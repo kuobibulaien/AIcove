@@ -28,17 +28,16 @@ export '../chat/domain/chat_display_policy.dart' show ChatDisplayStyle;
 
 /// 模型类型枚举
 enum ModelType {
-  chat('chat', '对话', Icons.chat_bubble_outline, Color(0xFF4A90E2)),
-  embedding('embedding', '嵌入', Icons.link, Color(0xFF10B981)),
-  tts('tts', '语音合成', Icons.volume_up_outlined, Color(0xFFEC4899)),
-  stt('stt', '语音识别', Icons.mic_outlined, Color(0xFFF59E0B)),
-  image('image', '图像生成', Icons.image_outlined, Color(0xFF8B5CF6));
+  chat('chat', '对话', Icons.chat_bubble_outline),
+  embedding('embedding', '嵌入', Icons.link),
+  tts('tts', '语音合成', Icons.volume_up_outlined),
+  stt('stt', '语音识别', Icons.mic_outlined),
+  image('image', '图像生成', Icons.image_outlined);
 
-  const ModelType(this.value, this.label, this.icon, this.color);
+  const ModelType(this.value, this.label, this.icon);
   final String value;
   final String label;
   final IconData icon;
-  final Color color;
 
   static ModelType fromValue(String? value) {
     for (final type in ModelType.values) {
@@ -116,6 +115,8 @@ final _sttPatterns = RegExp(
   r'speech-to-text|'
   r'transcription|'
   r'asr|' // Automatic Speech Recognition
+  r'transcribe|' // OpenAI gpt-4o-transcribe
+  r'scribe_v\d\w*|' // ElevenLabs Scribe
   r'paraformer|' // 阿里达摩院
   r'sensevoice|'
   r'funasr'
@@ -997,6 +998,24 @@ enum WindowControlButtonSide {
   }
 }
 
+/// Windows 点关闭按钮时的处理方式；首次关闭时询问并记住。
+enum WindowsCloseBehavior {
+  ask('ask', '每次询问'),
+  tray('tray', '最小化到托盘'),
+  exit('exit', '完全退出');
+
+  const WindowsCloseBehavior(this.value, this.label);
+  final String value;
+  final String label;
+
+  static WindowsCloseBehavior fromValue(String? value) {
+    for (final behavior in WindowsCloseBehavior.values) {
+      if (behavior.value == value) return behavior;
+    }
+    return WindowsCloseBehavior.ask;
+  }
+}
+
 /// 应用设置数据类
 class AppSettings {
   /// 压缩 Agent 使用的模型；空表示跟随默认聊天模型。
@@ -1046,6 +1065,9 @@ class AppSettings {
 
   /// Windows 桌面端仿 macOS 窗口控制按钮位置。
   final WindowControlButtonSide windowsWindowControlsSide;
+
+  /// Windows 关闭窗口时退出还是留在托盘。
+  final WindowsCloseBehavior windowsCloseBehavior;
   final String? userAvatar;
   final String? userName;
   final AutoReplySettings autoReplySettings;
@@ -1161,6 +1183,7 @@ class AppSettings {
     required this.uiScaleFactor,
     this.imagePreviewScale = 1.0,
     this.windowsWindowControlsSide = WindowControlButtonSide.left,
+    this.windowsCloseBehavior = WindowsCloseBehavior.ask,
     required this.autoReplySettings,
     required this.globalBackgroundColor,
     this.globalWallpaper = GlobalWallpaper.none,
@@ -1235,6 +1258,7 @@ class AppSettings {
     double? uiScaleFactor,
     double? imagePreviewScale,
     WindowControlButtonSide? windowsWindowControlsSide,
+    WindowsCloseBehavior? windowsCloseBehavior,
     AutoReplySettings? autoReplySettings,
     GlobalBackgroundColor? globalBackgroundColor,
     GlobalWallpaper? globalWallpaper,
@@ -1293,6 +1317,7 @@ class AppSettings {
     imagePreviewScale: imagePreviewScale ?? this.imagePreviewScale,
     windowsWindowControlsSide:
         windowsWindowControlsSide ?? this.windowsWindowControlsSide,
+    windowsCloseBehavior: windowsCloseBehavior ?? this.windowsCloseBehavior,
     autoReplySettings: autoReplySettings ?? this.autoReplySettings,
     globalBackgroundColor: globalBackgroundColor ?? this.globalBackgroundColor,
     globalWallpaper: globalWallpaper ?? this.globalWallpaper,

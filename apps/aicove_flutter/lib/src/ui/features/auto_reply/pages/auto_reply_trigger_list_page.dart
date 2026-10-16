@@ -201,21 +201,18 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
     }
   }
 
+  /// 进行中的触发器用强调色，已结束的一律弱化。
   Color _colorForStatus(AutoReplyTriggerStatus status, MoeColors colors) {
     switch (status) {
       case AutoReplyTriggerStatus.created:
       case AutoReplyTriggerStatus.pending:
-        return colors.primary;
       case AutoReplyTriggerStatus.prepared:
-        return const Color(0xFF66BB6A); // 绿色，就绪
+        return colors.primary;
       case AutoReplyTriggerStatus.paused:
-        return colors.muted;
       case AutoReplyTriggerStatus.fired:
-        return const Color(0xFF9E9E9E);
       case AutoReplyTriggerStatus.expired:
-        return const Color(0xFFEF5350); // 红色，已作废
       case AutoReplyTriggerStatus.deleted:
-        return const Color(0xFF9E9E9E);
+        return colors.muted;
     }
   }
 

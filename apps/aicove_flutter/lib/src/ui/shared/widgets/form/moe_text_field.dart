@@ -24,6 +24,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
 import 'package:flutter/services.dart';
+import '../../../theme/moe_input_theme.dart';
 import '../../../theme/tokens.dart';
 import '../moe_floating_surface.dart';
 
@@ -249,7 +250,8 @@ class _MoeTextFieldState extends State<MoeTextField> {
     final hintColor = widget.hintColor ?? colors.muted;
     final labelColor = widget.labelColor ?? colors.textSecondary;
     
-    final radius = widget.borderRadius ?? MoeRadii.borderSm;
+    final radius =
+        widget.borderRadius ?? BorderRadius.circular(moeInputRadius);
     final g2Radius = radius.topLeft.x;
     final borderWidth = widget.borderWidth ?? 1.0;
     final padding = widget.contentPadding ?? _defaultPadding;

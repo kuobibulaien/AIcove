@@ -519,20 +519,6 @@ class _ArtistPresetEditorPageState
                 horizontal: MoeSpacing.sm,
                 vertical: MoeSpacing.xs,
               ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.borderLight),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.borderLight),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: colors.primary),
-              ),
-              filled: true,
-              fillColor: colors.surface,
             ),
           ),
         ],

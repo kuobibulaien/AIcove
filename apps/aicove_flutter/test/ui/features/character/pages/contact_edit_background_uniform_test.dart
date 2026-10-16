@@ -75,8 +75,13 @@ void main() {
             _decorationColor(tester, settingsGroups.at(i)),
         };
 
-        expect(cardColors, {scenario.colors.componentBackground},
-            reason: '页面内所有卡片背景色必须统一为分组容器色 componentBackground');
+        expect(
+            cardColors,
+            {
+              moeContentSurfaceSolidColor(scenario.colors,
+                  scenario.dark ? Brightness.dark : Brightness.light),
+            },
+            reason: '页面内所有卡片背景色必须统一为分组容器色（componentBackground 叠内容墨色）');
         expect(scenario.colors.componentBackground,
             scenario.dark ? moePanelDark : moePanel);
       });

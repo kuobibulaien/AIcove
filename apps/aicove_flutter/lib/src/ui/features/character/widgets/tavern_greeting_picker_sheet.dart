@@ -147,7 +147,7 @@ class _GreetingCardState extends State<_GreetingCard> {
                           alignment: Alignment.centerRight,
                           child: TextButton(
                             style: TextButton.styleFrom(
-                              foregroundColor: colors.primary,
+                              foregroundColor: context.moeAccentInk,
                             ),
                             onPressed: () =>
                                 setState(() => _expanded = !_expanded),

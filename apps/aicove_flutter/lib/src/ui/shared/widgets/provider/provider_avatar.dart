@@ -18,6 +18,7 @@
 ///
 /// 更新记录：
 /// - 2026-01-21: 创建供应商头像组件
+/// - 2026-10-14: 新增 Fish Audio、NovelAI 官方图标
 library;
 
 import 'package:flutter/material.dart';
@@ -218,6 +219,10 @@ class ProviderAvatar extends StatelessWidget {
     'volcengine': 'assets/icons/providers/bytedance-color.svg',
     '火山引擎': 'assets/icons/providers/bytedance-color.svg',
     '火山': 'assets/icons/providers/bytedance-color.svg',
+    'fish audio': 'assets/icons/providers/fish-audio-color.svg',
+    'fish_audio': 'assets/icons/providers/fish-audio-color.svg',
+    'fishaudio': 'assets/icons/providers/fish-audio-color.svg',
+    'novelai': 'assets/icons/providers/novelai.svg',
   };
 
   /// 根据名称匹配品牌

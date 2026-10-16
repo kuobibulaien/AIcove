@@ -82,7 +82,7 @@ class DesktopWindowFrame extends StatelessWidget {
           top: kMacButtonPadding,
           left: controlsOnRight ? null : kMacButtonPadding,
           right: controlsOnRight ? kMacButtonPadding : null,
-          child: const MacWindowButtons(),
+          child: MacWindowButtons(closeFirst: !controlsOnRight),
         ),
       ],
     );
@@ -116,7 +116,11 @@ class _DragArea extends StatelessWidget {
 /// 可以直接放到 AppBar 的 leading 中，或者通过 Stack 叠加到页面左上角。
 /// 当鼠标悬停时显示功能图标（关闭 x / 最小化 - / 最大化 +）。
 class MacWindowButtons extends StatefulWidget {
-  const MacWindowButtons({super.key});
+  /// 放在左上角时按 macOS 顺序（关闭、最小化、最大化）；
+  /// 放在右上角时按 Windows 顺序（最小化、最大化、关闭）。
+  final bool closeFirst;
+
+  const MacWindowButtons({super.key, this.closeFirst = true});
 
   @override
   State<MacWindowButtons> createState() => _MacWindowButtonsState();
@@ -155,41 +159,43 @@ class _MacWindowButtonsState extends State<MacWindowButtons>
 
   @override
   Widget build(BuildContext context) {
+    final close = _MacButton(
+      color: const Color(0xFFFF5F57),
+      hoverIcon: Icons.close,
+      isHovered: _isHovered,
+      onPressed: () => windowManager.close(),
+    );
+    final minimize = _MacButton(
+      color: const Color(0xFFFFBD2E),
+      hoverIcon: Icons.remove,
+      isHovered: _isHovered,
+      onPressed: () => windowManager.minimize(),
+    );
+    final maximize = _MacButton(
+      color: const Color(0xFF27C93F),
+      hoverIcon: _isMaximized ? Icons.fullscreen_exit : Icons.fullscreen,
+      isHovered: _isHovered,
+      onPressed: () async {
+        if (await windowManager.isMaximized()) {
+          await windowManager.unmaximize();
+        } else {
+          await windowManager.maximize();
+        }
+      },
+    );
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 最小化（黄色）— Windows 顺序：最左
-          _MacButton(
-            color: const Color(0xFFFFBD2E),
-            hoverIcon: Icons.remove,
-            isHovered: _isHovered,
-            onPressed: () => windowManager.minimize(),
-          ),
-          const SizedBox(width: kMacButtonSpacing),
-          // 最大化/还原（绿色）— Windows 顺序：中间
-          _MacButton(
-            color: const Color(0xFF27C93F),
-            hoverIcon: _isMaximized ? Icons.fullscreen_exit : Icons.fullscreen,
-            isHovered: _isHovered,
-            onPressed: () async {
-              if (await windowManager.isMaximized()) {
-                await windowManager.unmaximize();
-              } else {
-                await windowManager.maximize();
-              }
-            },
-          ),
-          const SizedBox(width: kMacButtonSpacing),
-          // 关闭（红色）— Windows 顺序：最右
-          _MacButton(
-            color: const Color(0xFFFF5F57),
-            hoverIcon: Icons.close,
-            isHovered: _isHovered,
-            onPressed: () => windowManager.close(),
-          ),
+          for (final (index, button) in (widget.closeFirst
+                  ? [close, minimize, maximize]
+                  : [minimize, maximize, close])
+              .indexed) ...[
+            if (index > 0) const SizedBox(width: kMacButtonSpacing),
+            button,
+          ],
         ],
       ),
     );

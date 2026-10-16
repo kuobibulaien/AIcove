@@ -142,11 +142,12 @@ class _AccountPageState extends ConsumerState<AccountPage> {
                       onPressed: _login,
                     ),
                   const SizedBox(height: 12),
-                  TextButton(
+                  MoeSecondaryButton(
+                    label: '刷新账号状态',
+                    icon: Icons.refresh,
                     onPressed: state.busy
                         ? null
                         : () => ref.read(accountProvider.notifier).refresh(),
-                    child: const Text('刷新账号状态'),
                   ),
                   if (signedIn) ...[
                     const SizedBox(height: 24),

@@ -388,7 +388,7 @@ void main() {
   });
 
   testWidgets(
-    'failed autosave retains edits and back never discards or confirms',
+    'failed autosave retains edits and back asks before discarding',
     (tester) async {
       final store = _store()..fail = true;
       await _mount(tester, store);
@@ -404,17 +404,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
       expect(store.catalog.require('stable-id').name, '角色A绘图');
-      expect(find.textContaining('自动保存失败'), findsOneWidget);
       final context = tester.element(find.byType(DrawingPresetEditorPage));
       Navigator.of(context).maybePop();
       await tester.pumpAndSettle();
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('保存失败，修改已保留。'), findsOneWidget);
       expect(find.text('未保存'), findsOneWidget);
       store.fail = false;
       await tester.tap(find.text('重试'));
       await tester.pumpAndSettle();
       expect(store.catalog.require('stable-id').name, '未保存');
-      expect(find.byType(DrawingPresetEditorPage), findsOneWidget);
+      expect(find.byType(DrawingPresetEditorPage), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

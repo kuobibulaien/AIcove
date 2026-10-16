@@ -714,17 +714,23 @@ class VoicePreset {
     );
   }
 
-  /// 内置默认音色
+  /// 出厂默认音色：Fish Audio 纳西妲，出厂即绑定给预设角色纳西妲并设为默认预设。
+  static const String defaultPresetId = 'built_in_nahida_fish';
+  static const String _defaultFishAudioVoiceId =
+      '0e712bc0015b4cdbacbbc95af9da22b3';
+
   static VoicePreset get defaultPreset => VoicePreset(
-    id: 'built_in_nahida',
-    name: '纳西妲（仿）',
-    sourceType: VoiceSourceType.url,
+    id: defaultPresetId,
+    name: '纳西妲',
+    sourceType: VoiceSourceType.preset,
     providerType: VoiceProviderType.custom,
-    promptAudioUrl: _defaultNahidaPromptAudioUrl,
-    promptText:
-        '要准备睡下午觉了哦，躺过来吧。嗯，我们一起睡午觉吧。晚安，亲爱的，晚安吻的话，等你睡完觉我就亲你，怎么样。那要快点睡觉哦。嗯？想抱着我睡？一直都是可以哟，但是你要答应我好好睡觉。嗯~就是这样，闭眼睡觉觉吧。',
-    source: 'b站 月下专属人类 UID:1838261330',
+    source: 'Fish Audio',
     isBuiltIn: true,
+    synthesis: const VoiceSynthesisSettings(
+      providerId: 'fish_audio',
+      modelId: 's2.1-pro-free',
+      voiceId: _defaultFishAudioVoiceId,
+    ),
   );
 }
 
@@ -809,7 +815,8 @@ class TtsConfig {
     this.voiceFrequency = 60, // 默认"正常"档位
     String? systemPromptTemplate,
   }) : voicePresets = voicePresets ?? [VoicePreset.defaultPreset],
-       selectedVoicePresetId = selectedVoicePresetId ?? 'built_in_nahida',
+       selectedVoicePresetId =
+           selectedVoicePresetId ?? VoicePreset.defaultPresetId,
        systemPromptTemplate =
            systemPromptTemplate ?? defaultSystemPromptTemplate;
 
@@ -890,7 +897,9 @@ class TtsConfig {
         [];
 
     // 确保内置音色存在（如果被删除了就加回来）
-    final hasBuiltIn = presets.any((p) => p.id == 'built_in_nahida');
+    final hasBuiltIn = presets.any(
+      (p) => p.id == 'built_in_nahida' || p.id == VoicePreset.defaultPresetId,
+    );
     if (!hasBuiltIn && (json['presetSchemaVersion'] as int? ?? 0) == 0) {
       presets = [VoicePreset.defaultPreset, ...presets];
     }

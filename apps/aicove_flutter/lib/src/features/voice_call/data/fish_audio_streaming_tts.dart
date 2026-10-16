@@ -26,7 +26,7 @@ class FishAudioStreamingTts implements StreamingTtsPort {
   FishAudioStreamingTts({
     required this.apiKey,
     required this.referenceId,
-    this.model = 's2.1-pro',
+    this.model = 's2.1-pro-free',
     this.latency = 'balanced',
     this.endpoint = defaultEndpoint,
     this.pingInterval = const Duration(seconds: 20),

@@ -1,6 +1,7 @@
 import '../../../core/api/providers/google_api_mode.dart';
 import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api/providers/provider_chat_api_path.dart';
+import '../../plugins/tts/tts_request_format.dart';
 import '../app_settings.dart';
 
 const providerMultiKeyEnabledField = 'multi_key_enabled';
@@ -33,8 +34,35 @@ class ProviderDetailRequestFormat {
     comfyui,
   ];
 
+  /// 语音格式统一取自 [TtsRequestFormat] 注册表。
+  static final ttsFormats = TtsRequestFormat.all
+      .map(
+        (format) => ProviderDetailRequestFormat._(format.value, format.label),
+      )
+      .toList(growable: false);
+
   final String value;
   final String label;
+
+  bool get isTts => TtsRequestFormat.isTtsFormat(value);
+
+  @override
+  bool operator ==(Object other) =>
+      other is ProviderDetailRequestFormat && other.value == value;
+
+  @override
+  int get hashCode => value.hashCode;
+
+  /// 语音渠道：requestFormat 是语音格式，或只声明了语音能力。
+  static bool isTtsProvider(ProviderAuth provider) {
+    if (TtsRequestFormat.isTtsFormat(
+      provider.customConfig['requestFormat']?.toString(),
+    )) {
+      return true;
+    }
+    return provider.capabilities.isNotEmpty &&
+        provider.capabilities.every((item) => item == ModelType.tts.value);
+  }
 
   static List<ProviderDetailRequestFormat> forProvider(
     ProviderAuth provider, {
@@ -43,6 +71,7 @@ class ProviderDetailRequestFormat {
     if (isVertexProviderId(provider.id)) {
       return const <ProviderDetailRequestFormat>[gemini];
     }
+    if (isTtsProvider(provider)) return ttsFormats;
     final current = fromRaw(provider.customConfig['requestFormat']?.toString());
     if (current == ProviderDetailRequestFormat.novelai || current == comfyui) {
       return imageFormats;
@@ -81,7 +110,10 @@ class ProviderDetailRequestFormat {
       case 'nai':
         return ProviderDetailRequestFormat.novelai;
       default:
-        return null;
+        final tts = TtsRequestFormat.fromRaw(normalized);
+        return tts == null
+            ? null
+            : ProviderDetailRequestFormat._(tts.value, tts.label);
     }
   }
 }

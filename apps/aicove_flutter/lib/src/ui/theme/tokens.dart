@@ -575,6 +575,18 @@ class MoeColors extends ThemeExtension<MoeColors> {
 extension MoeColorsExtension on BuildContext {
   MoeColors get moeColors =>
       Theme.of(this).extension<MoeColors>() ?? MoeColors.light();
+
+  /// 强调色的「墨」版本：用于叠在强调色淡染底上的图标。
+  /// 浅色主题把强调色压深 35%，保证浅粉等淡强调色上的图标仍清晰；
+  /// 深色主题强调色本身已足够亮，原样使用。
+  Color get moeAccentInk {
+    final colors = moeColors;
+    if (Theme.of(this).brightness == Brightness.dark) return colors.primary;
+    return Color.alphaBlend(
+      colors.text.withValues(alpha: 0.35),
+      colors.primary,
+    );
+  }
 }
 
 // ===== Design Tokens =====

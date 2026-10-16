@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import '../../../theme/tokens.dart';
+import '../meotalk_dialog.dart';
 import '../sheets/moe_bottom_sheet.dart';
 import 'moe_text_field.dart';
 
@@ -139,7 +139,7 @@ mixin MoeAutoSaveState<T extends StatefulWidget> on State<T> {
 
 String moeAutoSaveSignature(Object? value) => jsonEncode(value);
 
-/// Flushes before returning and exposes errors without discarding the form.
+/// Flushes before returning; a failed save asks before discarding edits.
 class MoeAutoSaveScope extends StatefulWidget {
   const MoeAutoSaveScope(
       {super.key, required this.controller, required this.child});
@@ -217,43 +217,39 @@ class _MoeAutoSaveScopeState extends State<MoeAutoSaveScope>
     if (_leaving) return;
     _leaving = true;
     FocusScope.of(context).unfocus();
-    final saved = await widget.controller.flush();
-    if (mounted && saved) {
-      await Navigator.of(context).maybePop(result);
+    try {
+      while (mounted) {
+        if (await widget.controller.flush()) {
+          if (mounted) await Navigator.of(context).maybePop(result);
+          return;
+        }
+        if (!mounted) return;
+        final error = widget.controller.error;
+        // Composing text or a superseded write: nothing to report yet.
+        if (error == null) return;
+        final invalid = error is FormatException;
+        final choice = await showMeoTalkConfirm(
+          context: context,
+          title: '修改还没保存',
+          message: invalid ? error.message : '保存失败，修改已保留。',
+          cancelText: '放弃修改',
+          confirmText: invalid ? '继续编辑' : '重试',
+        );
+        if (!mounted || choice == null) return;
+        if (choice == false) {
+          // Bypasses this pop entry; already-saved edits stay saved.
+          Navigator.of(context).pop(result);
+          return;
+        }
+        if (invalid) return;
+      }
+    } finally {
+      _leaving = false;
     }
-    _leaving = false;
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: widget.controller,
-        builder: (context, _) =>
-            Column(mainAxisSize: MainAxisSize.min, children: [
-          Flexible(child: widget.child),
-          if (widget.controller.error != null)
-            Material(
-              color: context.moeColors.componentBackground,
-              child: SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Row(children: [
-                      Expanded(
-                          child: Text(widget.controller.error is FormatException
-                              ? (widget.controller.error as FormatException)
-                                  .message
-                              : '自动保存失败，修改已保留，请重试。')),
-                      TextButton(
-                          onPressed: widget.controller.saving
-                              ? null
-                              : () => widget.controller.flush(),
-                          child: const Text('重试')),
-                    ]),
-                  )),
-            ),
-        ]),
-      );
+  Widget build(BuildContext context) => widget.child;
 }
 
 class MoeAutoSaveForm extends StatefulWidget {

@@ -7,6 +7,7 @@ import '../../core/api/providers/zai_compat.dart';
 import 'data/local/ui_models_store_local_data_source.dart';
 import 'data/remote/provider_probe_remote_data_source.dart';
 import 'data/support/ui_models_store_support.dart';
+import 'settings_models.dart';
 
 /// 设置模块数据门面。
 /// 对外保持原有 API，不直接承载具体存储和网络细节。
@@ -49,6 +50,7 @@ class UiModelsApi {
     required String apiBaseUrl,
     required String modelId,
     Map<String, dynamic>? customConfig,
+    ModelType modelType = ModelType.chat,
   }) {
     return _remote.testModel(
       providerId: providerId,
@@ -56,6 +58,7 @@ class UiModelsApi {
       apiBaseUrl: apiBaseUrl,
       modelId: modelId,
       customConfig: customConfig,
+      modelType: modelType,
     );
   }
 

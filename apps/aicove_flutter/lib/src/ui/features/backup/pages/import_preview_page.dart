@@ -353,8 +353,8 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
       padding: const EdgeInsets.only(bottom: 8),
       child: MoeG2ClipRRect(
         radius: 12,
-        child: Material(
-          color: theme.cardColor,
+        child: MoeContentSurface(
+          radius: 12,
           child: InkWell(
             onTap: () {
               ref
@@ -518,6 +518,7 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     showDialog(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.transparent,
       builder: (context) => _ConflictDialog(
         conflicts: conflicts,
         onResolved: (resolutions) {
@@ -534,39 +535,27 @@ class _ImportPreviewPageState extends ConsumerState<ImportPreviewPage> {
     );
   }
 
-  void _showImportSuccess(ImportResult result) {
-    showDialog(
+  Future<void> _showImportSuccess(ImportResult result) async {
+    final done = await showMeoTalkDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(LucideIcons.checkCircle, color: Colors.green),
-            SizedBox(width: 8),
-            Text('导入成功'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('导入角色：${result.conversationIds.length}'),
-            Text('导入消息：${result.messagesImported}'),
-            if (result.skipped > 0) Text('跳过重复：${result.skipped}'),
-          ],
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              // 返回到数据管理页面
-              Navigator.of(context).pop();
-              Navigator.of(context).pop();
-            },
-            child: const Text('完成'),
-          ),
+      title: '导入成功',
+      showCancelButton: false,
+      confirmText: '完成',
+      barrierDismissible: false,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('导入角色：${result.conversationIds.length}'),
+          Text('导入消息：${result.messagesImported}'),
+          if (result.skipped > 0) Text('跳过重复：${result.skipped}'),
         ],
       ),
     );
+    if (done != true || !mounted) return;
+    // 返回到数据管理页面
+    Navigator.of(context).pop();
+    Navigator.of(context).pop();
   }
 
   String _formatDate(DateTime date) {
@@ -600,82 +589,70 @@ class _ConflictDialogState extends State<_ConflictDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = context.moeColors;
 
-    return AlertDialog(
-      title: Row(
+    return MeoTalkDialog(
+      title: '发现重复角色',
+      cancelText: '取消',
+      confirmText: '继续导入',
+      barrierDismissible: false,
+      onCancel: () => Navigator.of(context).pop(),
+      onConfirm: () {
+        Navigator.of(context).pop();
+        widget.onResolved(_resolutions);
+      },
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(LucideIcons.alertTriangle, color: theme.colorScheme.error),
-          const SizedBox(width: 8),
-          const Text('发现重复角色'),
-        ],
-      ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('以下角色已存在于本地，请选择处理方式：', style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 16),
-            ...widget.conflicts.map((conflict) {
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          const Text('以下角色已存在于本地，请选择处理方式：'),
+          for (final conflict in widget.conflicts) ...[
+            const SizedBox(height: 12),
+            MoeContentSurface(
+              radius: 16,
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    conflict.name,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: MoeFontWeights.emphasis,
+                      color: colors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      Text(
-                        conflict.name,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: MoeFontWeights.emphasis,
-                        ),
+                      _buildResolutionChip(
+                        context,
+                        conflict.id,
+                        ImportConflictResolution.createNew,
+                        '新建副本',
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          _buildResolutionChip(
-                            context,
-                            conflict.id,
-                            ImportConflictResolution.createNew,
-                            '新建副本',
-                          ),
-                          _buildResolutionChip(
-                            context,
-                            conflict.id,
-                            ImportConflictResolution.merge,
-                            '合并',
-                          ),
-                          _buildResolutionChip(
-                            context,
-                            conflict.id,
-                            ImportConflictResolution.skip,
-                            '跳过',
-                          ),
-                        ],
+                      _buildResolutionChip(
+                        context,
+                        conflict.id,
+                        ImportConflictResolution.merge,
+                        '合并',
+                      ),
+                      _buildResolutionChip(
+                        context,
+                        conflict.id,
+                        ImportConflictResolution.skip,
+                        '跳过',
                       ),
                     ],
                   ),
-                ),
-              );
-            }),
+                ],
+              ),
+            ),
           ],
-        ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () {
-            Navigator.of(context).pop();
-            widget.onResolved(_resolutions);
-          },
-          child: const Text('继续导入'),
-        ),
-      ],
     );
   }
 
@@ -687,19 +664,11 @@ class _ConflictDialogState extends State<_ConflictDialog> {
   ) {
     final isSelected = _resolutions[conflictId] == resolution;
 
-    return MoeButtonSurface(
-      radius: 999,
-      child: ChoiceChip(
-        label: Text(label),
-        selected: isSelected,
-        onSelected: (selected) {
-          if (selected) {
-            setState(() {
-              _resolutions[conflictId] = resolution;
-            });
-          }
-        },
-      ),
+    return MoeChoiceChip(
+      label: label,
+      selected: isSelected,
+      size: MoeChoiceChipSize.sm,
+      onTap: () => setState(() => _resolutions[conflictId] = resolution),
     );
   }
 }

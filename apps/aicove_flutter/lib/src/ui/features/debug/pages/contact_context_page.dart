@@ -197,18 +197,18 @@ class _ContactContextPageState extends ConsumerState<ContactContextPage> {
                 children: [
                   _OverviewCard(preview: preview),
                   const SizedBox(height: 12),
-                  MoeToggleBar<_ContextTab>(
+                  MoeSegmentedControl<_ContextTab>(
                     value: _tab,
-                    items: [
-                      MoeToggleItem(
+                    segments: [
+                      MoeSegment(
                         value: _ContextTab.messages,
                         label: '消息 ${preview.messages.length}',
                       ),
-                      const MoeToggleItem(
+                      const MoeSegment(
                         value: _ContextTab.sources,
                         label: '系统组成',
                       ),
-                      MoeToggleItem(
+                      MoeSegment(
                         value: _ContextTab.tools,
                         label: '工具 ${preview.tools.length}',
                       ),

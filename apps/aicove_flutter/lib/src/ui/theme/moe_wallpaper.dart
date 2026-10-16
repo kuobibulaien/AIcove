@@ -9,6 +9,7 @@ import 'tokens.dart' show layoutBreakpoint;
 enum GlobalWallpaper {
   none('none', '无'),
   catnap('catnap', '猫窗'),
+  laketown('laketown', '灯湖'),
   custom('custom', '自定义');
 
   const GlobalWallpaper(this.value, this.label);

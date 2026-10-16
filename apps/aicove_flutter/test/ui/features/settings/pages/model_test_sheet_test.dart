@@ -14,12 +14,15 @@ import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/features/settings/widgets/model_test_sheet.dart';
 
 class _Settings extends AppSettingsNotifier {
+  _Settings([this.data]);
+
+  final AppSettings? data;
   final completers = <String, Completer<String>>{};
   var inFlight = 0;
   var maxInFlight = 0;
 
   @override
-  Future<AppSettings> build() async => _testSettings;
+  Future<AppSettings> build() async => data ?? _testSettings;
 
   @override
   Future<String> testModel({
@@ -28,6 +31,7 @@ class _Settings extends AppSettingsNotifier {
     required String apiBaseUrl,
     required String modelId,
     Map<String, dynamic>? customConfig,
+    ModelType modelType = ModelType.chat,
   }) {
     final completer = Completer<String>();
     completers[modelId] = completer;
@@ -111,11 +115,12 @@ void main() {
     bool dark = false,
     double width = 390,
     GlobalKey? capture,
+    AppSettings? data,
   }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = Size(width, 780);
     addTearDown(tester.view.reset);
-    final settings = _Settings();
+    final settings = _Settings(data);
     final container = ProviderContainer(
       overrides: [appSettingsProvider.overrideWith(() => settings)],
     );
@@ -210,7 +215,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.check_circle), findsWidgets);
     expect(find.byIcon(Icons.cancel), findsOneWidget);
-    expect(find.text('已测 14/14 · 成功 13 · 失败 1'), findsOneWidget);
+    expect(
+      find.text('已测 14/14 · 成功 13 · 失败 1\n绘图、语音模型会真实生成一次，可能计费'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -251,20 +259,47 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('speech recognition model is marked unsupported, not failed', (
+    tester,
+  ) async {
+    final settings = await pumpSheet(
+      tester,
+      data: _testSettings.copyWith(
+        modelTypes: const <String, String>{'provider_a:model-01': 'stt'},
+      ),
+    );
+
+    await tester.tap(find.text('model-01'));
+    await tester.pumpAndSettle();
+    expect(settings.completers, isEmpty);
+    expect(find.byIcon(Icons.remove_circle_outline), findsOneWidget);
+    expect(find.byIcon(Icons.cancel), findsNothing);
+    expect(find.textContaining('已测 0/14'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final dark in [false, true]) {
     testWidgets('model test sheet source rendered preview dark=$dark', (
       tester,
     ) async {
       if (!const bool.fromEnvironment('WRITE_MODEL_TEST_PREVIEW')) return;
       final capture = GlobalKey();
-      final settings = await pumpSheet(tester, dark: dark, capture: capture);
+      final settings = await pumpSheet(
+        tester,
+        dark: dark,
+        capture: capture,
+        data: _testSettings.copyWith(
+          modelTypes: const <String, String>{'provider_a:model-04': 'stt'},
+        ),
+      );
 
-      // 制造混合状态：成功 + 失败 + 探测中 + 排队中
+      // 制造混合状态：成功 + 失败 + 暂不支持 + 探测中 + 排队中
       await tester.tap(find.text('全部测试'));
       await tester.pump();
       settings.completers['model-00']!.complete('ok');
       settings.completers['model-02']!.complete('ok');
       settings.completers['model-03']!.completeError(Exception('boom'));
+      await tester.pump();
       await tester.pump();
 
       await tester.runAsync(() async {

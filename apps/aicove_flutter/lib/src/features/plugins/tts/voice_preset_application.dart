@@ -12,6 +12,7 @@ import '../plugin_providers.dart';
 import 'providers/tts_voice_provider.dart';
 import 'tts_config.dart';
 import 'tts_provider_context.dart';
+import 'tts_request_format.dart';
 import 'tts_service.dart';
 import 'tts_voice_catalog_service.dart';
 import 'voice_preset_runtime.dart';
@@ -59,9 +60,8 @@ class VoicePresetApplication implements VoicePresetApplicationPort {
             providerName: provider.displayName ?? provider.id,
             adapterId: context.voiceProviderId ?? context.requestFormat,
             supportsReferenceAudio:
-                context.requestFormat == 'siliconflow_indextts' ||
-                context.requestFormat == 'aliyun_qwen_tts' ||
-                context.requestFormat == 'aliyun_cosyvoice',
+                TtsRequestFormat.fromRaw(context.requestFormat) ==
+                TtsRequestFormat.aliyun,
           ),
         );
       }
@@ -143,10 +143,18 @@ class VoicePresetApplication implements VoicePresetApplicationPort {
         settings: settings,
       );
       final provider = context.providerAuth;
-      if (provider == null ||
-          !context.hasApiKey ||
-          provider.apiBaseUrl.trim().isEmpty) {
-        throw StateError('此预设的供应商缺少 API 地址或密钥');
+      if (provider == null || provider.apiBaseUrl.trim().isEmpty) {
+        throw const VoicePresetResolutionException(
+          VoicePresetProblem.targetUnavailable,
+          '此预设的供应商缺少 API 地址',
+        );
+      }
+      if (!context.hasApiKey) {
+        throw VoicePresetResolutionException(
+          VoicePresetProblem.missingApiKey,
+          '音色预设使用的渠道「${provider.displayName ?? provider.id}」还没有填写 API Key，'
+          '请先在「设置 · 模型」里填写',
+        );
       }
       final material = snapshot.config.selectedVoicePreset!;
       if (material.synthesis?.voiceId?.isNotEmpty != true &&

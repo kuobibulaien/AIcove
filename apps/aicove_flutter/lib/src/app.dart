@@ -2,6 +2,7 @@ import 'dart:async';
 import 'features/sync/providers/cloud_sync_provider.dart';
 import 'features/sync/providers/lan_sync_provider.dart';
 
+import 'package:aicove_flutter/src/ui/theme/moe_input_theme.dart';
 import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'ui/shared/animations/parallax_slide_page_route.dart';
 import 'ui/shared/animations/theme_ripple_reveal.dart';
 import 'ui/shared/widgets/desktop_window_frame.dart';
 import 'ui/shared/widgets/moe_scroll_behavior.dart';
+import 'ui/shared/widgets/windows_close_guard.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
 import 'ui/shared/widgets/moe_adaptive_shell.dart';
@@ -39,6 +41,7 @@ import 'features/chat/services/tts_fallback_notification.dart';
 import 'features/settings/app_settings.dart';
 import 'ui/theme/accent_color_provider.dart';
 import 'features/memory/providers/memory_providers.dart';
+import 'features/plugins/tts/factory_nahida_voice_update.dart';
 
 class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
@@ -75,6 +78,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ref.read(cloudSyncProvider);
       ref.read(lanSyncPortProvider);
       unawaited(_retireLegacyMemory());
+      unawaited(_applyFactoryNahidaVoice());
       // 后台响过的角色来电：点了通知就接通，没接的记为未接（方案 12 §4.8）。
       unawaited(ref.read(incomingCallNotificationBridgeProvider).start());
       _requestRecentConversationsWarmup();
@@ -94,6 +98,19 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       AppLogger.warning(
         'LegacyMemoryRetirement',
         '旧记忆数据退役失败，下次启动重试',
+        metadata: {'error': error.toString()},
+      );
+    }
+  }
+
+  /// 老用户的纳西妲没设过音色时，一次性绑上出厂 Fish Audio 音色；失败下次启动重试。
+  Future<void> _applyFactoryNahidaVoice() async {
+    try {
+      await ref.read(factoryNahidaVoiceUpdateProvider).run();
+    } catch (error) {
+      AppLogger.warning(
+        'FactoryNahidaVoice',
+        '纳西妲出厂音色更新失败，下次启动重试',
         metadata: {'error': error.toString()},
       );
     }
@@ -339,11 +356,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ShellRoute(
           navigatorKey: _detailNavigatorKey,
           observers: [_detailObserver],
-          builder: (context, state, child) => MoeAdaptiveShell(
-            navigatorKey: _detailNavigatorKey,
-            observer: _detailObserver,
-            primary: const MainPage(),
-            detail: child,
+          builder: (context, state, child) => WindowsCloseGuard(
+            child: MoeAdaptiveShell(
+              navigatorKey: _detailNavigatorKey,
+              observer: _detailObserver,
+              primary: const MainPage(),
+              detail: child,
+            ),
           ),
           routes: [
             GoRoute(
@@ -627,14 +646,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         labelSmall: baseText.labelSmall,
       ),
       listTileTheme: const ListTileThemeData(minVerticalPadding: 12),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: isDark ? moeSurfaceAltDark : moeSurfaceAlt,
-        visualDensity: VisualDensity.standard,
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none),
-      ),
+      inputDecorationTheme:
+          buildMoeInputDecorationTheme(isDark: isDark, accent: accent),
       // 全局分割线样式：1px 细线、无额外上下留白（颜色更柔和）
       dividerTheme: DividerThemeData(
         color: isDark ? moeDividerColorDark : moeDividerColor,

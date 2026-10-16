@@ -37,6 +37,7 @@ class PresetCharactersLoader {
           description: json['description'] as String?,
           characterImage: json['characterImage'] as String?,
           avatarUrl: json['avatarUrl'] as String?,
+          voiceFile: json['voiceFile'] as String?,
           personaPrompt: personaPrompt,
           createdAt: now,
           updatedAt: now,

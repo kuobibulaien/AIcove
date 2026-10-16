@@ -6,10 +6,23 @@ import '../../theme/tokens.dart';
 import '../effects/smooth_clip.dart';
 import 'moe_liquid_glass.dart';
 
+/// Ink layered over default content cards in every material.
+Color moeContentSurfaceInk(Brightness brightness) =>
+    brightness == Brightness.dark
+    ? const Color(0x10FFFFFF)
+    : const Color(0x0E222222);
+
+/// Solid-material fill of a default content card.
+Color moeContentSurfaceSolidColor(MoeColors colors, Brightness brightness) =>
+    Color.alphaBlend(
+      moeContentSurfaceInk(brightness),
+      colors.componentBackground,
+    );
+
 /// Content cards follow the global material as a page-wide default: solid
 /// stays opaque, frosted uses the same thick blur as floating controls, and
-/// glass renders the same liquid lens and rim as the floating bars. Inside a
-/// scroll view [MoeLiquidGlass] switches to the scroll-safe standard shader.
+/// glass renders the same liquid lens and rim as the floating bars, keeping
+/// the premium shader even inside scroll views.
 class MoeContentSurface extends StatefulWidget {
   const MoeContentSurface({
     super.key,
@@ -64,6 +77,7 @@ class _MoeContentSurfaceState extends State<MoeContentSurface> {
         radius: widget.radius,
         borderRadius: widget.borderRadius,
         shadows: widget.shadows,
+        keepPremiumWhileScrolling: true,
         child: content,
       );
     }
@@ -75,9 +89,21 @@ class _MoeContentSurfaceState extends State<MoeContentSurface> {
       borderRadius: widget.borderRadius,
       side: widget.border,
     );
-    final requestedColor = widget.color ?? colors.componentBackground;
+    // Default cards carry a faint ink layer so they read as a distinct
+    // surface instead of a white block; in the frosted branch the result
+    // stays translucent so the backdrop blur still shows through.
+    final ink = widget.color == null
+        ? moeContentSurfaceInk(brightness)
+        : const Color(0x00000000);
+    final requestedColor = Color.alphaBlend(
+      ink,
+      widget.color ?? colors.componentBackground,
+    );
     final effectiveColor = followsMaterial
-        ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
+        ? Color.alphaBlend(
+            ink,
+            MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill),
+          )
         : accessibilityReduced
         ? requestedColor.withValues(alpha: 1)
         : requestedColor;

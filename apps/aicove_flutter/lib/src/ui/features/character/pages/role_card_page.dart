@@ -128,9 +128,19 @@ class _RoleCardContentState extends ConsumerState<RoleCardContent> {
       data: (items) => FutureBuilder<List<Conversation>>(
         future: _presets,
         builder: (context, snapshot) {
-          final directory = {for (final role in items) role.id: role};
+          // 隐私空间里的角色只能凭密码进入，目录与搜索都不露出。
+          final hidden = {
+            for (final role in items)
+              if (role.isHidden) role.id,
+          };
+          final directory = {
+            for (final role in items)
+              if (!role.isHidden) role.id: role,
+          };
           for (final role in snapshot.data ?? <Conversation>[]) {
-            directory.putIfAbsent(role.id, () => role);
+            if (!hidden.contains(role.id)) {
+              directory.putIfAbsent(role.id, () => role);
+            }
           }
           final query = _query.toLowerCase();
           final roles = directory.values

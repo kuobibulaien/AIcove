@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +14,8 @@ import 'character_list_item.dart';
 import 'privacy_space_pull_detector.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_adaptive_shell.dart';
+import '../../../../ui/shared/widgets/list/moe_slidable_action.dart';
+import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 import '../../../../ui/features/home/pages/privacy_space_page.dart';
 
@@ -230,7 +231,7 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                       extentRatio: 0.66,
                       children: [
                         // 置顶/取消置顶
-                        SlidableAction(
+                        MoeSlidableAction(
                           onPressed: (context) async {
                             await ref
                                 .read(conversationsProvider.notifier)
@@ -239,55 +240,33 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                                   isPinned: !c.isPinned,
                                 );
                           },
-                          backgroundColor: const Color(0xFF4C5B6F),
-                          foregroundColor: Colors.white,
                           icon: c.isPinned
                               ? Icons.push_pin
                               : Icons.push_pin_outlined,
                           label: c.isPinned ? '取消置顶' : '置顶',
                         ),
                         // 隐藏到隐私空间
-                        SlidableAction(
+                        MoeSlidableAction(
                           // 动作按钮随面板收起而卸载，弹窗链路要用列表自身的 context。
                           onPressed: (_) => hideConversationToPrivacySpace(
                             this.context,
                             ref,
                             c.id,
                           ),
-                          backgroundColor: const Color(0xFF7A6FAE),
-                          foregroundColor: Colors.white,
                           icon: Icons.visibility_off_outlined,
                           label: '隐藏',
                         ),
                         // 删除
-                        SlidableAction(
+                        MoeSlidableAction(
                           onPressed: (context) async {
                             // 显示确认对话框
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('确认删除'),
-                                content: Text(
+                            final confirmed = await showMeoTalkConfirm(
+                              context: this.context,
+                              title: '确认删除',
+                              message:
                                   '确定要删除 "${c.displayName}" 吗？删除后无法恢复。',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text('取消'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    style: withoutHoverFeedback(
-                                      TextButton.styleFrom(
-                                        foregroundColor: Colors.red,
-                                      ),
-                                    ),
-                                    child: const Text('删除'),
-                                  ),
-                                ],
-                              ),
+                              confirmText: '删除',
+                              isDanger: true,
                             );
                             if (confirmed == true) {
                               await ref
@@ -295,10 +274,9 @@ class _ContactsListContentState extends ConsumerState<ContactsListContent> {
                                   .deleteConversation(c.id);
                             }
                           },
-                          backgroundColor: const Color(0xFFFF4D4F),
-                          foregroundColor: Colors.white,
                           icon: Icons.delete_outline,
                           label: '删除',
+                          destructive: true,
                         ),
                       ],
                     ),

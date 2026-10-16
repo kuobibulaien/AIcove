@@ -66,6 +66,7 @@ void main() {
         apiBaseUrl: 'https://api.minimaxi.com/v1',
         models: <String>['speech-2.8-hd'],
         visibleModels: <String>['speech-2.8-hd'],
+        customConfig: <String, dynamic>{'requestFormat': 'minimax'},
         capabilities: <String>['tts'],
       ),
       ProviderAuth(

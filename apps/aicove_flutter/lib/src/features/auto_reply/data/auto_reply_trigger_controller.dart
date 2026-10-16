@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/sync/cloud_local_write.dart';
 import '../../chat/providers2.dart';
 import '../../chat/services/chat_history_store.dart';
 import 'auto_reply_claim_store.dart';
@@ -13,6 +14,7 @@ import 'auto_reply_dispatch_service.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
 import 'background_service.dart';
+import 'proactive_owner_device.dart';
 import 'proactive_planner.dart';
 import '../../settings/app_settings.dart';
 
@@ -91,6 +93,12 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     state = AsyncData(await _storage.loadTriggers());
   }
 
+  /// Picks up a list written by sync. Keeps the current value meanwhile, so
+  /// a write in between never starts from an empty list.
+  Future<void> reloadFromStorage() => cloudLocalWrite(() async {
+        state = AsyncData(await _storage.loadTriggers());
+      });
+
   Future<void> _appendHistoryLog({
     required AutoReplyTriggerLogCategory category,
     required String event,
@@ -161,9 +169,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       contextLastUserMessageId: lastUserMessage?.id,
       contextLastUserMessageAt: lastUserMessage?.createdAt,
     );
-    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
-    final updated = [...current, trigger];
-    await _persist(updated);
+    await _update((stored) => [...stored, trigger]);
     await _scheduleBackgroundTaskForTrigger(trigger);
     AppLogger.info('AutoReplyTrigger',
         'Created manual trigger: ${trigger.title} (Priority: ${priority.name})');
@@ -242,9 +248,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
           : action,
     );
 
-    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
-    final updated = [...current, trigger];
-    await _persist(updated);
+    await _update((stored) => [...stored, trigger]);
     await _scheduleBackgroundTaskForTrigger(trigger);
 
     AppLogger.info('AutoReplyTrigger', 'Created trigger', metadata: {
@@ -280,16 +284,18 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final target = current.where((t) => t.id == triggerId).firstOrNull;
     if (target == null || !target.isActive) return;
 
-    final updated = current.map((t) {
-      if (t.id != triggerId) return t;
-      return t.copyWith(
-        status: AutoReplyTriggerStatus.expired,
-        expireReason: reason,
-        lastFiredAt: DateTime.now(),
-      );
-    }).toList();
-
-    await _persist(updated);
+    // 以存储里的最新状态为准：期间已送达、暂停或被同步改掉的不再作废。
+    var expired = false;
+    await _update((stored) => stored.map((t) {
+          if (t.id != triggerId || !t.isActive) return t;
+          expired = true;
+          return t.copyWith(
+            status: AutoReplyTriggerStatus.expired,
+            expireReason: reason,
+            lastFiredAt: DateTime.now(),
+          );
+        }).toList());
+    if (!expired) return;
     await _cancelBackgroundTaskByTriggerId(triggerId);
     AppLogger.info('AutoReplyTrigger', 'Trigger expired', metadata: {
       'id': triggerId,
@@ -362,8 +368,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final target =
         current.where((element) => element.id == id).toList(growable: false);
     if (target.isEmpty) return;
-    final updated = current.where((e) => e.id != id).toList();
-    await _persist(updated);
+    await _update((stored) => stored.where((e) => e.id != id).toList());
     await _cancelBackgroundTaskByTriggerId(id);
     AppLogger.info('AutoReplyTrigger', 'Deleted trigger: $id');
     await _appendHistoryLog(
@@ -384,16 +389,15 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   }
 
   Future<void> togglePause(String id) async {
-    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
-    final updated = current.map((trigger) {
-      if (trigger.id != id) return trigger;
-      final nextStatus = trigger.status == AutoReplyTriggerStatus.paused
-          ? AutoReplyTriggerStatus.pending
-          : AutoReplyTriggerStatus.paused;
-      return trigger.copyWith(status: nextStatus);
-    }).toList();
-    await _persist(updated);
-    final changed = updated.firstWhere((e) => e.id == id);
+    final updated = await _update((stored) => stored.map((trigger) {
+          if (trigger.id != id) return trigger;
+          final nextStatus = trigger.status == AutoReplyTriggerStatus.paused
+              ? AutoReplyTriggerStatus.pending
+              : AutoReplyTriggerStatus.paused;
+          return trigger.copyWith(status: nextStatus);
+        }).toList());
+    final changed = updated.where((e) => e.id == id).firstOrNull;
+    if (changed == null) return;
     if (changed.status == AutoReplyTriggerStatus.paused) {
       await _cancelBackgroundTaskByTriggerId(changed.id);
     } else {
@@ -424,6 +428,8 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
     final trigger = current.where((t) => t.id == id).firstOrNull;
     if (trigger == null) return;
+    // 用户在本机手动触发：本机接手这个会话的主动回复，送达前的复查才放行。
+    await ProactiveOwnership.claim(trigger.conversationId);
 
     final activeChatId = ref.read(activeConversationIdProvider);
     final expireReason = await _checkShouldExpire(trigger, activeChatId);
@@ -490,7 +496,10 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final activeChatId = ref.read(activeConversationIdProvider);
 
     // 触发到期的触发器
+    final ownership = await ProactiveOwnership.load();
     for (final trigger in current) {
+      // 同步来的、归另一台设备负责的触发器由那台设备送达或作废，本机不碰。
+      if (!ownership.owns(trigger.conversationId)) continue;
       // 正在发送的触发器不参与本轮任何判断（含精确窗口作废）。
       if (_isInFlight(trigger.id, now)) continue;
       // 已开始送达（可能是另一进程或被杀的上一次）：只按送达记录收尾。
@@ -614,9 +623,8 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
 
     if (toDelete.isEmpty) return;
 
-    final updated =
-        current.where((t) => !toDelete.any((d) => d.id == t.id)).toList();
-    await _persist(updated);
+    await _update((stored) =>
+        stored.where((t) => !toDelete.any((d) => d.id == t.id)).toList());
 
     // 记录清理日志
     if (toDelete.isNotEmpty) {
@@ -720,15 +728,14 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     List<AutoReplyTrigger> updated = current;
 
     if (success) {
-      updated = current.map((t) {
+      updated = await _update((stored) => stored.map((t) {
         if (t.id != triggerId) return t;
         return t.copyWith(
           status: AutoReplyTriggerStatus.fired,
           lastFiredAt: firedAt,
           expireReason: null,
         );
-      }).toList();
-      await _persist(updated);
+      }).toList());
       await _cancelBackgroundTaskByTriggerId(triggerId);
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.delivery,
@@ -744,23 +751,23 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
           'reason': reason,
         },
       );
-    } else if (retryable && !target.isActive) {
-      // 发送期间用户已暂停或作废：只释放认领，保留用户的决定。
-      await _claimStore.release(triggerId, claimToken);
     } else if (retryable) {
       final retryAt = now.add(const Duration(minutes: 1));
-      updated = current.map((t) {
-        if (t.id != triggerId) return t;
+      var retried = false;
+      updated = await _update((stored) => stored.map((t) {
+        // 发送期间用户已暂停或作废（以存储为准）：只释放认领，保留用户的决定。
+        if (t.id != triggerId || !t.isActive) return t;
+        retried = true;
         return t.copyWith(
           status: AutoReplyTriggerStatus.pending,
           nextFireAt: retryAt,
           lastFiredAt: null,
           expireReason: reason,
         );
-      }).toList();
-      await _persist(updated);
+      }).toList());
       // 释放执行权认领，让重试可以重新认领
       await _claimStore.release(triggerId, claimToken);
+      if (!retried) return;
       final retryTrigger = updated.where((t) => t.id == triggerId).firstOrNull;
       if (retryTrigger != null) {
         await _scheduleBackgroundTaskForTrigger(retryTrigger);
@@ -788,15 +795,14 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         },
       );
     } else {
-      updated = current.map((t) {
+      updated = await _update((stored) => stored.map((t) {
         if (t.id != triggerId) return t;
         return t.copyWith(
           status: AutoReplyTriggerStatus.expired,
           lastFiredAt: now,
           expireReason: reason,
         );
-      }).toList();
-      await _persist(updated);
+      }).toList());
       await _cancelBackgroundTaskByTriggerId(triggerId);
       final expired = updated.where((t) => t.id == triggerId).firstOrNull;
       if (expired != null) {
@@ -907,9 +913,8 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
             ) !=
         null;
     if (delivered) {
-      final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
-      await _persist([
-        for (final t in current)
+      await _update((stored) => [
+        for (final t in stored)
           t.id == trigger.id
               ? t.copyWith(
                   status: AutoReplyTriggerStatus.fired,
@@ -938,10 +943,18 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     );
   }
 
-  Future<void> _persist(List<AutoReplyTrigger> triggers) async {
-    await _storage.saveTriggers(triggers);
-    state = AsyncData(triggers);
-  }
+  /// Changes the stored list, not the in-memory copy: reading, changing and
+  /// saving run under the sync write lock, so a list applied by sync in
+  /// between is never overwritten by a stale copy.
+  Future<List<AutoReplyTrigger>> _update(
+    List<AutoReplyTrigger> Function(List<AutoReplyTrigger> stored) change,
+  ) =>
+      cloudLocalWrite(() async {
+        final updated = change(await _storage.loadTriggers());
+        await _storage.saveTriggers(updated);
+        state = AsyncData(updated);
+        return updated;
+      });
 
   Future<void> _scheduleBackgroundTaskForTrigger(
     AutoReplyTrigger trigger,

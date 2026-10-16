@@ -24,6 +24,7 @@ import 'context_analyzer.dart';
 import 'conversation_proactive_state.dart';
 import 'conversation_proactive_state_storage.dart';
 import 'proactive_message_pregenerator.dart';
+import 'proactive_owner_device.dart';
 
 class AnalyzerScheduler {
   static const String _triggerPluginId = 'trigger';
@@ -120,6 +121,7 @@ class AnalyzerScheduler {
       );
       return;
     }
+    await ProactiveOwnership.claim(normalizedConversationId);
     await _clearConversationAutoTriggers(
       normalizedConversationId,
       reason: 'cleared_by_new_user_message',
@@ -368,6 +370,7 @@ class AnalyzerScheduler {
           level: 'DEBUG');
       return;
     }
+    if (!await _ownsConversation(conversationId)) return;
     final conversation = _ref.read(resolvedConversationByIdProvider(
       conversationId,
     ));
@@ -549,6 +552,9 @@ class AnalyzerScheduler {
       },
     );
 
+    // The user may have moved to another device while the model answered:
+    // its plan must not be replaced by this one.
+    if (!await _ownsConversation(conversationId)) return;
     await _clearConversationAutoTriggers(
       conversationId,
       reason: 'replaced_by_analyzer',
@@ -582,6 +588,9 @@ class AnalyzerScheduler {
       );
       return;
     }
+
+    // Or while the reply was being written.
+    if (!await _ownsConversation(conversationId)) return;
 
     final existingTrigger = _findActiveAiTriggerForConversation(conversationId);
     if (existingTrigger != null) {
@@ -675,6 +684,22 @@ class AnalyzerScheduler {
         reason: reason,
       );
     }
+  }
+
+  /// Another device answers for this conversation: stop watching it here.
+  Future<bool> _ownsConversation(String conversationId) async {
+    final ownership = await ProactiveOwnership.load();
+    if (ownership.owns(conversationId)) return true;
+    _cancelTimers(conversationId);
+    await _appendHistoryLog(
+      category: AutoReplyTriggerLogCategory.analyzer,
+      event: 'analysis_skipped_other_device',
+      message: '跳过分析：这个会话由用户最后发消息的另一台设备负责主动回复',
+      conversationId: conversationId,
+    );
+    _log('analyzer:skip_other_device', {'conversationId': conversationId},
+        level: 'DEBUG');
+    return false;
   }
 
   void _restoreTimers() {

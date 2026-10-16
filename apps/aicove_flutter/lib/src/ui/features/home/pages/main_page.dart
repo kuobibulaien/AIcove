@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/app_update/app_update_dialog.dart';
 import '../../../../features/app_update/app_update_service.dart';
+import '../../../../features/app_update/release_announcement.dart';
 import '../../../../features/chat/presentation/widgets/custom_bottom_nav.dart';
 import '../../../theme/tokens.dart';
 import '../../../shared/widgets/moe_chat_wallpaper.dart';
@@ -30,7 +31,16 @@ class _MainPageState extends ConsumerState<MainPage> {
   @override
   void initState() {
     super.initState();
-    unawaited(_checkForUpdate());
+    unawaited(_showAnnouncementThenCheckUpdate());
+  }
+
+  /// The release announcement goes first so the two dialogs never stack.
+  Future<void> _showAnnouncementThenCheckUpdate() async {
+    final announcement = await pendingReleaseAnnouncement();
+    if (announcement != null && mounted) {
+      await showReleaseAnnouncementDialog(context, announcement);
+    }
+    if (mounted) await _checkForUpdate();
   }
 
   /// Release builds look for a newer GitHub release once per launch.
@@ -107,7 +117,6 @@ class _MainPageState extends ConsumerState<MainPage> {
       baseline: MoeMaterialBaseline.background,
       // Page backgrounds keep blur and tint without a lens rim at the edges.
       useLiquid: false,
-      frostedOnly: true,
       // Full-screen narrow pages have nothing behind them to blur; a material
       // tint there would repaint the page background as a container color.
       blurEnabled: isWide ? null : false,

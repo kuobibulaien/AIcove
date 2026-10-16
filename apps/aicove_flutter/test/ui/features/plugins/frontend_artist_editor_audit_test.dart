@@ -57,7 +57,10 @@ void main() {
       container.read(imagePluginConfigProvider).artistPresets.single.name,
       'Audit',
     );
-    expect(find.text('重试'), findsOneWidget);
+    expect(find.text('重试'), findsNothing);
+    Navigator.of(tester.element(find.byType(TextField))).maybePop();
+    await tester.pumpAndSettle();
+    expect(find.text('修改还没保存'), findsOneWidget);
     SharedPreferencesStorePlatform.instance = previous;
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();

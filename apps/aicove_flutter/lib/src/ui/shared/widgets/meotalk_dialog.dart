@@ -1,7 +1,7 @@
-/// MeoTalk 底部弹窗
+/// MeoTalk 弹窗
 ///
 /// 设计特点：
-/// - 底部弹出，圆角30
+/// - 默认底部弹出，圆角30；`centered` 时居中显示，宽度封顶 420，圆角24
 /// - 标题居中，内容居左
 /// - 按钮带圆角
 library;
@@ -13,7 +13,7 @@ import 'buttons/moe_secondary_button.dart';
 import 'moe_floating_surface.dart';
 import '../../theme/tokens.dart';
 
-/// MeoTalk 底部弹窗
+/// MeoTalk 弹窗（默认底部，`centered` 居中）
 class MeoTalkDialog extends StatelessWidget {
   final String title;
   final Widget content;
@@ -27,6 +27,9 @@ class MeoTalkDialog extends StatelessWidget {
   final bool showConfirmButton;
   final bool barrierDismissible;
   final bool isDanger;
+
+  /// 居中显示，用于桌面端窗口级询问等不跟随底部操作区的场景。
+  final bool centered;
 
   const MeoTalkDialog({
     super.key,
@@ -42,7 +45,11 @@ class MeoTalkDialog extends StatelessWidget {
     this.showConfirmButton = true,
     this.barrierDismissible = true,
     this.isDanger = false,
+    this.centered = false,
   });
+
+  /// 居中弹窗的最大宽度
+  static const double centeredMaxWidth = 420;
 
   @override
   Widget build(BuildContext context) {
@@ -56,13 +63,16 @@ class MeoTalkDialog extends StatelessWidget {
         curve: Curves.easeOutCubic,
         padding: EdgeInsets.only(bottom: viewInsets.bottom),
         child: Align(
-          alignment: Alignment.bottomCenter,
+          alignment: centered ? Alignment.center : Alignment.bottomCenter,
           child: Container(
             width: double.infinity,
+            constraints: centered
+                ? const BoxConstraints(maxWidth: centeredMaxWidth)
+                : null,
             margin: const EdgeInsets.all(16),
             child: MoeFloatingSurface(
               baseline: MoeMaterialBaseline.background,
-              radius: 30,
+              radius: centered ? 24 : 30,
               solidColor: colors.componentBackground,
               padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
             child: Column(
@@ -166,8 +176,10 @@ class MeoTalkDialog extends StatelessWidget {
             child: MoePrimaryButton(
               label: confirmText ?? '确认',
               borderRadius: buttonRadius,
-              backgroundColor: isDanger ? Colors.red : colors.accentColor,
-              foregroundColor: isDanger ? Colors.red : colors.accentColor,
+              backgroundColor: isDanger ? colors.toastError : colors.accentColor,
+              // Danger keeps the error color on its label; normal confirms
+              // use the theme text color for readability on the accent tint.
+              foregroundColor: isDanger ? colors.toastError : null,
               onPressed: onConfirm,
             ),
           ),
@@ -176,7 +188,7 @@ class MeoTalkDialog extends StatelessWidget {
   }
 }
 
-/// 显示 MeoTalk 底部弹窗
+/// 显示 MeoTalk 弹窗（默认底部，`centered` 居中）
 Future<bool?> showMeoTalkDialog({
   required BuildContext context,
   required String title,
@@ -190,6 +202,7 @@ Future<bool?> showMeoTalkDialog({
   bool barrierDismissible = true,
   bool isDanger = false,
   bool useRootNavigator = true,
+  bool centered = false,
 }) {
   return showDialog<bool>(
     context: context,
@@ -207,6 +220,7 @@ Future<bool?> showMeoTalkDialog({
       showConfirmButton: showConfirmButton,
       barrierDismissible: barrierDismissible,
       isDanger: isDanger,
+      centered: centered,
       onCancel: () => Navigator.of(context).pop(false),
       onConfirm: () => Navigator.of(context).pop(true),
     ),

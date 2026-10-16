@@ -8,6 +8,8 @@ import 'package:aicove_flutter/src/core/api/providers/minimax_compat.dart';
 import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
 import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
+import 'package:aicove_flutter/src/features/plugins/tts/tts_request_format.dart';
+import 'package:aicove_flutter/src/features/voice_call/domain/asr_request_format.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -255,6 +257,46 @@ void main() {
       expect(requestCount, 0);
       expect(models, kNovelAiDefaultModels);
       expect(models.first, 'nai-diffusion-5-full');
+    });
+
+    test('Fish Audio preview returns built-in models without /models request',
+        () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount += 1;
+        return http.Response('Nothing matches the given URI', 404);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'fish_audio',
+        apiKey: 'fish-key',
+        apiBaseUrl: 'https://api.fish.audio/v1',
+        customConfig: const {'requestFormat': 'fish_audio'},
+      );
+
+      expect(requestCount, 0);
+      expect(models, TtsRequestFormat.fishAudio.defaultModels);
+    });
+
+    test('ASR channel preview returns registry models without request',
+        () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount += 1;
+        return http.Response('not found', 404);
+      });
+
+      final api = UiModelsApi(httpClient: client);
+      final models = await api.previewProvider(
+        providerId: 'aliyun_asr',
+        apiKey: 'key',
+        apiBaseUrl: 'https://dashscope.aliyuncs.com/api/v1',
+        customConfig: const {AsrRequestFormat.configKey: 'aliyun_asr'},
+      );
+
+      expect(requestCount, 0);
+      expect(models, AsrRequestFormat.aliyun.defaultModels);
     });
 
     test('NovelAI V5 Full should build minimal structured v5 payload',

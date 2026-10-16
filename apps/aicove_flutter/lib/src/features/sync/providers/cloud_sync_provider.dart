@@ -8,6 +8,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/media/media_store.dart';
 import '../../account/domain/account_port.dart';
 import '../../account/providers/account_provider.dart';
+import '../../auto_reply/data/auto_reply_trigger_controller.dart';
 import '../../chat/chat_providers.dart';
 import '../../chat/services/conversation_short_window_store.dart';
 import '../../plugins/plugin_providers.dart';
@@ -145,6 +146,12 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
       ref.invalidate(appSettingsProvider);
       ref.invalidate(ttsPluginConfigProvider);
       ref.invalidate(triggerPluginConfigProvider);
+      // Later writes must start from the synced list, not a stale copy.
+      if (ref.exists(autoReplyTriggersProvider)) {
+        unawaited(
+          ref.read(autoReplyTriggersProvider.notifier).reloadFromStorage(),
+        );
+      }
       ref.invalidate(stickerPluginConfigProvider);
       ref.invalidate(imagePluginConfigProvider);
       ref.invalidate(drawingPresetCatalogProvider);

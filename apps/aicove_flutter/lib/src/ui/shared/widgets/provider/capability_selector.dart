@@ -4,7 +4,7 @@
 ///
 /// 设计特点：
 /// - 4 个可选项：对话/嵌入/图片/语音
-/// - Checkbox 风格，支持多选
+/// - Checkbox 风格，支持多选（MoeChoiceChip）
 /// - 每项带图标和文字
 /// - 触觉反馈
 ///
@@ -21,9 +21,8 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../../theme/tokens.dart';
-import '../buttons/moe_button_surface.dart';
+import '../buttons/moe_choice_chip.dart';
 import 'capability_chips.dart';
 
 /// 用途多选组件
@@ -50,8 +49,6 @@ class CapabilitySelector extends StatelessWidget {
 
   void _toggle(ModelCapability cap) {
     if (!enabled) return;
-
-    HapticFeedback.lightImpact();
 
     final newSet = Set<String>.from(selected);
     if (newSet.contains(cap.value)) {
@@ -111,65 +108,13 @@ class CapabilitySelector extends StatelessWidget {
     ModelCapability cap,
     MoeColors colors,
   ) {
-    final isSelected = selected.contains(cap.value);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    // 使用项目定义的次级表面背景色
-    final bgColor = isSelected
-        ? cap.color.withValues(alpha: isDark ? 0.2 : 0.12)
-        : colors.surface;
-
-    // 边框色使用主题边框色，选中时使用能力主色
-    final borderColor = isSelected ? cap.color : colors.border;
-    final iconColor = isSelected ? cap.color : colors.muted;
-    final textColor = isSelected ? colors.text : colors.textSecondary;
-
-    return GestureDetector(
-      onTap: () => _toggle(cap),
-      child: MoeButtonSurface(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        radius: MoeRadii.md,
-        tintColor: isSelected ? bgColor : Colors.transparent,
-        border: Border.all(color: borderColor, width: isSelected ? 1.5 : 0.8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildCheckbox(isSelected, cap.color, colors),
-            const SizedBox(width: 10),
-            Icon(cap.icon, size: 18, color: iconColor),
-            const SizedBox(width: 6),
-            Text(
-              cap.label,
-              style: TextStyle(
-                fontSize: 14,
-                color: textColor,
-                fontWeight: isSelected
-                    ? MoeFontWeights.emphasis
-                    : MoeFontWeights.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCheckbox(bool isSelected, Color activeColor, MoeColors colors) {
-    return AnimatedContainer(
-      duration: kAnimFast,
-      width: 18,
-      height: 18,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: isSelected ? activeColor : Colors.transparent,
-        border: Border.all(
-          color: isSelected ? activeColor : colors.border,
-          width: 1.5,
-        ),
-      ),
-      child: isSelected
-          ? const Icon(Icons.check, size: 12, color: Colors.white)
-          : null,
+    return MoeChoiceChip(
+      label: cap.label,
+      icon: cap.icon,
+      selected: selected.contains(cap.value),
+      indicator: MoeChoiceIndicator.check,
+      expand: compact,
+      onTap: enabled ? () => _toggle(cap) : null,
     );
   }
 }
@@ -224,78 +169,16 @@ class CapabilitySingleSelector extends StatelessWidget {
     ModelCapability cap,
     MoeColors colors,
   ) {
-    final isSelected = selected == cap.value;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    final bgColor = isSelected
-        ? cap.color.withValues(alpha: isDark ? 0.2 : 0.12)
-        : colors.surface;
-
-    final borderColor = isSelected ? cap.color : colors.border;
-    final iconColor = isSelected ? cap.color : colors.muted;
-    final textColor = isSelected ? colors.text : colors.textSecondary;
-
-    return GestureDetector(
+    return MoeChoiceChip(
+      label: cap.label,
+      icon: cap.icon,
+      selected: selected == cap.value,
+      indicator: MoeChoiceIndicator.radio,
+      expand: true,
       onTap: enabled
           ? () {
-              if (selected != cap.value) {
-                HapticFeedback.lightImpact();
-                onChanged(cap.value);
-              }
+              if (selected != cap.value) onChanged(cap.value);
             }
-          : null,
-      child: MoeButtonSurface(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        radius: MoeRadii.md,
-        tintColor: isSelected ? bgColor : Colors.transparent,
-        border: Border.all(color: borderColor, width: isSelected ? 1.5 : 0.8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildRadio(isSelected, cap.color, colors),
-            const SizedBox(width: 10),
-            Icon(cap.icon, size: 18, color: iconColor),
-            const SizedBox(width: 6),
-            Text(
-              cap.label,
-              style: TextStyle(
-                fontSize: 14,
-                color: textColor,
-                fontWeight: isSelected
-                    ? MoeFontWeights.emphasis
-                    : MoeFontWeights.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRadio(bool isSelected, Color activeColor, MoeColors colors) {
-    return AnimatedContainer(
-      duration: kAnimFast,
-      width: 18,
-      height: 18,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: isSelected ? activeColor : Colors.transparent,
-        border: Border.all(
-          color: isSelected ? activeColor : colors.border,
-          width: 1.5,
-        ),
-      ),
-      child: isSelected
-          ? Center(
-              child: Container(
-                width: 6,
-                height: 6,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white,
-                ),
-              ),
-            )
           : null,
     );
   }
@@ -321,9 +204,6 @@ class CapabilityFilter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -333,8 +213,6 @@ class CapabilityFilter extends StatelessWidget {
               context,
               label: '全部',
               isSelected: selected == null,
-              color: colors.focus,
-              isDark: isDark,
               onTap: () => onChanged(null),
             ),
             const SizedBox(width: 8),
@@ -347,8 +225,6 @@ class CapabilityFilter extends StatelessWidget {
                 label: cap.label,
                 icon: cap.icon,
                 isSelected: selected == cap.value,
-                color: cap.color,
-                isDark: isDark,
                 onTap: () => onChanged(cap.value),
               ),
             ),
@@ -363,48 +239,14 @@ class CapabilityFilter extends StatelessWidget {
     required String label,
     IconData? icon,
     required bool isSelected,
-    required Color color,
-    required bool isDark,
     required VoidCallback onTap,
   }) {
-    final colors = context.moeColors;
-    final bgColor = isSelected
-        ? color.withValues(alpha: isDark ? 0.25 : 0.15)
-        : colors.surface;
-    final fgColor = isSelected ? color : colors.textSecondary;
-
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.lightImpact();
-        onTap();
-      },
-      child: MoeButtonSurface(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        radius: 16,
-        tintColor: isSelected ? bgColor : Colors.transparent,
-        border: Border.all(
-          color: isSelected ? color.withValues(alpha: 0.5) : colors.border,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 14, color: fgColor),
-              const SizedBox(width: 4),
-            ],
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: fgColor,
-                fontWeight: isSelected
-                    ? MoeFontWeights.emphasis
-                    : MoeFontWeights.normal,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return MoeChoiceChip(
+      label: label,
+      icon: icon,
+      selected: isSelected,
+      size: MoeChoiceChipSize.sm,
+      onTap: onTap,
     );
   }
 }

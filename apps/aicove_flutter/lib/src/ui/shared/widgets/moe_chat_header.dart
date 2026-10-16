@@ -72,56 +72,59 @@ class MoeChatHeader extends StatelessWidget implements PreferredSizeWidget {
         ),
         child: SizedBox(
           height: toolbarHeight,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              if (nativeInset > 0) SizedBox(width: nativeInset),
-              if (showBackButton) ...[
-                MoeFloatingSurface(
-                  radius: toolbarHeight / 2,
-                  child: SizedBox.square(
-                    dimension: toolbarHeight,
-                    child: leading ?? const BackButton(),
+          // The capsules sit side by side over the same backdrop.
+          child: MoeSharedBackdrop(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (nativeInset > 0) SizedBox(width: nativeInset),
+                if (showBackButton) ...[
+                  MoeFloatingSurface(
+                    radius: toolbarHeight / 2,
+                    child: SizedBox.square(
+                      dimension: toolbarHeight,
+                      child: leading ?? const BackButton(),
+                    ),
                   ),
-                ),
-                const SizedBox(width: telegramChatHeaderGap),
-              ],
-              Expanded(
-                child: MoeFloatingSurface(
-                  radius: toolbarHeight / 2,
-                  child: SizedBox(
-                    height: toolbarHeight,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [Expanded(child: title)],
+                  const SizedBox(width: telegramChatHeaderGap),
+                ],
+                Expanded(
+                  child: MoeFloatingSurface(
+                    radius: toolbarHeight / 2,
+                    child: SizedBox(
+                      height: toolbarHeight,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [Expanded(child: title)],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              if (actions.isNotEmpty) ...[
-                const SizedBox(width: telegramChatHeaderGap),
-                MoeFloatingSurface(
-                  radius: toolbarHeight / 2,
-                  child: SizedBox(
-                    height: toolbarHeight,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 2,
-                        vertical: 0,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: actions,
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(width: telegramChatHeaderGap),
+                  MoeFloatingSurface(
+                    radius: toolbarHeight / 2,
+                    child: SizedBox(
+                      height: toolbarHeight,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 2,
+                          vertical: 0,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: actions,
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

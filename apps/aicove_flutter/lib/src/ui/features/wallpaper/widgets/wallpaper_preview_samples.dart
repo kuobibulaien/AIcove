@@ -174,7 +174,6 @@ class WallpaperSampleScreen extends StatelessWidget {
           child: MoeFloatingSurface(
             baseline: MoeMaterialBaseline.background,
             useLiquid: false,
-            frostedOnly: true,
             radius: telegramPrimaryRadius,
             solidColor: context.moeColors.surface,
             border: BorderSide.none,

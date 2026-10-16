@@ -146,11 +146,11 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
           const SizedBox(height: 12),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            child: MoeToggleBar<AutoReplyTriggerType>(
+            child: MoeSegmentedControl<AutoReplyTriggerType>(
               value: _type,
-              items: const [
-                MoeToggleItem(value: AutoReplyTriggerType.delay, label: '延时触发'),
-                MoeToggleItem(value: AutoReplyTriggerType.fixed, label: '固定时间'),
+              segments: const [
+                MoeSegment(value: AutoReplyTriggerType.delay, label: '延时触发'),
+                MoeSegment(value: AutoReplyTriggerType.fixed, label: '固定时间'),
               ],
               onChanged: (value) {
                 setState(() {

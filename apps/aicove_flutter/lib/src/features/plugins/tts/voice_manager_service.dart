@@ -8,91 +8,13 @@
 /// 2026-01-27: 创建音色管理服务
 library;
 
-import 'dart:typed_data';
-
 import '../../../core/app_logger.dart';
 import '../../settings/app_settings.dart';
 import 'tts_config.dart';
-import 'siliconflow_tts_service.dart';
 import 'aliyun_voice_clone_service.dart';
 
 /// 音色管理服务
 class VoiceManagerService {
-  /// 获取硅基流动的预置音色列表
-  static List<VoicePreset> getSiliconFlowPresetVoices() {
-    return SiliconFlowTtsService.presetVoices.map((voice) {
-      return VoicePreset(
-        id: 'siliconflow_preset_${voice.id}',
-        name: voice.name,
-        sourceType: VoiceSourceType.preset,
-        providerType: VoiceProviderType.siliconFlow,
-        source: '硅基流动预置 · ${voice.gender == 'male' ? '男声' : '女声'}',
-        siliconFlowVoiceUri: voice.voiceParam, // 格式: model:voiceId
-        siliconFlowModel: voice.model,
-        isBuiltIn: false, // 预置音色不是内置音色，可以删除
-      );
-    }).toList();
-  }
-
-  /// 获取硅基流动用户已上传的音色列表
-  static Future<List<VoicePreset>> getSiliconFlowUserVoices(String apiKey) async {
-    try {
-      final service = SiliconFlowTtsService(apiKey: apiKey);
-      final voices = await service.getVoiceList();
-
-      return voices.map((voice) {
-        return VoicePreset(
-          id: 'siliconflow_user_${voice.uri.hashCode}',
-          name: voice.customName.isNotEmpty ? voice.customName : '用户音色',
-          sourceType: VoiceSourceType.url, // 用户上传的音色
-          providerType: VoiceProviderType.siliconFlow,
-          source: '硅基流动 · 用户上传',
-          promptText: voice.text,
-          siliconFlowVoiceUri: voice.uri,
-          siliconFlowModel: voice.model,
-        );
-      }).toList();
-    } catch (e) {
-      AppLogger.error('VoiceManager', '获取硅基流动用户音色失败', metadata: {'error': e.toString()});
-      rethrow;
-    }
-  }
-
-  /// 上传音色到硅基流动
-  static Future<VoicePreset> uploadToSiliconFlow({
-    required String apiKey,
-    required Uint8List audioBytes,
-    required String fileName,
-    required String customName,
-    required String text,
-    String model = 'IndexTeam/IndexTTS-2',
-  }) async {
-    try {
-      final service = SiliconFlowTtsService(apiKey: apiKey);
-      final result = await service.uploadVoiceFromBytes(
-        audioBytes: audioBytes,
-        fileName: fileName,
-        customName: customName,
-        text: text,
-        model: model,
-      );
-
-      return VoicePreset(
-        id: 'siliconflow_user_${result.uri.hashCode}',
-        name: customName,
-        sourceType: VoiceSourceType.url,
-        providerType: VoiceProviderType.siliconFlow,
-        source: '硅基流动 · 用户上传',
-        promptText: text,
-        siliconFlowVoiceUri: result.uri,
-        siliconFlowModel: result.model,
-      );
-    } catch (e) {
-      AppLogger.error('VoiceManager', '上传音色到硅基流动失败', metadata: {'error': e.toString()});
-      rethrow;
-    }
-  }
-
   /// 创建阿里云音色（从公网 URL）
   static Future<VoicePreset> createAliyunVoiceFromUrl({
     required String apiKey,
@@ -173,41 +95,11 @@ class VoiceManagerService {
     );
   }
 
-  /// 为已有音色创建硅基流动音色 URI
-  static Future<VoicePreset> createSiliconFlowVoiceForPreset({
-    required String apiKey,
-    required VoicePreset preset,
-    required Uint8List audioBytes,
-    required String fileName,
-    String model = 'IndexTeam/IndexTTS-2',
-  }) async {
-    final result = await uploadToSiliconFlow(
-      apiKey: apiKey,
-      audioBytes: audioBytes,
-      fileName: fileName,
-      customName: preset.name,
-      text: preset.promptText ?? '',
-      model: model,
-    );
-
-    // 合并到现有音色
-    return preset.copyWith(
-      siliconFlowVoiceUri: result.siliconFlowVoiceUri,
-      siliconFlowModel: result.siliconFlowModel,
-    );
-  }
-
   /// 获取渠道的 TTS API Key
   static String? getProviderApiKey(List<ProviderAuth> providers, String providerId) {
     final provider = providers.where((p) => p.id == providerId).firstOrNull;
     if (provider == null || provider.apiKeys.isEmpty) return null;
     return provider.apiKeys.first;
-  }
-
-  /// 判断渠道是否为硅基流动
-  static bool isSiliconFlowProvider(ProviderAuth provider) {
-    final url = provider.apiBaseUrl.toLowerCase();
-    return url.contains('siliconflow');
   }
 
   /// 判断渠道是否为阿里云
@@ -216,15 +108,9 @@ class VoiceManagerService {
     final format = provider.customConfig['requestFormat'] as String?;
     return url.contains('dashscope') ||
            url.contains('aliyuncs') ||
+           format == 'aliyun' ||
            format == 'aliyun_cosyvoice' ||
            format == 'aliyun_qwen_tts';
-  }
-
-  /// 判断模型是否为硅基流动模型
-  static bool isSiliconFlowModel(String modelId) {
-    return modelId.contains('FunAudioLLM') ||
-           modelId.contains('IndexTeam') ||
-           modelId.contains('CosyVoice2');
   }
 
   /// 判断模型是否为阿里云模型

@@ -54,9 +54,29 @@ void main() {
     }
   });
 
+  test('each built-in wallpaper swaps its own light and dark asset', () {
+    for (final wallpaper in [GlobalWallpaper.catnap, GlobalWallpaper.laketown]) {
+      final light = wallpaper.assetFor(
+        GlobalWallpaperSlot.page,
+        Brightness.light,
+      );
+      final dark = wallpaper.assetFor(
+        GlobalWallpaperSlot.page,
+        Brightness.dark,
+      );
+      expect(light, 'assets/wallpapers/${wallpaper.value}_light.webp');
+      expect(dark, 'assets/wallpapers/${wallpaper.value}_dark.webp');
+      expect(light, isNot(dark));
+    }
+  });
+
   test('wallpaper choice is parsed and stays on this device', () {
     final settings = mapUiModelsToAppSettings({'global_wallpaper': 'catnap'});
     expect(settings.globalWallpaper, GlobalWallpaper.catnap);
+    expect(
+      mapUiModelsToAppSettings({'global_wallpaper': 'laketown'}).globalWallpaper,
+      GlobalWallpaper.laketown,
+    );
     for (final legacy in ['mist', 'apricot']) {
       expect(
         mapUiModelsToAppSettings({'global_wallpaper': legacy}).globalWallpaper,
@@ -204,6 +224,29 @@ void main() {
       tester.widget<Image>(find.byType(Image)).alignment,
       Alignment.centerLeft,
     );
+  });
+
+  testWidgets('the built-in wallpaper follows the theme brightness', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _host(
+        const MoePageScaffold(body: SizedBox()),
+        wallpaper: GlobalWallpaper.laketown,
+      ),
+    );
+    expect(_assetNames(tester), {'assets/wallpapers/laketown_light.webp'});
+
+    await tester.pumpWidget(
+      _host(
+        const MoePageScaffold(body: SizedBox()),
+        wallpaper: GlobalWallpaper.laketown,
+        dark: true,
+      ),
+    );
+    // MaterialApp animates the theme switch, so brightness settles a frame in.
+    await tester.pumpAndSettle();
+    expect(_assetNames(tester), {'assets/wallpapers/laketown_dark.webp'});
   });
 
   testWidgets('custom wallpaper covers every page with a readability mask', (

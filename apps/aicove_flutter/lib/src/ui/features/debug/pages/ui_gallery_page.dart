@@ -27,7 +27,7 @@ class _UiGalleryPageState extends State<UiGalleryPage>
   bool _liquidGlassEnabled = true;
   double _liquidThickness = 20.0;
   double _liquidBlur = 8.0;
-  double _liquidRefraction = 1.25;
+  double _liquidRefraction = 1.5;
 
   @override
   void initState() {

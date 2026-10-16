@@ -17,6 +17,8 @@ const List<String> _providerSvgPaths = [
   'assets/icons/providers/siliconflow-color.svg',
   'assets/icons/providers/alibabacloud-color.svg',
   'assets/icons/providers/bytedance-color.svg',
+  'assets/icons/providers/fish-audio-color.svg',
+  'assets/icons/providers/novelai.svg',
 ];
 
 /// 预热所有供应商 SVG 图标

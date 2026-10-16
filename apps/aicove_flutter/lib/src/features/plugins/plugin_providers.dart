@@ -252,7 +252,11 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
   );
 
   static TtsConfig _defaultConfig() {
-    return TtsConfig(enabled: true);
+    return TtsConfig(
+      enabled: true,
+      presetSchemaVersion: 1,
+      defaultVoicePresetId: VoicePreset.defaultPresetId,
+    );
   }
 
   Future<void> _loadConfig() async {

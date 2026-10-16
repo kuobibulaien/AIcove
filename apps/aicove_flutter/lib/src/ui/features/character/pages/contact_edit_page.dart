@@ -7,6 +7,7 @@ import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/agent_context/data/silly_tavern_character_card_loader.dart';
@@ -21,7 +22,10 @@ import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../ui/features/settings/pages/chat_plugin_settings_page.dart';
 import '../../plugins/widgets/tavern_common.dart';
 import '../../chat/widgets/chat_wallpaper_background.dart';
+import '../../wallpaper/pages/wallpaper_editor_page.dart';
+import '../../wallpaper/widgets/wallpaper_preview_samples.dart';
 import '../widgets/avatar_name_section.dart';
+import 'character_appearance_page.dart';
 import 'contact_memory_page.dart';
 import '../services/contact_edit_snapshot_store.dart';
 
@@ -76,8 +80,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   late final TextEditingController _refImageCtrl;
   late final TextEditingController _chatBackgroundCtrl;
 
-  /// 仅导入角色卡时写入；null 表示沿用会话已有的模糊值。
-  double? _chatBackgroundBlurSigma;
+  /// 角色壁纸的遮罩、模糊与截取，与 [_chatBackgroundCtrl] 一起保存。
+  late WallpaperStyle _wallpaperStyle;
   bool _importingCard = false;
   bool _importingPreset = false;
   bool _submitting = false;
@@ -133,6 +137,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _chatBackgroundCtrl = TextEditingController(
       text: conv.chatBackgroundImage ?? '',
     );
+    _wallpaperStyle = chatWallpaperStyleOf(conv);
 
     final allPluginIds = conversationScopedChatPluginItems
         .map((e) => e.id)
@@ -312,8 +317,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                 nameCtrl: _nameCtrl,
                 avatarCtrl: _avatarCtrl,
                 refImageCtrl: _refImageCtrl,
-                onPickCharacterImage: _pickCharacterImage,
-                onClearCharacterImage: _clearCharacterImage,
+                onCustomize: _openAppearancePage,
               ),
             ),
 
@@ -463,9 +467,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     return ChatWallpaperLayer(
       image: raw,
       fallbackColor: colors.surfaceAlt,
-      style: chatWallpaperStyleOf(widget.conversation).copyWith(
-        blur: _chatBackgroundBlurSigma,
-      ),
+      style: _wallpaperStyle,
     );
   }
 
@@ -548,6 +550,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       result.personaPrompt,
       plugins,
       result.recipeId ?? '',
+      _wallpaperStyle.toJson(),
       '${result.clearAvatarUrl}',
       '${result.clearCharacterImage}',
       '${result.clearChatBackgroundImage}',
@@ -654,28 +657,76 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
   // ==================== 图片选择 ====================
 
+  /// 「自定义」：更换立绘与头像，并可进入聊天壁纸编辑页。
+  void _openAppearancePage() {
+    Navigator.of(context).push(
+      ParallaxSlidePageRoute(
+        page: CharacterAppearancePage(
+          nameCtrl: _nameCtrl,
+          avatarCtrl: _avatarCtrl,
+          refImageCtrl: _refImageCtrl,
+          onPickCharacterImage: _pickCharacterImage,
+          onCropAvatarFromCharacter: _cropAvatarFromCharacter,
+          onPickAvatar: _pickAvatar,
+          onEditWallpaper: _openWallpaperEditor,
+        ),
+      ),
+    );
+  }
+
   /// 上传立绘（两步流程）：
   /// 1. 选择原图 → 保存为立绘（characterImage）
   /// 2. 自动弹出裁剪界面 → 裁剪结果保存为头像（avatarUrl）
   Future<void> _pickCharacterImage() async {
+    final file = await _pickImageFile();
+    if (file == null) return;
+
+    // 第一步：原图保存为立绘
+    setState(() {
+      _refImageCtrl.text = buildDataImage(file.bytes!, fileName: file.name);
+    });
+
+    // 第二步：自动打开裁剪界面，裁剪为头像
+    await _cropAvatar(file.bytes!, file.name);
+    _scheduleAutoSave();
+  }
+
+  /// 从当前立绘重新裁剪头像。
+  Future<void> _cropAvatarFromCharacter() async {
+    final source = _refImageCtrl.text.trim();
+    if (source.isEmpty) return;
+    final bytes = await AvatarHelper(
+      characterImage: source,
+      displayName: _nameCtrl.text,
+    ).getAvatarBytes();
+    if (!mounted) return;
+    if (bytes == null) {
+      MoeToast.error(context, '读取立绘失败，请重新上传立绘');
+      return;
+    }
+    if (await _cropAvatar(bytes, 'avatar.png')) _scheduleAutoSave();
+  }
+
+  /// 单独上传一张图片裁剪为头像，不改立绘。
+  Future<void> _pickAvatar() async {
+    final file = await _pickImageFile();
+    if (file == null) return;
+    if (await _cropAvatar(file.bytes!, file.name)) _scheduleAutoSave();
+  }
+
+  Future<PlatformFile?> _pickImageFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    final file = result?.files.firstOrNull;
+    if (file?.bytes == null) return null;
+    return file;
+  }
 
-    final file = result.files.first;
-    if (file.bytes == null) return;
-    final originalBytes = file.bytes!;
-
-    // 第一步：原图保存为立绘
-    final characterDataUrl = buildDataImage(originalBytes, fileName: file.name);
-    setState(() {
-      _refImageCtrl.text = characterDataUrl;
-    });
-
-    // 第二步：自动打开裁剪界面，裁剪为头像
-    if (!mounted) return;
+  /// 打开裁剪界面，确认后把结果写成头像；返回是否已更新头像。
+  Future<bool> _cropAvatar(Uint8List bytes, String fileName) async {
+    if (!mounted) return false;
     final croppedBytes = await Navigator.of(context).push<Uint8List>(
       PageRouteBuilder(
         opaque: false,
@@ -684,7 +735,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         transitionDuration: kAnim,
         reverseTransitionDuration: kAnim,
         pageBuilder: (context, animation, secondaryAnimation) =>
-            ImageCropDialog(imageBytes: originalBytes, fileName: file.name),
+            ImageCropDialog(imageBytes: bytes, fileName: fileName),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final fadeAnimation = CurvedAnimation(
             parent: animation,
@@ -700,22 +751,47 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         },
       ),
     );
-
-    if (croppedBytes != null && mounted) {
-      final avatarDataUrl = buildDataImage(croppedBytes, fileName: file.name);
-      setState(() {
-        _avatarCtrl.text = avatarDataUrl;
-      });
-    }
-
-    _scheduleAutoSave();
+    if (croppedBytes == null || !mounted) return false;
+    setState(() {
+      _avatarCtrl.text = buildDataImage(croppedBytes, fileName: fileName);
+    });
+    return true;
   }
 
-  void _clearCharacterImage() {
-    setState(() {
-      _refImageCtrl.clear();
-    });
-    _scheduleAutoSave();
+  // ==================== 壁纸与样式 ====================
+
+  /// 编辑页示例里显示的头像与名字，取当前未保存的输入。
+  Conversation _buildPreviewConversation() {
+    final name = _nameCtrl.text.trim();
+    final avatar = _avatarCtrl.text.trim();
+    return widget.conversation.copyWith(
+      displayName: name.isEmpty ? null : name,
+      avatarUrl: avatar.isEmpty ? null : avatar,
+    );
+  }
+
+  /// 「自定义」：在共用的壁纸编辑页里换角色壁纸、调遮罩模糊与截取。
+  void _openWallpaperEditor() {
+    final raw = _chatBackgroundCtrl.text.trim();
+    MoeWorkspace.open(
+      context,
+      WallpaperEditorPage(
+        source: raw.isEmpty ? null : raw,
+        style: _wallpaperStyle,
+        defaultStyle: const WallpaperStyle(mask: kDefaultChatWallpaperMask),
+        kind: WallpaperPreviewKind.chat,
+        conversation: _buildPreviewConversation(),
+        canChangeImage: true,
+        onSave: (source, style) async {
+          if (!mounted) return;
+          setState(() {
+            _chatBackgroundCtrl.text = source?.trim() ?? '';
+            _wallpaperStyle = style;
+          });
+          if (_enableAutoSave) await autoSave.flush();
+        },
+      ),
+    );
   }
 
   // ==================== 导入酒馆角色卡 ====================
@@ -850,7 +926,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         _avatarCtrl.text = dataUrl;
         _refImageCtrl.clear();
         _chatBackgroundCtrl.text = dataUrl;
-        _chatBackgroundBlurSigma = _kImportedBackgroundBlurSigma;
+        _wallpaperStyle = const WallpaperStyle(
+          mask: kDefaultChatWallpaperMask,
+          blur: _kImportedBackgroundBlurSigma,
+        );
       }
     });
     _scheduleBlurEnsure();
@@ -1001,11 +1080,18 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
           clearCharacterImage: result.clearCharacterImage,
           chatBackgroundImage: result.chatBackgroundImage,
           clearChatBackgroundImage: result.clearChatBackgroundImage,
+          chatBackgroundMaskOpacity: result.clearChatBackgroundImage
+              ? null
+              : _wallpaperStyle.mask,
           clearChatBackgroundMaskOpacity: result.clearChatBackgroundImage,
           chatBackgroundBlurSigma: result.clearChatBackgroundImage
               ? null
-              : _chatBackgroundBlurSigma,
+              : _wallpaperStyle.blur,
           clearChatBackgroundBlurSigma: result.clearChatBackgroundImage,
+          chatBackgroundFraming: _wallpaperStyle.encodedFraming,
+          clearChatBackgroundFraming:
+              result.clearChatBackgroundImage ||
+              _wallpaperStyle.encodedFraming == null,
           selfAddress: result.selfAddress,
           clearSelfAddress: result.clearSelfAddress,
           addressUser: result.addressUser,

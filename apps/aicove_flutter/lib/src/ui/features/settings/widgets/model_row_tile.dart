@@ -25,6 +25,7 @@ import '../../../../core/api/thinking/thinking_level_catalog.dart';
 import '../../../../core/api/thinking/thinking_level_labels.dart';
 import '../../../../features/chat/presentation/widgets/thinking_level_sheet.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../ui/theme/moe_input_theme.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
@@ -403,13 +404,10 @@ class ModelRowTile extends ConsumerWidget {
                 const SizedBox(height: 16),
 
                 // 显示名称输入
-                TextFormField(
+                MoeTextField(
                   controller: ctrl,
-                  decoration: const InputDecoration(
-                    labelText: '显示名称（备注）',
-                    hintText: '留空则显示原始ID',
-                    border: OutlineInputBorder(),
-                  ),
+                  label: '显示名称（备注）',
+                  hint: '留空则显示原始ID',
                   autofocus: true,
                 ),
                 const SizedBox(height: 16),
@@ -428,53 +426,11 @@ class ModelRowTile extends ConsumerWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: ModelType.values.map((type) {
-                    final isSelected = type == selectedType;
-                    return GestureDetector(
-                      onTap: () {
-                        setSheetState(() => selectedType = type);
-                        HapticFeedback.selectionClick();
-                      },
-                      child: MoeButtonSurface(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        tintColor: isSelected
-                            ? type.color.withValues(alpha: 0.15)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: isSelected
-                              ? type.color
-                              : context.moeColors.border,
-                          width: isSelected ? 1.5 : 1,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              type.icon,
-                              size: 16,
-                              color: isSelected
-                                  ? type.color
-                                  : context.moeColors.muted,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              type.label,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: isSelected
-                                    ? type.color
-                                    : context.moeColors.text,
-                                fontWeight: isSelected
-                                    ? MoeFontWeights.emphasis
-                                    : MoeFontWeights.normal,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    return MoeChoiceChip(
+                      label: type.label,
+                      icon: type.icon,
+                      selected: type == selectedType,
+                      onTap: () => setSheetState(() => selectedType = type),
                     );
                   }).toList(),
                 ),
@@ -531,58 +487,18 @@ class ModelRowTile extends ConsumerWidget {
                           final isSelected = selectedCapabilities.contains(
                             capability.value,
                           );
-                          return GestureDetector(
-                            onTap: () {
-                              setSheetState(() {
-                                if (isSelected) {
-                                  selectedCapabilities.remove(capability.value);
-                                } else {
-                                  selectedCapabilities.add(capability.value);
-                                }
-                              });
-                              HapticFeedback.selectionClick();
-                            },
-                            child: MoeButtonSurface(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              tintColor: isSelected
-                                  ? feature.color.withValues(alpha: 0.15)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected
-                                    ? feature.color
-                                    : context.moeColors.border,
-                                width: isSelected ? 1.5 : 1,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    feature.icon,
-                                    size: 16,
-                                    color: isSelected
-                                        ? feature.color
-                                        : context.moeColors.muted,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    feature.label,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: isSelected
-                                          ? feature.color
-                                          : context.moeColors.text,
-                                      fontWeight: isSelected
-                                          ? MoeFontWeights.emphasis
-                                          : MoeFontWeights.normal,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                          return MoeChoiceChip(
+                            label: feature.label,
+                            icon: feature.icon,
+                            selected: isSelected,
+                            indicator: MoeChoiceIndicator.check,
+                            onTap: () => setSheetState(() {
+                              if (isSelected) {
+                                selectedCapabilities.remove(capability.value);
+                              } else {
+                                selectedCapabilities.add(capability.value);
+                              }
+                            }),
                           );
                         }).toList(),
                       ),
@@ -608,81 +524,44 @@ class ModelRowTile extends ConsumerWidget {
                 ),
                 const SizedBox(height: 8),
                 Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: TextFormField(
+                      child: _ParamField(
                         controller: tempCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: '温度',
-                          hintText: '默认',
-                          hintStyle: TextStyle(color: context.moeColors.muted),
-                          border: const OutlineInputBorder(),
-                          helperText: '0~2',
-                          helperStyle: TextStyle(
-                            fontSize: 10,
-                            color: context.moeColors.muted,
-                          ),
-                        ),
+                        label: '温度',
+                        hint: '默认',
+                        helper: '0~2',
+                        decimal: true,
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: TextFormField(
+                      child: _ParamField(
                         controller: topPCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: InputDecoration(
-                          labelText: 'Top P',
-                          hintText: '关闭',
-                          hintStyle: TextStyle(color: context.moeColors.muted),
-                          border: const OutlineInputBorder(),
-                          helperText: '0~1',
-                          helperStyle: TextStyle(
-                            fontSize: 10,
-                            color: context.moeColors.muted,
-                          ),
-                        ),
+                        label: 'Top P',
+                        hint: '关闭',
+                        helper: '0~1',
+                        decimal: true,
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: TextFormField(
+                      child: _ParamField(
                         controller: ctxLimitCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: '上下文数',
-                          hintText: '自动',
-                          hintStyle: TextStyle(color: context.moeColors.muted),
-                          border: const OutlineInputBorder(),
-                          helperText: '消息条数',
-                          helperStyle: TextStyle(
-                            fontSize: 10,
-                            color: context.moeColors.muted,
-                          ),
-                        ),
+                        label: '上下文数',
+                        hint: '自动',
+                        helper: '消息条数',
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                TextFormField(
+                const SizedBox(height: 12),
+                _ParamField(
                   controller: maxCtxTokensCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: '最大上下文 Token',
-                    hintText: '自动',
-                    hintStyle: TextStyle(color: context.moeColors.muted),
-                    border: const OutlineInputBorder(),
-                    helperText: '留空=按模型名自动判断',
-                    helperStyle: TextStyle(
-                      fontSize: 10,
-                      color: context.moeColors.muted,
-                    ),
-                  ),
+                  label: '最大上下文 Token',
+                  hint: '自动',
+                  helper: '留空=按模型名自动判断',
                 ),
 
                 // 默认思考档位
@@ -744,7 +623,37 @@ class ModelRowTile extends ConsumerWidget {
   }
 }
 
-/// 模型类型标签组件
+/// 模型参数输入：标题在上、说明在下，留空表示沿用默认。
+class _ParamField extends StatelessWidget {
+  const _ParamField({
+    required this.controller,
+    required this.label,
+    required this.hint,
+    required this.helper,
+    this.decimal = false,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hint;
+  final String helper;
+  final bool decimal;
+
+  @override
+  Widget build(BuildContext context) {
+    return MoeTextField(
+      controller: controller,
+      label: label,
+      hint: hint,
+      helperText: helper,
+      size: MoeTextFieldSize.sm,
+      keyboardType: decimal
+          ? const TextInputType.numberWithOptions(decimal: true)
+          : TextInputType.number,
+    );
+  }
+}
+
 class _ThinkingLevelField extends StatelessWidget {
   const _ThinkingLevelField({
     required this.options,
@@ -762,12 +671,12 @@ class _ThinkingLevelField extends StatelessWidget {
     final effective = value ?? options.softwareDefault;
     final title = thinkingLevelTitle(effective, isNative: options.isNative);
     return InkWell(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(moeInputRadius),
       onTap: onTap,
       child: MoeButtonSurface(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         tintColor: Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(moeInputRadius),
         border: Border.all(color: colors.border),
         child: Row(
           children: [
@@ -806,8 +715,8 @@ class _ModelTypeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = type.color.withValues(alpha: isDark ? 0.2 : 0.12);
-    final fgColor = isDark ? type.color.withValues(alpha: 0.9) : type.color;
+    final bgColor = context.moeColors.primary.withValues(alpha: isDark ? 0.2 : 0.12);
+    final fgColor = isDark ? context.moeColors.primary.withValues(alpha: 0.9) : context.moeColors.primary;
 
     return Container(
       height: 16,

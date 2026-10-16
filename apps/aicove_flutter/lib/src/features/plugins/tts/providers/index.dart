@@ -7,7 +7,7 @@
 /// import 'package:aicove_flutter/src/features/plugins/tts/providers/index.dart';
 ///
 /// // 获取指定渠道的 Provider
-/// final provider = TtsProviderFactory.getProvider('siliconflow');
+/// final provider = TtsProviderFactory.getProvider('minimax');
 ///
 /// // 获取音色列表
 /// final voices = await provider?.listVoices(apiKey: 'xxx');
@@ -27,6 +27,5 @@ library;
 
 export 'tts_voice_provider.dart';
 export 'tts_provider_factory.dart';
-export 'siliconflow_voice_provider.dart';
 export 'aliyun_voice_provider.dart';
 export 'minimax_voice_provider.dart';

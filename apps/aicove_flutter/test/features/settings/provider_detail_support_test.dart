@@ -57,11 +57,7 @@ void main() {
       customConfig: <String, dynamic>{'requestFormat': 'openai'},
     );
     final items = <ProviderMultiKeyItem>[
-      const ProviderMultiKeyItem(
-        id: 'mk_1',
-        key: 'sk-new',
-        updatedAt: 10,
-      ),
+      const ProviderMultiKeyItem(id: 'mk_1', key: 'sk-new', updatedAt: 10),
     ];
 
     final config = buildProviderCustomConfigForMultiKey(
@@ -75,7 +71,9 @@ void main() {
     expect(config['requestFormat'], 'openai');
     expect(config[providerMultiKeyEnabledField], isTrue);
     expect(
-        config[providerMultiKeyStrategyField], providerMultiKeyStrategyRandom);
+      config[providerMultiKeyStrategyField],
+      providerMultiKeyStrategyRandom,
+    );
     expect(config[providerMultiKeyRoundRobinIndexField], 3);
     expect(config[providerMultiKeyItemsField], hasLength(1));
   });
@@ -134,8 +132,8 @@ void main() {
     expect(patch.changed, isTrue);
     expect(patch.apiKeys, <String>['sk-one', 'sk-two', 'sk-three']);
     expect(patch.customConfig[providerMultiKeyRoundRobinIndexField], 1);
-    final rawItems =
-        (patch.customConfig[providerMultiKeyItemsField] as List).cast<Map>();
+    final rawItems = (patch.customConfig[providerMultiKeyItemsField] as List)
+        .cast<Map>();
     expect(rawItems.first['status'], 'error');
     expect(rawItems.first['failed_requests'], 1);
     expect(rawItems.first['last_error'].toString(), contains('quota exceeded'));
@@ -158,9 +156,7 @@ void main() {
       id: 'vertex',
       apiBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKeys: <String>[],
-      customConfig: <String, dynamic>{
-        'requestFormat': 'gemini',
-      },
+      customConfig: <String, dynamic>{'requestFormat': 'gemini'},
     );
 
     final format = resolveProviderDetailRequestFormat(provider);
@@ -170,5 +166,56 @@ void main() {
     expect(available, <ProviderDetailRequestFormat>[
       ProviderDetailRequestFormat.gemini,
     ]);
+  });
+
+  group('语音渠道的 API 格式', () {
+    test('语音渠道可在全部语音格式间切换，即使模型名被推断成对话', () {
+      const provider = ProviderAuth(
+        id: 'fish_audio',
+        apiKeys: <String>[],
+        apiBaseUrl: 'https://api.fish.audio/v1',
+        models: <String>['s2.1-pro'],
+        capabilities: <String>['chat'],
+        customConfig: <String, dynamic>{'requestFormat': 'fish_audio'},
+      );
+
+      final formats = ProviderDetailRequestFormat.forProvider(provider);
+
+      expect(formats.map((f) => f.value), <String>[
+        'openai_tts',
+        'minimax',
+        'aliyun',
+        'fish_audio',
+        'custom_rest',
+      ]);
+      expect(resolveProviderDetailRequestFormat(provider).label, 'Fish Audio');
+    });
+
+    test('阿里云子格式在详情页显示为阿里云', () {
+      const provider = ProviderAuth(
+        id: 'ali',
+        apiKeys: <String>[],
+        apiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        capabilities: <String>['tts'],
+        customConfig: <String, dynamic>{'requestFormat': 'aliyun_cosyvoice'},
+      );
+
+      expect(resolveProviderDetailRequestFormat(provider).value, 'aliyun');
+    });
+
+    test('对话渠道仍只有对话格式', () {
+      const provider = ProviderAuth(
+        id: 'deepseek',
+        apiKeys: <String>[],
+        apiBaseUrl: 'https://api.deepseek.com/v1',
+        capabilities: <String>['chat'],
+        customConfig: <String, dynamic>{'requestFormat': 'openai'},
+      );
+
+      expect(
+        ProviderDetailRequestFormat.forProvider(provider),
+        ProviderDetailRequestFormat.chatFormats,
+      );
+    });
   });
 }

@@ -60,13 +60,13 @@ void main() {
                           label: '新会话默认样式',
                           subtitle: '文档样式不分段，长文和代码块完整显示；聊天菜单里可为单个会话另设',
                           trailingType: MoeSettingsRowTrailing.custom,
-                          trailing: MoeToggleBar<ChatDisplayStyle>(
+                          trailing: MoeSegmentedControl<ChatDisplayStyle>(
                             expanded: false,
                             value: ChatDisplayStyle.bubble,
-                            items: const [
-                              MoeToggleItem(
+                            segments: const [
+                              MoeSegment(
                                   value: ChatDisplayStyle.bubble, label: '气泡'),
-                              MoeToggleItem(
+                              MoeSegment(
                                   value: ChatDisplayStyle.document,
                                   label: '文档'),
                             ],

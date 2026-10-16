@@ -1,26 +1,22 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import '../domain/speech_recognizer_port.dart';
+import 'cloud_asr/websocket_speech_recognizer.dart';
 
-/// 阿里云百炼实时语音识别（Paraformer realtime，WebSocket 双工）。
+/// 阿里云百炼实时语音识别（Fun-ASR／Paraformer realtime，run-task 双工协议）。
 ///
 /// 一个会话持续识别多句话，服务端按静音判断每句结束（`sentence_end`）。
 /// 实测静音阈值 300 ms 会在句中逗号停顿处误切，默认取 500 ms。
-class AliyunRealtimeSpeechRecognizer implements SpeechRecognizerPort {
+class AliyunRealtimeSpeechRecognizer extends WebSocketSpeechRecognizer {
   AliyunRealtimeSpeechRecognizer({
     required this.apiKey,
-    this.model = 'paraformer-realtime-v2',
+    this.model = 'fun-asr-realtime',
     this.endOfTurnSilenceMs = 500,
     this.endpoint = defaultEndpoint,
-    Future<WebSocket> Function(Uri uri, Map<String, String> headers)? connect,
-  }) : _connect =
-           connect ??
-           ((uri, headers) =>
-               WebSocket.connect(uri.toString(), headers: headers));
+    super.connect,
+  });
 
   static const defaultEndpoint =
       'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
@@ -29,79 +25,22 @@ class AliyunRealtimeSpeechRecognizer implements SpeechRecognizerPort {
   final String model;
   final int endOfTurnSilenceMs;
   final String endpoint;
-  final Future<WebSocket> Function(Uri uri, Map<String, String> headers)
-  _connect;
-
-  final _events = StreamController<SpeechRecognitionEvent>.broadcast();
-  WebSocket? _socket;
-  String? _taskId;
-  bool _inUtterance = false;
-  bool _stopping = false;
-  Completer<void>? _finished;
+  final String _taskId = randomHexId();
 
   @override
-  Stream<SpeechRecognitionEvent> get events => _events.stream;
+  String get vendor => '阿里云';
 
   @override
-  Future<void> start() async {
-    if (_socket != null) return;
-    final socket = await _connect(Uri.parse(endpoint), {
-      'Authorization': 'Bearer $apiKey',
-    });
-    _socket = socket;
-    final random = Random();
-    final taskId = List.generate(
-      32,
-      (_) => random.nextInt(16).toRadixString(16),
-    ).join();
-    _taskId = taskId;
-    final started = Completer<void>();
-    _finished = Completer<void>();
-    socket.listen(
-      (data) {
-        if (data is! String) return;
-        final message = jsonDecode(data);
-        if (message is! Map) return;
-        final header = message['header'];
-        final event = header is Map ? header['event'] : null;
-        switch (event) {
-          case 'task-started':
-            if (!started.isCompleted) started.complete();
-          case 'result-generated':
-            _onResult(message['payload']);
-          case 'task-finished':
-            _onTaskOver(started);
-          case 'task-failed':
-            final error = header is Map
-                ? '${header['error_code']}: ${header['error_message']}'
-                : data;
-            if (!started.isCompleted) {
-              started.completeError(StateError(error));
-            } else {
-              _emit(SpeechRecognitionFailed(error));
-            }
-            _completeFinished();
-        }
-      },
-      onError: (Object e) {
-        if (!started.isCompleted) {
-          started.completeError(e);
-        } else {
-          _emit(SpeechRecognitionFailed('$e'));
-        }
-      },
-      onDone: () {
-        if (!started.isCompleted) {
-          started.completeError(StateError('连接已关闭'));
-        }
-        _onTaskOver(started);
-      },
-    );
+  Future<(Uri, Map<String, String>)> connection() async =>
+      (Uri.parse(endpoint), {'Authorization': 'Bearer $apiKey'});
+
+  @override
+  void onOpen(WebSocket socket) {
     socket.add(
       jsonEncode({
         'header': {
           'action': 'run-task',
-          'task_id': taskId,
+          'task_id': _taskId,
           'streaming': 'duplex',
         },
         'payload': {
@@ -113,89 +52,142 @@ class AliyunRealtimeSpeechRecognizer implements SpeechRecognizerPort {
             'format': 'pcm',
             'sample_rate': speechRecognizerSampleRate,
             'max_sentence_silence': endOfTurnSilenceMs,
+            // 静音保活时不被服务端按超时断开。
+            'heartbeat': true,
           },
           'input': <String, dynamic>{},
         },
       }),
     );
-    try {
-      await started.future.timeout(const Duration(seconds: 10));
-    } catch (_) {
-      await dispose();
-      rethrow;
+  }
+
+  @override
+  void onMessage(Object data) {
+    if (data is! String) return;
+    final message = jsonDecode(data);
+    if (message is! Map) return;
+    final header = message['header'];
+    switch (header is Map ? header['event'] : null) {
+      case 'task-started':
+        markReady();
+      case 'result-generated':
+        _onResult(message['payload']);
+      case 'task-finished':
+        markFinished();
+      case 'task-failed':
+        fail('${header['error_code']}: ${header['error_message']}');
     }
-  }
-
-  /// 任务结束或连接关闭。不是我们主动 [stop] 的，就是服务端中途断了，
-  /// 通话再也收不到识别结果，必须报失败让通话收尾，不能停在“在听”。
-  void _onTaskOver(Completer<void> started) {
-    if (started.isCompleted && !_stopping && !_finishedCompleted) {
-      _emit(const SpeechRecognitionFailed('识别连接已断开'));
-    }
-    _completeFinished();
-  }
-
-  bool get _finishedCompleted => _finished?.isCompleted ?? true;
-
-  void _emit(SpeechRecognitionEvent event) {
-    if (!_events.isClosed) _events.add(event);
-  }
-
-  void _completeFinished() {
-    final finished = _finished;
-    if (finished != null && !finished.isCompleted) finished.complete();
   }
 
   void _onResult(Object? payload) {
     final output = payload is Map ? payload['output'] : null;
     final sentence = output is Map ? output['sentence'] : null;
     if (sentence is! Map) return;
-    final text = sentence['text']?.toString().trim() ?? '';
-    if (text.isEmpty) return;
-    if (!_inUtterance) {
-      _inUtterance = true;
-      _emit(const SpeechStarted());
-    }
+    final text = sentence['text']?.toString() ?? '';
     if (sentence['sentence_end'] == true) {
-      _inUtterance = false;
-      _emit(const SpeechEnded());
-      _emit(SpeechFinal(text));
+      if (text.trim().isNotEmpty) finalText(text);
     } else {
-      _emit(SpeechPartial(text));
+      partial(text);
     }
   }
 
   @override
-  void addAudio(Uint8List pcm16) => _socket?.add(pcm16);
+  void sendAudio(WebSocket socket, Uint8List pcm16) => socket.add(pcm16);
 
   @override
-  Future<void> stop() async {
-    final socket = _socket;
-    final taskId = _taskId;
-    if (socket == null || taskId == null) return;
-    _stopping = true;
+  void sendFinish(WebSocket socket) => socket.add(
+    jsonEncode({
+      'header': {
+        'action': 'finish-task',
+        'task_id': _taskId,
+        'streaming': 'duplex',
+      },
+      'payload': {'input': <String, dynamic>{}},
+    }),
+  );
+}
+
+/// 阿里云百炼 Qwen3-ASR 实时版（`/api-ws/v1/realtime`，OpenAI 风格事件，服务端 VAD）。
+class AliyunQwenRealtimeSpeechRecognizer extends WebSocketSpeechRecognizer {
+  AliyunQwenRealtimeSpeechRecognizer({
+    required this.apiKey,
+    required this.model,
+    required this.endpoint,
+    this.endOfTurnSilenceMs = 500,
+    super.connect,
+  });
+
+  final String apiKey;
+  final String model;
+
+  /// run-task 地址或 realtime 地址都可以，统一换成 realtime 路径。
+  final Uri endpoint;
+  final int endOfTurnSilenceMs;
+
+  @override
+  String get vendor => '阿里云';
+
+  @override
+  Future<(Uri, Map<String, String>)> connection() async => (
+    endpoint.replace(
+      path: '/api-ws/v1/realtime',
+      queryParameters: {'model': model},
+    ),
+    {'Authorization': 'Bearer $apiKey'},
+  );
+
+  @override
+  void onOpen(WebSocket socket) {
     socket.add(
       jsonEncode({
-        'header': {
-          'action': 'finish-task',
-          'task_id': taskId,
-          'streaming': 'duplex',
+        'event_id': randomHexId(16),
+        'type': 'session.update',
+        'session': {
+          'modalities': ['text'],
+          'input_audio_format': 'pcm',
+          'sample_rate': speechRecognizerSampleRate,
+          'turn_detection': {
+            'type': 'server_vad',
+            'silence_duration_ms': endOfTurnSilenceMs,
+          },
         },
-        'payload': {'input': <String, dynamic>{}},
       }),
-    );
-    await _finished?.future.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {},
     );
   }
 
   @override
-  Future<void> dispose() async {
-    _stopping = true;
-    final socket = _socket;
-    _socket = null;
-    await socket?.close();
-    if (!_events.isClosed) await _events.close();
+  void onMessage(Object data) {
+    if (data is! String) return;
+    final event = jsonDecode(data);
+    if (event is! Map) return;
+    switch (event['type']) {
+      case 'session.updated':
+        markReady();
+      case 'input_audio_buffer.speech_started':
+        speechStarted();
+      case 'conversation.item.input_audio_transcription.text':
+        partial('${event['text'] ?? ''}${event['stash'] ?? ''}');
+      case 'conversation.item.input_audio_transcription.completed':
+        finalText(event['transcript']?.toString() ?? '');
+      case 'session.finished':
+        markFinished();
+      case 'error':
+        final error = event['error'];
+        fail(error is Map ? '${error['code']}: ${error['message']}' : '$error');
+    }
   }
+
+  @override
+  void sendAudio(WebSocket socket, Uint8List pcm16) => socket.add(
+    jsonEncode({
+      'event_id': randomHexId(16),
+      'type': 'input_audio_buffer.append',
+      'audio': base64Encode(pcm16),
+    }),
+  );
+
+  @override
+  void sendFinish(WebSocket socket) => socket.add(
+    jsonEncode({'event_id': randomHexId(16), 'type': 'session.finish'}),
+  );
 }

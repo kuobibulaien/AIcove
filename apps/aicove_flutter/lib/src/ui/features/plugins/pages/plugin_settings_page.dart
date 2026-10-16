@@ -7,6 +7,7 @@ import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../settings/pages/context_memory_settings_page.dart';
 import 'tts_plugin_detail_page.dart';
+import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
 /// 插件设置页面
@@ -130,12 +131,10 @@ class PluginSettingsPage extends ConsumerWidget {
       // 未来可以添加更多插件的详细页面
       default:
         // 显示提示
-        final colors = context.moeColors;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('该插件暂无详细设置'),
-            backgroundColor: colors.panel,
-          ),
+        showMeoTalkAlert(
+          context: context,
+          title: '暂无详细设置',
+          message: '该插件暂无详细设置',
         );
     }
   }

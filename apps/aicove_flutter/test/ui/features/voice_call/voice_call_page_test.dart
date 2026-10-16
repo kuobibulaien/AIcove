@@ -54,6 +54,7 @@ void main() {
       input: FakeInput(),
       output: output,
       generator: generator,
+      greetOnConnect: false,
       turnEndQuiet: const Duration(milliseconds: 40),
       userTurnGap: Duration.zero,
       pollInterval: const Duration(milliseconds: 10),

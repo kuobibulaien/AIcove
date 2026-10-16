@@ -5,6 +5,13 @@ import 'package:aicove_flutter/src/features/settings/data/support/ui_models_stor
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 void main() {
+  test('WindowsCloseBehavior defaults to asking for unknown values', () {
+    expect(WindowsCloseBehavior.fromValue(null), WindowsCloseBehavior.ask);
+    expect(WindowsCloseBehavior.fromValue('bogus'), WindowsCloseBehavior.ask);
+    expect(WindowsCloseBehavior.fromValue('tray'), WindowsCloseBehavior.tray);
+    expect(WindowsCloseBehavior.fromValue('exit'), WindowsCloseBehavior.exit);
+  });
+
   test('claude-fable-5 should infer as chat instead of TTS', () {
     expect(ModelType.inferFromModelId('claude-fable-5'), ModelType.chat);
   });

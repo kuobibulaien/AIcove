@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:crypto/crypto.dart';
 
 import 'package:http/http.dart' as http;
@@ -13,24 +12,22 @@ import 'aliyun_voice_clone_service.dart';
 import 'synthesis/configurable_tts_synthesis_adapter.dart';
 import 'synthesis/minimax_tts_synthesis_adapter.dart';
 import 'synthesis/openai_compatible_tts_synthesis_adapter.dart';
-import 'synthesis/siliconflow_tts_synthesis_adapter.dart';
 import 'synthesis/tts_synthesis_adapter.dart';
 import 'tts_config.dart';
+import 'tts_request_format.dart';
 
 /// TTS 服务：在客户端直接调用第三方 TTS 渠道商
 ///
 /// 重构说明：API Key 和 URL 现在作为独立参数传入，
 /// 与 TtsConfig 中的业务配置分离。
-/// 支持的请求格式：openai_tts、siliconflow_indextts、aliyun_cosyvoice、aliyun_qwen_tts
+/// 请求格式见 TtsRequestFormat；阿里云在此按模型分流为 aliyun_cosyvoice／aliyun_qwen_tts。
 ///
 /// 2026-01-25: 添加 model 参数，支持用户选择具体模型
 /// 2026-01-26: 阿里云格式支持自动创建音色
-/// 2026-01-27: 添加硅基流动 IndexTTS-2 支持
+/// 2026-10-14: 只按 requestFormat 路由，移除硅基流动专用格式
 class TtsService {
   static const TtsSynthesisAdapter _openAiCompatibleSynthesisAdapter =
       OpenAiCompatibleTtsSynthesisAdapter();
-  static const TtsSynthesisAdapter _siliconFlowSynthesisAdapter =
-      SiliconFlowTtsSynthesisAdapter();
   static const TtsSynthesisAdapter _minimaxSynthesisAdapter =
       MinimaxTtsSynthesisAdapter();
   static const TtsSynthesisAdapter _configurableSynthesisAdapter =
@@ -85,35 +82,7 @@ class TtsService {
       throw TtsException('TTS API URL 未配置');
     }
 
-    final effectiveFormat = _resolveRequestFormat(url);
-    final preset = config.selectedVoicePreset;
-    final localPath = preset?.localAudioPath;
-    if (effectiveFormat == 'siliconflow_indextts' &&
-        localPath != null &&
-        localPath.isNotEmpty &&
-        (preset?.synthesis?.voiceId?.trim().isEmpty ?? true)) {
-      final file = File(localPath);
-      if (!await file.exists()) throw TtsException('参考音频文件不存在，请重新选择');
-      if (await file.length() > 20 * 1024 * 1024)
-        throw TtsException('参考音频不能超过20MB');
-      final bytes = await file.readAsBytes();
-      final audio =
-          'data:${MimeUtils.resolveAudioMimeType('', bytes)};base64,${base64Encode(bytes)}';
-      final material = VoicePreset.fromJson({
-        ...preset!.toJson(),
-        'localAudioPath': null,
-        'promptAudioUrl': audio,
-      });
-      return TtsService(
-        config: config.copyWith(voicePresets: [material]),
-        apiKey: apiKey,
-        requestUrl: requestUrl,
-        requestFormat: requestFormat,
-        model: model,
-        customConfig: customConfig,
-        onVoiceCreated: onVoiceCreated,
-      ).convert(text);
-    }
+    final effectiveFormat = _resolveRequestFormat();
     final synthesisContext = _buildSynthesisContext(
       text: trimmed,
       rawUrl: url,
@@ -455,8 +424,6 @@ class TtsService {
 
   Duration _resolveTimeout(String effectiveFormat) {
     switch (effectiveFormat) {
-      case 'siliconflow_indextts':
-        return const Duration(seconds: 30);
       case 'aliyun_cosyvoice':
       case 'aliyun_qwen_tts':
         return const Duration(seconds: 60); // 阿里云可能需要更长时间
@@ -471,7 +438,6 @@ class TtsService {
   /// - 只填基础地址（会自动补齐语音端点）
   /// - 直接填完整语音地址（保留原路径）
   /// - 阿里云使用专用端点
-  /// - 硅基流动使用 /audio/speech 端点
   Uri _buildSpeechUri(String rawUrl, String effectiveFormat) {
     final uri = Uri.parse(rawUrl);
     final path = uri.path;
@@ -497,8 +463,7 @@ class TtsService {
       return Uri.parse('https://dashscope.aliyuncs.com$cosyVoicePath');
     }
 
-    // 硅基流动使用标准 /audio/speech 端点
-    // OpenAI 兼容格式也使用 /audio/speech
+    // OpenAI 兼容格式使用 /audio/speech
     const speechPath = '/audio/speech';
     if (path.contains(speechPath)) {
       // 已经是完整路径，直接使用
@@ -546,54 +511,21 @@ class TtsService {
     return results;
   }
 
-  String _resolveRequestFormat(String rawUrl) {
-    final configured = requestFormat.trim();
-    if (configured.isNotEmpty && configured != 'openai_tts') {
+  /// 只认渠道配置的 requestFormat；阿里云按模型名分流到 CosyVoice／Qwen-TTS。
+  String _resolveRequestFormat() {
+    final configured = requestFormat.trim().toLowerCase();
+    if (configured == 'aliyun_cosyvoice' || configured == 'aliyun_qwen_tts') {
       return configured;
     }
-
-    if (_looksLikeSiliconFlow(rawUrl)) {
-      return 'siliconflow_indextts';
-    }
-
-    if (_looksLikeAliyunDashscope(rawUrl)) {
-      // 根据模型名称判断是 CosyVoice 还是 Qwen-TTS
+    final format =
+        TtsRequestFormat.fromRaw(configured) ?? TtsRequestFormat.openai;
+    if (format == TtsRequestFormat.aliyun) {
       final effectiveModel = model ?? config.model ?? '';
-      if (effectiveModel.contains('cosyvoice')) {
-        return 'aliyun_cosyvoice';
-      } else if (effectiveModel.contains('qwen')) {
-        return 'aliyun_qwen_tts';
-      }
-      // 默认使用 CosyVoice
-      return 'aliyun_cosyvoice';
+      return effectiveModel.contains('qwen')
+          ? 'aliyun_qwen_tts'
+          : 'aliyun_cosyvoice';
     }
-
-    return configured.isEmpty ? 'openai_tts' : configured;
-  }
-
-  bool _looksLikeSiliconFlow(String rawUrl) {
-    final lower = rawUrl.toLowerCase();
-    if (lower.contains('siliconflow.cn') || lower.contains('siliconflow.com')) {
-      return true;
-    }
-    try {
-      final uri = Uri.parse(rawUrl);
-      final host = uri.host.toLowerCase();
-      return host.contains('siliconflow');
-    } catch (_) {
-      return false;
-    }
-  }
-
-  bool _looksLikeAliyunDashscope(String rawUrl) {
-    final lower = rawUrl.toLowerCase();
-    if (lower.contains('dashscope.aliyuncs.com')) return true;
-    try {
-      final uri = Uri.parse(rawUrl);
-      return uri.host.toLowerCase().contains('dashscope');
-    } catch (_) {
-      return false;
-    }
+    return format.value;
   }
 
   TtsSynthesisContext _buildSynthesisContext({
@@ -632,10 +564,6 @@ class TtsService {
       return _configurableSynthesisAdapter;
     }
 
-    if (_siliconFlowSynthesisAdapter.supports(context)) {
-      return _siliconFlowSynthesisAdapter;
-    }
-
     if (_openAiCompatibleSynthesisAdapter.supports(context)) {
       return _openAiCompatibleSynthesisAdapter;
     }
@@ -652,8 +580,6 @@ class TtsService {
     switch (effectiveFormat) {
       case 'openai_tts':
         return _buildOpenAiTtsBody(text);
-      case 'siliconflow_indextts':
-        return _buildSiliconFlowIndexTtsBody(text);
       case 'aliyun_cosyvoice':
         return await _buildAliyunCosyVoiceBodyAsync(text);
       case 'aliyun_qwen_tts':
@@ -673,80 +599,6 @@ class TtsService {
     if (config.speed != null && config.speed != 1.0) {
       body['speed'] = config.speed;
     }
-    return body;
-  }
-
-  /// 硅基流动 IndexTTS-2 格式
-  /// 文档: https://docs.siliconflow.cn/cn/userguide/capabilities/text-to-speech
-  ///
-  /// 支持两种音色方式：
-  /// 1. 系统预置音色: voice 参数为 "模型名:音色ID"，如 FunAudioLLM/CosyVoice2-0.5B:alex
-  /// 2. 用户预置音色: voice 参数为上传后返回的 URI，如 speech:xxx:xxx
-  /// 3. 动态音色: voice 为空，通过 references 传入参考音频（实时克隆）
-  Map<String, dynamic> _buildSiliconFlowIndexTtsBody(String text) {
-    final effectiveModel = model ?? config.model ?? 'IndexTeam/IndexTTS-2';
-    final preset = config.selectedVoicePreset;
-
-    final body = <String, dynamic>{
-      'model': effectiveModel,
-      'input': text,
-      'response_format': 'mp3',
-    };
-
-    // 添加可选参数
-    if (config.speed != null && config.speed != 1.0) {
-      body['speed'] = config.speed;
-    }
-
-    // 判断使用哪种音色方式
-    final siliconFlowVoiceUri =
-        preset
-            ?.resolveBinding(
-              providerId: 'siliconflow',
-              adapterId: 'siliconflow',
-              modelId: effectiveModel,
-            )
-            ?.remoteVoiceId ??
-        preset?.siliconFlowVoiceUri;
-    final configVoice = config.voice;
-
-    // 1. 优先使用音色预设中的硅基流动 URI（用户上传的音色）
-    if (siliconFlowVoiceUri != null && siliconFlowVoiceUri.isNotEmpty) {
-      body['voice'] = siliconFlowVoiceUri;
-      return body;
-    }
-
-    // 2. 使用配置的 voice（可能是系统预置音色 ID 或完整的 voice 参数）
-    if (configVoice != null && configVoice.isNotEmpty) {
-      // 如果 voice 已经包含冒号（如 FunAudioLLM/CosyVoice2-0.5B:alex），直接使用
-      // 如果只是简单的音色 ID（如 alex），则拼接模型名
-      if (configVoice.contains(':') || configVoice.startsWith('speech:')) {
-        body['voice'] = configVoice;
-      } else {
-        // 拼接模型名和音色 ID
-        body['voice'] = '$effectiveModel:$configVoice';
-      }
-      return body;
-    }
-
-    // 3. 使用动态音色（通过 references 传入参考音频）
-    final promptAudioUrl = config.effectivePromptAudioUrl?.trim();
-    final promptText = config.effectivePromptText?.trim();
-
-    if (promptAudioUrl != null && promptAudioUrl.isNotEmpty) {
-      // 使用动态音色模式
-      body['voice'] = ''; // 传入空值表示使用动态音色
-      body['references'] = [
-        {
-          'audio': promptAudioUrl,
-          if (promptText != null && promptText.isNotEmpty) 'text': promptText,
-        },
-      ];
-    } else {
-      // 没有配置任何音色，使用默认的系统预置音色
-      body['voice'] = 'FunAudioLLM/CosyVoice2-0.5B:alex';
-    }
-
     return body;
   }
 

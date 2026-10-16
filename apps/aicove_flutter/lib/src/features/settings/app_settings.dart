@@ -307,6 +307,9 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   final windowsWindowControlsSide = WindowControlButtonSide.fromValue(
     data['windows_window_controls_side']?.toString(),
   );
+  final windowsCloseBehavior = WindowsCloseBehavior.fromValue(
+    data['windows_close_behavior']?.toString(),
+  );
   final hideUserAvatar = data['hide_user_avatar'] != false;
   final expandAudioText = data['expand_audio_text'] != false;
   final userAvatar = data['user_avatar'] as String?;
@@ -469,6 +472,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     uiScaleFactor: uiScaleFactor,
     imagePreviewScale: imagePreviewScale,
     windowsWindowControlsSide: windowsWindowControlsSide,
+    windowsCloseBehavior: windowsCloseBehavior,
     hideUserAvatar: hideUserAvatar,
     expandAudioText: expandAudioText,
     autoReplySettings: autoReplySettings,
@@ -886,6 +890,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String apiBaseUrl,
     required String modelId,
     Map<String, dynamic>? customConfig,
+    ModelType modelType = ModelType.chat,
   }) {
     return _api.testModel(
       providerId: providerId,
@@ -893,6 +898,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       apiBaseUrl: apiBaseUrl,
       modelId: modelId,
       customConfig: customConfig,
+      modelType: modelType,
     );
   }
 
@@ -1060,6 +1066,12 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   ) async {
     await _commit(
       () => _api.updatePartial({'windows_window_controls_side': side.value}),
+    );
+  }
+
+  Future<void> setWindowsCloseBehavior(WindowsCloseBehavior behavior) async {
+    await _commit(
+      () => _api.updatePartial({'windows_close_behavior': behavior.value}),
     );
   }
 

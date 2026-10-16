@@ -147,8 +147,8 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
       padding: const EdgeInsets.only(bottom: 8),
       child: MoeG2ClipRRect(
         radius: 12,
-        child: Material(
-          color: theme.cardColor,
+        child: MoeContentSurface(
+          radius: 12,
           child: InkWell(
             onTap: () {
               ref.read(selectedConversationsProvider.notifier).toggle(conv.id);
@@ -303,45 +303,28 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
     }
   }
 
-  void _showExportSuccess(ExportResult result) {
-    showDialog(
+  Future<void> _showExportSuccess(ExportResult result) async {
+    final share = await showMeoTalkDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(LucideIcons.checkCircle, color: Colors.green),
-            SizedBox(width: 8),
-            Text('导出成功'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('文件：${result.fileName}'),
-            const SizedBox(height: 4),
-            Text('角色数：${result.conversationCount}'),
-            Text('消息数：${result.messageCount}'),
-            Text('文件大小：${_formatSize(result.sizeBytes)}'),
-            Text(widget.password.isEmpty ? '未加密' : '已用密码加密'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('完成'),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Share.shareXFiles([XFile(result.filePath)]);
-            },
-            icon: const Icon(LucideIcons.share2, size: 18),
-            label: const Text('分享'),
-          ),
+      title: '导出成功',
+      cancelText: '完成',
+      confirmText: '分享',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('文件：${result.fileName}'),
+          const SizedBox(height: 4),
+          Text('角色数：${result.conversationCount}'),
+          Text('消息数：${result.messageCount}'),
+          Text('文件大小：${_formatSize(result.sizeBytes)}'),
+          Text(widget.password.isEmpty ? '未加密' : '已用密码加密'),
         ],
       ),
     );
+    if (share == true) {
+      await Share.shareXFiles([XFile(result.filePath)]);
+    }
   }
 
   String _formatSize(int bytes) {

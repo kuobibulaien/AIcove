@@ -5,6 +5,7 @@
 ///
 /// 更新记录：
 /// - 2026-09-15: 创建模型测活弹窗，替换详情页内联不可滚动版本
+/// - 2026-10-14: 按模型类型分流测活，绘图／语音真实生成一次，识别模型真实建连一次，嵌入标为暂不支持
 library;
 
 import 'dart:async';
@@ -140,6 +141,10 @@ class _ModelTestContentState extends State<_ModelTestContent> {
         modelId: modelId,
       );
       if (mounted) setState(() => _states[modelId] = _ModelTestState.success);
+    } on UnsupportedError {
+      if (mounted) {
+        setState(() => _states[modelId] = _ModelTestState.unsupported);
+      }
     } catch (_) {
       if (mounted) setState(() => _states[modelId] = _ModelTestState.failure);
     }
@@ -187,7 +192,8 @@ class _ModelTestContentState extends State<_ModelTestContent> {
         ),
       ),
       footer: Text(
-        '已测 ${success + failure}/${_models.length} · 成功 $success · 失败 $failure',
+        '已测 ${success + failure}/${_models.length} · 成功 $success · 失败 $failure\n'
+        '绘图、语音模型会真实生成一次，可能计费',
         textAlign: TextAlign.center,
         style: TextStyle(color: colors.textSecondary, fontSize: 13),
       ),
@@ -257,9 +263,14 @@ class _ModelTestContentState extends State<_ModelTestContent> {
         );
       case _ModelTestState.failure:
         return const Icon(Icons.cancel, size: 20, color: Color(0xFFE53935));
+      case _ModelTestState.unsupported:
+        return Tooltip(
+          message: '暂不支持测试此类模型',
+          child: Icon(Icons.remove_circle_outline, size: 20, color: colors.muted),
+        );
     }
   }
 }
 
 /// 模型测试状态
-enum _ModelTestState { queued, loading, success, failure }
+enum _ModelTestState { queued, loading, success, failure, unsupported }

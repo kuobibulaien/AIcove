@@ -25,8 +25,8 @@ class MoeLiquidGlass extends StatelessWidget {
     this.borderRadius,
     this.shadows,
     this.border,
-    this.thickness = 20.0,
-    this.refractiveIndex = 1.25,
+    this.thickness,
+    this.refractiveIndex = 1.5,
     this.blurSigma,
     this.baseline = MoeMaterialBaseline.component,
     this.quality = GlassQuality.premium,
@@ -38,8 +38,9 @@ class MoeLiquidGlass extends StatelessWidget {
     this.height,
     this.clipBehavior = Clip.antiAlias,
     this.useOwnLayer = true,
+    this.keepPremiumWhileScrolling = false,
   }) : assert(radius >= 0),
-       assert(thickness >= 0),
+       assert(thickness == null || thickness >= 0),
        assert(blurSigma == null || blurSigma >= 0);
 
   /// 内部子组件（内容保持清晰，并在表面提供透明 Material 以承载点击和焦点）
@@ -54,11 +55,26 @@ class MoeLiquidGlass extends StatelessWidget {
   final List<BoxShadow>? shadows;
   final BorderSide? border;
 
-  /// 玻璃厚度（产生物理折射扭曲，默认 20px）
-  final double thickness;
+  /// 玻璃厚度（产生物理折射扭曲）。为 null 时按短边自适应，见 [adaptiveThickness]。
+  final double? thickness;
 
-  /// 折射率（艺术控制透镜扭曲强度，默认 1.25）
+  /// 折射率（艺术控制透镜扭曲强度，默认 1.5）
   final double refractiveIndex;
+
+  /// Edge lens width as a share of the shorter side, in logical pixels.
+  static const double adaptiveRimRatio = 0.2;
+  static const double adaptiveRimMin = 7;
+  static const double adaptiveRimMax = 14;
+
+  /// Thickness whose lens band scales with the surface, the way system glass
+  /// bends small capsules strongly and large panels only at a thin rim.
+  /// liquid_glass_widgets draws the band `thickness / 3` logical pixels wide.
+  static double adaptiveThickness(Size size) {
+    final shortest = size.shortestSide;
+    if (!shortest.isFinite || shortest <= 0) return adaptiveRimMin * 3;
+    return (shortest * adaptiveRimRatio).clamp(adaptiveRimMin, adaptiveRimMax) *
+        3;
+  }
 
   /// 模糊强度（未显式指定时继承全局 [MoeGlassTheme.blurSigma]）
   final double? blurSigma;
@@ -93,6 +109,10 @@ class MoeLiquidGlass extends StatelessWidget {
   /// 是否使用独立图层合成
   final bool useOwnLayer;
 
+  /// Keep [GlassQuality.premium] inside scroll views instead of stepping
+  /// down to the scroll-safe standard shader.
+  final bool keepPremiumWhileScrolling;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
@@ -111,7 +131,9 @@ class MoeLiquidGlass extends StatelessWidget {
         !isAccessibilityDegraded;
     // premium 依赖纹理捕获，包文档注明在滚动中可能渲染错误；滚动内改用 standard。
     final effectiveQuality =
-        quality == GlassQuality.premium && moeSurfaceMovesWithContent(context)
+        quality == GlassQuality.premium &&
+            !keepPremiumWhileScrolling &&
+            moeSurfaceMovesWithContent(context)
         ? GlassQuality.standard
         : quality;
     final isFrosted = glassTheme?.material == MoeSurfaceMaterial.frosted;
@@ -206,10 +228,10 @@ class MoeLiquidGlass extends StatelessWidget {
       );
     } else {
       // ── 液态玻璃分支：GPU Fragment Shader 透镜折射 ──
-      final effectiveSettings =
+      LiquidGlassSettings settingsFor(Size size) =>
           settings ??
           LiquidGlassSettings(
-            thickness: thickness,
+            thickness: thickness ?? adaptiveThickness(size),
             refractiveIndex: refractiveIndex,
             blur: baseline.blurSigma(effectiveSigma),
             glassColor: colors.glassTintForFill(tintFill),
@@ -235,15 +257,19 @@ class MoeLiquidGlass extends StatelessWidget {
             child: Stack(
               fit: StackFit.passthrough,
               children: [
+                // Positioned children skip intrinsic passes, so measuring here
+                // is safe even when the surface sits in an intrinsic layout.
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: AdaptiveGlass(
-                      shape: effectiveShape,
-                      settings: effectiveSettings,
-                      quality: effectiveQuality,
-                      useOwnLayer: useOwnLayer,
-                      clipBehavior: clipBehavior,
-                      child: const SizedBox.expand(),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => AdaptiveGlass(
+                        shape: effectiveShape,
+                        settings: settingsFor(constraints.biggest),
+                        quality: effectiveQuality,
+                        useOwnLayer: useOwnLayer,
+                        clipBehavior: clipBehavior,
+                        child: const SizedBox.expand(),
+                      ),
                     ),
                   ),
                 ),

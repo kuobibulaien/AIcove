@@ -3,14 +3,12 @@ import 'package:aicove_flutter/src/features/plugins/tts/voice_preset_runtime.dar
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/minimax_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/openai_compatible_tts_synthesis_adapter.dart';
-import 'package:aicove_flutter/src/features/plugins/tts/synthesis/siliconflow_tts_synthesis_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   for (final adapter in <TtsSynthesisAdapter>[
     const MinimaxTtsSynthesisAdapter(),
     const OpenAiCompatibleTtsSynthesisAdapter(),
-    const SiliconFlowTtsSynthesisAdapter(),
   ]) {
     test(
         '${adapter.providerId}: real body builder consumes the role snapshot, not global voice',

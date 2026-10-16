@@ -214,15 +214,27 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
                       maxLines: 8,
                       label: '新话题内容摘要（可修改）'),
                   const Text('确认后将整理进长期记忆。'),
-                  TextButton(
-                      onPressed: _prepare, child: const Text('重新整理（保留原话题）')),
+                  IntrinsicWidth(
+                    child: MoeSecondaryButton(
+                      label: '重新整理（保留原话题）',
+                      icon: Icons.refresh,
+                      size: MoeSecondaryButtonSize.sm,
+                      onPressed: _prepare,
+                    ),
+                  ),
                 ],
                 if (_draft == null && !_busy) ...[
                   if (_current != null)
                     Text('上次内容摘要：\n${_current!.summary}',
                         maxLines: 4, overflow: TextOverflow.ellipsis),
-                  TextButton(
-                      onPressed: _undo, child: const Text('撤销上次压缩')),
+                  IntrinsicWidth(
+                    child: MoeSecondaryButton(
+                      label: '撤销上次压缩',
+                      icon: Icons.undo,
+                      size: MoeSecondaryButtonSize.sm,
+                      onPressed: _undo,
+                    ),
+                  ),
                 ],
                 if (_error != null)
                   Padding(

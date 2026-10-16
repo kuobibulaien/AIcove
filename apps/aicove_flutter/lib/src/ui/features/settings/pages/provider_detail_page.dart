@@ -35,6 +35,10 @@ import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../widgets/comfyui_workflow_editor.dart';
 import '../../../../core/api/providers/provider_extra_body.dart';
 import '../widgets/provider_extra_body_editor.dart';
+import '../widgets/tts_request_template_editor.dart';
+import '../widgets/provider_asr_settings_group.dart';
+import '../widgets/fish_audio_provider_notice.dart';
+import '../../../../features/plugins/tts/tts_request_format.dart';
 
 /// 供应商详情页
 class ProviderDetailPage extends ConsumerStatefulWidget {
@@ -246,6 +250,21 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
     }
   }
 
+  Future<void> _editTtsRequestTemplate(ProviderAuth provider) async {
+    final template = await showTtsRequestTemplateEditor(
+      context,
+      provider.customConfig,
+    );
+    if (template == null || !mounted) return;
+    try {
+      await _actions.saveTtsRequestTemplate(provider, template);
+    } catch (error) {
+      if (mounted) {
+        MoeToast.show(context, '保存失败：$error', type: ToastType.error);
+      }
+    }
+  }
+
   Future<void> _testConnection(ProviderAuth provider) async {
     if (provider.visibleModels.isEmpty) {
       MoeToast.show(context, '当前渠道没有可用模型', type: ToastType.error);
@@ -324,7 +343,9 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
         snapshot: () => selected,
         save: () async {
           final format = selected;
-          final nextPath = defaultProviderDetailChatApiPathForFormat(format);
+          final nextPath = format.isTts
+              ? ''
+              : defaultProviderDetailChatApiPathForFormat(format);
           await _actions.updateRequestFormat(provider, format, nextPath);
           if (!mounted) return;
           _syncControllerIfNotFocused(
@@ -340,18 +361,31 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MoeToggleBar<ProviderDetailRequestFormat>(
-                value: selected,
-                items: availableFormats
-                    .map(
-                      (e) => MoeToggleItem<ProviderDetailRequestFormat>(
-                        value: e,
-                        label: e.label,
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  setSheetState(() => selected = value);
+              // 语音格式较多，窄屏放不下时横向滚动。
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final fits =
+                      constraints.maxWidth / availableFormats.length >= 84;
+                  final bar = MoeSegmentedControl<ProviderDetailRequestFormat>(
+                    value: selected,
+                    expanded: fits,
+                    segments: availableFormats
+                        .map(
+                          (e) => MoeSegment<ProviderDetailRequestFormat>(
+                            value: e,
+                            label: e.label,
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      setSheetState(() => selected = value);
+                    },
+                  );
+                  if (fits) return bar;
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: bar,
+                  );
                 },
               ),
               const SizedBox(height: 24),
@@ -675,11 +709,17 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
       provider,
       settings: settings,
     );
+    final isTtsProvider = ProviderDetailRequestFormat.isTtsProvider(provider);
+    // 纯识别渠道的格式在「语音识别」分组里切，不显示对话／合成的 API 格式。
+    final isAsrOnlyProvider =
+        provider.capabilities.isNotEmpty &&
+        provider.capabilities.every((item) => item == ModelType.stt.value);
     final showChatApiPath =
-        (settings
-                ?.getProviderModelsByType(provider.id, type: ModelType.chat)
-                .isNotEmpty ??
-            false) ||
+        !isTtsProvider &&
+            (settings
+                    ?.getProviderModelsByType(provider.id, type: ModelType.chat)
+                    .isNotEmpty ??
+                false) ||
         provider.capabilities.contains(ModelType.chat.value);
 
     // 因为 resizeToAvoidBottomInset: false，不需要监听键盘高度
@@ -761,8 +801,37 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
                     onChanged: (_) => _scheduleAutoSave(provider),
                   ),
                 ),
+              if (provider.id == kFishAudioProviderId)
+                FishAudioProviderNotice(
+                  keyController: _keyController,
+                  showKeyLink: !multiKeyEnabled,
+                ),
             ],
           ),
+          ProviderAsrSettingsGroup(
+            key: ValueKey('asr_${provider.id}'),
+            provider: provider,
+            onSave: (values) =>
+                _actions.saveCustomConfigValues(provider, values),
+          ),
+          if (requestFormat.value == TtsRequestFormat.customRest.value)
+            MoeSettingsGroup(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              title: '自定义 REST',
+              children: [
+                MoeSettingsRow(
+                  label: '请求模板',
+                  detailText:
+                      provider.customConfig.containsKey(
+                        TtsRequestFormat.customRestTemplateKey,
+                      )
+                      ? '已配置'
+                      : '使用默认模板',
+                  trailingType: MoeSettingsRowTrailing.chevron,
+                  onTap: () => _editTtsRequestTemplate(provider),
+                ),
+              ],
+            ),
           if (requestFormat == ProviderDetailRequestFormat.comfyui)
             MoeSettingsGroup(
               margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -807,14 +876,15 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
             margin: const EdgeInsets.symmetric(horizontal: 16),
             title: '高级信息',
             children: [
-              MoeSettingsRow(
-                label: 'API 格式',
-                trailingType: MoeSettingsRowTrailing.text,
-                detailText: requestFormat.label,
-                onTap: requestFormatOptions.length > 1
-                    ? () => _showRequestFormatSheet(provider)
-                    : null,
-              ),
+              if (!isAsrOnlyProvider)
+                MoeSettingsRow(
+                  label: 'API 格式',
+                  trailingType: MoeSettingsRowTrailing.text,
+                  detailText: requestFormat.label,
+                  onTap: requestFormatOptions.length > 1
+                      ? () => _showRequestFormatSheet(provider)
+                      : null,
+                ),
               MoeSettingsRow(
                 label: '多 Key 模式',
                 trailingType: MoeSettingsRowTrailing.custom,
@@ -952,15 +1022,14 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
       return cached.modelEntries;
     }
 
-    final entries =
-        provider.visibleModels
-            .map(
-              (modelId) => _ProviderModelEntry(
-                modelId: modelId,
-                displayName: displayNames[modelId] ?? '',
-              ),
-            )
-            .toList(growable: false);
+    final entries = provider.visibleModels
+        .map(
+          (modelId) => _ProviderModelEntry(
+            modelId: modelId,
+            displayName: displayNames[modelId] ?? '',
+          ),
+        )
+        .toList(growable: false);
 
     _cachedModelEntriesSignature = signature;
     _cachedModelEntries = List<_ProviderModelEntry>.unmodifiable(entries);

@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
 import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
 
 void main() {
@@ -74,20 +73,73 @@ void main() {
     expect(after.defaultModelName, initial.defaultModelName);
   });
 
-  test('fresh defaults should include built-in Z.AI provider', () async {
+  test('fresh defaults keep only the slim built-in provider list', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
     final settings = await container.read(appSettingsProvider.future);
-    final provider = settings.providers.firstWhere((p) => p.id == 'zai');
 
-    expect(provider.displayName, 'Z.AI');
-    expect(provider.apiBaseUrl, kZaiGeneralApiBase);
-    expect(provider.enabled, isFalse);
-    expect(provider.visibleModels, <String>['glm-5', 'glm-5-turbo', 'glm-4.7']);
-    expect(provider.models, containsAll(kZaiDefaultChatModels));
-    expect(provider.customConfig['requestFormat'], 'openai');
+    expect(settings.providers.map((p) => p.id), <String>[
+      'deepseek',
+      'openrouter',
+      'aliyun',
+      'fish_audio',
+      'novelai',
+      'gemini',
+    ]);
+  });
+
+  group('built-in Fish Audio free-only migration', () {
+    Map<String, dynamic> fishStore(List<String> appliedMigrations) =>
+        <String, dynamic>{
+          'providers': [
+            {
+              'id': 'fish_audio',
+              'displayName': 'Fish Audio',
+              'apiKeys': <String>[],
+              'apiBaseUrl': 'https://api.fish.audio/v1',
+              'enabled': false,
+              'models': <String>['s2.1-pro-free', 's2.1-pro'],
+              'visible_models': <String>['s2.1-pro-free', 's2.1-pro'],
+              'hidden_models': <String>[],
+              'capabilities': <String>['tts'],
+              'custom_config': <String, dynamic>{'requestFormat': 'fish_audio'},
+            },
+          ],
+          'applied_migrations': appliedMigrations,
+        };
+
+    Future<ProviderAuth> loadFish(Map<String, dynamic> store) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'aicove.ui_models.v1': jsonEncode(store),
+      });
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final settings = await container.read(appSettingsProvider.future);
+      return settings.providers.firstWhere((p) => p.id == 'fish_audio');
+    }
+
+    test('removes s2.1-pro from an existing built-in Fish provider', () async {
+      final provider = await loadFish(
+        fishStore(<String>[kFishAudioProviderBackfillMigrationId]),
+      );
+      expect(provider.models, <String>['s2.1-pro-free']);
+      expect(provider.visibleModels, <String>['s2.1-pro-free']);
+
+      final prefs = await SharedPreferences.getInstance();
+      final saved = jsonDecode(prefs.getString('aicove.ui_models.v1')!) as Map;
+      expect(saved['applied_migrations'],
+          contains(kFishAudioFreeOnlyMigrationId));
+    });
+
+    test('keeps s2.1-pro the user re-added after the migration ran', () async {
+      final provider = await loadFish(fishStore(<String>[
+        kFishAudioProviderBackfillMigrationId,
+        kFishAudioFreeOnlyMigrationId,
+      ]));
+      expect(provider.models, unorderedEquals(<String>['s2.1-pro-free', 's2.1-pro']));
+    });
   });
 
   test('fresh defaults should include built-in Gemini provider', () async {
@@ -101,21 +153,14 @@ void main() {
     expect(provider.displayName, kGoogleGeminiProviderDisplayName);
     expect(provider.apiBaseUrl, kGeminiDeveloperApiBase);
     expect(provider.enabled, isFalse);
-    expect(
-      provider.visibleModels,
-      <String>[
-        'gemini-2.5-flash',
-        'gemini-2.5-pro',
-        'gemini-2.5-flash-lite',
-      ],
-    );
-    expect(provider.models, containsAll(kGeminiDeveloperDefaultModels));
+    expect(provider.visibleModels, isEmpty);
+    expect(provider.models, isEmpty);
     expect(provider.customConfig['requestFormat'], 'gemini');
     expect(
         provider.customConfig.containsKey(kGoogleVertexExpressField), isFalse);
   });
 
-  test('legacy store should backfill Z.AI once and allow user deletion',
+  test('legacy store no longer backfills removed built-in providers',
       () async {
     final legacyStore = <String, dynamic>{
       'providers': [
@@ -140,25 +185,10 @@ void main() {
       'aicove.ui_models.v1': jsonEncode(legacyStore),
     });
 
-    var container = ProviderContainer();
-    addTearDown(() => container.dispose());
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
 
-    var settings = await container.read(appSettingsProvider.future);
-    expect(settings.providers.map((p) => p.id), contains('zai'));
-
-    final prefs = await SharedPreferences.getInstance();
-    final firstSaved = jsonDecode(prefs.getString('aicove.ui_models.v1')!)
-        as Map<String, dynamic>;
-    expect(
-      (firstSaved['applied_migrations'] as List?)?.cast<String>(),
-      contains(kZaiProviderBackfillMigrationId),
-    );
-
-    await container.read(appSettingsProvider.notifier).deleteProvider('zai');
-    container.dispose();
-
-    container = ProviderContainer();
-    settings = await container.read(appSettingsProvider.future);
+    final settings = await container.read(appSettingsProvider.future);
     expect(settings.providers.map((p) => p.id), isNot(contains('zai')));
   });
 
@@ -1087,7 +1117,12 @@ void main() {
     expect(provider.visibleModels.first, 'nai-diffusion-5-full');
     expect(
       provider.visibleModels,
-      <String>['nai-diffusion-5-full', 'nai-diffusion-5-curated'],
+      <String>[
+      'nai-diffusion-5-full',
+      'nai-diffusion-5-curated',
+      'nai-diffusion-4-5-full',
+      'nai-diffusion-4-5-curated',
+    ],
     );
     expect(provider.models, kNovelAiDefaultModels);
     expect(provider.customConfig['requestFormat'], 'novelai');

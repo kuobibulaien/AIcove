@@ -13,6 +13,7 @@ library;
 // === 按钮组件 ===
 export 'buttons/moe_primary_button.dart';
 export 'buttons/moe_button_surface.dart';
+export 'buttons/moe_choice_chip.dart';
 export 'buttons/moe_secondary_button.dart';
 export 'buttons/moe_icon_button.dart';
 export 'buttons/moe_tile_button.dart';
@@ -23,11 +24,13 @@ export 'form/moe_input_decoration.dart';
 export 'form/moe_switch.dart';
 export 'form/moe_checkbox.dart';
 export 'form/moe_toggle_bar.dart';
+export 'form/moe_segmented_control.dart';
 export 'form/moe_slider.dart';
 export 'form/moe_labeled_slider_row.dart';
 
 // === 列表组件 ===
 export 'list/moe_settings_group.dart';
+export 'list/moe_slidable_action.dart';
 export 'list/moe_settings_row.dart';
 export 'list/moe_list_tile.dart';
 

@@ -17,6 +17,7 @@ import '../../ui/features/character/services/contact_edit_snapshot_store.dart';
 import '../context/providers/context_providers.dart';
 import '../memory/providers/memory_providers.dart';
 import '../settings/app_settings.dart';
+import '../plugins/tts/tts_config.dart';
 import '../../core/utils/message_formatter.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
@@ -74,6 +75,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       displayName: 'Nahida',
       description: 'Default preset character',
       characterImage: 'assets/characters/images/nahida.jpg',
+      voiceFile: VoicePreset.defaultPresetId,
       createdAt: now,
       updatedAt: now,
     );

@@ -42,6 +42,20 @@ void main() {
     });
   });
 
+  group('MoeLiquidGlass.adaptiveThickness', () {
+    test('lens band follows the shorter side within bounds', () {
+      // Band width is thickness / 3 logical pixels.
+      expect(MoeLiquidGlass.adaptiveThickness(const Size(200, 44)) / 3,
+          closeTo(8.8, 1e-9));
+      expect(MoeLiquidGlass.adaptiveThickness(const Size(80, 20)) / 3,
+          MoeLiquidGlass.adaptiveRimMin);
+      expect(MoeLiquidGlass.adaptiveThickness(const Size(600, 400)) / 3,
+          MoeLiquidGlass.adaptiveRimMax);
+      expect(MoeLiquidGlass.adaptiveThickness(Size.infinite) / 3,
+          MoeLiquidGlass.adaptiveRimMin);
+    });
+  });
+
   group('MoeLiquidGlass Widget', () {
     setUp(() {
       MoeLiquidGlassService.setMockState(initialized: true, available: true);

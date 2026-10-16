@@ -41,10 +41,10 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
       await operation(port);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e is LanSyncFailure ? e.message : '操作未完成，请稍后重试'),
-          ),
+        await showMeoTalkAlert(
+          context: context,
+          title: '操作未完成',
+          message: e is LanSyncFailure ? e.message : '操作未完成，请稍后重试',
         );
       }
     } finally {
@@ -84,53 +84,51 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
   Future<void> _conflict(List<LanRevision> versions) async {
     final selected = await showDialog<LanRevision>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('选择保留的版本'),
-        content: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('两端同时修改了这份内容。选择后，两端会采用这一份；其它版本仍保留在同步记录中。'),
-                const SizedBox(height: 12),
-                for (final version in versions)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            _versionSource(version, versions),
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            _description(version),
-                            maxLines: 8,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 8),
-                          TextButton(
-                            onPressed: () => Navigator.pop(context, version),
-                            child: const Text('采用这一份'),
-                          ),
-                        ],
+      barrierColor: Colors.transparent,
+      builder: (context) => MeoTalkDialog(
+        title: '选择保留的版本',
+        cancelText: '稍后处理',
+        showConfirmButton: false,
+        onCancel: () => Navigator.pop(context),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('两端同时修改了这份内容。选择后，两端会采用这一份；其它版本仍保留在同步记录中。'),
+            for (final version in versions) ...[
+              const SizedBox(height: 12),
+              MoeContentSurface(
+                radius: 16,
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _versionSource(version, versions),
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: MoeFontWeights.emphasis,
+                        color: context.moeColors.text,
                       ),
                     ),
-                  ),
-              ],
-            ),
-          ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _description(version),
+                      maxLines: 8,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 10),
+                    MoeSecondaryButton(
+                      label: '采用这一份',
+                      size: MoeSecondaryButtonSize.sm,
+                      onPressed: () => Navigator.pop(context, version),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('稍后处理'),
-          ),
-        ],
       ),
     );
     if (selected != null) {
@@ -270,9 +268,10 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                       if (async.hasError) const Text('局域网同步初始化失败，请重试'),
                       if (async.isLoading)
                         const Center(child: CircularProgressIndicator()),
-                      TextButton(
+                      MoeSecondaryButton(
+                        label: '重新加载',
+                        size: MoeSecondaryButtonSize.sm,
                         onPressed: () => ref.invalidate(lanSyncPortProvider),
-                        child: const Text('重新加载'),
                       ),
                     ] else ...[
                       MoeSettingsGroup(
@@ -351,11 +350,15 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                             '在另一台设备上扫一扫，或输入这 6 位数字；十分钟内有效，只能用一次。',
                             textAlign: TextAlign.center,
                           ),
-                          TextButton(
-                            onPressed: () => Clipboard.setData(
-                              ClipboardData(text: state.invitation!),
+                          IntrinsicWidth(
+                            child: MoeSecondaryButton(
+                              label: '复制配对码',
+                              icon: Icons.copy_outlined,
+                              size: MoeSecondaryButtonSize.sm,
+                              onPressed: () => Clipboard.setData(
+                                ClipboardData(text: state.invitation!),
+                              ),
                             ),
-                            child: const Text('复制配对码'),
                           ),
                         ],
                         const SizedBox(height: 12),
@@ -371,23 +374,34 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            TextButton(
-                              onPressed: _action
-                                  ? null
-                                  : () => _run((port) async {
-                                      await port.pair(_code.text);
-                                      _code.clear();
-                                    }),
-                              child: const Text('连接设备'),
+                            IntrinsicWidth(
+                              child: MoePrimaryButton(
+                                label: '连接设备',
+                                size: MoePrimaryButtonSize.sm,
+                                onPressed: _action
+                                    ? null
+                                    : () => _run((port) async {
+                                        await port.pair(_code.text);
+                                        _code.clear();
+                                      }),
+                              ),
                             ),
                             if (LanScanPage.supported)
-                              TextButton(
-                                onPressed: _action ? null : _scan,
-                                child: const Text('扫一扫'),
+                              IntrinsicWidth(
+                                child: MoeSecondaryButton(
+                                  label: '扫一扫',
+                                  icon: Icons.qr_code_scanner,
+                                  size: MoeSecondaryButtonSize.sm,
+                                  onPressed: _action ? null : _scan,
+                                ),
                               ),
-                            TextButton(
-                              onPressed: _action ? null : _image,
-                              child: const Text('导入二维码'),
+                            IntrinsicWidth(
+                              child: MoeSecondaryButton(
+                                label: '导入二维码',
+                                icon: Icons.image_outlined,
+                                size: MoeSecondaryButtonSize.sm,
+                                onPressed: _action ? null : _image,
+                              ),
                             ),
                           ],
                         ),
@@ -426,19 +440,26 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                                   spacing: 8,
                                   children: [
                                     if (peer.pending && peer.incoming)
-                                      TextButton(
-                                        onPressed: _action || !state.enabled
-                                            ? null
-                                            : () => _run(
-                                                (port) => port.approve(peer.id),
-                                              ),
-                                        child: const Text('确认配对'),
+                                      IntrinsicWidth(
+                                        child: MoePrimaryButton(
+                                          label: '确认配对',
+                                          size: MoePrimaryButtonSize.sm,
+                                          onPressed: _action || !state.enabled
+                                              ? null
+                                              : () => _run(
+                                                  (port) =>
+                                                      port.approve(peer.id),
+                                                ),
+                                        ),
                                       ),
-                                    TextButton(
-                                      onPressed: _action
-                                          ? null
-                                          : () => _forget(peer),
-                                      child: const Text('取消配对'),
+                                    IntrinsicWidth(
+                                      child: MoeSecondaryButton(
+                                        label: '取消配对',
+                                        size: MoeSecondaryButtonSize.sm,
+                                        onPressed: _action
+                                            ? null
+                                            : () => _forget(peer),
+                                      ),
                                     ),
                                   ],
                                 ),

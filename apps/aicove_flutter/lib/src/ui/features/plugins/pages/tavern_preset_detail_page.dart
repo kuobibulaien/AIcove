@@ -70,16 +70,16 @@ class _TavernPresetDetailPageState
                       MoeSettingsLayout.verticalListPadding,
                     ),
                     children: [
-                      MoeToggleBar<_Section>(
+                      MoeSegmentedControl<_Section>(
                         value: _section,
-                        items: const [
-                          MoeToggleItem(value: _Section.prompts, label: '提示词'),
-                          MoeToggleItem(value: _Section.regex, label: '正则'),
-                          MoeToggleItem(
+                        segments: const [
+                          MoeSegment(value: _Section.prompts, label: '提示词'),
+                          MoeSegment(value: _Section.regex, label: '正则'),
+                          MoeSegment(
                             value: _Section.worldBooks,
                             label: '世界书',
                           ),
-                          MoeToggleItem(value: _Section.tags, label: '标签'),
+                          MoeSegment(value: _Section.tags, label: '标签'),
                         ],
                         onChanged: (section) =>
                             setState(() => _section = section),
@@ -472,7 +472,14 @@ class _Missing extends StatelessWidget {
               description: description,
               action: onRetry == null
                   ? null
-                  : TextButton(onPressed: onRetry, child: const Text('重试')),
+                  : IntrinsicWidth(
+                      child: MoeSecondaryButton(
+                        label: '重试',
+                        icon: Icons.refresh,
+                        size: MoeSecondaryButtonSize.sm,
+                        onPressed: onRetry,
+                      ),
+                    ),
             ),
           ],
         ),

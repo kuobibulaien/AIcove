@@ -33,7 +33,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
       _emotion,
       _chunk;
   final _sample = TextEditingController(text: '你好，很高兴见到你。今天想聊些什么？');
-  String? _provider, _model, _localPath, _audio, _error;
+  String? _provider, _model, _localPath, _audio;
   List<VoiceChannelBinding> _bindings = [];
   VoiceSourceType _source = VoiceSourceType.preset;
   double _speed = 1;
@@ -126,29 +126,28 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
 
   Future<void> _work(Future<void> Function() action) async {
     if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    setState(() => _busy = true);
     try {
       await action();
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        await showMeoTalkAlert(
+          context: context,
+          title: '操作未完成',
+          message: e is StateError ? e.message : '$e',
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  bool _validate() {
-    if (!_form.currentState!.validate()) return false;
-    if (_provider == null || _model == null) {
-      setState(() => _error = '请先选择供应商与模型');
-      return false;
-    }
+  String? _invalidReason() {
+    if (!_form.currentState!.validate()) return '请先补全标红的项目';
+    if (_provider == null || _model == null) return '请先选择供应商与模型';
     if (_source == VoiceSourceType.local &&
         (_localPath == null || _localPath!.isEmpty)) {
-      setState(() => _error = '请选择参考音频文件');
-      return false;
+      return '请选择参考音频文件';
     }
     final context = TtsProviderContext.resolveForSelection(
       config: TtsConfig(),
@@ -159,14 +158,21 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
     if (_source != VoiceSourceType.preset &&
         context.capabilities?.needsPromptText == true &&
         _text.text.trim().isEmpty) {
-      setState(() => _error = '此供应商需要参考音频对应的文字');
-      return false;
+      return '此供应商需要参考音频对应的文字';
     }
-    return true;
+    return null;
+  }
+
+  bool _validate() {
+    final reason = _invalidReason();
+    if (reason == null) return true;
+    showMeoTalkAlert(context: context, title: '还不能继续', message: reason);
+    return false;
   }
 
   Future<void> _save() async {
-    if (!_validate()) throw FormatException(_error ?? '请填写有效的音色预设');
+    final reason = _invalidReason();
+    if (reason != null) throw FormatException(reason);
     await ref.read(voicePresetApplicationProvider).save(_draft());
   }
 
@@ -216,14 +222,21 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
     );
     if (selected == null || !mounted) return;
     if (selected.providerId == _provider && selected.modelId == _model) return;
+    final hadVoice = _voice.text.trim().isNotEmpty;
     setState(() {
       _provider = selected.providerId;
       _model = selected.modelId;
       _voice.clear();
       _bindings = [];
       _audio = null;
-      _error = '已切换渠道或模型，请重新选择音色 ID；参考素材保留。';
     });
+    if (hadVoice) {
+      await showMeoTalkAlert(
+        context: context,
+        title: '已切换渠道或模型',
+        message: '原来的音色 ID 不通用，请重新选择；参考素材已保留。',
+      );
+    }
   }
 
   Future<void> _browse() async {
@@ -337,11 +350,9 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
     final format = providerContext?.requestFormat;
     final canLocal =
         capabilities?.canUploadFile == true ||
-        format == 'siliconflow_indextts' ||
         format == 'aliyun_qwen_tts';
     final canUrl =
         capabilities?.canUploadUrl == true ||
-        format == 'siliconflow_indextts' ||
         format == 'aliyun_qwen_tts';
     return autoSavePage(
       MoePageScaffold(
@@ -373,17 +384,6 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                   ),
                   children: [
                     if (_busy) const LinearProgressIndicator(),
-                    if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 12,
-                        ),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(color: colors.primary),
-                        ),
-                      ),
                     AbsorbPointer(
                       absorbing: _busy,
                       child: Column(
@@ -443,29 +443,26 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                                 ),
                                 child: Wrap(
                                   spacing: 8,
+                                  runSpacing: 8,
                                   children: [
                                     for (final value in VoiceSourceType.values)
-                                      MoeButtonSurface(
-                                        radius: 999,
-                                        child: ChoiceChip(
-                                          label: Text(switch (value) {
-                                            VoiceSourceType.preset => '音色 ID',
-                                            VoiceSourceType.url => '音频链接',
-                                            VoiceSourceType.local => '音频文件',
-                                          }),
-                                          selected: _source == value,
-                                          onSelected:
-                                              (value == VoiceSourceType.local &&
-                                                      !canLocal) ||
-                                                  (value ==
-                                                          VoiceSourceType.url &&
-                                                      !canUrl)
-                                              ? null
-                                              : (_) => setState(() {
-                                                  _source = value;
-                                                  _audio = null;
-                                                }),
-                                        ),
+                                      MoeChoiceChip(
+                                        label: switch (value) {
+                                          VoiceSourceType.preset => '音色 ID',
+                                          VoiceSourceType.url => '音频链接',
+                                          VoiceSourceType.local => '音频文件',
+                                        },
+                                        selected: _source == value,
+                                        onTap:
+                                            (value == VoiceSourceType.local &&
+                                                    !canLocal) ||
+                                                (value == VoiceSourceType.url &&
+                                                    !canUrl)
+                                            ? null
+                                            : () => setState(() {
+                                                _source = value;
+                                                _audio = null;
+                                              }),
                                       ),
                                   ],
                                 ),

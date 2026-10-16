@@ -66,8 +66,6 @@ class AutoReplyHistoryLogCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _buildLegend(context),
-            const SizedBox(height: 12),
             if (loading && logs.isEmpty)
               const Center(
                 child: Padding(
@@ -97,47 +95,6 @@ class AutoReplyHistoryLogCard extends StatelessWidget {
               ),
           ],
         ),
-      ],
-    );
-  }
-
-  Widget _buildLegend(BuildContext context) {
-    final colors = context.moeColors;
-    final items = <({String label, Color color})>[
-      (label: '默认唤醒', color: colors.primary),
-      (label: '分析决策', color: const Color(0xFF7E57C2)),
-      (label: '触发器', color: const Color(0xFFFFA726)),
-      (label: '后台 Agent', color: const Color(0xFF26A69A)),
-      (label: '发送结果', color: const Color(0xFF66BB6A)),
-      (label: '后台兜底', color: const Color(0xFF42A5F5)),
-    ];
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        for (final item in items)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: MoeG2Decoration(
-              radius: 10,
-              color: item.color.withValues(alpha: 0.12),
-              border: Border.all(color: item.color.withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  item.label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.text,
-                    fontWeight: MoeFontWeights.emphasis,
-                  ),
-                ),
-              ],
-            ),
-          ),
       ],
     );
   }
@@ -186,7 +143,7 @@ class _HistoryLogTile extends StatelessWidget {
               if (log.success != null)
                 _MetaChip(
                   label: log.success! ? '成功' : '失败',
-                  color: log.success! ? colors.toastSuccess : colors.toastError,
+                  color: log.success! ? colors.primary : colors.toastError,
                 ),
               if (log.level != AutoReplyTriggerLogLevel.info)
                 _MetaChip(
@@ -195,7 +152,7 @@ class _HistoryLogTile extends StatelessWidget {
                       : '警告',
                   color: log.level == AutoReplyTriggerLogLevel.error
                       ? colors.toastError
-                      : const Color(0xFFFFA726),
+                      : colors.primary,
                 ),
             ],
           ),
@@ -251,27 +208,13 @@ class _HistoryLogTile extends StatelessWidget {
     );
   }
 
+  /// 分类靠文字区分，颜色只表达「出错」与「正常」两种状态。
   Color _accentColor(MoeColors colors) {
-    if (log.level == AutoReplyTriggerLogLevel.error) {
-      return colors.toastError;
-    }
-    if (log.level == AutoReplyTriggerLogLevel.warning) {
-      return const Color(0xFFFFA726);
-    }
-    switch (log.category) {
-      case AutoReplyTriggerLogCategory.wakeup:
-        return colors.primary;
-      case AutoReplyTriggerLogCategory.analyzer:
-        return const Color(0xFF7E57C2);
-      case AutoReplyTriggerLogCategory.trigger:
-        return const Color(0xFFFFA726);
-      case AutoReplyTriggerLogCategory.agent:
-        return const Color(0xFF26A69A);
-      case AutoReplyTriggerLogCategory.delivery:
-        return log.success == false ? colors.toastError : colors.toastSuccess;
-      case AutoReplyTriggerLogCategory.background:
-        return const Color(0xFF42A5F5);
-    }
+    final failed =
+        log.level == AutoReplyTriggerLogLevel.error ||
+        (log.category == AutoReplyTriggerLogCategory.delivery &&
+            log.success == false);
+    return failed ? colors.toastError : colors.primary;
   }
 
   String _labelForCategory() {

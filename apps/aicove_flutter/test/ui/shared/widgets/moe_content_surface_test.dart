@@ -54,16 +54,24 @@ Material _surfaceMaterial(WidgetTester tester) {
 void main() {
   tearDown(() => MoeLiquidGlassService.setMockState());
 
-  testWidgets('solid mode stays opaque componentBackground', (tester) async {
+  testWidgets('solid mode is an opaque ink-tinted componentBackground', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       _wrap(child: const MoeContentSurface(child: Text('内容'))),
     );
     await tester.pumpAndSettle();
     expect(find.byType(BackdropFilter), findsNothing);
+    final color = _surfaceMaterial(tester).color!;
     expect(
-      _surfaceMaterial(tester).color,
-      MoeColors.light().componentBackground,
+      color,
+      Color.alphaBlend(
+        moeContentSurfaceInk(Brightness.light),
+        MoeColors.light().componentBackground,
+      ),
     );
+    expect(color.a, 1);
+    expect(color, isNot(MoeColors.light().componentBackground));
   });
 
   for (final dark in [false, true]) {
@@ -102,10 +110,16 @@ void main() {
               fill: 0.8,
             ),
           );
+          final color = _surfaceMaterial(tester).color!;
           expect(
-            _surfaceMaterial(tester).color,
-            MoeFrostedMaterial.surfaceTint(brightness, fill: 0.8),
+            color,
+            Color.alphaBlend(
+              moeContentSurfaceInk(brightness),
+              MoeFrostedMaterial.surfaceTint(brightness, fill: 0.8),
+            ),
           );
+          // Frosted cards must never turn into a solid fill.
+          expect(color.a, lessThan(1));
         }
         expect(tester.takeException(), isNull);
       });

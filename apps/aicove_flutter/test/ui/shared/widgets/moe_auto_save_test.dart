@@ -192,16 +192,62 @@ void main() {
     await tester.enterText(find.byType(TextField), 'new');
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
+    expect(find.text('修改还没保存'), findsOneWidget);
     expect(find.text('new'), findsOneWidget);
-    expect(find.text('重试'), findsOneWidget);
     expect(persisted, 'old');
     fail = false;
     await tester.tap(find.text('重试'));
     await tester.pumpAndSettle();
     expect(persisted, 'new');
-    await tester.tap(find.byTooltip('关闭'));
-    await tester.pumpAndSettle();
     expect(find.text('edit'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('invalid draft never traps the page: discard leaves it',
+      (tester) async {
+    final text = TextEditingController();
+    var saves = 0;
+    await tester.pumpWidget(MaterialApp(
+        home: Builder(
+            builder: (context) => Scaffold(
+                    body: TextButton(
+                  child: const Text('open'),
+                  onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) => MoeAutoSaveForm(
+                            fields: [text],
+                            snapshot: () => text.text,
+                            save: () async {
+                              if (text.text != 'ok') {
+                                throw const FormatException('请填写名称');
+                              }
+                              saves++;
+                            },
+                            builder: (context, update) => Scaffold(
+                                appBar: const MoeAppBar(
+                                    title: 'edit', showBackButton: true),
+                                body: TextField(controller: text))),
+                      )),
+                )))));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'bad');
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('请填写名称'), findsNothing);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    expect(find.text('请填写名称'), findsOneWidget);
+    await tester.tap(find.text('继续编辑'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('放弃修改'));
+    await tester.pumpAndSettle();
+    expect(find.text('open'), findsOneWidget);
+    expect(saves, 0);
+    expect(tester.takeException(), isNull);
+    text.dispose();
   });
 }

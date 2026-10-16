@@ -14,6 +14,7 @@ import 'auto_reply_trigger_storage.dart';
 import 'incoming_call.dart';
 import 'proactive_call.dart';
 import 'proactive_call_ledger.dart';
+import 'proactive_owner_device.dart';
 import 'proactive_planner.dart';
 import 'proactive_reply_generator.dart';
 
@@ -236,17 +237,24 @@ class AutoReplyDispatchService {
         apiResult: apiResult,
         settings: settings,
       );
-      // 仍持有认领才写消息；写入开始后不再重试（至多一次，宁缺不重）。
+      // 仍持有认领、仍是负责设备才写消息；写入开始后不再重试（至多一次，宁缺不重）。
+      // 交给另一台设备时放掉本机认领，用户回到本机还能马上再触发。
+      final claims = AutoReplyClaimStore(_ref.read(databaseProvider));
+      final handedOff =
+          !(await ProactiveOwnership.load()).owns(trigger.conversationId);
+      if (deliveryToken != null && handedOff) {
+        await claims.release(trigger.id, deliveryToken);
+      }
       if (deliveryToken != null &&
-          !await AutoReplyClaimStore(_ref.read(databaseProvider))
-              .beginDelivery(
+          (handedOff ||
+              !await claims.beginDelivery(
                 trigger.id,
                 deliveryToken,
                 messageId: buildResult.rawMessage?.id,
-              )) {
+              ))) {
         await _appendHistoryLog(
           event: 'dispatch_superseded',
-          message: '主动回复已放弃：生成期间执行权被另一方接管',
+          message: '主动回复已放弃：生成期间执行权被另一方或另一台设备接管',
           trigger: trigger,
           success: false,
           level: AutoReplyTriggerLogLevel.warning,
@@ -370,11 +378,14 @@ class AutoReplyDispatchService {
     }
     final bool claimed;
     try {
+      final claims = AutoReplyClaimStore(_ref.read(databaseProvider));
+      final handedOff = !(await ProactiveOwnership.load()).owns(conversation.id);
+      if (claimToken != null && handedOff) {
+        await claims.release(trigger.id, claimToken);
+      }
       claimed =
           claimToken == null ||
-          await AutoReplyClaimStore(
-            _ref.read(databaseProvider),
-          ).beginDelivery(trigger.id, claimToken);
+          (!handedOff && await claims.beginDelivery(trigger.id, claimToken));
     } catch (e) {
       await ledger.release(trigger.id);
       await _logCallAsMessage(trigger, '确认送达失败：$e');

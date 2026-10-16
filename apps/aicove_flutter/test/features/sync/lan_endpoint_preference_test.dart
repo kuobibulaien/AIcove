@@ -163,5 +163,8 @@ void main() {
       expect(await replay(), 200);
       expect(await replay(), 403);
     },
+    // 10001 real encrypted round trips take ~16s alone; under the full suite's
+    // parallel load that crosses the 30s default.
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 }

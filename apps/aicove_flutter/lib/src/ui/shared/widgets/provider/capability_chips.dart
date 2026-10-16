@@ -4,7 +4,7 @@
 ///
 /// 设计特点：
 /// - 小圆角 Chip 水平排列
-/// - 每种用途有独特的图标和颜色
+/// - 每种用途有独特的图标，颜色统一用强调色
 /// - 支持亮/暗色模式
 ///
 /// 使用示例：
@@ -25,13 +25,13 @@ import '../../effects/smooth_clip.dart';
 
 /// 模型能力类型
 enum ModelCapability {
-  chat('chat', '对话', Icons.chat_bubble_outline, Color(0xFF4A90E2)),
-  embedding('embedding', '嵌入', Icons.link, Color(0xFF10B981)),
-  image('image', '图片', Icons.image_outlined, Color(0xFFF59E0B)),
-  tts('tts', '语音', Icons.volume_up_outlined, Color(0xFFEC4899)),
-  tools('tools', '工具调用', Icons.build_outlined, Color(0xFF8B5CF6));
+  chat('chat', '对话', Icons.chat_bubble_outline),
+  embedding('embedding', '嵌入', Icons.link),
+  image('image', '图片', Icons.image_outlined),
+  tts('tts', '语音', Icons.volume_up_outlined),
+  tools('tools', '工具调用', Icons.build_outlined);
 
-  const ModelCapability(this.value, this.label, this.icon, this.color);
+  const ModelCapability(this.value, this.label, this.icon);
 
   /// API 值
   final String value;
@@ -41,9 +41,6 @@ enum ModelCapability {
 
   /// 图标
   final IconData icon;
-
-  /// 主题色
-  final Color color;
 
   /// 从字符串解析
   static ModelCapability? fromValue(String value) {
@@ -130,8 +127,8 @@ class CapabilityChips extends StatelessWidget {
   }
 
   Widget _buildChip(BuildContext context, ModelCapability cap, bool isDark) {
-    final bgColor = cap.color.withValues(alpha: isDark ? 0.2 : 0.12);
-    final fgColor = isDark ? cap.color.withValues(alpha: 0.9) : cap.color;
+    final bgColor = context.moeColors.primary.withValues(alpha: isDark ? 0.2 : 0.12);
+    final fgColor = isDark ? context.moeColors.primary.withValues(alpha: 0.9) : context.moeColors.primary;
 
     return Container(
       height: size.height,
@@ -205,9 +202,9 @@ class CapabilityChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bgColor = capability.color.withValues(alpha: isDark ? 0.2 : 0.12);
+    final bgColor = context.moeColors.primary.withValues(alpha: isDark ? 0.2 : 0.12);
     final fgColor =
-        isDark ? capability.color.withValues(alpha: 0.9) : capability.color;
+        isDark ? context.moeColors.primary.withValues(alpha: 0.9) : context.moeColors.primary;
 
     return Container(
       height: size.height,
@@ -244,16 +241,15 @@ class CapabilityChip extends StatelessWidget {
 
 /// 模型特性类型（基于模型名称推断）
 enum ModelFeature {
-  vision('vision', '视觉', Icons.visibility_outlined, Color(0xFF8B5CF6)),
-  tools('tools', '工具', Icons.build_outlined, Color(0xFF10B981)),
-  reasoning('reasoning', '思考', Icons.psychology_outlined, Color(0xFFF59E0B));
+  vision('vision', '视觉', Icons.visibility_outlined),
+  tools('tools', '工具', Icons.build_outlined),
+  reasoning('reasoning', '思考', Icons.psychology_outlined);
 
-  const ModelFeature(this.value, this.label, this.icon, this.color);
+  const ModelFeature(this.value, this.label, this.icon);
 
   final String value;
   final String label;
   final IconData icon;
-  final Color color;
 
   static ModelFeature? fromValue(String value) {
     final normalized = value.trim().toLowerCase();
@@ -331,9 +327,9 @@ class ModelFeatureChips extends StatelessWidget {
   }
 
   Widget _buildChip(BuildContext context, ModelFeature feature, bool isDark) {
-    final bgColor = feature.color.withValues(alpha: isDark ? 0.2 : 0.12);
+    final bgColor = context.moeColors.primary.withValues(alpha: isDark ? 0.2 : 0.12);
     final fgColor =
-        isDark ? feature.color.withValues(alpha: 0.9) : feature.color;
+        isDark ? context.moeColors.primary.withValues(alpha: 0.9) : context.moeColors.primary;
 
     return Container(
       height: size.height,

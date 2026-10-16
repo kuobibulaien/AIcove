@@ -21,6 +21,7 @@ const localGeneralSettings = <String>{
   'ui_scale_factor',
   'image_preview_scale',
   'windows_window_controls_side',
+  'windows_close_behavior',
   'chat_background_color',
   'global_background_color',
   'global_wallpaper',

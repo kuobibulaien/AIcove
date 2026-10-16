@@ -5,8 +5,8 @@ import 'tts_synthesis_adapter.dart';
 /// 通用可配置 REST TTS 合成适配器
 ///
 /// 适用于所有标准 HTTP POST 请求并返回二进制音频流（如 MP3、WAV）的 TTS 供应商。
-/// 支持零代码扩展新渠道：在 customConfig 中配置路径、Header 与 Body 映射模板即可生效。
-/// 同时内置了主流标准服务商（如 Fish Audio）的预置映射。
+/// 自定义 REST 渠道在 customConfig.tts_template 中配置路径、Header 与 Body 模板；
+/// Fish Audio 使用内置模板。
 class ConfigurableTtsSynthesisAdapter extends TtsSynthesisAdapter {
   static const String formatFishAudio = 'fish_audio';
   static const String formatFishAudioAlias = 'fishaudio';
@@ -33,34 +33,6 @@ class ConfigurableTtsSynthesisAdapter extends TtsSynthesisAdapter {
     formatConfigurableRest,
     formatTemplate,
   ];
-
-  @override
-  bool supports(TtsSynthesisContext context) {
-    final normalizedFormat = TtsSynthesisAdapter.normalizeIdentifier(
-      context.requestFormat,
-    );
-    if (requestFormatAliases.any(
-      (alias) =>
-          TtsSynthesisAdapter.normalizeIdentifier(alias) == normalizedFormat,
-    )) {
-      return true;
-    }
-
-    final normalizedProvider = TtsSynthesisAdapter.normalizeIdentifier(
-      context.providerId,
-    );
-    if (normalizedProvider == formatFishAudio ||
-        normalizedProvider == formatFishAudioAlias) {
-      return true;
-    }
-
-    if (context.customConfig.containsKey('tts_template') ||
-        context.customConfig.containsKey('ttsTemplate')) {
-      return true;
-    }
-
-    return false;
-  }
 
   @override
   Duration resolveTimeout(TtsSynthesisContext context) {
@@ -192,19 +164,13 @@ class ConfigurableTtsSynthesisAdapter extends TtsSynthesisAdapter {
     final custom =
         context.customConfig['tts_template'] ??
         context.customConfig['ttsTemplate'];
-    if (custom is Map<String, dynamic>) {
-      return custom;
+    if (custom is Map) {
+      return Map<String, dynamic>.from(custom);
     }
     final format = TtsSynthesisAdapter.normalizeIdentifier(
       context.requestFormat,
     );
-    final provider = TtsSynthesisAdapter.normalizeIdentifier(
-      context.providerId,
-    );
-    if (format == formatFishAudio ||
-        format == formatFishAudioAlias ||
-        provider == formatFishAudio ||
-        provider == formatFishAudioAlias) {
+    if (format == formatFishAudio || format == formatFishAudioAlias) {
       return _fishAudioPreset;
     }
     return const {};

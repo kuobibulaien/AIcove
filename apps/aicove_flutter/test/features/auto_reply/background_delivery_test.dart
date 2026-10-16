@@ -7,7 +7,9 @@ import 'dart:io';
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/background_service.dart';
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -130,6 +132,41 @@ void main() {
           )),
       isNull,
     );
+  });
+
+  test('a database locked while the task opens it is reopened, not reused',
+      () async {
+    // Another connection holds the file exclusively, so the task's first
+    // open fails reading the schema version. Drift keeps that failure on the
+    // connection for good: the retry has to open a new one.
+    late AppDatabase holder;
+    for (var attempt = 0;; attempt++) {
+      holder = AppDatabase.forTesting(NativeDatabase(
+        File(p.join(root.path, 'aicove.db')),
+        setup: (db) => db.execute('PRAGMA locking_mode = EXCLUSIVE'),
+      ));
+      try {
+        await holder.customStatement('BEGIN EXCLUSIVE');
+        break;
+      } catch (e) {
+        await holder.close();
+        if (!'$e'.contains('(code 5)') || attempt >= 6) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 50 * (1 << attempt)));
+      }
+    }
+    final released = Future<void>.delayed(
+      const Duration(milliseconds: 300),
+      () async {
+        await holder.customStatement('COMMIT');
+        await holder.close();
+      },
+    );
+
+    await runActiveReplyTaskForTest(task());
+    await released;
+
+    expect((await _messages()).single.content, '早上好呀');
+    expect(await _status(), 'fired');
   });
 
   test('a run killed after writing is finished without a second message',

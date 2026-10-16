@@ -55,7 +55,8 @@ void main() {
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
           // Inside the outer scroll view surfaces keep the global material
-          // (liquid on the scroll-safe standard shader); the content group
+          // (floating liquid on the scroll-safe standard shader, content
+          // cards keep premium); the content group
           // takes one blur under frosted and the liquid lens under glass.
           expect(
             find.byType(BackdropFilter),
@@ -75,10 +76,18 @@ void main() {
           final glass = find.byType(AdaptiveGlass);
           if (mode == MoeSurfaceMaterial.liquid) {
             expect(glass, findsWidgets);
+            final contentGlass = find.descendant(
+              of: find.byType(MoeSettingsGroup),
+              matching: glass,
+            );
+            expect(contentGlass, findsOneWidget);
+            final contentElements = contentGlass.evaluate().toSet();
             for (final element in glass.evaluate()) {
               expect(
                 (element.widget as AdaptiveGlass).quality,
-                GlassQuality.standard,
+                contentElements.contains(element)
+                    ? GlassQuality.premium
+                    : GlassQuality.standard,
               );
             }
           } else {

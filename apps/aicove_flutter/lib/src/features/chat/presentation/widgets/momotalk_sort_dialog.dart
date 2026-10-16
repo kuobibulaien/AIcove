@@ -1,8 +1,6 @@
-import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../domain/sort_mode.dart';
 
 class MomotalkSortDialog extends StatelessWidget {
@@ -22,12 +20,13 @@ class MomotalkSortDialog extends StatelessWidget {
     return Dialog(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      child: MoeG2ClipRRect(
-        radius: 12,
-        child: Container(
-          width: 300,
+      child: SizedBox(
+        width: 300,
+        child: MoeFloatingSurface(
+          baseline: MoeMaterialBaseline.background,
+          radius: 24,
+          solidColor: colors.componentBackground,
           padding: const EdgeInsets.all(16),
-          color: colors.surface,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -105,29 +104,11 @@ class MomotalkSortDialog extends StatelessWidget {
               const SizedBox(height: 24),
 
               // Confirm Button
-              MoeG2ClipRRect(
-                radius: 8,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  style: withoutHoverFeedback(
-                    ElevatedButton.styleFrom(
-                      backgroundColor: colors.surface,
-                      foregroundColor: const Color(
-                        0xFF4C5B6F,
-                      ), // Dark blue text
-                      elevation: 0,
-                      side: BorderSide(color: colors.divider),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                  ),
-                  child: const Text(
-                    '確認',
-                    style: TextStyle(
-                      fontWeight: MoeFontWeights.emphasis,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
+              MoePrimaryButton(
+                label: '確認',
+                width: double.infinity,
+                borderRadius: BorderRadius.circular(12),
+                onPressed: () => Navigator.of(context).pop(),
               ),
             ],
           ),
@@ -143,35 +124,13 @@ class MomotalkSortDialog extends StatelessWidget {
     required VoidCallback? onTap,
     bool isPlaceholder = false,
   }) {
-    final colors = context.moeColors;
-
-    return MoeG2ClipRRect(
-      radius: 8,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          child: MoeButtonSurface(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            radius: 8,
-            tintColor: isSelected ? colors.accent : Colors.transparent,
-            border: Border.all(
-              color: isSelected ? colors.accent : colors.divider,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: isSelected
-                    ? colors.text
-                    : (isPlaceholder ? colors.muted : colors.text),
-                fontWeight: MoeFontWeights.emphasis,
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ),
-      ),
+    return MoeChoiceChip(
+      label: label,
+      selected: isSelected,
+      expand: true,
+      muted: isPlaceholder,
+      size: MoeChoiceChipSize.md,
+      onTap: onTap,
     );
   }
 }

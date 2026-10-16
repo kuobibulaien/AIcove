@@ -4,6 +4,7 @@ import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
 import '../effects/smooth_clip.dart';
+import 'meotalk_dialog.dart';
 
 /// 通用的图片裁剪弹窗
 /// 用于头像等场景的图片裁剪
@@ -80,11 +81,10 @@ class _ImageCropDialogState extends State<ImageCropDialog>
                     if (result is CropSuccess) {
                       Navigator.pop(context, result.croppedImage);
                     } else if (result is CropFailure) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('裁剪失败: ${result.cause}'),
-                          duration: const Duration(seconds: 1),
-                        ),
+                      showMeoTalkAlert(
+                        context: context,
+                        title: '裁剪失败',
+                        message: '${result.cause}',
                       );
                     }
                   },

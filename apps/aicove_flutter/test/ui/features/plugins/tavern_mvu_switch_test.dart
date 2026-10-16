@@ -107,7 +107,7 @@ void main() {
     await _settle(tester);
     await tester.tap(
       find.descendant(
-        of: find.byWidgetPredicate((w) => w is MoeToggleBar),
+        of: find.byWidgetPredicate((w) => w is MoeSegmentedControl),
         matching: find.text('世界书'),
       ),
     );

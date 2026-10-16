@@ -5,8 +5,8 @@
 /// 2026-01-31: 创建 TTS Provider 工厂
 library;
 
+import '../tts_request_format.dart';
 import 'tts_voice_provider.dart';
-import 'siliconflow_voice_provider.dart';
 import 'aliyun_voice_provider.dart';
 import 'minimax_voice_provider.dart';
 
@@ -27,10 +27,11 @@ class TtsProviderResolution {
 }
 
 /// TTS Provider 工厂
+///
+/// 只按渠道的 requestFormat 路由（见 TtsRequestFormat），不再按地址或渠道 id 猜厂商。
 class TtsProviderFactory {
   /// 所有已注册的 Provider
   static final Map<String, TtsVoiceProvider> _providers = {
-    'siliconflow': SiliconFlowVoiceProvider(),
     'aliyun_qwen': AliyunQwenVoiceProvider(),
     'aliyun_cosyvoice': AliyunCosyVoiceProvider(),
     'minimax': MinimaxVoiceProvider(),
@@ -38,7 +39,7 @@ class TtsProviderFactory {
 
   /// 根据渠道标识获取 Provider
   ///
-  /// [providerId] 渠道标识，如 'siliconflow'、'aliyun_qwen'、'minimax'
+  /// [providerId] 渠道标识，如 'aliyun_qwen'、'minimax'
   /// 返回对应的 Provider 实例，如果不存在则返回 null
   static TtsVoiceProvider? getProvider(String providerId) {
     final normalized = _normalizeRoutingValue(providerId);
@@ -51,95 +52,30 @@ class TtsProviderFactory {
     return null;
   }
 
-  static String _normalizeRequestFormat(String? requestFormat) {
-    final normalized = _normalizeRoutingValue(requestFormat);
-    return normalized.isEmpty ? 'openai_tts' : normalized;
-  }
-
+  /// [providerId]、[apiUrl] 仅为兼容旧调用保留，不参与路由。
   static TtsProviderResolution resolve({
     String? providerId,
     String? apiUrl,
     String? requestFormat,
   }) {
-    final normalizedRequestFormat = _normalizeRequestFormat(requestFormat);
-
-    if (normalizedRequestFormat != 'openai_tts') {
-      for (final provider in _providers.values) {
-        if (provider.matchesRequestFormat(normalizedRequestFormat)) {
-          return TtsProviderResolution(
-            voiceProvider: provider,
-            requestFormat: normalizedRequestFormat,
-            matchedBy: 'requestFormat',
-          );
-        }
-      }
-    }
-
-    final normalizedProviderId = _normalizeRoutingValue(providerId);
-    if (normalizedProviderId.isNotEmpty) {
-      for (final provider in _providers.values) {
-        if (provider.matchesProviderId(normalizedProviderId)) {
-          return TtsProviderResolution(
-            voiceProvider: provider,
-            requestFormat: normalizedRequestFormat,
-            matchedBy: 'providerId',
-          );
-        }
-      }
-      if (normalizedProviderId == 'fish_audio' ||
-          normalizedProviderId == 'fishaudio') {
+    final raw = _normalizeRoutingValue(requestFormat);
+    final requestFormatValue =
+        raw == 'aliyun_cosyvoice' || raw == 'aliyun_qwen_tts'
+        ? raw
+        : (TtsRequestFormat.fromRaw(raw) ?? TtsRequestFormat.openai).value;
+    for (final provider in _providers.values) {
+      if (provider.matchesRequestFormat(requestFormatValue)) {
         return TtsProviderResolution(
-          voiceProvider: null,
-          requestFormat: normalizedRequestFormat == 'openai_tts'
-              ? 'fish_audio'
-              : normalizedRequestFormat,
-          matchedBy: 'providerId',
+          voiceProvider: provider,
+          requestFormat: requestFormatValue,
+          matchedBy: 'requestFormat',
         );
       }
     }
-
-    final normalizedApiUrl = _normalizeRoutingValue(apiUrl);
-    if (normalizedApiUrl.isNotEmpty) {
-      for (final provider in _providers.values) {
-        if (provider.matchesApiUrl(normalizedApiUrl)) {
-          return TtsProviderResolution(
-            voiceProvider: provider,
-            requestFormat: normalizedRequestFormat,
-            matchedBy: 'apiUrl',
-          );
-        }
-      }
-      if (normalizedApiUrl.contains('fish.audio')) {
-        return TtsProviderResolution(
-          voiceProvider: null,
-          requestFormat: normalizedRequestFormat == 'openai_tts'
-              ? 'fish_audio'
-              : normalizedRequestFormat,
-          matchedBy: 'apiUrl',
-        );
-      }
-    }
-
     return TtsProviderResolution(
       voiceProvider: null,
-      requestFormat: normalizedRequestFormat,
+      requestFormat: requestFormatValue,
     );
-  }
-
-  /// 根据 API URL 自动识别渠道并获取 Provider
-  ///
-  /// [apiUrl] API 基础 URL
-  /// [requestFormat] 可选，请求格式标识
-  static TtsVoiceProvider? getProviderByUrl(
-    String apiUrl, {
-    String? requestFormat,
-    String? providerId,
-  }) {
-    return resolve(
-      providerId: providerId,
-      apiUrl: apiUrl,
-      requestFormat: requestFormat,
-    ).voiceProvider;
   }
 
   /// 获取所有可用的 Provider 列表

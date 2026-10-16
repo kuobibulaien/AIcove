@@ -1,7 +1,11 @@
+import '../../voice_call/data/cloud_asr/asr_model_probe.dart';
+import '../../voice_call/domain/asr_request_format.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../core/api/providers/provider_extra_body.dart';
+import '../../plugins/tts/tts_model_probe.dart';
+import '../../plugins/tts/tts_request_format.dart';
 import '../app_settings.dart';
 import 'provider_detail_support.dart';
 
@@ -146,6 +150,13 @@ class ProviderDetailActions {
   ) {
     var customConfig = Map<String, dynamic>.from(provider.customConfig);
     customConfig['requestFormat'] = format.value;
+    if (format.value == TtsRequestFormat.customRest.value) {
+      customConfig.putIfAbsent(
+        TtsRequestFormat.customRestTemplateKey,
+        () =>
+            Map<String, dynamic>.of(TtsRequestFormat.defaultCustomRestTemplate),
+      );
+    }
     customConfig = copyCustomConfigWithProviderChatApiPath(
       customConfig,
       apiPath,
@@ -168,6 +179,45 @@ class ProviderDetailActions {
     return _notifier.editProvider(
       providerId: provider.id,
       customConfig: {...latest.customConfig, ...workflow},
+    );
+  }
+
+  /// 合并若干 customConfig 键；值为 null 的键删除。
+  Future<void> saveCustomConfigValues(
+    ProviderAuth provider,
+    Map<String, String?> values,
+  ) {
+    final latest =
+        _settings?.providers
+            .where((item) => item.id == provider.id)
+            .firstOrNull ??
+        provider;
+    final next = Map<String, dynamic>.of(latest.customConfig);
+    values.forEach((key, value) {
+      if (value == null) {
+        next.remove(key);
+      } else {
+        next[key] = value;
+      }
+    });
+    return _notifier.editProvider(providerId: provider.id, customConfig: next);
+  }
+
+  Future<void> saveTtsRequestTemplate(
+    ProviderAuth provider,
+    Map<String, dynamic> template,
+  ) {
+    final latest =
+        _settings?.providers
+            .where((item) => item.id == provider.id)
+            .firstOrNull ??
+        provider;
+    return _notifier.editProvider(
+      providerId: provider.id,
+      customConfig: {
+        ...latest.customConfig,
+        TtsRequestFormat.customRestTemplateKey: template,
+      },
     );
   }
 
@@ -194,16 +244,44 @@ class ProviderDetailActions {
     required String apiKey,
     required String modelId,
   }) {
-    return _notifier.testModel(
-      providerId: resolveProviderDetailRequestFormat(
-        provider,
-        settings: _settings,
-      ).value,
-      apiKey: apiKey,
-      apiBaseUrl: provider.apiBaseUrl,
-      modelId: modelId,
-      customConfig: provider.customConfig,
-    );
+    final settings = _settings;
+    final modelType =
+        settings?.getModelType(settings.buildModelRef(provider.id, modelId)) ??
+        ModelType.inferFromModelId(modelId);
+    switch (modelType) {
+      case ModelType.stt:
+        if (AsrRequestFormat.ofConfig(provider.customConfig) == null) {
+          throw UnsupportedError('渠道没有设置语音识别格式');
+        }
+        return AsrModelProbe.run(
+          provider: provider,
+          apiKey: apiKey,
+          modelId: modelId,
+        );
+      case ModelType.embedding:
+        throw UnsupportedError('暂不支持测试${modelType.label}模型');
+      case ModelType.tts:
+        if (settings == null) throw StateError('设置尚未加载');
+        return TtsModelProbe.run(
+          settings: settings,
+          provider: provider,
+          apiKey: apiKey,
+          modelId: modelId,
+        );
+      case ModelType.chat:
+      case ModelType.image:
+        return _notifier.testModel(
+          providerId: resolveProviderDetailRequestFormat(
+            provider,
+            settings: settings,
+          ).value,
+          apiKey: apiKey,
+          apiBaseUrl: provider.apiBaseUrl,
+          modelId: modelId,
+          customConfig: provider.customConfig,
+          modelType: modelType,
+        );
+    }
   }
 
   Future<void> reorderModels({

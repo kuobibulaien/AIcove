@@ -6,7 +6,6 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../../../core/api/providers/zai_compat.dart';
 import '../support/ui_models_store_support.dart';
 
 const _legacyTriggerConfigKey = 'aicove.plugins.trigger.config';
@@ -475,24 +474,6 @@ class UiModelsStoreLocalDataSource {
             .toList(growable: false);
     final appliedMigrations = cleanSettingsStrings(data['applied_migrations']);
 
-    if (!appliedMigrations.contains(kZaiProviderBackfillMigrationId)) {
-      final hasZai = providers.any((provider) {
-        if (provider is! Map) return false;
-        return provider['id']?.toString().trim() == 'zai';
-      });
-      if (!hasZai) {
-        final zaiDefault = defaultProviders.firstWhere(
-          (provider) => provider['id'] == 'zai',
-          orElse: () => <String, dynamic>{},
-        );
-        if (zaiDefault.isNotEmpty) {
-          providers.add(Map<String, dynamic>.from(zaiDefault));
-        }
-      }
-      appliedMigrations.add(kZaiProviderBackfillMigrationId);
-      data['applied_migrations'] = appliedMigrations;
-    }
-
     if (!appliedMigrations.contains(kFishAudioProviderBackfillMigrationId)) {
       final hasFishAudio = providers.any((provider) {
         if (provider is! Map) return false;
@@ -508,6 +489,29 @@ class UiModelsStoreLocalDataSource {
         }
       }
       appliedMigrations.add(kFishAudioProviderBackfillMigrationId);
+      data['applied_migrations'] = appliedMigrations;
+    }
+
+    if (!appliedMigrations.contains(kFishAudioFreeOnlyMigrationId)) {
+      for (final provider in providers) {
+        if (provider is! Map ||
+            provider['id']?.toString().trim() != 'fish_audio') {
+          continue;
+        }
+        for (final field in const [
+          'models',
+          'visible_models',
+          'hidden_models',
+        ]) {
+          final list = provider[field];
+          if (list is List) {
+            provider[field] = list
+                .where((model) => model?.toString().trim() != 's2.1-pro')
+                .toList();
+          }
+        }
+      }
+      appliedMigrations.add(kFishAudioFreeOnlyMigrationId);
       data['applied_migrations'] = appliedMigrations;
     }
 

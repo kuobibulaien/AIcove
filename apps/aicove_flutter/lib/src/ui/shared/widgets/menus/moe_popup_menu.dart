@@ -562,7 +562,7 @@ class _VerticalMenu extends StatelessWidget {
                                           overlayColor: Colors.transparent,
                                           alignment: Alignment.centerLeft,
                                           foregroundColor: items[index].danger
-                                              ? Colors.red
+                                              ? colors.toastError
                                               : colors.text,
                                           minimumSize: const Size(
                                             double.infinity,

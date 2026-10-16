@@ -163,12 +163,10 @@ class PrivacySpacePage extends ConsumerWidget {
                     motion: const ScrollMotion(),
                     extentRatio: 0.3,
                     children: [
-                      SlidableAction(
+                      MoeSlidableAction(
                         onPressed: (_) => ref
                             .read(conversationsProvider.notifier)
                             .updateConversationSettings(c.id, isHidden: false),
-                        backgroundColor: const Color(0xFF7A6FAE),
-                        foregroundColor: Colors.white,
                         icon: Icons.visibility_outlined,
                         label: '取消隐藏',
                       ),

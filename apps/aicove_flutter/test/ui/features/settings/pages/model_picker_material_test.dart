@@ -209,10 +209,9 @@ void main() {
                 .descendant(of: sheetSurface, matching: find.byType(Material))
                 .first,
           );
-          // A draggable sheet stays opaque under the shared motion guard.
-          expect(material.color!.a, closeTo(1, 0.0001));
-          expect(find.descendant(of: sheetSurface,
-              matching: find.byType(BackdropFilter)), findsNothing);
+          // Draggable sheets keep the global material instead of a solid fill;
+          // the search field and action button keep their own materials.
+          expect(material.color!.a, lessThan(1));
           final sheetRect = tester.getRect(sheetSurface);
           expect(
             sheetRect.height,

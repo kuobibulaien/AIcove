@@ -1,9 +1,15 @@
 import '../../settings_models.dart';
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_adapter_factory.dart';
-import '../../../../core/api/providers/zai_compat.dart';
 import '../../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../plugins/tts/tts_request_format.dart';
+import '../../../voice_call/domain/asr_request_format.dart';
+
+/// 内置阿里云渠道预置的实时识别模型；老用户的阿里云渠道补一次（[kAliyunAsrSeededKey] 标记），
+/// 之后用户删掉也不会再加回来。
+const kAliyunSeededAsrModels = <String>['fun-asr-realtime'];
+const kAliyunAsrSeededKey = 'asr_models_seeded';
 
 /// SharedPreferences 键名，统一管理模型与渠道配置。
 const kUiModelsStoreKey = 'aicove.ui_models.v1';
@@ -35,6 +41,9 @@ const kNovelAiV5FullDefaultMigrationId = 'novelai_v5_full_default_20260821';
 const kFishAudioProviderBackfillMigrationId =
     'builtin_provider_fish_audio_20260904';
 
+/// 内置 Fish Audio 渠道只保留免费模型、去掉 s2.1-pro 的迁移 id。
+const kFishAudioFreeOnlyMigrationId = 'builtin_fish_audio_free_only_20261014';
+
 const _novelAiModelAliases = <String, String>{
   // Older local presets used this id, but NovelAI now expects "curated".
   'nai-diffusion-4-5-curated-preview': 'nai-diffusion-4-5-curated',
@@ -51,8 +60,8 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
       'apiKeys': <String>[],
       'apiBaseUrl': 'https://api.deepseek.com/v1',
       'enabled': true,
-      'models': <String>['deepseek-reasoner', 'deepseek-chat'],
-      'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
+      'models': <String>['deepseek-flash', 'deepseek-v4-pro'],
+      'visible_models': <String>['deepseek-flash', 'deepseek-v4-pro'],
       'hidden_models': <String>[],
       'capabilities': <String>['chat'],
     },
@@ -68,50 +77,22 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
       'capabilities': <String>['chat'],
     },
     {
-      'id': 'minimax',
-      'displayName': 'MiniMax',
-      'apiKeys': <String>[],
-      'apiBaseUrl': 'https://api.minimaxi.com/v1',
-      'enabled': true,
-      'models': <String>[
-        'speech-2.8-hd',
-        'speech-2.8-turbo',
-        'speech-2.6-hd',
-        'speech-2.6-turbo',
-        'speech-02-hd',
-        'speech-02-turbo',
-      ],
-      'visible_models': <String>['speech-2.8-hd', 'speech-2.8-turbo'],
-      'hidden_models': <String>[],
-      'capabilities': <String>['tts'],
-    },
-    {
-      'id': 'kimi',
-      'displayName': 'Kimi',
-      'apiKeys': <String>[],
-      'apiBaseUrl': 'https://api.moonshot.cn/v1',
-      'enabled': true,
-      'models': <String>[],
-      'visible_models': <String>[],
-      'hidden_models': <String>[],
-      'capabilities': <String>['chat'],
-    },
-    {
       'id': 'aliyun',
       'displayName': '阿里云',
       'apiKeys': <String>[],
       'apiBaseUrl': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       'enabled': true,
-      'models': <String>[
-        'cosyvoice-v3-plus',
-        'qwen3-tts-vc-realtime-2026-01-15',
-      ],
+      'models': <String>['cosyvoice-v3-plus', ...kAliyunSeededAsrModels],
       'visible_models': <String>[
         'cosyvoice-v3-plus',
-        'qwen3-tts-vc-realtime-2026-01-15',
+        ...kAliyunSeededAsrModels,
       ],
       'hidden_models': <String>[],
-      'capabilities': <String>['tts'],
+      'capabilities': <String>['tts', 'stt'],
+      'custom_config': <String, dynamic>{
+        AsrRequestFormat.configKey: 'aliyun_asr',
+        kAliyunAsrSeededKey: true,
+      },
     },
     {
       'id': 'fish_audio',
@@ -119,8 +100,8 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
       'apiKeys': <String>[],
       'apiBaseUrl': 'https://api.fish.audio/v1',
       'enabled': false,
-      'models': <String>['s2.1-pro-free', 's2.1-pro'],
-      'visible_models': <String>['s2.1-pro-free', 's2.1-pro'],
+      'models': <String>['s2.1-pro-free'],
+      'visible_models': <String>['s2.1-pro-free'],
       'hidden_models': <String>[],
       'capabilities': <String>['tts'],
       'custom_config': <String, dynamic>{'requestFormat': 'fish_audio'},
@@ -135,6 +116,8 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
       'visible_models': <String>[
         kNovelAiV5FullModelId,
         'nai-diffusion-5-curated',
+        'nai-diffusion-4-5-full',
+        'nai-diffusion-4-5-curated',
       ],
       'hidden_models': <String>[],
       'capabilities': <String>['image'],
@@ -144,77 +127,29 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
       },
     },
     {
-      'id': 'siliconflow',
-      'displayName': '硅基流动',
-      'apiKeys': <String>[],
-      'apiBaseUrl': 'https://api.siliconflow.cn/v1',
-      'enabled': false,
-      'models': <String>[],
-      'visible_models': <String>[],
-      'hidden_models': <String>[],
-      'capabilities': <String>['chat'],
-    },
-    {
       'id': 'gemini',
       'displayName': kGoogleGeminiProviderDisplayName,
       'apiKeys': <String>[],
       'apiBaseUrl': kGeminiDeveloperApiBase,
       'enabled': false,
-      'models': List<String>.from(kGeminiDeveloperDefaultModels),
-      'visible_models': <String>[
-        'gemini-2.5-flash',
-        'gemini-2.5-pro',
-        'gemini-2.5-flash-lite',
-      ],
-      'hidden_models': <String>[
-        'gemini-2.0-flash',
-        'gemini-2.0-flash-lite',
-        'gemini-3-flash-preview',
-      ],
-      'capabilities': <String>['chat'],
-      'custom_config': <String, dynamic>{'requestFormat': 'gemini'},
-    },
-    {
-      'id': 'zai',
-      'displayName': 'Z.AI',
-      'apiKeys': <String>[],
-      'apiBaseUrl': kZaiGeneralApiBase,
-      'enabled': false,
-      'models': List<String>.from(kZaiDefaultChatModels),
-      'visible_models': <String>['glm-5', 'glm-5-turbo', 'glm-4.7'],
-      'hidden_models': <String>[
-        'glm-4.7-flash',
-        'glm-4.7-flashx',
-        'glm-4.6',
-        'glm-4.5',
-        'glm-4.5-air',
-      ],
-      'capabilities': <String>['chat'],
-      'custom_config': <String, dynamic>{'requestFormat': 'openai'},
-    },
-    {
-      'id': 'volcengine',
-      'displayName': '火山引擎',
-      'apiKeys': <String>[],
-      'apiBaseUrl': 'https://ark.cn-beijing.volces.com/api/v3',
-      'enabled': false,
       'models': <String>[],
       'visible_models': <String>[],
       'hidden_models': <String>[],
       'capabilities': <String>['chat'],
+      'custom_config': <String, dynamic>{'requestFormat': 'gemini'},
     },
   ],
-  'visible_models': <String>['deepseek-reasoner', 'deepseek-chat'],
-  'default_model': 'deepseek-reasoner',
+  'visible_models': <String>['deepseek-flash', 'deepseek-v4-pro'],
+  'default_model': 'deepseek-flash',
   'model_display_names': <String, String>{
-    'deepseek-chat': 'DeepSeek Chat',
-    'deepseek-reasoner': 'DeepSeek Reasoner',
+    'deepseek-flash': 'DeepSeek V4.1 Flash',
+    'deepseek-v4-pro': 'DeepSeek V4 Pro',
   },
   'backend_api_key': '',
   'applied_migrations': <String>[
-    kZaiProviderBackfillMigrationId,
     kNovelAiV5FullDefaultMigrationId,
     kFishAudioProviderBackfillMigrationId,
+    kFishAudioFreeOnlyMigrationId,
   ],
   'image_generation_enabled': true,
   'context_window_tokens': 272000,
@@ -226,6 +161,7 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'text_scale_factor': 1.0,
   'ui_scale_factor': 1.0,
   'windows_window_controls_side': WindowControlButtonSide.left.value,
+  'windows_close_behavior': WindowsCloseBehavior.ask.value,
   'auto_reply_settings': _defaultAutoReplySettings(),
   'enhanced_dialogue_settings': _defaultEnhancedDialogueSettings(),
   'call_flow_settings': _defaultCallFlowSettings(),
@@ -654,6 +590,13 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       if (id == 'aliyun' && !capabilities.contains('tts')) {
         capabilities.add('tts');
       }
+      if (id == 'aliyun' && customConfig[kAliyunAsrSeededKey] != true) {
+        for (final model in kAliyunSeededAsrModels) {
+          if (!models.contains(model)) models.add(model);
+          if (!visible.contains(model)) visible.add(model);
+        }
+        customConfig[kAliyunAsrSeededKey] = true;
+      }
 
       final ttsModels = customConfig['tts_models'];
       if (ttsModels is List && visible.isEmpty) {
@@ -674,6 +617,58 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
           ?.toString()
           .trim()
           .toLowerCase();
+      // 语音渠道以 requestFormat 为准并补成显式格式；纯语音渠道或模型名推断不出
+      // 类型的格式（Fish、自定义 REST），未手动设类型的模型一律算语音。
+      final ttsOnly =
+          capabilities.isNotEmpty &&
+          capabilities.every((item) => item == ModelType.tts.value);
+      final ttsFormat = TtsRequestFormat.normalizeStored(
+        rawFormat: requestFormat,
+        apiBaseUrl: apiBaseUrl,
+        isTtsProvider: ttsOnly,
+      );
+      if (ttsFormat != null) {
+        customConfig['requestFormat'] = ttsFormat;
+      }
+      if (ttsFormat != null &&
+          (ttsOnly || TtsRequestFormat.fromRaw(ttsFormat)!.forcesTtsModels)) {
+        for (final model in models) {
+          if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty &&
+              ModelType.inferFromModelId(model) != ModelType.stt) {
+            modelTypes['$id:$model'] = ModelType.tts.value;
+          }
+        }
+      }
+      // 语音识别渠道：补显式识别格式；纯识别渠道的模型名大多推断不出类型
+      // （nova-3、16k_zh、volc.seedasr.*），未手动设类型的一律算识别。
+      final asrOnly =
+          capabilities.isNotEmpty &&
+          capabilities.every((item) => item == ModelType.stt.value);
+      final asrFormat = AsrRequestFormat.normalizeStored(
+        rawFormat: customConfig[AsrRequestFormat.configKey]?.toString(),
+        apiBaseUrl: apiBaseUrl,
+        hasSpeechRecognitionModels:
+            asrOnly ||
+            models.any(
+              (model) =>
+                  _resolveProviderModelType(
+                    providerId: id,
+                    modelId: model,
+                    modelTypes: modelTypes,
+                  ) ==
+                  ModelType.stt,
+            ),
+      );
+      if (asrFormat != null) {
+        customConfig[AsrRequestFormat.configKey] = asrFormat;
+      }
+      if (asrOnly) {
+        for (final model in models) {
+          if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty) {
+            modelTypes['$id:$model'] = ModelType.stt.value;
+          }
+        }
+      }
       final isNovelAi =
           isNovelAiProvider(providerId: id, apiBaseUrl: apiBaseUrl) ||
           requestFormat == 'novelai' ||
@@ -778,6 +773,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
   }
 
   data['providers'] = normalizedProviders;
+  if (modelTypes.isNotEmpty) data['model_types'] = modelTypes;
   data['visible_models'] = visibleUnion..sort(caseInsensitiveSettingsSort);
   data['auto_reply_settings'] = normalizeAutoReplySettings(
     data['auto_reply_settings'],
@@ -798,6 +794,9 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
           .toDouble();
   data['windows_window_controls_side'] = WindowControlButtonSide.fromValue(
     data['windows_window_controls_side']?.toString(),
+  ).value;
+  data['windows_close_behavior'] = WindowsCloseBehavior.fromValue(
+    data['windows_close_behavior']?.toString(),
   ).value;
   return data;
 }

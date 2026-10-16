@@ -2,7 +2,6 @@ import 'tts_synthesis_adapter.dart';
 
 class TtsSynthesisFormats {
   static const String openAi = 'openai_tts';
-  static const String siliconFlowIndexTts = 'siliconflow_indextts';
   static const String minimax = 'minimax';
   static const String minimaxTts = 'minimax_tts';
 

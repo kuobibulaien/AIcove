@@ -149,10 +149,13 @@ class _ChatInterfaceSettingsPageState
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MoeSegTabBar(
-                currentIndex: _tab,
-                tabs: const ['壁纸', '行为'],
-                onTap: (index) => setState(() => _tab = index),
+              MoeSegmentedControl<int>(
+                value: _tab,
+                segments: const [
+                  MoeSegment(value: 0, label: '壁纸'),
+                  MoeSegment(value: 1, label: '行为'),
+                ],
+                onChanged: (index) => setState(() => _tab = index),
               ),
               const SizedBox(height: 8),
               ConstrainedBox(
@@ -203,13 +206,13 @@ class _ChatInterfaceSettingsPageState
             children: [
               SizedBox(width: 40, child: _label(colors, '样式')),
               Expanded(
-                child: MoeToggleBar<String>(
+                child: MoeSegmentedControl<String>(
                   key: const ValueKey('chat_interface_style_toggle'),
                   value: styleChoice,
-                  items: [
-                    MoeToggleItem(value: 'follow', label: '默认'),
-                    const MoeToggleItem(value: 'bubble', label: '气泡'),
-                    const MoeToggleItem(value: 'document', label: '文档'),
+                  segments: [
+                    MoeSegment(value: 'follow', label: '默认'),
+                    const MoeSegment(value: 'bubble', label: '气泡'),
+                    const MoeSegment(value: 'document', label: '文档'),
                   ],
                   onChanged: (value) => ref
                       .read(conversationsProvider.notifier)

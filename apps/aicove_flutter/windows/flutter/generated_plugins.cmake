@@ -12,6 +12,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   screen_retriever_windows
   share_plus
   sqlite3_flutter_libs
+  tray_manager
   url_launcher_windows
   window_manager
 )

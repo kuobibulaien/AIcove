@@ -19,7 +19,6 @@ class MoeFloatingSurface extends StatefulWidget {
     this.baseline = MoeMaterialBaseline.component,
     this.blurEnabled,
     this.useLiquid,
-    this.frostedOnly = false,
     this.borderRadius,
     this.solidColor,
     this.border,
@@ -39,10 +38,6 @@ class MoeFloatingSurface extends StatefulWidget {
   /// 是否启用液态效果（为 null 时跟随全局设置 [MoeGlassTheme.useLiquidGlass]）
   final bool? useLiquid;
 
-  /// Uses the frosted recipe in the glass level too, with that level's own
-  /// blur and fill. For full-page text backgrounds, where the thin glass tint
-  /// cannot keep text readable and no lens edge is drawn.
-  final bool frostedOnly;
   final BorderRadius? borderRadius;
   final Color? solidColor;
   final BorderSide? border;
@@ -72,10 +67,7 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
     final colors = context.moeColors;
     final glassTheme = MoeGlassTheme.maybeOf(context);
     final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
-    final isFrosted =
-        glassTheme?.material == MoeSurfaceMaterial.frosted ||
-        (widget.frostedOnly &&
-            glassTheme?.material == MoeSurfaceMaterial.liquid);
+    final isFrosted = glassTheme?.material == MoeSurfaceMaterial.frosted;
     final isBlurEnabled =
         (blurEnabled ?? glassTheme?.enabled ?? true) &&
         !moeSurfaceMovesWithContent(context, ignoreScrollables: true) &&
@@ -168,6 +160,7 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
               Positioned.fill(
                 child: IgnorePointer(
                   child: BackdropFilter(
+                    backdropGroupKey: MoeSharedBackdrop.keyOf(context),
                     filter: isFrosted
                         ? MoeFrostedMaterial.surfaceFilter(
                             brightness,
@@ -190,6 +183,34 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
       ),
     );
   }
+}
+
+/// Lets sibling surfaces over one backdrop read it once instead of once each.
+///
+/// For non-overlapping surfaces on the same layer with the same blur, such as
+/// the three header capsules. The engine then blurs the backdrop once and each
+/// surface cuts its share from that result, which samples slightly differently
+/// than a per-surface blur (measured up to 5/255 per channel).
+class MoeSharedBackdrop extends StatelessWidget {
+  const MoeSharedBackdrop({super.key, required this.child});
+
+  final Widget child;
+
+  static BackdropKey? keyOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_SharedBackdropScope>() == null
+      ? null
+      : BackdropGroup.of(context)?.backdropKey;
+
+  @override
+  Widget build(BuildContext context) =>
+      BackdropGroup(child: _SharedBackdropScope(child: child));
+}
+
+class _SharedBackdropScope extends InheritedWidget {
+  const _SharedBackdropScope({required super.child});
+
+  @override
+  bool updateShouldNotify(_SharedBackdropScope oldWidget) => false;
 }
 
 /// Marks controls that share one surrounding material instead of stacking filters.

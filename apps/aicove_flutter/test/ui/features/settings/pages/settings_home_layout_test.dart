@@ -22,11 +22,11 @@ Material _innerMaterial(WidgetTester tester, Finder surface) {
 const _profileCard = ValueKey('settings-profile-card');
 const _entryContainer = ValueKey('settings-entry-container');
 
-const _entryStyles = <String, (IconData, int)>{
-  '模型': (Icons.layers_rounded, 0xFF5856D6),
-  '通用': (Icons.tune_rounded, 0xFF32ADE6),
-  '插件': (Icons.extension_rounded, 0xFFAF52DE),
-  '调试': (Icons.terminal_rounded, 0xFFFF9500),
+const _entryIcons = <String, IconData>{
+  '模型': Icons.layers_rounded,
+  '通用': Icons.tune_rounded,
+  '插件': Icons.extension_rounded,
+  '调试': Icons.terminal_rounded,
 };
 
 void main() {
@@ -70,7 +70,10 @@ void main() {
         final cardMaterial = _innerMaterial(tester, card);
         final containerMaterial = _innerMaterial(tester, container);
         expect(containerMaterial.color, cardMaterial.color);
-        expect(cardMaterial.color, MoeColors.light().componentBackground);
+        expect(
+          cardMaterial.color,
+          moeContentSurfaceSolidColor(MoeColors.light(), Brightness.light),
+        );
         expect(cardMaterial.shape, moeG2Shape(radius: 20));
         expect(containerMaterial.shape, moeG2Shape(radius: 20));
         final avatar = tester.getRect(find.byType(MoeAvatar));
@@ -93,12 +96,19 @@ void main() {
           );
           final tile = row.iconWidget! as Container;
           final decoration = tile.decoration! as MoeG2Decoration;
-          final (iconData, colorValue) = _entryStyles[row.label]!;
-          expect(decoration.color, Color(colorValue));
+          // 入口图标统一强调色：淡染底＋强调色图标，不再四色实底。
+          final accent = MoeColors.light().primary;
+          expect(decoration.color, accent.withValues(alpha: 0.16));
           expect(decoration.radius, 7);
           final glyph = tile.child! as Icon;
-          expect(glyph.icon, iconData);
-          expect(glyph.color, Colors.white);
+          expect(glyph.icon, _entryIcons[row.label]);
+          expect(
+            glyph.color,
+            Color.alphaBlend(
+              MoeColors.light().text.withValues(alpha: 0.35),
+              accent,
+            ),
+          );
           expect(glyph.size, 19);
           expect(row.labelStyle!.fontSize, 16);
           expect(row.labelStyle!.fontWeight, FontWeight.normal);
@@ -140,7 +150,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final expected = MoeColors.dark().componentBackground;
+    final expected = moeContentSurfaceSolidColor(
+      MoeColors.dark(),
+      Brightness.dark,
+    );
     final cardMaterial = _innerMaterial(tester, find.byKey(_profileCard));
     final containerMaterial = _innerMaterial(
       tester,
@@ -155,8 +168,11 @@ void main() {
     for (final row in rows) {
       final tile = row.iconWidget! as Container;
       final decoration = tile.decoration! as MoeG2Decoration;
-      final (_, colorValue) = _entryStyles[row.label]!;
-      expect(decoration.color, Color(colorValue));
+      expect(
+        decoration.color,
+        MoeColors.dark().primary.withValues(alpha: 0.24),
+      );
+      expect((tile.child! as Icon).color, MoeColors.dark().primary);
       expect(decoration.radius, 7);
     }
     expect(tester.takeException(), isNull);

@@ -120,7 +120,7 @@ void main() {
       );
       await _settle(tester);
       final tab = find.descendant(
-        of: find.byWidgetPredicate((w) => w is MoeToggleBar),
+        of: find.byWidgetPredicate((w) => w is MoeSegmentedControl),
         matching: find.text('标签'),
       );
       await tester.tap(tab);

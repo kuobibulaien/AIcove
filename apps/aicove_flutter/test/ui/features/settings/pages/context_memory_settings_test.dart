@@ -177,7 +177,12 @@ void main() {
       );
       await tester.enterText(find.byType(TextField).last, '0');
       await tester.pumpAndSettle(const Duration(milliseconds: 500));
+      Navigator.of(tester.element(find.byType(ContextMemorySettingsPage)))
+          .maybePop();
+      await tester.pumpAndSettle();
       expect(find.textContaining('请输入大于'), findsOneWidget);
+      await tester.tap(find.text('继续编辑'));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, '96');
       await tester.pump();
       final scope = tester.widget<MoeAutoSaveScope>(

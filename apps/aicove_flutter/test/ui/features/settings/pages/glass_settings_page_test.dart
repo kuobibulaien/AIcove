@@ -48,7 +48,7 @@ void main() {
         );
       }
       expect(
-        find.text('玻璃模式功耗较高，可能会引起手机发热。'),
+        find.text('此项极耗费性能，容易引起发热和卡顿。手机端日用推荐模糊或纯色。'),
         choice == '玻璃' ? findsOneWidget : findsNothing,
       );
       expect(tester.takeException(), isNull);

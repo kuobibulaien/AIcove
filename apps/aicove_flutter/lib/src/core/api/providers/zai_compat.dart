@@ -2,7 +2,6 @@ library;
 
 const kZaiGeneralApiBase = 'https://api.z.ai/api/paas/v4';
 const kZaiCodingApiBase = 'https://api.z.ai/api/coding/paas/v4';
-const kZaiProviderBackfillMigrationId = 'builtin_provider_zai_20260322';
 
 const kZaiDefaultChatModels = <String>[
   'glm-5',

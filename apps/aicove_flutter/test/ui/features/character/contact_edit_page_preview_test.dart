@@ -10,7 +10,9 @@ import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dar
 import 'package:aicove_flutter/src/features/plugins/image/drawing_preset.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
+import 'package:aicove_flutter/src/ui/features/character/pages/character_appearance_page.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
+import 'package:aicove_flutter/src/ui/features/wallpaper/pages/wallpaper_editor_page.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -91,7 +93,7 @@ void main() {
         VoicePreset.defaultPreset,
         VoicePreset(id: 'preset_yelu', name: '夜露·清亮'),
       ],
-      defaultVoicePresetId: 'built_in_nahida',
+      defaultVoicePresetId: VoicePreset.defaultPresetId,
     );
 
     SharedPreferences.setMockInitialValues({
@@ -111,7 +113,7 @@ void main() {
       avatarUrl: portrait,
       characterImage: portrait,
       chatBackgroundImage: wallpaper,
-      voiceFile: 'built_in_nahida',
+      voiceFile: VoicePreset.defaultPresetId,
       description: '须弥的小吉祥草王',
       personaPrompt: PersonaPromptCodec.compose(
         userPrompt: '你是须弥的小吉祥草王纳西妲，温柔聪慧，喜欢用比喻解释事物。',
@@ -180,6 +182,35 @@ void main() {
     if (capture) {
       await _capture(tester, boundaryKey, 'contact-edit');
     }
+
+    // 立绘海报：不再有更换/清空按钮，底部「自定义」进入立绘与头像编辑页。
+    expect(find.text('更换立绘'), findsNothing);
+    expect(find.text('清空立绘'), findsNothing);
+    await tester.tap(find.text('自定义'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 400)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(CharacterAppearancePage), findsOneWidget);
+    expect(find.text('更换立绘'), findsOneWidget);
+    expect(find.text('从立绘裁剪头像'), findsOneWidget);
+    expect(find.text('上传头像'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-edit-customize');
+    }
+    await tester.tap(find.text('聊天壁纸'));
+    await tester.pumpAndSettle();
+    expect(find.byType(WallpaperEditorPage), findsOneWidget);
+    final navigator = tester.state<NavigatorState>(
+      find.byType(Navigator).first,
+    );
+    navigator.pop();
+    await tester.pumpAndSettle();
+    navigator.pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(CharacterAppearancePage), findsNothing);
 
     await tester.ensureVisible(find.text('角色卡信息'));
     await tester.pumpAndSettle();

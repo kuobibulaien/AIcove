@@ -19,7 +19,7 @@ import '../application/active_voice_call.dart';
 import '../application/voice_call_archiver.dart';
 import '../application/scripted_opening_reply_generator.dart';
 import '../application/voice_call_session.dart';
-import '../data/aliyun_realtime_speech_recognizer.dart';
+import '../data/cloud_asr/cloud_speech_recognizer_factory.dart';
 import '../data/api_runner_call_reply_generator.dart';
 import '../data/device_call_audio.dart';
 import '../data/fish_audio_streaming_tts.dart';
@@ -106,8 +106,7 @@ class ActiveVoiceCallNotifier extends Notifier<ActiveVoiceCall?> {
           .read(voiceCallFactoryProvider)
           .create(conversation, openingLine: openingLine),
       archiver: ref.read(voiceCallArchiverProvider),
-      describeError: (e) =>
-          e is VoiceCallUnavailable ? e.message : '通话接通失败：$e',
+      describeError: (e) => e is VoiceCallUnavailable ? e.message : '通话接通失败：$e',
       log: (message) => AppLogger.info('VoiceCall', message),
       onFinished: () {
         if (identical(state, call)) state = null;
@@ -233,40 +232,77 @@ class VoiceCallFactory {
     final voiceId =
         service.config.selectedVoicePreset?.synthesis?.voiceId?.trim() ?? '';
     final apiKey = service.apiKey?.trim() ?? '';
-    if (voiceId.isEmpty || apiKey.isEmpty) {
-      throw const VoiceCallUnavailable('音色预设缺少 Fish Audio 音色 ID 或密钥');
+    if (voiceId.isEmpty) {
+      throw const VoiceCallUnavailable('音色预设还没有填写 Fish Audio 音色 ID');
+    }
+    if (apiKey.isEmpty) {
+      throw const VoiceCallUnavailable(
+        'Fish Audio 渠道还没有填写 API Key，请先在「设置 · 模型」里填写',
+      );
     }
     return FishAudioStreamingTts(
       apiKey: apiKey,
       referenceId: voiceId,
       model: service.model?.trim().isNotEmpty == true
           ? service.model!.trim()
-          : 's2.1-pro',
+          : 's2.1-pro-free',
     );
   }
 
-  /// 按设置里的识别来源选识别器；「自动」时装了本地模型就用本地，否则用阿里云。
+  /// 按设置里的识别来源选识别器；「自动」时装了本地模型就用本地，否则用渠道商里第一个能用的识别模型。
   Future<SpeechRecognizerPort> _resolveRecognizer(AppSettings settings) async {
     final source = await _ref.read(callRecognizerSourceProvider.future);
-    if (source != CallRecognizerSource.aliyun) {
+    if (source.kind != CallRecognizerKind.cloud) {
       final local = await installedLocalCallModel();
       if (local != null) {
         AppLogger.info('VoiceCall', '识别来源：本地模型');
         return SherpaLocalSpeechRecognizer(models: local);
       }
       if (source == CallRecognizerSource.local) {
-        throw const VoiceCallUnavailable('本机还没有安装本地识别模型，请在「语音 · 语音通话」里换一个识别来源');
+        throw const VoiceCallUnavailable(
+          '本机还没有安装本地识别模型，请在「语音 · 语音通话」里下载，或换一个识别来源',
+        );
       }
     }
-    final key = aliyunCallRecognizerKey(settings);
-    if (key != null) {
-      AppLogger.info('VoiceCall', '识别来源：阿里云');
-      return AliyunRealtimeSpeechRecognizer(apiKey: key);
+    final options = cloudRecognizerOptions(settings);
+    final CloudRecognizerOption? option;
+    if (source.kind == CallRecognizerKind.cloud) {
+      option = options
+          .where(
+            (o) =>
+                o.provider.id == source.providerId && o.model == source.model,
+          )
+          .firstOrNull;
+      if (option == null) {
+        throw VoiceCallUnavailable(
+          '选中的识别模型 ${source.model} 已不在渠道商里，请在「语音 · 语音通话」里重新选择',
+        );
+      }
+      if (!option.ready) {
+        throw VoiceCallUnavailable(
+          '「${option.label}」缺少 ${option.missing}，请先在渠道商里填写',
+        );
+      }
+    } else {
+      option = options.where((o) => o.ready).firstOrNull;
+      if (option == null) {
+        throw const VoiceCallUnavailable(
+          '还没有可用的语音识别：请在「语音 · 语音通话」里下载本地识别模型，或在渠道商里添加语音识别模型',
+        );
+      }
     }
-    throw VoiceCallUnavailable(
-      source == CallRecognizerSource.aliyun
-          ? '还没有配置阿里云百炼密钥，请先在模型供应商里添加阿里云'
-          : '还没有可用的语音识别：请安装本地识别模型，或配置阿里云百炼密钥',
-    );
+    try {
+      final recognizer = createCloudSpeechRecognizer(
+        option.provider,
+        option.model,
+      );
+      AppLogger.info(
+        'VoiceCall',
+        '识别来源：${option.format.label} ${option.model}',
+      );
+      return recognizer;
+    } on CloudRecognizerConfigError catch (e) {
+      throw VoiceCallUnavailable(e.message);
+    }
   }
 }

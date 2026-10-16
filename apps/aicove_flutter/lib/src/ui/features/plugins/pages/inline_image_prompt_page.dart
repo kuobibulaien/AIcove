@@ -495,7 +495,6 @@ class _InlinePromptEditorPageState
                       minLines: 12,
                       decoration: const InputDecoration(
                         hintText: '输入快速链路要注入的完整提示词模板',
-                        border: OutlineInputBorder(),
                         alignLabelWithHint: true,
                       ),
                     ),

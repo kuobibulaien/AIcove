@@ -30,6 +30,7 @@ import 'conversation_proactive_state.dart';
 import 'conversation_proactive_state_storage.dart';
 import 'incoming_call_notification.dart';
 import 'proactive_call_ledger.dart';
+import 'proactive_owner_device.dart';
 import 'proactive_reply_generator.dart';
 
 // 任务名称常量
@@ -302,7 +303,7 @@ Future<T> _withClaimStore<T>(
 }) async {
   for (var attempt = 0;; attempt++) {
     try {
-      return await body(AutoReplyClaimStore(_taskDatabase()));
+      return await body(AutoReplyClaimStore(await _taskDatabase()));
     } catch (e) {
       // 前台连接的写事务可能占锁好几秒：退避总计约 12 秒，仍失败才放弃。
       if (_isSqliteLock(e) && attempt < 8) {
@@ -319,7 +320,25 @@ Future<T> _withClaimStore<T>(
 /// 连接在后台 isolate 里还没真正关掉，下一次打开就会撞上锁。
 AppDatabase? _taskDb;
 
-AppDatabase _taskDatabase() => _taskDb ??= AppDatabase();
+/// 打开成功才缓存：drift 把打开阶段（读 schema 版本）的失败永久记在连接上，
+/// 撞锁后复用同一连接，重试只会读回旧错误，所以失败的连接直接关掉重开。
+Future<AppDatabase> _taskDatabase() async {
+  final cached = _taskDb;
+  if (cached != null) return cached;
+  final db = AppDatabase();
+  try {
+    await db.customSelect('SELECT 1').get();
+  } catch (_) {
+    await db.close();
+    rethrow;
+  }
+  final raced = _taskDb;
+  if (raced != null) {
+    await db.close();
+    return raced;
+  }
+  return _taskDb = db;
+}
 
 Future<void> _runActiveReplyTask(Map<String, dynamic> data) async {
   try {
@@ -478,6 +497,20 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
       );
       return;
     }
+  }
+
+  // 用户已换到另一台设备说话：这个会话的主动回复归那台设备负责。
+  if (!(await ProactiveOwnership.load()).owns(convId)) {
+    await _appendHistoryLog(
+      event: 'task_skipped_other_device',
+      message: '后台主动回复任务已跳过：这个会话由另一台设备负责',
+      triggerId: triggerId.isEmpty ? null : triggerId,
+      title: triggerTitle,
+      conversationId: convId,
+      success: false,
+      level: AutoReplyTriggerLogLevel.warning,
+    );
+    return;
   }
 
   // 与前台轮询同源的发送门禁：quiet hours / dailyLimit / minInterval。
@@ -729,9 +762,17 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
 
   final storagePayload = buildBackgroundAssistantStoragePayload(reply);
 
-  // 开始送达：仍持有认领才写消息；生成期间被另一方接管则放弃，避免重复。
+  // 开始送达：仍持有认领、仍是负责设备才写消息；生成期间被另一方或另一台
+  // 设备接管则放弃，避免重复。
+  // 交给另一台设备时放掉本机认领（用户回到本机还能马上再触发），并直接放弃：
+  // 释放可能因锁失败，不能指望随后的 beginDelivery 一定失败。
+  final handedOff = !(await ProactiveOwnership.load()).owns(convId);
+  if (claimToken != null && handedOff) {
+    await _releaseTriggerExecutionClaim(triggerId, claimToken);
+  }
   if (claimToken != null &&
-      !await _withClaimStore(
+      (handedOff ||
+          !await _withClaimStore(
         (store) => store.beginDelivery(
           triggerId,
           claimToken!,
@@ -739,10 +780,10 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
         ),
         fallback: false,
         what: 'begin delivery',
-      )) {
+      ))) {
     await _appendHistoryLog(
       event: 'task_superseded',
-      message: '后台主动回复已放弃：生成期间执行权被另一方接管',
+      message: '后台主动回复已放弃：生成期间执行权被另一方或另一台设备接管',
       triggerId: triggerId,
       title: triggerTitle,
       conversationId: convId,
@@ -830,7 +871,7 @@ Future<String?> _generateLiveReply({
       conversationId: conversationId,
       reminder: reminder,
       turnId: 'auto_reply_background_$triggerId',
-      overrides: [databaseProvider.overrideWithValue(_taskDatabase())],
+      overrides: [databaseProvider.overrideWithValue(await _taskDatabase())],
     );
   } catch (e) {
     print('[Background] Live generation failed: $e');
@@ -848,7 +889,7 @@ Future<bool> _isTriggerMessageDelivered(
   String? messageId,
 }) async {
   try {
-    final existing = await MessageRepository(_taskDatabase())
+    final existing = await MessageRepository(await _taskDatabase())
         .getById(messageId ?? backgroundTriggerMessageId(triggerId));
     return existing != null &&
         (messageId != null || existing.conversationId == conversationId);
@@ -873,7 +914,7 @@ Future<bool> _ringInBackground({
 }) async {
   if (defaultTargetPlatform != TargetPlatform.android) return false;
   final settings = await _loadAutoReplySettingsMap();
-  final ledger = ProactiveCallLedger(_taskDatabase());
+  final ledger = ProactiveCallLedger(await _taskDatabase());
   final String? blocked = settings['allow_proactive_calls'] != true
       ? '主动来电已关闭'
       : await ledger.callsPaused(convId)
@@ -899,11 +940,16 @@ Future<bool> _ringInBackground({
     );
     return false;
   }
-  if (!await _withClaimStore(
-    (store) => store.beginDelivery(triggerId, claimToken),
-    fallback: false,
-    what: 'begin call delivery',
-  )) {
+  final handedOff = !(await ProactiveOwnership.load()).owns(convId);
+  if (handedOff) {
+    await _releaseTriggerExecutionClaim(triggerId, claimToken);
+  }
+  if (handedOff ||
+      !await _withClaimStore(
+        (store) => store.beginDelivery(triggerId, claimToken),
+        fallback: false,
+        what: 'begin call delivery',
+      )) {
     await ledger.release(triggerId);
     await _appendHistoryLog(
       event: 'task_superseded',
@@ -1080,8 +1126,8 @@ Future<bool> _saveMessageToStorage(
   BackgroundAssistantStoragePayload payload, {
   required String messageId,
 }) async {
-  final db = _taskDatabase();
   try {
+    final db = await _taskDatabase();
     final convRepo = ConversationRepository(db);
     final msgRepo = MessageRepository(db);
 

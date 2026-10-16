@@ -65,7 +65,7 @@ import '../../voice_call/widgets/voice_call_floating_window.dart';
 import '../../voice_call/widgets/voice_call_live_messages.dart';
 import '../../../../features/voice_call/application/active_voice_call.dart';
 import '../../../../features/voice_call/providers/voice_call_providers.dart'
-    show ActiveVoiceCallNotifier, activeVoiceCallProvider;
+    show ActiveVoiceCallNotifier, activeVoiceCallProvider, voiceCallFactoryProvider;
 
 const Duration kChatPageImagePrecacheDelay = Duration(milliseconds: 180);
 const Duration kChatPageUnreadClearDelay = Duration(milliseconds: 160);
@@ -797,11 +797,31 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return call.conversationId == conversationId ? call : null;
   }
 
-  void _openVoiceCall(Conversation conv) {
+  bool _checkingVoiceCall = false;
+
+  Future<void> _openVoiceCall(Conversation conv) async {
     final current = ref.read(activeVoiceCallProvider);
     if (current != null && current.conversationId != conv.id) {
       MoeToast.brief(context, '正在和别的角色通话');
       return;
+    }
+    // 新拨的电话先查音色预设、密钥和识别来源，配不齐就提示，不进通话页。
+    if (current == null) {
+      if (_checkingVoiceCall) return;
+      _checkingVoiceCall = true;
+      final String? reason;
+      try {
+        reason = await ref
+            .read(voiceCallFactoryProvider)
+            .unavailableReason(conv);
+      } finally {
+        _checkingVoiceCall = false;
+      }
+      if (!mounted) return;
+      if (reason != null) {
+        MoeToast.error(context, '无法通话：$reason');
+        return;
+      }
     }
     final call = _voiceCalls.start(conv);
     // 从悬浮窗回来：输入换回语音。
@@ -992,21 +1012,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return showDialog<bool>(
       context: context,
       barrierDismissible: true,
-      barrierColor: Colors.black54,
+      barrierColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: colors.surface,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Text(
-            '当前模型不支持图片',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: colors.text,
-            ),
-          ),
+        builder: (ctx, setDialogState) => MeoTalkDialog(
+          title: '当前模型不支持图片',
+          cancelText: '取消',
+          confirmText: '仍然发送',
+          onCancel: () => Navigator.of(ctx).pop(false),
+          onConfirm: () {
+            if (dontShowAgain) {
+              ref
+                  .read(appSettingsProvider.notifier)
+                  .setSkipVisionCompatDialog(true);
+            }
+            Navigator.of(ctx).pop(true);
+          },
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1014,13 +1034,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               Text(
                 '当前聊天模型（$modelName）不支持图片理解，'
                 '上下文中的图片可能导致调用失败。',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: colors.textSecondary,
-                  height: 1.5,
-                ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Text(
                 '请切换到支持图片输入的聊天模型。继续发送仅会使用已有文字内容。',
                 style: TextStyle(
@@ -1029,34 +1044,29 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   height: 1.4,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               // "不再提醒"复选框
-              InkWell(
-                borderRadius: BorderRadius.circular(4),
-                onTap: () {
-                  setDialogState(() => dontShowAgain = !dontShowAgain);
-                },
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () =>
+                    setDialogState(() => dontShowAgain = !dontShowAgain),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: Checkbox(
-                          value: dontShowAgain,
-                          onChanged: (v) {
-                            setDialogState(() => dontShowAgain = v ?? false);
-                          },
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        ),
+                      MoeCheckbox(
+                        value: dontShowAgain,
+                        onChanged: (v) =>
+                            setDialogState(() => dontShowAgain = v),
                       ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 8),
                       Text(
                         '不再提醒',
-                        style: TextStyle(fontSize: 12, color: colors.muted),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: colors.textSecondary,
+                        ),
                       ),
                     ],
                   ),
@@ -1064,28 +1074,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('取消', style: TextStyle(color: colors.muted)),
-            ),
-            TextButton(
-              onPressed: () {
-                if (dontShowAgain) {
-                  ref
-                      .read(appSettingsProvider.notifier)
-                      .setSkipVisionCompatDialog(true);
-                }
-                Navigator.of(ctx).pop(true);
-              },
-              child: Text(
-                '仍然发送',
-                style: TextStyle(color: colors.accentColor),
-              ),
-            ),
-          ],
-          // "不再提醒"复选框放在 content 底部
-          contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
         ),
       ),
     );

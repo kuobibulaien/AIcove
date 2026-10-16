@@ -21,19 +21,10 @@ import 'moe_floating_surface.dart';
 /// Toast 类型枚举
 enum ToastType { info, success, error, warning }
 
-/// 根据 Toast 类型从主题中获取背景色（统一入口，DRY）
+/// Toast 染色：成功、错误、警告统一用强调色，靠图标区分；信息类不染色。
 Color _toastBackgroundColor(BuildContext context, ToastType type) {
   final colors = context.moeColors;
-  switch (type) {
-    case ToastType.success:
-      return colors.toastSuccess;
-    case ToastType.error:
-      return colors.toastError;
-    case ToastType.warning:
-      return colors.toastWarning;
-    case ToastType.info:
-      return colors.toastInfo;
-  }
+  return type == ToastType.info ? colors.toastInfo : colors.primary;
 }
 
 /// 轻量级 Toast 提示工具

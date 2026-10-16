@@ -19,6 +19,8 @@ import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_chat_api_path.dart';
+import '../../../../features/plugins/tts/tts_request_format.dart';
+import '../../../../features/voice_call/domain/asr_request_format.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/settings/data/support/ui_models_store_support.dart'
     show kNovelAiDefaultModels;
@@ -26,14 +28,18 @@ import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../widgets/comfyui_workflow_editor.dart';
+import '../widgets/tts_request_template_editor.dart';
 
 /// 显示添加供应商底部弹窗
-Future<bool?> showAddProviderSheet(BuildContext context) {
+Future<bool?> showAddProviderSheet(
+  BuildContext context, {
+  ProviderCategory initialCategory = ProviderCategory.chat,
+}) {
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    builder: (context) => const AddProviderSheet(),
+    builder: (context) => AddProviderSheet(initialCategory: initialCategory),
   );
 }
 
@@ -41,7 +47,8 @@ Future<bool?> showAddProviderSheet(BuildContext context) {
 enum ProviderCategory {
   chat('chat', '对话'),
   image('image', '绘图'),
-  tts('tts', '语音');
+  tts('tts', '语音'),
+  stt('stt', '识别');
 
   const ProviderCategory(this.value, this.label);
 
@@ -59,7 +66,11 @@ class ApiFormat {
     this.defaultApiPath = '',
     this.defaultModels = const <String>[],
     this.apiKeyOptional = false,
+    this.asr,
   }) : providerId = providerId ?? value;
+
+  /// 语音识别格式；写入 customConfig.asrRequestFormat 而不是 requestFormat。
+  final AsrRequestFormat? asr;
 
   /// 写入 customConfig.requestFormat 的值
   final String value;
@@ -116,69 +127,54 @@ class ApiFormat {
     apiKeyOptional: true,
   );
 
-  static const openaiTts = ApiFormat._(
-    value: 'openai_tts',
-    providerId: 'openai',
-    label: 'OpenAI',
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    defaultModels: <String>['gpt-4o-mini-tts', 'tts-1', 'tts-1-hd'],
-  );
-  static const minimaxTts = ApiFormat._(
-    value: 'minimax',
-    label: 'MiniMax',
-    defaultBaseUrl: 'https://api.minimaxi.com/v1',
-    defaultModels: <String>['speech-2.8-hd', 'speech-2.8-turbo'],
-  );
-  static const siliconflowTts = ApiFormat._(
-    value: 'siliconflow_indextts',
-    providerId: 'siliconflow',
-    label: '硅基流动',
-    defaultBaseUrl: 'https://api.siliconflow.cn/v1',
-    defaultModels: <String>[
-      'IndexTeam/IndexTTS-2',
-      'FunAudioLLM/CosyVoice2-0.5B',
-    ],
-  );
-  // 阿里云按模型名区分 CosyVoice / Qwen-TTS，requestFormat 留默认交给 URL 识别。
-  static const aliyunTts = ApiFormat._(
-    value: 'openai_tts',
-    providerId: 'aliyun',
-    label: '阿里云',
-    defaultBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    defaultModels: <String>[
-      'cosyvoice-v3-plus',
-      'qwen3-tts-vc-realtime-2026-01-15',
-    ],
-  );
-  static const fishAudioTts = ApiFormat._(
-    value: 'fish_audio',
-    label: 'Fish Audio',
-    defaultBaseUrl: 'https://api.fish.audio/v1',
-    defaultModels: <String>['s2.1-pro-free', 's2.1-pro'],
-  );
+  /// 语音格式统一取自 [TtsRequestFormat] 注册表。
+  static final ttsFormats = TtsRequestFormat.all
+      .map(
+        (format) => ApiFormat._(
+          value: format.value,
+          label: format.label,
+          defaultBaseUrl: format.defaultBaseUrl,
+          providerId: format.providerId,
+          defaultModels: format.defaultModels,
+        ),
+      )
+      .toList(growable: false);
+
+  /// 识别格式统一取自 [AsrRequestFormat] 注册表。
+  static final asrFormats = AsrRequestFormat.all
+      .map(
+        (format) => ApiFormat._(
+          value: format.value,
+          label: format.label,
+          defaultBaseUrl: format.defaultEndpoint,
+          providerId: format.providerId,
+          defaultModels: format.defaultModels,
+          asr: format,
+        ),
+      )
+      .toList(growable: false);
 
   static const chatFormats = <ApiFormat>[openai, claude, gemini];
   static const imageFormats = <ApiFormat>[openaiImage, novelai, comfyui];
-  static const ttsFormats = <ApiFormat>[
-    openaiTts,
-    minimaxTts,
-    siliconflowTts,
-    aliyunTts,
-    fishAudioTts,
-  ];
 
   static List<ApiFormat> forCategory(ProviderCategory category) {
     return switch (category) {
       ProviderCategory.chat => chatFormats,
       ProviderCategory.image => imageFormats,
       ProviderCategory.tts => ttsFormats,
+      ProviderCategory.stt => asrFormats,
     };
   }
 }
 
 /// 添加供应商底部弹窗
 class AddProviderSheet extends ConsumerStatefulWidget {
-  const AddProviderSheet({super.key});
+  const AddProviderSheet({
+    super.key,
+    this.initialCategory = ProviderCategory.chat,
+  });
+
+  final ProviderCategory initialCategory;
 
   @override
   ConsumerState<AddProviderSheet> createState() => _AddProviderSheetState();
@@ -197,9 +193,36 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   bool _submitting = false;
   Map<String, dynamic> _comfyConfig = {};
   bool get _isComfyUI => _selectedFormat == ApiFormat.comfyui;
+  Map<String, dynamic> _ttsTemplate = Map<String, dynamic>.of(
+    TtsRequestFormat.defaultCustomRestTemplate,
+  );
+  bool get _isCustomRestTts =>
+      _category == ProviderCategory.tts &&
+      _selectedFormat.value == TtsRequestFormat.customRest.value;
+
+  /// 识别格式除 API Key 外的凭证（AppID、SecretId 等），按 [AsrCredentialField.key]。
+  final _credentialCtrls = <String, TextEditingController>{};
+
+  TextEditingController _credentialCtrl(String key) =>
+      _credentialCtrls.putIfAbsent(key, TextEditingController.new);
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialCategory != ProviderCategory.chat) {
+      _category = widget.initialCategory;
+      final format = ApiFormat.forCategory(_category).first;
+      _selectedFormat = format;
+      _urlCtrl.text = format.defaultBaseUrl;
+      _pathCtrl.text = format.defaultApiPath;
+    }
+  }
 
   @override
   void dispose() {
+    for (final ctrl in _credentialCtrls.values) {
+      ctrl.dispose();
+    }
     _displayCtrl.dispose();
     _keyCtrl.dispose();
     _urlCtrl.dispose();
@@ -268,6 +291,17 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       return;
     }
 
+    final asr = format.asr;
+    final credentials = <String, String>{};
+    for (final field in asr?.credentialFields ?? const <AsrCredentialField>[]) {
+      final value = _credentialCtrl(field.key).text.trim();
+      if (value.isEmpty && !field.optional) {
+        MoeToast.show(context, '请输入 ${field.label}');
+        return;
+      }
+      if (value.isNotEmpty) credentials[field.key] = value;
+    }
+
     if (_isComfyUI) {
       try {
         ComfyUIImageAdapter.endpoint(apiBaseUrl, 'prompt');
@@ -283,25 +317,30 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
       final notifier = ref.read(appSettingsProvider.notifier);
       var previewFailed = false;
       var allModels = const <String>[];
-      final customConfig = copyCustomConfigWithProviderChatApiPath(
-        <String, dynamic>{
-          'requestFormat': format.value,
-          if (_isComfyUI) ..._comfyConfig,
-        },
-        apiPath,
-      );
+      final customConfig =
+          copyCustomConfigWithProviderChatApiPath(<String, dynamic>{
+            if (asr == null) 'requestFormat': format.value,
+            if (asr != null) AsrRequestFormat.configKey: asr.value,
+            ...credentials,
+            if (_isComfyUI) ..._comfyConfig,
+            if (_isCustomRestTts)
+              TtsRequestFormat.customRestTemplateKey: _ttsTemplate,
+          }, apiPath);
 
-      try {
-        allModels = _filterByCategory(
-          await notifier.previewProviderModels(
-            providerId: format.providerId,
-            apiKey: apiKey,
-            apiBaseUrl: apiBaseUrl,
-            customConfig: customConfig,
-          ),
-        );
-      } catch (_) {
-        previewFailed = true;
+      // 识别厂商都没有列模型的接口，直接用注册表里的默认模型。
+      if (asr == null) {
+        try {
+          allModels = _filterByCategory(
+            await notifier.previewProviderModels(
+              providerId: format.providerId,
+              apiKey: apiKey,
+              apiBaseUrl: apiBaseUrl,
+              customConfig: customConfig,
+            ),
+          );
+        } catch (_) {
+          previewFailed = true;
+        }
       }
       if (allModels.isEmpty && format.defaultModels.isNotEmpty) {
         allModels = List<String>.of(format.defaultModels);
@@ -422,12 +461,12 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                           padding: const EdgeInsets.all(12),
                           borderRadius: BorderRadius.circular(20),
                           children: [
-                            MoeToggleBar<ProviderCategory>(
+                            MoeSegmentedControl<ProviderCategory>(
                               value: _category,
-                              items: ProviderCategory.values
+                              segments: ProviderCategory.values
                                   .map(
                                     (c) =>
-                                        MoeToggleItem(value: c, label: c.label),
+                                        MoeSegment(value: c, label: c.label),
                                   )
                                   .toList(),
                               onChanged: _onCategoryChanged,
@@ -456,12 +495,23 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                             _buildInputRow(
                               colors,
                               icon: Icons.key_outlined,
-                              label: 'API Key',
+                              label:
+                                  _selectedFormat.asr?.apiKeyLabel ?? 'API Key',
                               controller: _keyCtrl,
                               hintText: _selectedFormat.apiKeyOptional
                                   ? '可选（Bearer Token）'
                                   : '必填',
                             ),
+                            for (final field
+                                in _selectedFormat.asr?.credentialFields ??
+                                    const <AsrCredentialField>[])
+                              _buildInputRow(
+                                colors,
+                                icon: Icons.vpn_key_outlined,
+                                label: field.label,
+                                controller: _credentialCtrl(field.key),
+                                hintText: field.optional ? '可选' : '必填',
+                              ),
                             _buildInputRow(
                               colors,
                               icon: Icons.link_outlined,
@@ -509,6 +559,49 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                             colors,
                           ),
                         ],
+                        if (_isCustomRestTts) ...[
+                          const SizedBox(height: 16),
+                          MoeSettingsGroup(
+                            margin: EdgeInsets.zero,
+                            children: [
+                              MoeSettingsRow(
+                                label: '请求模板',
+                                detailText: '路径、请求头、请求体',
+                                trailingType: MoeSettingsRowTrailing.text,
+                                showDivider: false,
+                                onTap: () async {
+                                  final template =
+                                      await showTtsRequestTemplateEditor(
+                                        context,
+                                        {
+                                          TtsRequestFormat
+                                                  .customRestTemplateKey:
+                                              _ttsTemplate,
+                                        },
+                                      );
+                                  if (template != null && mounted) {
+                                    setState(() => _ttsTemplate = template);
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                          _buildHint(
+                            '适合没有内置格式的语音服务：按厂商文档改模板即可。模型列表可在添加后的详情页手动添加。',
+                            colors,
+                          ),
+                        ],
+                        if (_selectedFormat.asr != null)
+                          _buildHint(
+                            [
+                              for (final field
+                                  in _selectedFormat.asr!.credentialFields)
+                                if (field.hint != null)
+                                  '${field.label}：${field.hint}',
+                              '识别模型已按厂商预置，添加后可在详情页增删。',
+                            ].join('\n'),
+                            colors,
+                          ),
                         ValueListenableBuilder<TextEditingValue>(
                           valueListenable: _urlCtrl,
                           builder: (context, value, _) {
@@ -639,14 +732,14 @@ class _FormatBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final items = formats
-        .map((f) => MoeToggleItem(value: f, label: f.label))
+        .map((f) => MoeSegment(value: f, label: f.label))
         .toList();
     return LayoutBuilder(
       builder: (context, constraints) {
         final fits = constraints.maxWidth / formats.length >= _minItemWidth;
-        final bar = MoeToggleBar<ApiFormat>(
+        final bar = MoeSegmentedControl<ApiFormat>(
           value: value,
-          items: items,
+          segments: items,
           expanded: fits,
           onChanged: onChanged,
         );

@@ -77,9 +77,11 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('选择图片失败: $e')));
+        await showMeoTalkAlert(
+          context: context,
+          title: '选择图片失败',
+          message: '$e',
+        );
       }
     }
   }
@@ -102,9 +104,11 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
       mode: LaunchMode.externalApplication,
     ).catchError((_) => false);
     if (opened || !mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('无法打开链接：$_githubUrl')));
+    await showMeoTalkAlert(
+      context: context,
+      title: '无法打开链接',
+      message: _githubUrl,
+    );
   }
 
   Future<void> _checkForUpdate() async {

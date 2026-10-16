@@ -157,18 +157,26 @@ class _ComfyUIWorkflowEditorState extends State<ComfyUIWorkflowEditor> {
                   const SizedBox(height: 12),
                   Wrap(
                     spacing: 8,
+                    runSpacing: 8,
                     children: [
-                      TextButton.icon(
-                        onPressed: _import,
-                        icon: const Icon(Icons.file_open_outlined),
-                        label: const Text('导入 JSON 文件'),
+                      IntrinsicWidth(
+                        child: MoeSecondaryButton(
+                          label: '导入 JSON 文件',
+                          icon: Icons.file_open_outlined,
+                          size: MoeSecondaryButtonSize.sm,
+                          onPressed: _import,
+                        ),
                       ),
-                      TextButton(
-                        onPressed: _parse,
-                        child: const Text('解析粘贴内容'),
+                      IntrinsicWidth(
+                        child: MoeSecondaryButton(
+                          label: '解析粘贴内容',
+                          size: MoeSecondaryButtonSize.sm,
+                          onPressed: _parse,
+                        ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 12),
                   TextField(
                     key: const ValueKey('comfy-workflow-json'),
                     controller: _json,
@@ -239,9 +247,10 @@ class _ComfyUIWorkflowEditorState extends State<ComfyUIWorkflowEditor> {
           ),
           Padding(
             padding: const EdgeInsets.all(16),
-            child: SizedBox(
+            child: MoePrimaryButton(
+              label: '保存工作流',
               width: double.infinity,
-              child: FilledButton(onPressed: _save, child: const Text('保存工作流')),
+              onPressed: _save,
             ),
           ),
         ],

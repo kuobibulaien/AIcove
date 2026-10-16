@@ -1,6 +1,6 @@
 # 语音通话（方案与实测）
 
-> 状态（2026-10-12）：路线已定（ADR0074）。已实现：引擎、Fish 流式合成、回复生成、麦克风／播放、通话页与聊天页入口、通话记录（v22）、气泡与记录页、上下文快照与通话摘要、识别来源设置。Mac 应用内已打通电话。模型下载还没做。数据都是在 Mac 上测的，连接的是开发者本机网络，真机和移动网络还没测。
+> 状态（2026-10-12）：路线已定（ADR0074）。已实现：引擎、Fish 流式合成、回复生成、麦克风／播放、通话页与聊天页入口、通话记录（v22）、气泡与记录页、上下文快照与通话摘要、识别来源设置。Mac 应用内已打通电话。本地识别模型可在应用内下载（2026-10-14）。数据都是在 Mac 上测的，连接的是开发者本机网络，真机和移动网络还没测。
 
 ## 流水线
 
@@ -86,13 +86,33 @@ tool/flutterw --dart run tool/voice_call_latency_probe.dart --keepalive 0,15,45,
 
 ## 语音识别：三种来源
 
-用户在「语音 · 语音通话」里选择识别来源（自动／本地／阿里云，只存本机），通话逻辑只依赖 `SpeechRecognizerPort`（`lib/src/features/voice_call/domain/speech_recognizer_port.dart`）。
+用户在「语音 · 语音通话」里选择识别来源（只存本机）：自动、本地模型，以及渠道商里每个启用渠道的可见识别模型（2026-10-14 起，ADR0082；之前只有写死的「阿里云百炼」）。通话逻辑只依赖 `SpeechRecognizerPort`（`lib/src/features/voice_call/domain/speech_recognizer_port.dart`）。
 
 | 来源 | 适配器 | 现状 |
 |---|---|---|
-| 本地离线（应用内下载模型） | `SherpaLocalSpeechRecognizer`：Silero VAD 判断说完，SenseVoice 识别整句，跑在后台 isolate | 已实现，在 Mac 的 `flutter test` 中用真实模型测试通过；Mac、Android 能构建，但应用内还没实际运行过；模型下载和管理还没做 |
-| 云端（用户自填密钥） | `AliyunRealtimeSpeechRecognizer`：百炼 Paraformer 实时识别 | 已实现，有协议测试；其它云端厂商以后按同一端口接入 |
+| 本地离线（应用内下载模型） | `SherpaLocalSpeechRecognizer`：Silero VAD 判断说完，SenseVoice 识别整句，跑在后台 isolate | 已实现，Mac 应用内跑通；模型在「语音 · 语音通话」页下载／删除（见下文「模型下载」），手机实机未验 |
+| 云端（渠道商里的识别模型） | `data/cloud_asr/`：统一骨架 `WebSocketSpeechRecognizer`＋七家适配器，`createCloudSpeechRecognizer` 按渠道 `asrRequestFormat` 选 | 已实现，有协议测试（本地假服务）；均未用真实 Key 验证，见下文「云端识别」 |
 | 系统语音识别 | 未实现（候选：`speech_to_text` 包，调用 Android SpeechRecognizer 和 Apple Speech 框架） | 只做了调研，见下文 |
+
+### 云端识别（2026-10-14，ADR0082）
+
+格式注册表 `domain/asr_request_format.dart`，格式存渠道 `customConfig.asrRequestFormat`（与对话／合成的 `requestFormat` 分开）。渠道地址填 `ws(s)://` 时照用，填 `http(s)://` 时阿里云、OpenAI 换成同主机的识别地址，其余用默认地址。
+
+| 格式 | 适配器 | 模型名的含义 | 额外凭证 | 判停 |
+|---|---|---|---|---|
+| 阿里云百炼 | `AliyunRealtimeSpeechRecognizer`（run-task）；`qwen3-asr*` 走 `AliyunQwenRealtimeSpeechRecognizer`（`/api-ws/v1/realtime`） | 模型 id | 无 | `max_sentence_silence`／`server_vad` |
+| 火山引擎（豆包） | `VolcengineSpeechRecognizer`：二进制帧＋gzip，`bigmodel_async` | X-Api-Resource-Id | 旧版控制台填 App ID（此时 API Key 填 Access Token） | `end_window_size`，`definite` 分句 |
+| 腾讯云 | `TencentSpeechRecognizer`：地址签名 HMAC-SHA1 | engine_model_type | AppID、SecretId（API Key 栏填 SecretKey） | `needvad`＋`vad_silence_time`，`slice_type` 2 |
+| 讯飞 | `XfyunSpeechRecognizer`：实时语音转写标准版 | 只有 `rtasr` | APPID（API Key 栏填 APIKey） | `cn.st.type` 为 "0" |
+| OpenAI Realtime | `OpenAiRealtimeSpeechRecognizer`：`intent=transcription`，24 kHz（16 kHz 线性插值升采样） | 转写模型 | 无 | `server_vad`；`gpt-live-transcribe` 不支持，不能用 |
+| Deepgram | `DeepgramSpeechRecognizer` | `nova-3` 等 | 语言（可选，默认 zh-CN） | `is_final` 拼到 `speech_final`／`UtteranceEnd` |
+| ElevenLabs | `ElevenLabsSpeechRecognizer` | `scribe_v2_realtime` | 无 | `commit_strategy=vad` |
+
+- 判停静音统一 500 ms（`kCloudEndOfTurnSilenceMs`）。
+- 保活：超过 4 秒没送音频（角色在说话、静音、打字模式）就发一次 100 ms 静音，Deepgram 发 `KeepAlive`；防止腾讯 6 秒、Deepgram 10 秒、讯飞 15 秒无音频断开。
+- 挂断时 OpenAI／ElevenLabs 没人在说话就立即收尾，否则最多等 2 秒拿最后一句。
+- 「测试模型」对识别模型真实建连、送 1 秒静音（`AsrModelProbe`），能验证地址、凭证、签名和模型名，不验证识别效果。
+- 内置阿里云渠道预置 `fun-asr-realtime`、`paraformer-realtime-v2`，老用户的阿里云渠道补一次（`asr_models_seeded`）。
 
 ### 本地模型选型（2026-10-12）
 
@@ -118,6 +138,13 @@ tool/flutterw --dart run tool/voice_call_latency_probe.dart --keepalive 0,15,45,
 - 本地识别 + DeepSeek + Fish：两轮完整跑通。从用户说完到出第一个字约 2.4～3.3 秒，到听见第一块音频约 3.0～3.9 秒；合成连接 0.8～0.9 秒、识别器 1.6～1.8 秒在接通阶段完成。
 - macOS 上 `record` 开启系统语音处理（回声消除）后，输入收到的全是零，真人说话也一样（2026-10-12 用户实测纠正；之前以为是外放的 `say` 被当回声消掉）。所以系统语音处理只在 Android／iOS 开，桌面端一律关闭（`callVoiceProcessingSupported`），桌面通话保持半双工。
 - 调试版每次重新构建签名都会变，macOS 会再弹一次麦克风权限框。
+
+### 模型下载（2026-10-14）
+
+- `data/local_asr_model_installer.dart`：三个文件（`silero_vad_v5.onnx`、SenseVoice 的 `model.int8.onnx`＋`tokens.txt`，合计约 229 MB）按 Hugging Face 固定提交下载，地址依次是 hf-mirror.com、huggingface.co（VAD 再加 sherpa-onnx GitHub Release 兜底）。不下 GitHub 的 tar.bz2 整包，省掉解压。
+- 每个文件先写 `.part`，大小和 SHA-256 都对上才改名，所以正式文件存在即完整（`installedLocalCallModel` 只查存在）；已装的文件跳过，中断后再装只补缺的。没做断点续传。
+- 下载状态在全局 `localCallModelInstallProvider`，离开设置页不中断；完成或删除后刷新 `callRecognizerReadinessProvider`。目录仍是应用支持目录下的 `voice_call/asr-models`。
+- 设置页：「本地识别模型」分组显示下载／进度与取消／失败重试／已安装与删除；选「本地模型」而未安装时直接弹窗问要不要下载。
 
 ### 依赖与平台注意
 

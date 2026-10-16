@@ -235,15 +235,19 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Column(
             children: [
-              MoeSegTabBar(
+              MoeSegmentedControl<WallpaperLayout>(
                 key: const ValueKey('wallpaper_editor_layout_tabs'),
-                currentIndex: target.index,
-                tabs: [
+                value: target,
+                segments: [
                   for (final layout in WallpaperLayout.values)
-                    layout == current ? '${layout.label}（当前）' : layout.label,
+                    MoeSegment(
+                      value: layout,
+                      label: layout == current
+                          ? '${layout.label}（当前）'
+                          : layout.label,
+                    ),
                 ],
-                onTap: (index) =>
-                    setState(() => _target = WallpaperLayout.values[index]),
+                onChanged: (layout) => setState(() => _target = layout),
               ),
               const SizedBox(height: 10),
               Expanded(child: _frame(target, current, showLabel: false)),

@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/configurable_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/minimax_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/openai_compatible_tts_synthesis_adapter.dart';
-import 'package:aicove_flutter/src/features/plugins/tts/synthesis/siliconflow_tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/synthesis/tts_synthesis_adapter.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_service.dart';
@@ -39,145 +38,6 @@ void main() {
         'input': 'hello',
         'voice': 'nova',
         'speed': 1.2,
-      });
-    });
-  });
-
-  group('SiliconFlowTtsSynthesisAdapter', () {
-    const adapter = SiliconFlowTtsSynthesisAdapter();
-
-    test('已带 /audio/speech 时保持路径并移除 query', () {
-      final context = TtsSynthesisContext(
-        config: TtsConfig(model: 'IndexTeam/IndexTTS-2'),
-        text: 'hello',
-        rawUrl: 'https://api.siliconflow.cn/v1/audio/speech?foo=bar',
-        requestFormat: 'siliconflow_indextts',
-        apiKey: 'sk-demo',
-      );
-
-      expect(adapter.supports(context), isTrue);
-      expect(
-        adapter.buildSpeechUri(context).toString(),
-        'https://api.siliconflow.cn/v1/audio/speech',
-      );
-      expect(adapter.resolveTimeout(context), const Duration(seconds: 30));
-      expect(adapter.buildHeaders(context), {
-        'Content-Type': 'application/json',
-        'X-Failover-Enabled': 'true',
-        'Authorization': 'Bearer sk-demo',
-      });
-    });
-
-    test('系统音色模式会拼接模型和音色 ID', () {
-      final context = TtsSynthesisContext(
-        config: TtsConfig(
-          model: 'IndexTeam/IndexTTS-2',
-          voice: 'alex',
-          speed: 1.1,
-        ),
-        text: 'system voice',
-        rawUrl: 'https://api.siliconflow.cn/v1',
-        requestFormat: 'siliconflow_indextts',
-      );
-
-      expect(adapter.buildRequestBody(context), {
-        'model': 'IndexTeam/IndexTTS-2',
-        'input': 'system voice',
-        'response_format': 'mp3',
-        'speed': 1.1,
-        'voice': 'IndexTeam/IndexTTS-2:alex',
-      });
-    });
-
-    test('动态音色模式会构造 references', () {
-      final context = TtsSynthesisContext(
-        config: TtsConfig(
-          model: 'IndexTeam/IndexTTS-2',
-          promptAudioUrl: 'https://example.com/ref.mp3',
-          promptText: '参考文本',
-          voicePresets: const [],
-          selectedVoicePresetId: '',
-        ),
-        text: 'dynamic voice',
-        rawUrl: 'https://api.siliconflow.cn/v1',
-        requestFormat: 'siliconflow_indextts',
-      );
-
-      expect(adapter.buildRequestBody(context), {
-        'model': 'IndexTeam/IndexTTS-2',
-        'input': 'dynamic voice',
-        'response_format': 'mp3',
-        'voice': '',
-        'references': [
-          {
-            'audio': 'https://example.com/ref.mp3',
-            'text': '参考文本',
-          }
-        ],
-      });
-    });
-
-    test('预置 URI 优先于系统音色和动态音色', () {
-      final context = TtsSynthesisContext(
-        config: TtsConfig(
-          model: 'IndexTeam/IndexTTS-2',
-          voice: 'alex',
-          promptAudioUrl: 'https://example.com/ref.mp3',
-          promptText: '参考文本',
-          voicePresets: [
-            VoicePreset(
-              id: 'preset-1',
-              name: '上传音色',
-              siliconFlowVoiceUri: 'speech:tenant:voice-id',
-            ),
-          ],
-          selectedVoicePresetId: 'preset-1',
-        ),
-        text: 'preset voice',
-        rawUrl: 'https://api.siliconflow.cn/v1',
-        requestFormat: 'siliconflow_indextts',
-      );
-
-      expect(adapter.buildRequestBody(context), {
-        'model': 'IndexTeam/IndexTTS-2',
-        'input': 'preset voice',
-        'response_format': 'mp3',
-        'voice': 'speech:tenant:voice-id',
-      });
-    });
-
-    test('binding 兼容旧厂商 providerId 时仍优先使用渠道音色', () {
-      final context = TtsSynthesisContext(
-        config: TtsConfig(
-          selectedProviderId: 'provider_sf',
-          model: 'IndexTeam/IndexTTS-2',
-          voicePresets: [
-            VoicePreset(
-              id: 'preset-binding',
-              name: '绑定音色',
-              bindings: const [
-                VoiceChannelBinding(
-                  providerId: 'siliconflow',
-                  providerName: '硅基流动',
-                  adapterId: 'siliconflow',
-                  modelId: 'IndexTeam/IndexTTS-2',
-                  remoteVoiceId: 'speech:binding:voice-id',
-                ),
-              ],
-            ),
-          ],
-          selectedVoicePresetId: 'preset-binding',
-        ),
-        text: 'binding voice',
-        rawUrl: 'https://api.siliconflow.cn/v1',
-        requestFormat: 'siliconflow_indextts',
-      );
-
-      expect(adapter.buildRequestBody(context), {
-        'model': 'IndexTeam/IndexTTS-2',
-        'input': 'binding voice',
-        'response_format': 'mp3',
-        'voice': 'speech:binding:voice-id',
       });
     });
   });
@@ -356,7 +216,7 @@ void main() {
         apiKey: 'test-key',
         requestUrl:
             'http://${server.address.address}:${server.port}/minimax/v1',
-        requestFormat: 'openai_tts',
+        requestFormat: 'minimax',
       );
 
       try {
@@ -440,6 +300,62 @@ void main() {
         });
         expect(result.success, isTrue);
         expect(result.audioUrl, startsWith('data:audio/mpeg;base64,'));
+      } finally {
+        await server.close(force: true);
+      }
+    });
+
+    test('自定义 REST 按渠道模板发请求，占位符全部替换', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requestReceived = Completer<void>();
+      late String requestPath;
+      late String apiKeyHeader;
+      late Map<String, dynamic> requestBody;
+
+      unawaited(server.listen((request) async {
+        requestPath = request.uri.path;
+        apiKeyHeader = request.headers.value('x-api-key') ?? '';
+        requestBody =
+            jsonDecode(await utf8.decoder.bind(request).join())
+                as Map<String, dynamic>;
+        request.response.headers.contentType = ContentType('audio', 'mpeg');
+        request.response.add([0xFF, 0xFB, 0x90, 0x64]);
+        await request.response.close();
+        if (!requestReceived.isCompleted) requestReceived.complete();
+      }).asFuture<void>());
+
+      final service = TtsService(
+        config: TtsConfig(model: 'my-voice-model', voice: 'v-001', speed: 1.2),
+        apiKey: 'custom-key',
+        requestUrl: 'http://${server.address.address}:${server.port}/api',
+        requestFormat: 'custom_rest',
+        customConfig: const <String, dynamic>{
+          'tts_template': <String, dynamic>{
+            'path': '/v2/speak',
+            'headers': <String, dynamic>{'X-Api-Key': '{apiKey}'},
+            'body': <String, dynamic>{
+              'content': '{text}',
+              'speaker': '{voice}',
+              'engine': '{model}',
+              'rate': '{speed}',
+            },
+          },
+        },
+      );
+
+      try {
+        final result = await service.convert('custom rest');
+        await requestReceived.future;
+
+        expect(requestPath, '/api/v2/speak');
+        expect(apiKeyHeader, 'custom-key');
+        expect(requestBody, {
+          'content': 'custom rest',
+          'speaker': 'v-001',
+          'engine': 'my-voice-model',
+          'rate': 1.2,
+        });
+        expect(result.success, isTrue);
       } finally {
         await server.close(force: true);
       }

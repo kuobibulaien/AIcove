@@ -51,25 +51,21 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
     (
       label: '模型',
       icon: Icons.layers_rounded,
-      color: Color(0xFF5856D6),
       page: ModelListPage(),
     ),
     (
       label: '通用',
       icon: Icons.tune_rounded,
-      color: Color(0xFF32ADE6),
       page: UiSettingsPage(),
     ),
     (
       label: '插件',
       icon: Icons.extension_rounded,
-      color: Color(0xFFAF52DE),
       page: ChatPluginSettingsPage(),
     ),
     (
       label: '调试',
       icon: Icons.terminal_rounded,
-      color: Color(0xFFFF9500),
       page: DebugCenterPage(),
     ),
   ];
@@ -153,7 +149,6 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
                   _buildEntry(
                     context,
                     icon: entry.icon,
-                    color: entry.color,
                     label: entry.label,
                     page: entry.page,
                   ),
@@ -168,7 +163,6 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
   Widget _buildEntry(
     BuildContext context, {
     required IconData icon,
-    required Color color,
     required String label,
     required Widget page,
   }) {
@@ -186,8 +180,13 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       iconWidget: Container(
         width: 30,
         height: 30,
-        decoration: MoeG2Decoration(radius: 7, color: color),
-        child: Icon(icon, color: Colors.white, size: 19),
+        decoration: MoeG2Decoration(
+          radius: 7,
+          color: context.moeColors.primary.withValues(
+            alpha: Theme.of(context).brightness == Brightness.dark ? 0.24 : 0.16,
+          ),
+        ),
+        child: Icon(icon, color: context.moeAccentInk, size: 19),
       ),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: _innerInset,

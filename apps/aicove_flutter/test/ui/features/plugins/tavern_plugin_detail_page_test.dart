@@ -50,7 +50,7 @@ Future<void> settle(WidgetTester tester) async {
 
 Future<void> tapTab(WidgetTester tester, String label) async {
   final finder = find.descendant(
-    of: find.byWidgetPredicate((w) => w is MoeToggleBar),
+    of: find.byWidgetPredicate((w) => w is MoeSegmentedControl),
     matching: find.text(label),
   );
   await tester.ensureVisible(finder);

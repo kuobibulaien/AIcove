@@ -148,9 +148,13 @@ class _ChatShareSheetState extends ConsumerState<ChatShareSheet> {
               ),
               error: (_, __) => Center(
                 heightFactor: 1,
-                child: TextButton(
-                  onPressed: () => ref.invalidate(conversationsProvider),
-                  child: const Text('联系人加载失败，点击重试'),
+                child: IntrinsicWidth(
+                  child: MoeSecondaryButton(
+                    label: '联系人加载失败，点击重试',
+                    icon: Icons.refresh,
+                    size: MoeSecondaryButtonSize.sm,
+                    onPressed: () => ref.invalidate(conversationsProvider),
+                  ),
                 ),
               ),
               data: (items) {

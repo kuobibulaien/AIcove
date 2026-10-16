@@ -1,4 +1,3 @@
-import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -179,6 +178,8 @@ class UiSettingsPage extends ConsumerWidget {
                     settings,
                     colors,
                   ),
+                  _divider(colors),
+                  _buildWindowsCloseBehaviorPicker(ref, settings, colors),
                 ],
               ],
             ),
@@ -248,16 +249,16 @@ class UiSettingsPage extends ConsumerWidget {
                   label: '新会话默认样式',
                   subtitle: '可在单个聊天的菜单里单独切换',
                   trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: MoeToggleBar<ChatDisplayStyle>(
+                  trailing: MoeSegmentedControl<ChatDisplayStyle>(
                     key: const ValueKey('chat_display_style_toggle'),
                     expanded: false,
                     value: settings.chatDisplayStyle,
-                    items: const [
-                      MoeToggleItem(
+                    segments: const [
+                      MoeSegment(
                         value: ChatDisplayStyle.bubble,
                         label: '气泡',
                       ),
-                      MoeToggleItem(
+                      MoeSegment(
                         value: ChatDisplayStyle.document,
                         label: '文档',
                       ),
@@ -676,22 +677,14 @@ class UiSettingsPage extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SegmentedButton<MoeSurfaceMaterial>(
-            expandedInsets: EdgeInsets.zero,
-            showSelectedIcon: false,
+          MoeSegmentedControl<MoeSurfaceMaterial>(
+            value: material,
             segments: [
               for (final material in MoeSurfaceMaterial.values)
-                ButtonSegment(value: material, label: Text(material.label)),
+                MoeSegment(value: material, label: material.label),
             ],
-            selected: {material},
-            onSelectionChanged: (selection) =>
-                _setSurfaceMaterial(context, ref, selection.first),
-            style: withoutHoverFeedback(
-              SegmentedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
+            onChanged: (material) =>
+                _setSurfaceMaterial(context, ref, material),
           ),
           if (material == MoeSurfaceMaterial.liquid) ...[
             const SizedBox(height: 6),
@@ -707,7 +700,7 @@ class UiSettingsPage extends ConsumerWidget {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      '玻璃模式功耗较高，可能会引起手机发热。',
+                      '此项极耗费性能，容易引起发热和卡顿。手机端日用推荐模糊或纯色。',
                       style: TextStyle(
                         fontSize: 12,
                         color: colors.toastWarning,
@@ -874,31 +867,48 @@ class UiSettingsPage extends ConsumerWidget {
             style: TextStyle(fontSize: 13, color: colors.muted),
           ),
           const SizedBox(height: 10),
-          SegmentedButton<WindowControlButtonSide>(
-            expandedInsets: EdgeInsets.zero,
+          MoeSegmentedControl<WindowControlButtonSide>(
+            value: settings.windowsWindowControlsSide,
             segments: const [
-              ButtonSegment(
-                value: WindowControlButtonSide.left,
-                label: Text('左'),
-              ),
-              ButtonSegment(
-                value: WindowControlButtonSide.right,
-                label: Text('右'),
-              ),
+              MoeSegment(value: WindowControlButtonSide.left, label: '左'),
+              MoeSegment(value: WindowControlButtonSide.right, label: '右'),
             ],
-            selected: {settings.windowsWindowControlsSide},
-            onSelectionChanged: (selection) {
-              ref
-                  .read(appSettingsProvider.notifier)
-                  .setWindowsWindowControlsSide(selection.first);
-            },
-            showSelectedIcon: false,
-            style: withoutHoverFeedback(
-              SegmentedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
+            onChanged: (side) => ref
+                .read(appSettingsProvider.notifier)
+                .setWindowsWindowControlsSide(side),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Windows 关闭窗口时退出还是留在托盘
+  Widget _buildWindowsCloseBehaviorPicker(
+    WidgetRef ref,
+    AppSettings settings,
+    MoeColors colors,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _blockLabel(colors, '关闭窗口时'),
+          const SizedBox(height: 2),
+          Text(
+            '收进托盘后主动消息和来电照常进行，完全退出则会停止',
+            style: TextStyle(fontSize: 13, color: colors.muted),
+          ),
+          const SizedBox(height: 10),
+          MoeSegmentedControl<WindowsCloseBehavior>(
+            value: settings.windowsCloseBehavior,
+            segments: [
+              for (final behavior in WindowsCloseBehavior.values)
+                MoeSegment(value: behavior, label: behavior.label),
+            ],
+            onChanged: (behavior) => ref
+                .read(appSettingsProvider.notifier)
+                .setWindowsCloseBehavior(behavior),
           ),
         ],
       ),
@@ -971,10 +981,14 @@ class UiSettingsPage extends ConsumerWidget {
             ),
           Align(
             alignment: Alignment.centerLeft,
-            child: ActionChip(
-              label: const Text('另存为集合'),
-              onPressed: () =>
-                  _showSaveAsSetDialog(context, ref, settings, activeSet),
+            child: IntrinsicWidth(
+              child: MoeSecondaryButton(
+                label: '另存为集合',
+                icon: Icons.save_outlined,
+                size: MoeSecondaryButtonSize.sm,
+                onPressed: () =>
+                    _showSaveAsSetDialog(context, ref, settings, activeSet),
+              ),
             ),
           ),
           const SizedBox(height: 16),

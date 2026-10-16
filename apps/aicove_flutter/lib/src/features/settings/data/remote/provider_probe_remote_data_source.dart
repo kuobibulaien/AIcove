@@ -11,6 +11,10 @@ import '../../../../core/api/providers/zai_compat.dart';
 import '../../../../core/network/json_http_client.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
+import '../../../../core/api/agent_api.dart';
+import '../../../plugins/tts/tts_request_format.dart';
+import '../../../voice_call/domain/asr_request_format.dart';
+import '../../settings_models.dart';
 import '../support/ui_models_store_support.dart';
 
 /// 设置模块远端探测数据源。
@@ -53,6 +57,14 @@ class ProviderProbeRemoteDataSource {
     }
     if (isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
       return kNovelAiDefaultModels;
+    }
+    // Fish Audio 与各家识别接口都没有列模型的端点，直接用注册表里的模型。
+    final config = customConfig ?? const <String, dynamic>{};
+    final asrFormat = AsrRequestFormat.ofConfig(config);
+    if (asrFormat != null) return asrFormat.defaultModels;
+    if (TtsRequestFormat.fromRaw(config['requestFormat']?.toString()) ==
+        TtsRequestFormat.fishAudio) {
+      return TtsRequestFormat.fishAudio.defaultModels;
     }
     if (resolvedProvider == 'gemini') {
       return _previewGeminiProvider(
@@ -101,6 +113,7 @@ class ProviderProbeRemoteDataSource {
     required String apiBaseUrl,
     required String modelId,
     Map<String, dynamic>? customConfig,
+    ModelType modelType = ModelType.chat,
   }) async {
     if (ComfyUIWorkflow.isProvider(providerId, customConfig)) {
       final client = _httpClient ?? http.Client();
@@ -119,6 +132,15 @@ class ProviderProbeRemoteDataSource {
       } finally {
         if (_httpClient == null) client.close();
       }
+    }
+    if (modelType == ModelType.image) {
+      return _testImageModel(
+        providerId: providerId,
+        apiKey: apiKey,
+        apiBaseUrl: apiBaseUrl,
+        modelId: modelId,
+        customConfig: customConfig,
+      );
     }
     try {
       final adapter = ProviderAdapterFactory.getAdapter(
@@ -175,6 +197,38 @@ class ProviderProbeRemoteDataSource {
       return result.text.isNotEmpty ? result.text : '(模型响应成功，无文本内容)';
     } catch (e) {
       throw Exception('模型测试失败: $e');
+    }
+  }
+
+  /// 绘图模型没有对话接口，按真实生图路径出一张最小请求的图。
+  Future<String> _testImageModel({
+    required String providerId,
+    required String apiKey,
+    required String apiBaseUrl,
+    required String modelId,
+    Map<String, dynamic>? customConfig,
+  }) async {
+    final httpClient = _httpClient ?? http.Client();
+    final client = AgentApiClient(
+      client: httpClient,
+      timeout: const Duration(seconds: 90),
+    );
+    try {
+      final result = await client.generateImage(
+        provider: providerId,
+        model: modelId,
+        prompt: 'a red apple on a white table',
+        providerApiBase: apiBaseUrl,
+        providerApiKey: apiKey,
+        customConfig: customConfig,
+        requestSource: 'model_test',
+      );
+      if (result.images.isEmpty) throw StateError('未返回图片');
+      return '生图成功（${result.images.length} 张）';
+    } catch (e) {
+      throw Exception('模型测试失败: $e');
+    } finally {
+      if (_httpClient == null) httpClient.close();
     }
   }
 

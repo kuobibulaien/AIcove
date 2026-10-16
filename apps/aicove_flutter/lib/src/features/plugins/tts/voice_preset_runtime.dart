@@ -25,6 +25,7 @@ enum VoicePresetProblem {
   duplicatePreset,
   needsConfiguration,
   targetUnavailable,
+  missingApiKey,
   ambiguousTarget,
   invalidParameters,
   missingVoice,

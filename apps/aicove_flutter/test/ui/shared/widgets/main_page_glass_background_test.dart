@@ -10,7 +10,6 @@ import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_liquid_glass.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_chat_wallpaper.dart';
-import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/moe_wallpaper.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
@@ -102,9 +101,8 @@ void main() {
           if (width >= 900) {
             expect(root.blurEnabled, isNull);
             expect(find.byType(BackdropFilter), findsWidgets);
-            // The glass level paints the root with the frosted tint, not the
-            // thin glass tint, so list text stays readable over wallpapers.
-            expect(root.frostedOnly, isTrue);
+            // The glass level paints the root with the glass recipe like every
+            // other surface: the glass tint, no lens rim.
             final rootMaterial = tester.widget<Material>(
               find
                   .descendant(
@@ -115,10 +113,8 @@ void main() {
             );
             expect(
               rootMaterial.color,
-              MoeFrostedMaterial.surfaceTint(
-                dark ? Brightness.dark : Brightness.light,
-                fill: kDefaultGlassTintFill,
-              ),
+              (dark ? MoeColors.dark() : MoeColors.light())
+                  .glassTintForFill(kDefaultGlassTintFill),
             );
           } else {
             // Full-screen narrow roots paint the plain page color.

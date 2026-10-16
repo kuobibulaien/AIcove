@@ -57,7 +57,13 @@ void main() {
       await tester.enterText(find.byType(TextField), '');
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
+      expect(find.textContaining('请输入大于 0'), findsNothing);
+      Navigator.of(tester.element(find.byType(DefaultModelSettingsPage)))
+          .maybePop();
+      await tester.pumpAndSettle();
       expect(find.textContaining('请输入大于 0'), findsOneWidget);
+      await tester.tap(find.text('继续编辑'));
+      await tester.pumpAndSettle();
       expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
           '');
       expect(find.text('保存'), findsNothing);

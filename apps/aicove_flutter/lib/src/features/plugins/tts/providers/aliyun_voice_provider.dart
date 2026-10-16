@@ -25,6 +25,7 @@ class AliyunQwenVoiceProvider extends TtsVoiceProvider {
   @override
   List<String> get requestFormatAliases => const <String>[
         'aliyun_qwen_tts',
+        'aliyun',
       ];
 
   @override

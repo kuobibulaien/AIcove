@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../theme/tokens.dart';
 import '../animations/parallax_slide_page_route.dart';
 import 'desktop_window_frame.dart';
+import 'meotalk_dialog.dart';
 import 'moe_chat_wallpaper.dart';
 
 /// The detail navigator stays mounted when the window crosses the breakpoint.
@@ -239,9 +240,11 @@ class MoeWorkspace extends InheritedWidget {
 
   static bool _canReplace(BuildContext context, NavigatorState navigator) {
     if (!(_observer(navigator)?.hasProtectedRoute ?? false)) return true;
-    ScaffoldMessenger.maybeOf(
-      context,
-    )?.showSnackBar(const SnackBar(content: Text('请先完成或退出右侧正在编辑的页面，再切换。')));
+    showMeoTalkAlert(
+      context: context,
+      title: '暂时不能切换',
+      message: '请先完成或退出右侧正在编辑的页面，再切换。',
+    );
     return false;
   }
 

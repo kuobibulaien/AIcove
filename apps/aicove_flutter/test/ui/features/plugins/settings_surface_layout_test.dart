@@ -421,7 +421,7 @@ void main() {
       for (final tab in ['提示词', '正则', '世界书', '标签']) {
         await tester.tap(
           find.descendant(
-            of: find.byWidgetPredicate((w) => w is MoeToggleBar),
+            of: find.byWidgetPredicate((w) => w is MoeSegmentedControl),
             matching: find.text(tab),
           ),
         );

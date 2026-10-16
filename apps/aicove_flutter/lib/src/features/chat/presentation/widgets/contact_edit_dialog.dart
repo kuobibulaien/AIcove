@@ -9,6 +9,8 @@ import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../domain/conversation.dart';
 import '../../domain/persona_prompt_codec.dart';
+import '../../../../ui/shared/widgets/buttons/moe_primary_button.dart';
+import '../../../../ui/shared/widgets/buttons/moe_secondary_button.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
 
 class ContactEditResult {
@@ -121,13 +123,13 @@ Future<ContactEditResult?> showContactEditDialog({
                   width: 72,
                   height: 72,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _fallbackLetter(nameCtrl.text),
+                  errorBuilder: (_, __, ___) => _fallbackLetter(context, nameCtrl.text),
                 ),
               );
             }
             return MoeG2ClipRRect(
               radius: radiusBubble.x,
-              child: _fallbackLetter(nameCtrl.text),
+              child: _fallbackLetter(context, nameCtrl.text),
             );
           }
 
@@ -151,10 +153,10 @@ Future<ContactEditResult?> showContactEditDialog({
               alignment: Alignment.center,
               decoration: MoeG2Decoration(
                 radius: 12,
-                color: Colors.grey.shade200,
+                color: context.moeColors.text.withValues(alpha: 0.05),
               ),
-              child: const Icon(Icons.image_not_supported_outlined,
-                  size: 42, color: Colors.grey),
+              child: Icon(Icons.image_not_supported_outlined,
+                  size: 42, color: context.moeColors.muted),
             );
           }
 
@@ -178,19 +180,27 @@ Future<ContactEditResult?> showContactEditDialog({
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          FilledButton.icon(
-                            onPressed: pickAvatar,
-                            icon: const Icon(Icons.image),
-                            label: const Text('选择头像'),
-                          ),
-                          if (avatarData != null)
-                            TextButton(
-                              onPressed: () => setState(() {
-                                avatarData = null;
-                                avatarBytes = null;
-                              }),
-                              child: const Text('清除'),
+                          IntrinsicWidth(
+                            child: MoePrimaryButton(
+                              label: '选择头像',
+                              icon: Icons.image_outlined,
+                              size: MoePrimaryButtonSize.sm,
+                              onPressed: pickAvatar,
                             ),
+                          ),
+                          if (avatarData != null) ...[
+                            const SizedBox(height: 8),
+                            IntrinsicWidth(
+                              child: MoeSecondaryButton(
+                                label: '清除',
+                                size: MoeSecondaryButtonSize.sm,
+                                onPressed: () => setState(() {
+                                  avatarData = null;
+                                  avatarBytes = null;
+                                }),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ],
@@ -202,19 +212,25 @@ Future<ContactEditResult?> showContactEditDialog({
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      FilledButton.icon(
-                        onPressed: pickCharacterImage,
-                        icon: const Icon(Icons.photo_library_outlined),
-                        label: const Text('选择立绘'),
+                      IntrinsicWidth(
+                        child: MoePrimaryButton(
+                          label: '选择立绘',
+                          icon: Icons.photo_library_outlined,
+                          size: MoePrimaryButtonSize.sm,
+                          onPressed: pickCharacterImage,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       if (characterData != null)
-                        TextButton(
-                          onPressed: () => setState(() {
-                            characterData = null;
-                            characterBytes = null;
-                          }),
-                          child: const Text('清除'),
+                        IntrinsicWidth(
+                          child: MoeSecondaryButton(
+                            label: '清除',
+                            size: MoeSecondaryButtonSize.sm,
+                            onPressed: () => setState(() {
+                              characterData = null;
+                              characterBytes = null;
+                            }),
+                          ),
                         ),
                     ],
                   ),
@@ -267,22 +283,23 @@ Future<ContactEditResult?> showContactEditDialog({
   );
 }
 
-Widget _fallbackLetter(String name) {
+Widget _fallbackLetter(BuildContext context, String name) {
   final letter = name.isNotEmpty ? name[0] : '新';
   return Container(
     width: 72,
     height: 72,
     decoration: MoeG2Decoration(
       radius: 10,
-      color: const Color(0xFFF0F0F0),
+      color: context.moeColors.primary.withValues(alpha: 0.16),
     ),
     alignment: Alignment.center,
     child: Text(
       letter,
-      style: const TextStyle(
-          fontSize: 24,
-          color: Color(0xFF999999),
-          fontWeight: MoeFontWeights.emphasis),
+      style: TextStyle(
+        fontSize: 24,
+        color: context.moeAccentInk,
+        fontWeight: MoeFontWeights.emphasis,
+      ),
     ),
   );
 }

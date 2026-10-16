@@ -247,4 +247,43 @@ void main() {
       expect(selected, isNull);
     },
   );
+
+  testWidgets('new preset missing a model can still be left by discarding', (
+    tester,
+  ) async {
+    final port = _Port();
+    await mount(
+      tester,
+      Builder(
+        builder: (context) => TextButton(
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const VoicePresetEditorPage(),
+            ),
+          ),
+          child: const Text('open'),
+        ),
+      ),
+      const Size(360, 800),
+      scale: 1,
+      port: port,
+      count: 0,
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '还没选模型');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(find.text('重试'), findsNothing);
+    final context = tester.element(find.byType(VoicePresetEditorPage));
+    Navigator.of(context).maybePop();
+    await tester.pumpAndSettle();
+    expect(find.text('修改还没保存'), findsOneWidget);
+    expect(find.text('请先补全标红的项目'), findsOneWidget);
+    await tester.tap(find.text('放弃修改'));
+    await tester.pumpAndSettle();
+    expect(find.byType(VoicePresetEditorPage), findsNothing);
+    expect(port.saved, isNull);
+    expect(tester.takeException(), isNull);
+  });
 }
