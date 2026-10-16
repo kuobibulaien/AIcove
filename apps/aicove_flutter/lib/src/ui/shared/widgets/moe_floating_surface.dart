@@ -221,3 +221,32 @@ class MoeSurfaceGroup extends InheritedWidget {
   @override
   bool updateShouldNotify(MoeSurfaceGroup oldWidget) => false;
 }
+
+/// 浮在壁纸上的整页底色材质：宽屏左侧的根界面和桌面端通话小窗共用，
+/// 跟着用户选的纯色／毛玻璃／玻璃档模糊与填充（页面背景不要透镜边缘）。
+class MoePageSurface extends StatelessWidget {
+  const MoePageSurface({
+    super.key,
+    required this.child,
+    this.radius = 0,
+    this.blurEnabled,
+  });
+
+  final Widget child;
+  final double radius;
+
+  /// 见 [MoeFloatingSurface.blurEnabled]。
+  final bool? blurEnabled;
+
+  @override
+  Widget build(BuildContext context) => MoeFloatingSurface(
+    baseline: MoeMaterialBaseline.background,
+    useLiquid: false,
+    blurEnabled: blurEnabled,
+    radius: radius,
+    solidColor: context.moeColors.surface,
+    border: BorderSide.none,
+    shadows: const [],
+    child: child,
+  );
+}

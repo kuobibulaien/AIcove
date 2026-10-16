@@ -27,9 +27,17 @@ class PrivacySpaceStore {
       await preferences.reload();
       return preferences.getString(privacySpacePasswordKey);
     },
+    // 必须带同步字段时钟写入：没有时钟时两台设备的密码无法比较新旧，
+    // 局域网同步会卡在冲突、云同步会被对端旧值覆盖。
     write: (value) async {
       final preferences = await SharedPreferences.getInstance();
-      await preferences.setString(privacySpacePasswordKey, value);
+      if (!await saveCloudPreference(
+        preferences,
+        privacySpacePasswordKey,
+        value,
+      )) {
+        throw StateError('Privacy space password was not saved');
+      }
     },
   );
 

@@ -116,7 +116,6 @@ class _RoleCardContentState extends ConsumerState<RoleCardContent> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
     final conversations = ref.watch(conversationsProvider);
     return conversations.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -189,15 +188,9 @@ class _RoleCardContentState extends ConsumerState<RoleCardContent> {
               ],
             );
           }
-          return ListView.separated(
+          return ListView.builder(
             padding: moeUnderBarPadding(context),
             itemCount: roles.length,
-            separatorBuilder: (_, __) => Divider(
-              height: borderWidth,
-              thickness: borderWidth,
-              indent: 72,
-              color: colors.divider,
-            ),
             itemBuilder: (context, index) =>
                 _buildRoleRow(context, roles[index]),
           );

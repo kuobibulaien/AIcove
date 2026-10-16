@@ -55,7 +55,11 @@ void main() {
   });
 
   test('each built-in wallpaper swaps its own light and dark asset', () {
-    for (final wallpaper in [GlobalWallpaper.catnap, GlobalWallpaper.laketown]) {
+    for (final wallpaper in [
+      GlobalWallpaper.catnap,
+      GlobalWallpaper.laketown,
+      GlobalWallpaper.sakura,
+    ]) {
       final light = wallpaper.assetFor(
         GlobalWallpaperSlot.page,
         Brightness.light,
@@ -76,6 +80,10 @@ void main() {
     expect(
       mapUiModelsToAppSettings({'global_wallpaper': 'laketown'}).globalWallpaper,
       GlobalWallpaper.laketown,
+    );
+    expect(
+      mapUiModelsToAppSettings({'global_wallpaper': 'sakura'}).globalWallpaper,
+      GlobalWallpaper.sakura,
     );
     for (final legacy in ['mist', 'apricot']) {
       expect(

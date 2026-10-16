@@ -10,6 +10,7 @@ enum GlobalWallpaper {
   none('none', '无'),
   catnap('catnap', '猫窗'),
   laketown('laketown', '灯湖'),
+  sakura('sakura', '樱丘'),
   custom('custom', '自定义');
 
   const GlobalWallpaper(this.value, this.label);
@@ -22,9 +23,13 @@ enum GlobalWallpaper {
     return 'assets/wallpapers/${value}_$mode.webp';
   }
 
-  /// 未调过截取位置时的默认焦点：竖屏裁切保留画面左侧的猫咪与植物。
-  Alignment get alignment =>
-      this == catnap ? Alignment.centerLeft : Alignment.center;
+  /// 未调过截取位置时的默认焦点：竖屏裁切保留猫窗左侧的猫咪与植物、
+  /// 樱丘树下的灯笼。
+  Alignment get alignment => switch (this) {
+    catnap => Alignment.centerLeft,
+    sakura => const Alignment(-0.45, 0),
+    _ => Alignment.center,
+  };
 
   static GlobalWallpaper fromValue(String? value) {
     // 旧内置壁纸（mist／apricot）已移除，选过的改用当前内置壁纸。

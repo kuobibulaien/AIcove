@@ -704,8 +704,9 @@ class _ComposerState extends ConsumerState<Composer> {
     return rawHeight / scale;
   }
 
+  // MediaQuery 已由全局缩放容器换算到布局坐标；只有原生通道的高度需要换算。
   double _liveKeyboardInsetLayout(BuildContext context) {
-    return _toLayoutHeight(MediaQuery.viewInsetsOf(context).bottom);
+    return MediaQuery.viewInsetsOf(context).bottom;
   }
 
   double _nativeKeyboardHeightLayout() {

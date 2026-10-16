@@ -6,8 +6,8 @@ import '../../../../features/voice_call/application/active_voice_call.dart';
 import '../../../../features/voice_call/application/voice_call_session.dart';
 import '../../../../core/models/message_block.dart';
 
-/// 通话收起后浮在聊天页上的小窗：正中是话筒（打字期间禁用），下面是通话时长。
-/// 可拖动，点一下回到通话页。放在一个铺满的 Stack 层里使用。
+/// 窄屏通话切回聊天后浮在聊天页上的小窗：正中是话筒开关状态，下面是通话时长。
+/// 可拖动，点一下回到通话。放在一个铺满的 Stack 层里使用。
 class VoiceCallFloatingWindow extends StatefulWidget {
   const VoiceCallFloatingWindow({
     super.key,
@@ -118,7 +118,7 @@ class _FloatingCard extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 打字期间话筒禁用，避免语音和文字同时输入。
+                  // 话筒照常开着（说话和打字都进通话），这里只显示开关状态。
                   Container(
                     width: 40,
                     height: 40,
@@ -127,10 +127,12 @@ class _FloatingCard extends StatelessWidget {
                       color: Colors.white.withValues(alpha: 0.14),
                     ),
                     child: Icon(
-                      Icons.mic_off_rounded,
+                      call.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
                       key: const ValueKey('voice-call-floating-mic'),
                       size: 22,
-                      color: Colors.white.withValues(alpha: 0.6),
+                      color: Colors.white.withValues(
+                        alpha: call.muted ? 0.6 : 0.95,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 6),

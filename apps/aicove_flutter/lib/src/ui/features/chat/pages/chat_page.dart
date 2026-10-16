@@ -60,7 +60,8 @@ import '../widgets/topic_compaction_button.dart';
 import '../widgets/frontend_message_probe.dart';
 import '../widgets/chat_viewport_controller.dart';
 import '../widgets/chat_wallpaper_background.dart';
-import '../../voice_call/pages/voice_call_page.dart';
+import '../../voice_call/widgets/voice_call_view.dart';
+import '../../voice_call/window/voice_call_window_launcher.dart';
 import '../../voice_call/widgets/voice_call_floating_window.dart';
 import '../../voice_call/widgets/voice_call_live_messages.dart';
 import '../../../../features/voice_call/application/active_voice_call.dart';
@@ -764,10 +765,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   ActiveVoiceCall? _boundCall;
   List<Message> _voiceCallMessages = const <Message>[];
 
-  /// 订阅当前通话：逐句记录变化时刷新临时气泡与悬浮窗。
+  /// 订阅当前通话：逐句记录变化时刷新临时气泡、通话视图与悬浮窗。
   void _bindVoiceCall(ActiveVoiceCall? call) {
     if (identical(call, _boundCall)) return;
-    _boundCall?.removeListener(_onVoiceCallChanged);
+    final previous = _boundCall;
+    previous?.removeListener(_onVoiceCallChanged);
+    // 没接通的电话收尾后通话视图随之撤掉，原因改用提示告诉用户。
+    final error = previous?.error;
+    if (error != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) MoeToast.error(context, error);
+      });
+    }
     _boundCall = call;
     call?.addListener(_onVoiceCallChanged);
     _voiceCallMessages = call == null
@@ -790,12 +799,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (next.length > previous.length) _forceChatListToBottom();
   }
 
-  /// 这个聊天里收成悬浮窗、正在打字的通话；挂断收尾中不再接收输入。
+  /// 这个聊天里正在进行的通话：输入框打的字进通话；挂断收尾中不再接收输入。
   ActiveVoiceCall? _typingVoiceCall(String? conversationId) {
     final call = _boundCall;
-    if (call == null || !call.minimized || call.ending) return null;
+    if (call == null || call.ending) return null;
     return call.conversationId == conversationId ? call : null;
   }
+
+  /// 最近一次构建时的会话；聊天页关掉时只挂断这个聊天里的通话。
+  String? _shownConversationId;
 
   bool _checkingVoiceCall = false;
 
@@ -824,12 +836,43 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
     }
     final call = _voiceCalls.start(conv);
-    // 从悬浮窗回来：输入换回语音。
-    call.restore();
-    MoeWorkspace.open(context, VoiceCallPage(conversation: conv, call: call));
+    // 在小窗里的提到前面，其余在聊天页里显示、已收起的回到通话视图。
+    if (call.inWindow) {
+      await VoiceCallWindows.open(context, call, conv);
+    } else {
+      call.restore();
+    }
   }
 
-  /// 通话打字模式下，输入框的文字只进通话，不进主对话。
+  /// 没打开成功的小窗：这通电话改在聊天页里显示，不再反复尝试。
+  ActiveVoiceCall? _windowFailedCall;
+  bool _openingCallWindow = false;
+
+  /// 桌面宽屏时通话放进独立小窗（参照微信）；拨出和接听来电都走这里。
+  bool _wantsCallWindow(ActiveVoiceCall call, bool isWide) =>
+      isWide &&
+      VoiceCallWindows.supported &&
+      !call.ending &&
+      !identical(call, _windowFailedCall);
+
+  void _openCallWindowLater(ActiveVoiceCall call, Conversation conv) {
+    if (call.inWindow || _openingCallWindow) return;
+    _openingCallWindow = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        _openingCallWindow = false;
+        return;
+      }
+      final opened = await VoiceCallWindows.open(context, call, conv);
+      _openingCallWindow = false;
+      if (!opened && mounted && !call.ending) {
+        setState(() => _windowFailedCall = call);
+        call.leaveWindow();
+      }
+    });
+  }
+
+  /// 通话期间输入框的文字只进通话，不进主对话。
   bool _sendToVoiceCall(ActiveVoiceCall call, String text) {
     final sent = call.sendText(text);
     if (sent) {
@@ -1217,17 +1260,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return null;
   }
 
+  /// [callView] 显示时盖住聊天内容、共用同一张壁纸；聊天内容只是不画，
+  /// 列表位置和草稿都还在。
   Widget _buildConversationBackground({
     required Conversation? conv,
     required Color fallbackColor,
     required Widget child,
+    Widget? callView,
   }) {
     return MoeWorkspaceBackground(
       background: ChatWallpaperLayer.forConversation(
         conversation: conv,
         fallbackColor: fallbackColor,
       ),
-      child: child,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Offstage(offstage: callView != null, child: child),
+          ?callView,
+        ],
+      ),
     );
   }
 
@@ -1262,8 +1314,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
     _modelFailoverPromptController.dismiss();
     _boundCall?.removeListener(_onVoiceCallChanged);
-    // 收成悬浮窗的通话跟着这个聊天页；聊天页关掉就挂断。
-    _voiceCalls.hangUpIfMinimizedAwayFrom(null);
+    // 通话视图嵌在这个聊天页里；聊天页关掉就挂断。
+    _voiceCalls.hangUpIn(_shownConversationId);
     _conversationActivation.clear();
     _entryRouteAnimation?.removeStatusListener(_onEntryRouteStatus);
     _imagePrecacheTimer?.cancel();
@@ -1352,17 +1404,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final hasMoreMessages = currentConversationId == null
         ? false
         : ref.watch(conversationHasMoreProvider(currentConversationId));
+    _shownConversationId = currentConversationId;
     _bindVoiceCall(ref.watch(activeVoiceCallProvider));
-    // 切到别的角色时，收成悬浮窗的通话随之挂断。
+    // 切到别的角色时，这个聊天里的通话随之挂断。
     ref.listen<String?>(
       activeConversationProvider.select((c) => c?.id),
-      (_, next) => _voiceCalls.hangUpIfMinimizedAwayFrom(next),
+      (_, next) => _voiceCalls.hangUpIfAwayFrom(next),
     );
-    final callHere = _boundCall?.conversationId == currentConversationId;
+    final callHere = _boundCall?.conversationId == currentConversationId
+        ? _boundCall
+        : null;
     // 通话内容只作临时显示，不进主对话；挂断后收进同一条通话气泡。
-    final transientMessages =
-        callHere ? _voiceCallMessages : const <Message>[];
+    final transientMessages = callHere != null
+        ? _voiceCallMessages
+        : const <Message>[];
     final typingCall = _typingVoiceCall(currentConversationId);
+    // 桌面宽屏的通话在独立小窗里；其余时候通话视图和聊天共用壁纸、占满聊天页，
+    // 收起后成悬浮窗。
+    final isWide = MoeWorkspace.maybeOf(context)?.isWide ?? false;
+    final windowCall =
+        callHere != null &&
+        (callHere.inWindow || _wantsCallWindow(callHere, isWide));
+    if (windowCall && conv != null) _openCallWindowLater(callHere, conv);
+    final showCall =
+        callHere != null && conv != null && !windowCall && !callHere.minimized;
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
     final chatStatus = ref.watch(chatStatusProvider);
     // 字段级订阅：页面只关心聊天背景色，设置里其他字段变化不再重建整页
@@ -1416,16 +1481,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         : 0.0;
 
     return PopScope(
-      canPop: !_selection.active,
+      // 通话视图里返回是回到聊天，不挂断。
+      canPop: !_selection.active && !showCall,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && !_selectionBusy) _selection.clear();
+        if (didPop) return;
+        if (showCall) {
+          callHere.minimize();
+        } else if (!_selectionBusy) {
+          _selection.clear();
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.transparent,
         // (注释已丢失)
         resizeToAvoidBottomInset: false,
         extendBodyBehindAppBar: true,
-        appBar: MoeChatHeader(
+        appBar: showCall ? null : MoeChatHeader(
           showBackButton: MoeWorkspace.showsBackButton(context),
           nativeInset: nativeInset,
           toolbarHeight: toolbarHeight,
@@ -1529,6 +1600,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         body: _buildConversationBackground(
           conv: conv,
           fallbackColor: chatBgColor,
+          callView: showCall
+              ? VoiceCallView(
+                  conversation: conv,
+                  call: callHere,
+                  onCollapse: callHere.minimize,
+                )
+              : null,
           child: Stack(
             children: [
               if (conv != null && messagesAsync.hasValue && messages.isEmpty)
@@ -1699,7 +1777,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ],
                 ),
               ),
-              if (typingCall != null && conv != null)
+              if (typingCall != null &&
+                  !windowCall &&
+                  typingCall.minimized &&
+                  conv != null)
                 Positioned.fill(
                   child: VoiceCallFloatingWindow(
                     call: typingCall,

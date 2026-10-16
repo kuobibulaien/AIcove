@@ -43,6 +43,24 @@ void main() {
     },
   );
 
+  test('adjacent turns from the same side merge into one message', () {
+    // 连发两句字、角色没出声就被打断：上游只收一问一答时不能连着两条 user。
+    final messages = buildVoiceCallMessages(const [], const [
+      CallTurn(role: 'assistant', text: '喂？'),
+      CallTurn(role: 'user', text: '我在地铁上'),
+      CallTurn(role: 'user', text: '不方便说话'),
+    ]);
+    final call = messages.where(
+      (m) =>
+          m['role'] != 'system' &&
+          !m['content'].toString().contains(kVoiceCallInstruction),
+    );
+    expect(call.map((m) => (m['role'], m['content'])), [
+      ('assistant', '喂？'),
+      ('user', '我在地铁上\n不方便说话'),
+    ]);
+  });
+
   test(
     'the speech guide joins the call instruction; without it tags are banned',
     () {

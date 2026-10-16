@@ -104,10 +104,6 @@ class VoiceCallSession {
   /// 关掉话筒：麦克风照常采集，但不送去识别。
   bool muted = false;
 
-  /// 打字模式：输入改由 [sendText] 提供，话筒暂停，不和语音同时输入。
-  /// 与 [muted] 分开，回到语音时恢复用户原来的话筒开关。
-  bool typing = false;
-
   /// 扬声器：关掉后角色的声音立刻无声，通话和字幕照常进行。
   bool get speakerOn => !output.silenced;
   set speakerOn(bool value) => output.silenced = !value;
@@ -186,7 +182,7 @@ class VoiceCallSession {
     _meterMic(pcm);
     final busy =
         _phase == VoiceCallPhase.thinking || _phase == VoiceCallPhase.speaking;
-    if (muted || typing || (busy && !allowBargeIn)) return;
+    if (muted || (busy && !allowBargeIn)) return;
     recognizer.addAudio(pcm);
   }
 
@@ -245,7 +241,8 @@ class VoiceCallSession {
   }
 
   /// 打字输入的一轮：和识别出的一句话走同一条回复链路，写进同一份逐句记录。
-  /// 还没提交的语音半句并进来一起发；角色正在想或说时直接打断（文字没有回声问题）。
+  /// 话筒照常开着，打字和说话可以交替；还没提交的语音半句并进来一起发，
+  /// 角色正在想或说时直接打断（文字没有回声问题）。
   /// 返回 false 表示通话还没接通或已在挂断。
   bool sendText(String text) {
     final trimmed = text.trim();

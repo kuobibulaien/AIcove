@@ -67,7 +67,7 @@ python3 tool/collect_diagnostics.py --from-bundle /path/to/aicove_diagnostics_..
 ```bash
 python3 tool/collect_diagnostics.py --since 2h
 # 多台手机时不能猜设备；用已确认设备号：
-python3 tool/collect_diagnostics.py --device 3a845d3f --since 7d
+python3 tool/collect_diagnostics.py --device <设备号> --since 7d
 ```
 
 默认读取唯一在线且已授权的设备。工具不安装、不启动/停止应用、不操作 UI、不清数据、不上传、不提权。正式 release 的 run-as 拒绝访问时应停下，不能尝试绕过沙箱。

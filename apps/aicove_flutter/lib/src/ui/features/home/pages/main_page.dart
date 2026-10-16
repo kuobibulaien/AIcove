@@ -113,17 +113,11 @@ class _MainPageState extends ConsumerState<MainPage> {
         child: content,
       );
     }
-    return MoeFloatingSurface(
-      baseline: MoeMaterialBaseline.background,
-      // Page backgrounds keep blur and tint without a lens rim at the edges.
-      useLiquid: false,
+    return MoePageSurface(
       // Full-screen narrow pages have nothing behind them to blur; a material
       // tint there would repaint the page background as a container color.
       blurEnabled: isWide ? null : false,
       radius: isWide ? telegramPrimaryRadius : 0,
-      solidColor: colors.surface,
-      border: BorderSide.none,
-      shadows: const [],
       child: content,
     );
   }

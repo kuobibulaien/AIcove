@@ -14,8 +14,14 @@ import 'src/features/observability/diagnostic_runtime_identity.dart';
 import 'src/features/observability/diagnostic_access_service.dart';
 import 'src/core/network/windows_proxy_http_overrides.dart';
 import 'src/features/auto_reply/data/background_service.dart';
+import 'src/ui/features/voice_call/window/voice_call_window_app.dart';
 
-void main() async {
+void main(List<String> args) async {
+  // 桌面端通话小窗是同一份程序的另一个引擎（desktop_multi_window 传入
+  // `multi_window <窗口 id> <参数>`），只跑通话界面。
+  if (args.length >= 3 && args.first == 'multi_window') {
+    return runVoiceCallWindow(args[2]);
+  }
   WidgetsFlutterBinding.ensureInitialized();
   FrontendErrorCapture(FrontendDiagnosticsService.instance).install();
   FrontendDiagnosticsService.instance

@@ -1,7 +1,7 @@
 name: aicove_flutter
 description: Flutter frontend for AIcove AI companion
 publish_to: 'none'
-version: 0.2.0+2026101501
+version: 0.3.0+2026101602
 
 environment:
   sdk: '>=3.12.2 <4.0.0'
@@ -80,6 +80,7 @@ dependencies:
   url_launcher: ^6.3.3
   mobile_scanner: 7.3.0  # 局域网配对实时扫一扫
   tray_manager: ^0.5.3
+  desktop_multi_window: 0.3.1 # 宽屏桌面端语音通话的独立小窗（每个窗口一个引擎）
 
 dev_dependencies:
   flutter_test:

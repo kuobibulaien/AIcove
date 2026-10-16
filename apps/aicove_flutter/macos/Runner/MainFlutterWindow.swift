@@ -1,5 +1,8 @@
 import Cocoa
 import FlutterMacOS
+import desktop_multi_window
+import screen_retriever_macos
+import window_manager
 
 class MainFlutterWindow: NSWindow {
   private var chromeChannel: FlutterMethodChannel?
@@ -15,6 +18,12 @@ class MainFlutterWindow: NSWindow {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    // Voice call windows run their own engine; give them only the plugins they use.
+    FlutterMultiWindowPlugin.setOnWindowCreatedCallback { controller in
+      WindowManagerPlugin.register(with: controller.registrar(forPlugin: "WindowManagerPlugin"))
+      // window_manager centers the window through screen_retriever.
+      ScreenRetrieverMacosPlugin.register(with: controller.registrar(forPlugin: "ScreenRetrieverMacosPlugin"))
+    }
 
     chromeChannel = FlutterMethodChannel(name: "aicove/window_chrome", binaryMessenger: flutterViewController.engine.binaryMessenger)
     chromeChannel?.setMethodCallHandler { [weak self] call, result in

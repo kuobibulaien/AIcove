@@ -152,18 +152,6 @@ void main() {
         reason: 'ttsEnabled 变化不应触发 ChatMessageList 重建');
   });
 
-  testWidgets('uiScaleFactor 变化仍会重建消息列表', (tester) async {
-    final buildCount = await pumpList(tester);
-    final before = buildCount();
-
-    notifierOf(tester).debugSet(_baseSettings.copyWith(uiScaleFactor: 1.2));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(buildCount(), greaterThan(before),
-        reason: 'uiScaleFactor 变化必须触发重建');
-  });
-
   testWidgets('messageFormatConfig 变化仍会重建消息列表', (tester) async {
     final buildCount = await pumpList(tester);
     final before = buildCount();

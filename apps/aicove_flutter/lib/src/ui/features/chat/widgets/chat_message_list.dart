@@ -707,14 +707,9 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   @override
   Widget build(BuildContext context) {
     final actions = ref.watch(chatActionsProvider);
-    // 字段级订阅：设置里无关字段变化不再重建整颗消息列表
-    final uiScale = ref.watch(appSettingsProvider.select(
-      (settings) => (settings.valueOrNull?.uiScaleFactor ?? 1.0)
-          .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
-          .toDouble(),
-    ));
-    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom / uiScale;
-    final safeBottom = MediaQuery.paddingOf(context).bottom / uiScale;
+    // MediaQuery 已由全局缩放容器换算到布局坐标。
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
     final fallbackBottomPadding = safeBottom + 70 + keyboardInset;
     final listBottomPadding = widget.bottomOverlayHeight > 0
         ? widget.bottomOverlayHeight

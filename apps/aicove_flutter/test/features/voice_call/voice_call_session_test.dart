@@ -109,16 +109,15 @@ void main() {
     },
   );
 
-  test('typed text replaces the mic and joins the same transcript', () async {
+  test('typed text joins the same transcript while the mic stays on', () async {
     final session = build();
     await session.start();
     expect(session.sendText('  '), isFalse);
 
-    session.typing = true;
+    // 打字不关话筒：在听的时候照常送识别。
     input.mic.add(Uint8List(320));
     await settle();
-    // 打字期间话筒不送识别，避免两种输入同时进来。
-    expect(recognizer.received, isEmpty);
+    expect(recognizer.received, hasLength(1));
 
     expect(session.sendText('我在地铁上，不方便说话'), isTrue);
     await settle();
@@ -135,18 +134,15 @@ void main() {
       ('assistant', '好呀，那你打字，我说给你听。'),
     ]);
 
-    // 回到语音：话筒恢复。
-    session.typing = false;
     input.mic.add(Uint8List(320));
     await settle();
-    expect(recognizer.received, hasLength(1));
+    expect(recognizer.received, hasLength(2));
     await session.hangUp();
   });
 
   test('typing while the character speaks interrupts the reply', () async {
     final session = build();
     await session.start();
-    session.typing = true;
     session.sendText('讲个故事');
     await settle();
     generator.current!.add('从前有座山，山里有座庙。');

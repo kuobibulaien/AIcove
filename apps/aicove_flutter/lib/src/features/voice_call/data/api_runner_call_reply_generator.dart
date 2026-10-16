@@ -274,13 +274,19 @@ List<Map<String, dynamic>> buildVoiceCallMessages(
       : reminders.buildReminderMessage(
           reminderContent: '接通电话前，你们更早的文字聊天摘要（仅供参考，不要复述）：\n${brief.trim()}',
         );
-  final callMessages = <Map<String, dynamic>>[
-    for (final turn in turns)
-      {
-        'role': turn.isUser ? 'user' : 'assistant',
-        'content': turn.interrupted ? '${turn.text}……（被用户打断）' : turn.text,
-      },
-  ];
+  // 有的上游只接受一问一答交替：连着的同一方（连发几句字、角色没出声就被
+  // 打断）合成一条。
+  final callMessages = <Map<String, dynamic>>[];
+  for (final turn in turns) {
+    final role = turn.isUser ? 'user' : 'assistant';
+    final content = turn.interrupted ? '${turn.text}……（被用户打断）' : turn.text;
+    if (callMessages.lastOrNull?['role'] == role) {
+      callMessages.last['content'] =
+          '${callMessages.last['content']}\n$content';
+    } else {
+      callMessages.add({'role': role, 'content': content});
+    }
+  }
   final lastUser = callMessages.lastIndexWhere((m) => m['role'] == 'user');
   final rules = [
     kVoiceCallInstruction,

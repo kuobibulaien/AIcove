@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 import 'package:aicove_flutter/src/features/chat/application/privacy_space.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
@@ -64,6 +66,23 @@ void main() {
     memory.value = other.value;
     expect(await password.verify('2468'), isFalse);
     expect(await password.verify('9999'), isTrue);
+  });
+
+  test('设置密码写入同步字段时钟，否则两台设备的密码无法比较新旧', () async {
+    SharedPreferences.setMockInitialValues({});
+    final password = PrivacySpacePassword(PrivacySpaceStore.preferences());
+    await password.set('496215');
+
+    final preferences = await SharedPreferences.getInstance();
+    final value = preferences.getString(privacySpacePasswordKey);
+    final times = cloudPreferenceTimes(
+      preferences,
+      privacySpacePasswordKey,
+      value,
+      'device-a',
+    );
+    expect((times['value'] as Map)['at_ms'], greaterThan(0));
+    expect(await password.verify('496215'), isTrue);
   });
 
   testWidgets('隐藏联系人不出现在列表，下拉半屏输入密码后进入隐私空间', (tester) async {

@@ -11,7 +11,7 @@ import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/voice_call/application/voice_call_session.dart';
 import 'package:aicove_flutter/src/features/voice_call/domain/speech_recognizer_port.dart';
 import 'package:aicove_flutter/src/features/voice_call/providers/voice_call_providers.dart';
-import 'package:aicove_flutter/src/ui/features/voice_call/pages/voice_call_page.dart';
+import 'package:aicove_flutter/src/ui/features/voice_call/widgets/voice_call_view.dart';
 import 'package:aicove_flutter/src/ui/features/voice_call/widgets/voice_call_floating_window.dart';
 import 'package:aicove_flutter/src/ui/features/voice_call/widgets/voice_call_live_messages.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
@@ -39,6 +39,7 @@ void main() {
   late FakeRecognizer recognizer;
   late FakeGenerator generator;
   late FakeOutput output;
+  late FakeInput input;
   late VoiceCallSession session;
   late List<Message> bubbles;
   late ActiveVoiceCall call;
@@ -48,10 +49,11 @@ void main() {
     recognizer = FakeRecognizer();
     generator = FakeGenerator();
     output = FakeOutput();
+    input = FakeInput();
     session = VoiceCallSession(
       recognizer: recognizer,
       tts: FakeTts(),
-      input: FakeInput(),
+      input: input,
       output: output,
       generator: generator,
       greetOnConnect: false,
@@ -61,15 +63,17 @@ void main() {
     );
   });
 
-  final navigator = GlobalKey<NavigatorState>();
-
-  /// 聊天页在下面，通话页压在上面（同真实入口），收起或挂断时弹回聊天页。
+  /// 同聊天页：壁纸在下面，通话视图盖在上面（窄屏占满）；收起后视图撤掉，
+  /// 通话继续。[wide] 时顶上是「聊天／通话」标签，没有左上角的收起按钮。
   Future<void> mount(
     WidgetTester tester,
     Future<VoiceCallSession> Function() build, {
     GlobalKey? boundary,
+    bool wide = false,
   }) async {
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = wide
+        ? const Size(900, 700)
+        : const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -87,30 +91,60 @@ void main() {
         child: SkinScope(
           skin: const MoeTalkSkin(),
           child: MaterialApp(
-            navigatorKey: navigator,
             theme: ThemeData(
               fontFamily: capture ? 'Preview' : null,
               extensions: [MoeColors.light()],
             ),
-            home: const Scaffold(body: Text('聊天页')),
+            home: RepaintBoundary(
+              key: boundary,
+              child: Material(
+                child: ListenableBuilder(
+                  listenable: call,
+                  builder: (context, _) => Column(
+                    children: [
+                      Expanded(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.asset(
+                              'assets/wallpapers/catnap_light.webp',
+                              fit: BoxFit.cover,
+                            ),
+                            if (call.minimized)
+                              const Center(child: Text('聊天页'))
+                            else
+                              VoiceCallView(
+                                conversation: _conv,
+                                call: call,
+                                // 宽屏截图模拟独立小窗：没有收起按钮。
+                                onCollapse: wide ? null : call.minimize,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
     );
     unawaited(call.connect());
-    unawaited(
-      navigator.currentState!.push(
-        MaterialPageRoute<void>(
-          builder: (_) => RepaintBoundary(
-            key: boundary,
-            child: VoiceCallPage(conversation: _conv, call: call),
-          ),
-        ),
-      ),
-    );
-    // 计时器每秒刷新，不能 pumpAndSettle；推进到页面转场走完。
+    // 计时器每秒刷新，不能 pumpAndSettle。
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
+  }
+
+  /// 挂断跨越测试时钟与真实事件循环，交替推进直到存档完成。
+  Future<void> settleHangUp(WidgetTester tester) async {
+    for (var i = 0; i < 100 && bubbles.isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 10));
+    }
   }
 
   /// 跑完一轮：用户说一句，角色回一句并播完。
@@ -131,9 +165,7 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('connects, shows the conversation and hangs up on leave', (
-    tester,
-  ) async {
+  testWidgets('connects, shows the conversation and hangs up', (tester) async {
     await mount(tester, () async => session);
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
@@ -163,28 +195,19 @@ void main() {
     expect(find.text('我今天下午去面试了，好紧张'), findsOneWidget);
     expect(find.text('诶？面试怎么样啊？没准备的问题确实挺慌的。'), findsOneWidget);
 
-    await tester.pumpWidget(const SizedBox());
-    // 挂断里的取消订阅跨越测试时钟与真实事件循环，交替推进直到走完。
-    for (var i = 0; i < 100 && session.phase != VoiceCallPhase.ended; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await tester.tap(find.byKey(const ValueKey('voice-call-hang-up')));
+    await settleHangUp(tester);
     expect(session.phase, VoiceCallPhase.ended);
-    for (var i = 0; i < 20 && bubbles.isEmpty; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump();
-    }
     // 挂断即存档：聊天只多一条气泡，逐句记录在气泡里。
-    expect((bubbles.single.blocks!.single as CallRecordBlock).turns, hasLength(2));
+    expect(
+      (bubbles.single.blocks!.single as CallRecordBlock).turns,
+      hasLength(2),
+    );
     expect(bubbles.single.content, startsWith('[语音通话 '));
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('typing tucks the call into a floating window and back', (
+  testWidgets('collapsing returns to chat with the mic still on', (
     tester,
   ) async {
     await mount(tester, () async => session);
@@ -192,15 +215,19 @@ void main() {
       () => Future<void>.delayed(const Duration(milliseconds: 20)),
     );
     await tester.pump();
+    // 窄屏没有「打字」胶囊，改成左上角的取消全屏。
+    expect(find.text('打字'), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('voice-call-type')));
+    await tester.tap(find.byKey(const ValueKey('voice-call-collapse')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-    // 页面收起，通话照常进行，话筒暂停。
-    expect(find.byType(VoiceCallPage), findsNothing);
+    // 视图收起回到聊天，通话照常进行，话筒不关：说的话照样送识别。
+    expect(find.byType(VoiceCallView), findsNothing);
+    expect(find.text('聊天页'), findsOneWidget);
     expect(call.minimized, isTrue);
-    expect(session.typing, isTrue);
     expect(session.phase, VoiceCallPhase.listening);
+    input.mic.add(Uint8List(320));
+    await tester.pump();
+    expect(recognizer.received, hasLength(1));
 
     // 打的字进通话，回复照常念出来，同在一份逐句记录里。
     expect(call.sendText('我在地铁上'), isTrue);
@@ -226,7 +253,7 @@ void main() {
     expect(voiceCallLiveMessages(call).map((m) => m.content), ['那我小声点说。']);
     expect(call.transcript, hasLength(2));
 
-    // 悬浮窗：正中是禁用的话筒，点一下回到通话、话筒恢复。
+    // 悬浮窗：正中是话筒（开着），点一下回到通话。
     var reopened = false;
     await tester.pumpWidget(
       MaterialApp(
@@ -247,20 +274,18 @@ void main() {
         ),
       ),
     );
-    expect(find.byKey(const ValueKey('voice-call-floating-mic')), findsOne);
     await tester.tap(find.byKey(const ValueKey('voice-call-floating-window')));
     expect(reopened, isTrue);
     expect(call.minimized, isFalse);
-    expect(session.typing, isFalse);
+    expect(
+      tester
+          .widget<Icon>(find.byKey(const ValueKey('voice-call-floating-mic')))
+          .icon,
+      Icons.mic_rounded,
+    );
 
     unawaited(call.hangUp());
-    // 挂断跨越测试时钟与真实事件循环，交替推进直到存档完成。
-    for (var i = 0; i < 100 && bubbles.isEmpty; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 5)),
-      );
-      await tester.pump(const Duration(milliseconds: 10));
-    }
+    await settleHangUp(tester);
     final block = bubbles.single.blocks!.single as CallRecordBlock;
     // 打的字和说的话在同一条通话气泡里。
     expect(block.turns.map((t) => t.text), ['我在地铁上', '那我小声点说。']);
@@ -318,8 +343,7 @@ void main() {
     expect(find.text('此角色没有可用的音色'), findsOneWidget);
   });
 
-  testWidgets('voice call source rendered preview', (tester) async {
-    if (!capture) return;
+  Future<void> loadPreviewFonts(WidgetTester tester) async {
     await tester.runAsync(() async {
       final loader = FontLoader('Preview')
         ..addFont(
@@ -336,13 +360,52 @@ void main() {
         );
       await icons.load();
     });
+  }
+
+  testWidgets('wide voice call source rendered preview', (tester) async {
+    if (!capture) return;
+    await loadPreviewFonts(tester);
+    final key = GlobalKey();
+    await mount(tester, () async => session, boundary: key, wide: true);
+    await tester.runAsync(
+      () => precacheImage(
+        const AssetImage('assets/wallpapers/catnap_light.webp'),
+        tester.element(find.byType(VoiceCallView)),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+    await oneTurn(tester);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.runAsync(() async {
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final image = await boundary.toImage(pixelRatio: 2);
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+      final dir = Directory('../../.codex-temp/voice-call/previews')
+        ..createSync(recursive: true);
+      await File(
+        '${dir.path}/voice-call-wide-900.png',
+      ).writeAsBytes(bytes!.buffer.asUint8List());
+      image.dispose();
+    });
+    unawaited(call.hangUp());
+    await settleHangUp(tester);
+  });
+
+  testWidgets('voice call source rendered preview', (tester) async {
+    if (!capture) return;
+    await loadPreviewFonts(tester);
     final key = GlobalKey();
     await mount(tester, () async => session, boundary: key);
     // 背景图解码要在真实事件循环里完成。
     await tester.runAsync(
       () => precacheImage(
         const AssetImage('assets/wallpapers/catnap_light.webp'),
-        tester.element(find.byType(VoiceCallPage)),
+        tester.element(find.byType(VoiceCallView)),
       ),
     );
     await tester.runAsync(
@@ -366,10 +429,9 @@ void main() {
       ).writeAsBytes(bytes!.buffer.asUint8List());
       image.dispose();
     });
-    // 收起成悬浮窗后的样子：聊天背景上的小窗，正中是禁用的话筒。
-    await tester.tap(find.byKey(const ValueKey('voice-call-type')));
+    // 收起成悬浮窗后的样子：聊天背景上的小窗，正中是话筒。
+    await tester.tap(find.byKey(const ValueKey('voice-call-collapse')));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
     final floatKey = GlobalKey();
     await tester.pumpWidget(
       MaterialApp(

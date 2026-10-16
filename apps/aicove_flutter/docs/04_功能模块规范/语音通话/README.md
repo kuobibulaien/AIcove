@@ -25,10 +25,11 @@
 | | `data/api_runner_call_reply_generator.dart`、`data/voice_call_context_brief.dart` | 接通时走主聊天唯一装配入口 `prepareApiConfig` 拿上下文快照：只带最近 8 条原文，更早的由后台自动压缩 Agent 压成接通前摘要（只存内存）；只留记忆、时间感知插件，去掉工具；插件提醒不留在快照里（`deferReminders`），每轮按发送时刻现算当前时间，和通话约束合成一条贴在用户最新一句前（2026-10-14 修：之前接通时算一次，还插在文字聊天最后一条用户消息前，角色感知不到通话中的时间），请求关闭思考（Kimi K3 不理这个参数，仍会短暂思考，2026-10-12 实测）。快照不写预设变量和 `context_summaries`；模型取默认聊天模型。每轮把两条 assistant 占位换成摘要和通话轮次（保留被合并进来的前后文字），并插入通话约束提醒，经 `ApiRunner` 一律流式调用，没流出的部分用最终回复补齐 |
 | | `data/voice_call_summarizer.dart` | 通话摘要 Agent `local.voice_call_summary`：复用后台运行壳和压缩模型，输入只有本次逐句转写 |
 | | `data/device_call_audio.dart` | `record` 采集 16 kHz PCM（系统回声消除只在手机上开）；`mp_audio_stream` 播放，进度按墙钟估算，清空靠重建播放流 |
-| 通话生命周期 | `application/active_voice_call.dart`、`activeVoiceCallProvider` | 一通电话的全局控制器（同一时间一通）：接通、挂断存档、话筒／扬声器、收起成悬浮窗（`minimize`，输入换成打字、话筒暂停）与恢复（`restore`）、打字输入（`sendText`）。通话页和聊天页悬浮窗都只是它的视图 |
+| 通话生命周期 | `application/active_voice_call.dart`、`activeVoiceCallProvider` | 一通电话的全局控制器（同一时间一通）：接通、挂断存档、话筒／扬声器、切回聊天（`minimize`，通话视图收起，话筒照常）与回到通话（`restore`）、打字输入（`sendText`）。实现 `VoiceCallControls`；通话视图、桌面小窗（`showInWindow`／打开失败时 `leaveWindow`）和窄屏悬浮窗都只是它的视图 |
 | 装配 | `providers/voice_call_providers.dart`、`providers/voice_call_settings.dart` | 按角色音色预设取 Fish 音色；按设置的识别来源（自动／本地／阿里云，只存本机）选识别器 |
-| 界面 | `lib/src/ui/features/voice_call/pages/voice_call_page.dart` | 参照 Telegram：全屏渐变（接通前蓝紫、接通后蓝绿、结束灰），大头像在角色说话时有波纹，名字与计时白字，背景用角色的聊天背景（没有则用全局壁纸）加深色遮罩；底部扬声器／挂断／话筒三个毛玻璃圆按钮，字幕开关和「打字」是「在听」下面的小胶囊，关掉扬声器或话筒时按钮上方出现提示胶囊。关扬声器是让角色立刻无声、通话和字幕照常（播放插件没有音量接口，靠重建播放流、把没播的部分按静音重推实现，计时不变）；手机上的听筒／外放切换还没做。聊天页顶栏电话按钮进入（`MoeWorkspace.open`），离开即挂断并存档（点「打字」收成悬浮窗除外）；全局或角色关掉语音插件时不显示按钮 |
-| | `lib/src/ui/features/voice_call/widgets/voice_call_floating_window.dart`、`widgets/voice_call_live_messages.dart` | 打字模式：通话页字幕旁的「打字」胶囊把通话收成聊天页右上角的可拖动小窗（正中是禁用的话筒，下面是时长，点一下回到通话、话筒恢复）。聊天输入框提示「通话中，打字给对方」，发出的字经 `sendText` 进通话，和识别结果走同一条回复链路并写进同一份逐句记录，不写 messages 表、不进主对话上下文；图片和文件不收。通话进行中聊天列表把逐句记录投影成普通样子的临时气泡，长按只有复制和删除（没有编辑、重新生成、引用、多选）；删除只是不再显示，通话记录和摘要不变。挂断存档后换成通话气泡。收起后关掉聊天页或切到别的角色即挂断 |
+| 界面 | `lib/src/ui/features/voice_call/widgets/voice_call_view.dart` | 通话视图只依赖 `VoiceCallControls` 接口（`application/voice_call_controls.dart`），不画壁纸。窄屏和手机嵌在聊天页里，和聊天共用壁纸、不加遮罩；聊天内容只是不画（Offstage），列表位置和草稿保留；左上角「取消全屏」收成悬浮窗，返回手势同样是收起而不挂断。大头像在角色说话时有波纹，名字与计时白字；底部扬声器／挂断／话筒三个毛玻璃圆按钮，「在听」下面只有字幕开关，关掉扬声器或话筒时按钮上方出现提示胶囊。关扬声器是让角色立刻无声、通话和字幕照常。聊天页顶栏电话按钮拨号或回到通话；不在小窗里的通话，关掉聊天页或切到别的角色即挂断并存档；全局或角色关掉语音插件时不显示按钮 |
+| | `lib/src/ui/features/voice_call/window/`（ADR0085） | 桌面（Mac／Windows）宽屏拨出或接听时，通话放进独立系统小窗（参照微信，360×640）。`desktop_multi_window` 每个窗口一个引擎：通话只在主窗口跑，`VoiceCallWindowLink` 把状态、计时、外观推给小窗，小窗的 `RemoteVoiceCall` 把按钮回传。外观（聊天页那张壁纸、亮暗、主题色、`MoeGlassTheme` 参数）由 `voiceCallWindowAppearanceOf` 计算，`VoiceCallWindowSync`（应用层）变化即重推；背景用和宽屏根界面同一个 `MoePageSurface`，纯色档不盖。关小窗即挂断；挂断后约 1.2 秒自动关，没接通的留着显示原因；在小窗里的通话不随切换角色或关闭聊天页挂断；同一时间一通一窗，再点拨号是把小窗提到前面。小窗引擎只注册 `window_manager`／`screen_retriever`（Mac `MainFlutterWindow.swift`、Windows `flutter_window.cpp`），不碰数据库；不能用 `windowManager.destroy`（Mac 上会退出整个应用）。带小窗时调试会话热重启会超时，要 stop 后重新 start |
+| | `lib/src/ui/features/voice_call/widgets/voice_call_floating_window.dart`、`widgets/voice_call_live_messages.dart` | 打字与语音共存（2026-10-16 起不再有打字模式）：切回聊天或通话在小窗里时，话筒照常开着，说话和打字都进通话。窄屏切回聊天后通话收成右上角可拖动小窗（正中显示话筒开关状态，下面是时长，点一下回到通话）。通话期间聊天输入框提示「通话中，打字给对方」，发出的字经 `sendText` 进通话，和识别结果走同一条回复链路并写进同一份逐句记录，不写 messages 表、不进主对话上下文；图片和文件不收。连着的同一方轮次（连发几句、角色没出声就被打断）在请求里合成一条（`buildVoiceCallMessages`），适配只收一问一答的上游。通话进行中聊天列表把逐句记录投影成普通样子的临时气泡，长按只有复制和删除；删除只是不再显示，通话记录和摘要不变。挂断存档后换成通话气泡 |
 | | `lib/src/ui/features/voice_call/pages/voice_call_settings_page.dart` | 语音插件页里的「语音通话」子页面：识别来源三选一，并显示每个来源当前能不能用。通话属于语音插件，不单独做插件 |
 | | `lib/src/ui/features/voice_call/widgets/call_record_bubble.dart`、`pages/call_transcript_page.dart` | 聊天里的通话气泡（电话图标＋时长），点开是只读逐句记录 |
 
@@ -109,7 +110,7 @@ tool/flutterw --dart run tool/voice_call_latency_probe.dart --keepalive 0,15,45,
 | ElevenLabs | `ElevenLabsSpeechRecognizer` | `scribe_v2_realtime` | 无 | `commit_strategy=vad` |
 
 - 判停静音统一 500 ms（`kCloudEndOfTurnSilenceMs`）。
-- 保活：超过 4 秒没送音频（角色在说话、静音、打字模式）就发一次 100 ms 静音，Deepgram 发 `KeepAlive`；防止腾讯 6 秒、Deepgram 10 秒、讯飞 15 秒无音频断开。
+- 保活：超过 4 秒没送音频（角色在说话、静音）就发一次 100 ms 静音，Deepgram 发 `KeepAlive`；防止腾讯 6 秒、Deepgram 10 秒、讯飞 15 秒无音频断开。
 - 挂断时 OpenAI／ElevenLabs 没人在说话就立即收尾，否则最多等 2 秒拿最后一句。
 - 「测试模型」对识别模型真实建连、送 1 秒静音（`AsrModelProbe`），能验证地址、凭证、签名和模型名，不验证识别效果。
 - 内置阿里云渠道预置 `fun-asr-realtime`、`paraformer-realtime-v2`，老用户的阿里云渠道补一次（`asr_models_seeded`）。

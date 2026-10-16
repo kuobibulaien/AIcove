@@ -117,12 +117,20 @@ class ActiveVoiceCallNotifier extends Notifier<ActiveVoiceCall?> {
     return call;
   }
 
-  /// 收成悬浮窗的通话离开了它的聊天（换角色或关掉聊天页）就挂断，
-  /// 不留一通看不见的电话。
-  void hangUpIfMinimizedAwayFrom(String? conversationId) {
+  /// 切到别的角色：通话视图嵌在原来的聊天页里，随之挂断；
+  /// 在独立小窗里的通话不跟着聊天页走。
+  void hangUpIfAwayFrom(String? conversationId) {
     final call = state;
-    if (call == null || !call.minimized) return;
+    if (call == null || call.inWindow) return;
     if (call.conversationId == conversationId) return;
+    unawaited(call.hangUp());
+  }
+
+  /// 这个角色的聊天页关掉了：挂断它的通话（别的角色的通话、独立小窗里的通话不动）。
+  void hangUpIn(String? conversationId) {
+    final call = state;
+    if (call == null || call.inWindow) return;
+    if (call.conversationId != conversationId) return;
     unawaited(call.hangUp());
   }
 }

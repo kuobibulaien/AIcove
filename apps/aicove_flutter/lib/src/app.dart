@@ -19,6 +19,7 @@ import 'ui/shared/widgets/windows_close_guard.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
 import 'ui/shared/widgets/moe_adaptive_shell.dart';
+import 'ui/shared/widgets/moe_global_ui_scale.dart';
 import 'ui/features/character/pages/contact_edit_page.dart';
 import 'core/utils/blurred_background_service.dart';
 import 'core/utils/image_preheat_queue.dart';
@@ -33,8 +34,8 @@ import 'features/auto_reply/data/analyzer_scheduler.dart';
 import 'features/auto_reply/data/auto_reply_service.dart';
 import 'features/auto_reply/data/incoming_call.dart';
 import 'features/voice_call/application/active_voice_call.dart';
-import 'ui/features/voice_call/pages/voice_call_page.dart';
 import 'ui/features/voice_call/widgets/incoming_call_host.dart';
+import 'ui/features/voice_call/window/voice_call_window_launcher.dart';
 import 'features/auto_reply/data/background_message_reprocessor.dart';
 import 'features/chat/providers2.dart';
 import 'features/chat/services/tts_fallback_notification.dart';
@@ -337,16 +338,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     return images;
   }
 
-  /// 接听角色来电：先回到这个角色的聊天，再在上面打开通话页。
+  /// 接听角色来电：回到这个角色的聊天，通话视图在聊天页里显示。
   void _openAcceptedCall(Conversation conversation, ActiveVoiceCall call) {
     _router.go('/chat/${conversation.id}', extra: conversation);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _detailNavigatorKey.currentState?.push(
-        ParallaxSlidePageRoute<void>(
-          page: VoiceCallPage(conversation: conversation, call: call),
-        ),
-      );
-    });
   }
 
   /// 创建路由配置（只调用一次）
@@ -538,13 +532,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                     child: DesktopWindowFrame(
                     windowControlsOnRight: settings.windowsWindowControlsSide ==
                         WindowControlButtonSide.right,
-                    child: _GlobalUiScale(
+                    child: MoeGlobalUiScale(
                       scale: uiScale,
                       child: TooltipVisibility(
                         visible: false,
                         child: IncomingCallHost(
                           onAccepted: _openAcceptedCall,
-                          child: child ?? const SizedBox.shrink(),
+                          child: VoiceCallWindowSync(
+                            child: child ?? const SizedBox.shrink(),
+                          ),
                         ),
                       ),
                     ),
@@ -679,49 +675,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             ? MoeColors.dark(accentColor: accent)
             : MoeColors.light(accentColor: accent),
       ],
-    );
-  }
-}
-
-/// 全局界面缩放容器
-///
-/// 通过反向 SizedBox + Transform.scale，让缩放后依然铺满视口，
-/// 用于手动微调不同设备上的整体观感。
-class _GlobalUiScale extends StatelessWidget {
-  final double scale;
-  final Widget child;
-
-  const _GlobalUiScale({
-    required this.scale,
-    required this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final effectiveScale = scale.clamp(kMinUiScaleFactor, kMaxUiScaleFactor);
-    if ((effectiveScale - 1.0).abs() < 0.001) {
-      return child;
-    }
-
-    final viewport = MediaQuery.sizeOf(context);
-
-    return ClipRect(
-      child: OverflowBox(
-        alignment: Alignment.topCenter,
-        minWidth: 0,
-        minHeight: 0,
-        maxWidth: double.infinity,
-        maxHeight: double.infinity,
-        child: Transform.scale(
-          scale: effectiveScale,
-          alignment: Alignment.topCenter,
-          child: SizedBox(
-            width: viewport.width / effectiveScale,
-            height: viewport.height / effectiveScale,
-            child: child,
-          ),
-        ),
-      ),
     );
   }
 }

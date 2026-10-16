@@ -11,7 +11,7 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../features/voice_call/application/active_voice_call.dart';
 import '../../../shared/widgets/index.dart';
 import '../../chat/widgets/chat_wallpaper_background.dart';
-import '../pages/voice_call_page.dart';
+import 'voice_call_view.dart';
 
 const _acceptGreen = Color(0xFF30A46C);
 

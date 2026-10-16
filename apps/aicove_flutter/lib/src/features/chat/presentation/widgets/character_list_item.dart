@@ -6,7 +6,6 @@ library;
 
 import 'package:flutter/material.dart';
 import '../../../../ui/shared/widgets/moe_avatar.dart';
-import '../../../../ui/theme/skin_provider.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 
@@ -54,14 +53,12 @@ class CharacterListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final skin = context.skin;
     final colors = context.moeColors;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final bgColor = isActive
         ? colors.primary.withValues(alpha: isDark ? 0.26 : 0.18)
         : Colors.transparent;
-    final borderColor = colors.borderLight;
     // Accent text on its own accent tint is too faint; the tint marks the row.
     final titleColor = colors.text;
     final subtitleColor = isActive ? colors.textSecondary : colors.muted;
@@ -83,12 +80,7 @@ class CharacterListItem extends StatelessWidget {
         child: Container(
           // 左右内边距，保证卡片内容居中
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            color: bgColor,
-            border: Border(
-              bottom: BorderSide(color: borderColor, width: skin.borderWidth),
-            ),
-          ),
+          color: bgColor,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
