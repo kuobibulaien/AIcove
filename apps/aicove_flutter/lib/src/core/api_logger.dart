@@ -3,7 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'storage/app_data_directory.dart';
 
 /// 截断长文本，保留头尾
 ///
@@ -195,7 +195,7 @@ class ApiLogger {
   static Future<String> _getLogDirPath() async {
     if (_cachedLogDirPath != null) return _cachedLogDirPath!;
 
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final logDir = Directory('${appDir.path}/$_logDirName');
     if (!await logDir.exists()) {
       await logDir.create(recursive: true);

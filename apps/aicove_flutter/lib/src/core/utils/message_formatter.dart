@@ -1,7 +1,8 @@
 import 'kaomoji_parser.dart';
 import 'markdown_fence.dart';
 
-const List<String> _kDefaultChunkPunctuations = [
+/// 已删除的旧「默认」档标点，只用于把老配置迁移到「保守」档。
+const List<String> _kLegacyDefaultChunkPunctuations = [
   '\u3002',
   '\uff01',
   '\uff1f',
@@ -96,21 +97,19 @@ class MessageChunkPunctuationSet {
   int get hashCode => Object.hash(id, name, Object.hashAll(punctuations));
 }
 
+const String _kDefaultChunkPunctuationSetId = 'conservative';
+const String _kLegacyDefaultChunkPunctuationSetId = 'default';
+
 const List<MessageChunkPunctuationSet> _kDefaultChunkPunctuationSets = [
   MessageChunkPunctuationSet(
-    id: 'default',
-    name: '默认',
-    punctuations: _kDefaultChunkPunctuations,
+    id: _kDefaultChunkPunctuationSetId,
+    name: '保守',
+    punctuations: [],
   ),
   MessageChunkPunctuationSet(
     id: 'simple',
     name: '精简',
     punctuations: _kSimpleChunkPunctuations,
-  ),
-  MessageChunkPunctuationSet(
-    id: 'conservative',
-    name: '保守',
-    punctuations: [],
   ),
   MessageChunkPunctuationSet(
     id: 'detailed',
@@ -152,9 +151,9 @@ class MessageFormatConfig {
   const MessageFormatConfig({
     this.enableChunking = true,
     this.filterPunctuation = false,
-    this.chunkPunctuations = _kDefaultChunkPunctuations,
+    this.chunkPunctuations = const [],
     this.chunkPunctuationSets = _kDefaultChunkPunctuationSets,
-    this.activeChunkPunctuationSetId = 'default',
+    this.activeChunkPunctuationSetId = _kDefaultChunkPunctuationSetId,
     this.filterPunctuations = _kDefaultFilterPunctuations,
     this.stickerProbability = 0.3,
     this.minSegmentLength = 5,
@@ -263,7 +262,7 @@ class MessageFormatConfig {
   factory MessageFormatConfig.fromJson(Map<String, dynamic> json) {
     final rawChunkPunctuations = _sanitizePunctuations(
       (json['chunkPunctuations'] as List<dynamic>?)?.cast<String>() ??
-          _kDefaultChunkPunctuations,
+          const <String>[],
     );
 
     final rawSets = (json['chunkPunctuationSets'] as List<dynamic>? ?? const [])
@@ -273,16 +272,28 @@ class MessageFormatConfig {
         .toList();
 
     final hasStructuredSets = rawSets.isNotEmpty;
-    final sets = hasStructuredSets
-        ? _sanitizeSets(rawSets)
-        : _buildSetsFromLegacy(rawChunkPunctuations);
-
     var activeSetId = (json['activeChunkPunctuationSetId'] as String?)?.trim();
     if ((activeSetId == null || activeSetId.isEmpty) && !hasStructuredSets) {
       activeSetId =
-          _listEquals(rawChunkPunctuations, _kDefaultChunkPunctuations)
-              ? 'default'
+          _listEquals(rawChunkPunctuations, _kLegacyDefaultChunkPunctuations)
+              ? _kLegacyDefaultChunkPunctuationSetId
               : 'legacy';
+    }
+    // 旧「默认」档已删除：未改过的内置「默认」档从列表移除，选中它的改选「保守」。
+    final droppedLegacyDefault = hasStructuredSets
+        ? rawSets.any(_isUntouchedLegacyDefaultSet)
+        : activeSetId == _kLegacyDefaultChunkPunctuationSetId;
+    final sets = hasStructuredSets
+        ? _sanitizeSets(
+            rawSets
+                .where((item) => !_isUntouchedLegacyDefaultSet(item))
+                .toList(),
+          )
+        : _buildSetsFromLegacy(rawChunkPunctuations);
+    final migrateActiveSet = droppedLegacyDefault &&
+        activeSetId == _kLegacyDefaultChunkPunctuationSetId;
+    if (migrateActiveSet) {
+      activeSetId = _kDefaultChunkPunctuationSetId;
     }
     final resolvedActiveSetId = _resolveActiveSetId(activeSetId, sets);
     final activePunctuations =
@@ -295,7 +306,7 @@ class MessageFormatConfig {
     return MessageFormatConfig(
       enableChunking: json['enableChunking'] as bool? ?? true,
       filterPunctuation: json['filterPunctuation'] as bool? ?? false,
-      chunkPunctuations: hasExplicitChunkPunctuations
+      chunkPunctuations: hasExplicitChunkPunctuations && !migrateActiveSet
           ? rawChunkPunctuations
           : activePunctuations,
       chunkPunctuationSets: sets,
@@ -311,10 +322,19 @@ class MessageFormatConfig {
     );
   }
 
+  static bool _isUntouchedLegacyDefaultSet(MessageChunkPunctuationSet set) {
+    return set.id.trim() == _kLegacyDefaultChunkPunctuationSetId &&
+        _listEquals(
+          _sanitizePunctuations(set.punctuations),
+          _kLegacyDefaultChunkPunctuations,
+        );
+  }
+
   static List<MessageChunkPunctuationSet> _buildSetsFromLegacy(
     List<String> legacyPunctuations,
   ) {
-    if (_listEquals(legacyPunctuations, _kDefaultChunkPunctuations)) {
+    if (legacyPunctuations.isEmpty ||
+        _listEquals(legacyPunctuations, _kLegacyDefaultChunkPunctuations)) {
       return _kDefaultChunkPunctuationSets;
     }
     return <MessageChunkPunctuationSet>[

@@ -6,9 +6,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/storage/app_data_directory.dart';
 
 typedef PresetVariablesDocumentsDirectoryResolver =
     Future<Directory> Function();
@@ -36,7 +36,7 @@ class SillyTavernVariableStore {
   SillyTavernVariableStore({
     PresetVariablesDocumentsDirectoryResolver? documentsDirectoryResolver,
   }) : _documentsDirectoryResolver =
-           documentsDirectoryResolver ?? getApplicationDocumentsDirectory;
+           documentsDirectoryResolver ?? appDataDirectory;
 
   final PresetVariablesDocumentsDirectoryResolver _documentsDirectoryResolver;
 

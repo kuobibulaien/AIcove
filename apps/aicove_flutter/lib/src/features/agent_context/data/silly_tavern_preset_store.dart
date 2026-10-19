@@ -9,7 +9,6 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/app_logger.dart';
 import '../../content_tags/domain/tag_presentation.dart';
@@ -18,6 +17,7 @@ import '../domain/silly_tavern_preset.dart';
 import '../domain/silly_tavern_preset_parser.dart';
 import '../domain/silly_tavern_world_book.dart';
 import '../domain/tavern_compatibility_port.dart';
+import '../../../core/storage/app_data_directory.dart';
 
 typedef PresetDocumentsDirectoryResolver = Future<Directory> Function();
 
@@ -88,7 +88,7 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     PresetDocumentsDirectoryResolver? documentsDirectoryResolver,
   }) : _parser = parser,
        _documentsDirectoryResolver =
-           documentsDirectoryResolver ?? getApplicationDocumentsDirectory;
+           documentsDirectoryResolver ?? appDataDirectory;
 
   final SillyTavernPresetParser _parser;
   final PresetDocumentsDirectoryResolver _documentsDirectoryResolver;

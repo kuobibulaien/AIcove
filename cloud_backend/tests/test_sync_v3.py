@@ -281,6 +281,14 @@ class SyncTest(unittest.TestCase):
                 old = next(doc for doc in docs if doc['entity_id'] == historical['entity_id'])
                 self.assertEqual(json.loads(old['payload']['json_value']), {'default_model': 'shared-model'})
 
+    def test_general_settings_match_client_list(self):
+        import re
+        from sync_v3.general_settings import LOCAL_GENERAL_SETTINGS
+        source = (Path(__file__).resolve().parents[2] / 'apps' / 'aicove_flutter' / 'lib'
+                  / 'src' / 'core' / 'sync' / 'cloud_setting_policy.dart').read_text(encoding='utf-8')
+        body = re.search(r'const localGeneralSettings = <String>\{(.*?)\};', source, re.S).group(1)
+        self.assertEqual(LOCAL_GENERAL_SETTINGS, set(re.findall(r"'([a-z_]+)'", body)))
+
     def test_malformed_batch_rolls_back_preceding_writes(self):
         with self.assertRaises(SyncError):
             self.push([self.put(), self.put(id='missing', op='bad', version=8)])

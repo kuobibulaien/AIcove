@@ -36,6 +36,28 @@ class AllowAllGate implements ToolGate {
       const GateVerdict.allow();
 }
 
+/// One call's way through [GatedToolExecutor]: the gate check, the approval
+/// and the tool itself all run inside it, so what the gate saw can be checked
+/// again when the tool runs. Provider call ids repeat across requests; this
+/// object does not.
+class ToolCallScope {
+  ToolCallScope();
+
+  static const _key = #aicoveKernelToolCallScope;
+
+  /// Runs [body] with this as [current].
+  T run<T>(T Function() body) => runZoned(body, zoneValues: {_key: this});
+
+  /// Null outside [GatedToolExecutor.executeOne].
+  static ToolCallScope? get current => Zone.current[_key] as ToolCallScope?;
+
+  /// Notes the gate and the port leave for the tool, by owner-chosen key.
+  final Map<Object, Object?> notes = {};
+
+  /// How the call got through; set before the tool runs.
+  GateOutcome? outcome;
+}
+
 class ApprovalRequest {
   const ApprovalRequest({
     required this.toolName,
@@ -43,9 +65,13 @@ class ApprovalRequest {
     required this.arguments,
     required this.reason,
     required this.withdrawn,
+    this.callId,
   });
 
   final String toolName;
+
+  /// The call being approved, so a port can tie its answer to this call.
+  final String? callId;
   final ToolEffect effect;
   final Map<String, dynamic> arguments;
   final String reason;
@@ -60,6 +86,25 @@ class ApprovalRequest {
 /// A late answer after [ApprovalRequest.withdrawn] is ignored.
 abstract interface class ApprovalPort {
   Future<bool> request(ApprovalRequest request);
+}
+
+/// An approval with the reason for a rejection, which goes back to the model
+/// so it can pick a safer route instead of retrying the same call.
+class ApprovalAnswer {
+  const ApprovalAnswer.approved()
+      : approved = true,
+        reason = null;
+
+  const ApprovalAnswer.rejected([this.reason]) : approved = false;
+
+  final bool approved;
+  final String? reason;
+}
+
+/// An [ApprovalPort] that may explain a rejection, such as an automatic
+/// reviewer. [GatedToolExecutor] calls [answer] instead of [request].
+abstract interface class ExplainingApprovalPort implements ApprovalPort {
+  Future<ApprovalAnswer> answer(ApprovalRequest request);
 }
 
 /// ⑦ decorator that applies a [ToolGate]. Denied, rejected, timed-out and
@@ -95,13 +140,29 @@ class GatedToolExecutor implements ToolBatchExecutor {
   Future<KernelToolResult> executeOne(
     KernelToolCall call,
     TurnContext ctx,
+  ) {
+    final scope = ToolCallScope();
+    return scope.run(() => _executeOne(call, ctx, scope));
+  }
+
+  Future<KernelToolResult> _executeOne(
+    KernelToolCall call,
+    TurnContext ctx,
+    ToolCallScope scope,
   ) async {
     final effect = _effectOf(call);
     final verdict = _gate.check(call, effect);
+    String? rejection;
     var outcome = switch (verdict.decision) {
       GateDecision.allow => GateOutcome.allowed,
       GateDecision.deny => GateOutcome.denied,
-      GateDecision.ask => await _ask(call, effect, verdict.reason ?? '', ctx),
+      GateDecision.ask => await _ask(
+          call,
+          effect,
+          verdict.reason ?? '',
+          ctx,
+          (reason) => rejection = reason,
+        ),
     };
     if (_runs(outcome) && ctx.cancellation.isCancelled) {
       outcome = GateOutcome.cancelled;
@@ -121,7 +182,10 @@ class GatedToolExecutor implements ToolBatchExecutor {
       outcome = GateOutcome.cancelled;
       await emit(outcome);
     }
-    if (_runs(outcome)) return _inner.executeOne(call, ctx);
+    if (_runs(outcome)) {
+      scope.outcome = outcome;
+      return _inner.executeOne(call, ctx);
+    }
     return KernelToolResult(
       callId: call.id,
       name: call.name,
@@ -129,6 +193,7 @@ class GatedToolExecutor implements ToolBatchExecutor {
         GateOutcome.denied => '不允许执行：${verdict.reason}',
         GateOutcome.timedOut => '用户未允许：等待确认超时',
         GateOutcome.cancelled => '用户未允许：本次运行已取消',
+        GateOutcome.rejected when rejection != null => '未获允许：$rejection',
         _ => '用户未允许：${call.name}',
       },
       isError: true,
@@ -143,6 +208,7 @@ class GatedToolExecutor implements ToolBatchExecutor {
     ToolEffect effect,
     String reason,
     TurnContext ctx,
+    void Function(String reason) onRejected,
   ) async {
     final approvals = _approvals;
     if (approvals == null || ctx.cancellation.isCancelled) {
@@ -153,17 +219,24 @@ class GatedToolExecutor implements ToolBatchExecutor {
     final withdrawn = Completer<void>();
     var answered = false;
     try {
-      final answer = approvals
-          .request(ApprovalRequest(
-            toolName: call.name,
-            effect: effect,
-            arguments: call.arguments,
-            reason: reason,
-            withdrawn: withdrawn.future,
-          ))
-          .then((ok) {
+      final request = ApprovalRequest(
+        callId: call.id,
+        toolName: call.name,
+        effect: effect,
+        arguments: call.arguments,
+        reason: reason,
+        withdrawn: withdrawn.future,
+      );
+      final answer = (approvals is ExplainingApprovalPort
+              ? approvals.answer(request)
+              : approvals.request(request).then((ok) => ok
+                  ? const ApprovalAnswer.approved()
+                  : const ApprovalAnswer.rejected()))
+          .then((answer) {
             answered = true;
-            return ok ? GateOutcome.approved : GateOutcome.rejected;
+            if (answer.approved) return GateOutcome.approved;
+            if (answer.reason case final reason?) onRejected(reason);
+            return GateOutcome.rejected;
           })
           .timeout(approvalTimeout, onTimeout: () => GateOutcome.timedOut);
       final cancelled =

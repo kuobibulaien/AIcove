@@ -1,6 +1,6 @@
 # Provider 抽象层详细设计
 
-> 2026-01-31 创建
+> 2026-01-31 创建；2026-10-16 按当时代码修订（硅基流动已下线，删去其适配器；工厂改用 `resolve`）
 > 对应代码：`lib/src/features/plugins/tts/providers/`
 
 ---
@@ -36,7 +36,7 @@
 
 ```dart
 abstract class TtsVoiceProvider {
-  /// 渠道标识，如 'siliconflow'、'aliyun_qwen'、'minimax'
+  /// 渠道标识，如 'aliyun_qwen'、'minimax'
   String get providerId;
 
   /// 渠道显示名称，如 '硅基流动'、'阿里云 Qwen-TTS'
@@ -139,26 +139,20 @@ class VoiceCreateResult {
 
 ## 三、各渠道适配器实现要点
 
-### 3.1 SiliconFlowVoiceProvider
-
-- `listVoices()`: 预置音色从硬编码列表读取，用户音色调 `GET /audio/voice/list`
-- `createVoice()`: 调 multipart 上传 `POST /uploads/audio/voice`，必须有 promptText
-- `deleteVoice()`: 调 `POST /audio/voice/deletions`，参数是 voiceUri
-
-### 3.2 AliyunQwenVoiceProvider
+### 3.1 AliyunQwenVoiceProvider
 
 - `listVoices()`: 调 `POST action=list` 获取已创建音色
 - `createVoice()`: 文件模式用 Base64 编码上传，URL 模式优先客户端下载再 Base64 上传（避免阿里云拉取超时）
 - `deleteVoice()`: 调 `POST action=delete`
 
-### 3.3 AliyunCosyVoiceProvider
+### 3.2 AliyunCosyVoiceProvider
 
 - `listVoices()`: 调 `POST action=list_voice`
 - `createVoice()`: 只支持 URL，调 `POST action=create_voice`，返回 DEPLOYING 状态
 - `deleteVoice()`: 调 `POST action=delete_voice`
 - `queryVoiceStatus()`: 调 `POST action=query_voice`，轮询等待 OK
 
-### 3.4 MinimaxVoiceProvider
+### 3.3 MinimaxVoiceProvider
 
 - `listVoices()`: 调 `POST /get_voice`，返回 system_voice 和 voice_cloning 两个列表
 - `createVoice()`: 两步流程
@@ -181,9 +175,11 @@ if (provider != null) {
   print('用户音色: ${voices.userVoices.length}');
 }
 
-// 方式2：按 API URL 自动识别
-final provider = TtsProviderFactory.getProviderByUrl(
-  'https://api.siliconflow.cn/v1/audio',
+// 方式2：按渠道 id／地址／请求格式一起解析（TtsService 合成时用这个）
+final resolution = TtsProviderFactory.resolve(
+  providerId: providerId,
+  apiUrl: apiUrl,
+  requestFormat: requestFormat,
 );
 
 // 方式3：获取所有渠道信息供 UI 展示
@@ -201,7 +197,6 @@ for (final info in infos) {
 |--------|--------|------|
 | `voice_manager_service.dart` | `providers/` 目录 | 新代码是旧代码的替代方案，目前共存 |
 | `tts_service.dart` | 不变 | Provider 层只管音色管理，合成仍由 TtsService 负责 |
-| `siliconflow_tts_service.dart` | `siliconflow_voice_provider.dart` | Provider 内部调用 Service |
 | `aliyun_voice_clone_service.dart` | `aliyun_voice_provider.dart` | Provider 内部调用 Service |
 
 **迁移路线**：

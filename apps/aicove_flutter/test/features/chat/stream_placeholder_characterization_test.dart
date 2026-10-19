@@ -166,6 +166,9 @@ class _FakeConversationsNotifier extends ConversationsNotifier {
   }) async {
     state = AsyncValue.data(list);
   }
+
+  @override
+  Future<void> saveOne(Conversation conv) async {}
 }
 
 Future<void> _insertConversation(AppDatabase db, Conversation conv) async {

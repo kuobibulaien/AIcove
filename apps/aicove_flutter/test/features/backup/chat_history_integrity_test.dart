@@ -564,4 +564,38 @@ void main() {
     await expectLater(export(), throwsFormatException);
     expect(await backups(), isEmpty);
   });
+
+  test('H21 task receipt exports as one line of text, not a live card',
+      () async {
+    final receipt = TaskReceiptBlock(
+      id: 'block',
+      messageId: 'm',
+      receiptId: 'r1',
+      taskId: 't1',
+      receiptStatus: TaskReceiptStatus.needsInput,
+      summary: '查到两家店',
+      question: '要哪一家？',
+      executorDevice: 'mac',
+    );
+    await source.update(source.messages).write(
+        MessagesCompanion(content: Value(receipt.content), role: const Value('user')));
+    await source
+        .into(source.messageBlocks)
+        .insert(MessageBlockConverter.toCompanion(receipt, 'm', 0));
+
+    final archive = ZipDecoder().decodeBytes(await (await export()).readAsBytes());
+    final message = (jsonDecode(utf8.decode(
+            archive.findFile('messages.json')!.content as List<int>))['messages']
+        as List).single as Map<String, dynamic>;
+    const line = '[杂活回执：需要用户回答] 任务 t1 查到两家店 问题：要哪一家？';
+    expect(message['content'], line);
+    final data = (message['blocks'] as List).single['data'] as Map;
+    expect(data['content'], line);
+    expect(data.containsKey('taskReceipt'), isFalse);
+
+    await restore(await export());
+    final restored = await loadBlocks(target, 'm');
+    expect(restored.single, isNot(isA<TaskReceiptBlock>()));
+    expect((restored.single as TextBlock).content, line);
+  });
 }

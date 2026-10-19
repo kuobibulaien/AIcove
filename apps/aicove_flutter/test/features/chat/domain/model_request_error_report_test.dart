@@ -42,6 +42,56 @@ void main() {
     });
   });
 
+  group('ModelRequestErrorReport.brief', () {
+    test('explains missing API key instead of pointing to the log center', () {
+      final brief = ModelRequestErrorReport.brief(
+        'Bad state: Missing providerApiKey for direct stream',
+      );
+      expect(brief, contains('API Key'));
+      expect(brief, isNot(contains('日志中心')));
+    });
+
+    test('recognizes context overflow from provider bodies', () {
+      const bodies = [
+        'Exception: HTTP 400: {"error":{"message":"This model\'s maximum '
+            'context length is 65536 tokens. However, you requested 70000 '
+            'tokens.","code":"context_length_exceeded"}}',
+        'Exception: HTTP 400: {"error":{"message":"prompt is too long: '
+            '210000 tokens > 200000 maximum"}}',
+        'Exception: HTTP 400: {"error":{"message":"The input token count '
+            '(1200000) exceeds the maximum number of tokens allowed"}}',
+      ];
+      for (final body in bodies) {
+        expect(ModelRequestErrorReport.brief(body), contains('上下文'));
+      }
+    });
+
+    test('keeps HTTP hint and provider message short', () {
+      final brief = ModelRequestErrorReport.brief(
+        'Exception: HTTP 402: {"error":{"message":"Insufficient Balance"}}',
+      );
+      expect(brief, '发送失败：HTTP 402 账户余额不足：Insufficient Balance');
+
+      final long = ModelRequestErrorReport.brief(
+        'Exception: HTTP 500: ${'x' * 500}',
+      );
+      expect(long.length, lessThanOrEqualTo(110));
+    });
+
+    test('shows readable local errors as is', () {
+      expect(
+        ModelRequestErrorReport.brief(
+          'Bad state: 上下文超限：预设处理后的消息与工具定义超过本轮预算',
+        ),
+        '发送失败：上下文超限：预设处理后的消息与工具定义超过本轮预算',
+      );
+    });
+
+    test('falls back to the log center only when nothing is known', () {
+      expect(ModelRequestErrorReport.brief('  '), contains('日志中心'));
+    });
+  });
+
   test('buildFullLog keeps full error and only entries of this round', () {
     final start = DateTime(2026, 10, 4, 10);
     final log = ModelRequestErrorReport.buildFullLog(

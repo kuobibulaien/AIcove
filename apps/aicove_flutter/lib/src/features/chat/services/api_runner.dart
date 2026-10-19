@@ -1,5 +1,8 @@
 library;
 
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
+    show KernelCancellation;
+
 import '../../../core/app_logger.dart' show TraceLogger;
 import '../../observability/trace_models.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
@@ -43,6 +46,9 @@ abstract interface class ApiRunner {
     void Function()? onStreamToolCallObserved,
     void Function()? onStreamingFallback,
     TraceContext? traceContext,
+
+    /// Stops the run between stages; tools check it before committing.
+    KernelCancellation? cancellation,
   });
 }
 

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../chat/conversation_providers.dart';
@@ -17,6 +16,7 @@ import 'tts_service.dart';
 import 'tts_voice_catalog_service.dart';
 import 'voice_preset_runtime.dart';
 import 'voice_request.dart';
+import '../../../core/storage/app_data_directory.dart';
 
 abstract interface class VoicePresetApplicationPort {
   Future<void> initialize();
@@ -253,7 +253,7 @@ class VoicePresetApplication implements VoicePresetApplicationPort {
       throw StateError('请选择音频文件');
     }
     final dir = Directory(
-      '${(await getApplicationDocumentsDirectory()).path}/voice_presets',
+      '${(await appDataDirectory()).path}/voice_presets',
     );
     await dir.create(recursive: true);
     return (await source.copy(

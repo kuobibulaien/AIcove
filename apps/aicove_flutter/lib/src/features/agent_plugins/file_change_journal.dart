@@ -11,6 +11,23 @@ abstract interface class ChangeApplier {
   Future<void> apply(Map<String, Object?> state);
 }
 
+/// A [ChangeApplier] that can tell whether a state is still in effect, so an
+/// undo never overwrites a later edit made elsewhere.
+abstract class CheckedChangeApplier implements ChangeApplier {
+  Future<bool> isCurrent(Map<String, Object?> state);
+
+  /// Writes [state] only if [expected] is still in effect; false when it is
+  /// not. Override to check and write under one lock of the store.
+  Future<bool> applyIfCurrent(
+    Map<String, Object?> expected,
+    Map<String, Object?> state,
+  ) async {
+    if (!await isCurrent(expected)) return false;
+    await apply(state);
+    return true;
+  }
+}
+
 /// Change journal kept in a local JSON file: not in the database, not synced
 /// (batch 2 decision 2). Keeps the most recent [capacity] entries.
 class FileChangeJournal implements ChangeJournal {
@@ -62,6 +79,33 @@ class FileChangeJournal implements ChangeJournal {
     return entry;
   }
 
+  /// Records [change], runs [write] and keeps the record only if [write]
+  /// returns true; null when it refused. All of it holds the journal lock,
+  /// so no undo can pick up the record while the write is still undecided.
+  Future<JournalEntry?> commitIf(
+    String toolName,
+    ReversibleChange change,
+    Future<bool> Function() write,
+  ) =>
+      _locked(() async {
+        final entry = await _append(toolName, change);
+        bool written;
+        try {
+          written = await write();
+        } catch (_) {
+          await _drop(entry.id);
+          rethrow;
+        }
+        if (!written) await _drop(entry.id);
+        return written ? entry : null;
+      });
+
+  Future<void> _drop(String entryId) async {
+    final entries = await _read();
+    entries.removeWhere((e) => e.id == entryId);
+    await _write(entries);
+  }
+
   @override
   Future<List<JournalEntry>> recent({int limit = 50}) async {
     final entries = await _read();
@@ -79,7 +123,17 @@ class FileChangeJournal implements ChangeJournal {
     if (index < 0) throw StateError('撤销记录不存在：$entryId');
     final entry = entries[index];
     if (entry.undoneAt != null) throw StateError('已经撤销过：$entryId');
-    await _applierOf(entry.change.kind).apply(entry.change.before);
+    final applier = _applierOf(entry.change.kind);
+    if (applier is CheckedChangeApplier) {
+      if (!await applier.applyIfCurrent(
+        entry.change.after,
+        entry.change.before,
+      )) {
+        throw StateError('这项修改之后又被改过，为免覆盖新的内容，不能撤销');
+      }
+    } else {
+      await applier.apply(entry.change.before);
+    }
     final now = _clock();
     entries[index] = JournalEntry(
       id: entry.id,

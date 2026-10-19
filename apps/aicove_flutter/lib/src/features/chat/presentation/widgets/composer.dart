@@ -1120,8 +1120,10 @@ class _ComposerState extends ConsumerState<Composer> {
           MoeToast.brief(context, '请先完成当前编辑，再使用对话选项');
           return;
         }
-        ref.read(dialogueOptionsConsumedProvider(editOwner).notifier).state =
-            pick.signature;
+        if (pick.signature != null) {
+          ref.read(dialogueOptionsConsumedProvider(editOwner).notifier).state =
+              pick.signature;
+        }
         final text = pick.text;
         final draft = _ctrl.text;
         final next = draft.isEmpty ? text : '$draft\n$text';

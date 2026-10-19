@@ -41,6 +41,8 @@ import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
 import '../../../../features/dialogue_options/domain/dialogue_options.dart';
 import 'dialogue_options_badge.dart';
+import '../../../../features/dialogue_options/application/dialogue_options_providers.dart';
+import '../../../../ui/shared/widgets/ui_blocks/moe_ui_block_scope.dart';
 import 'chat_end_anchored_sliver.dart';
 import 'chat_message_list_display_cache.dart';
 import 'chat_message_list_items.dart';
@@ -939,8 +941,19 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       scrollController: _scrollController,
       topInset: widget.topOverlayHeight,
       bottomInset: listBottomPadding,
-      child: content,
+      child: MoeUiBlockScope(
+        conversationId: widget.conversationId,
+        onAsk: _askFromUiBlock,
+        child: content,
+      ),
     );
+  }
+
+  /// A follow-up from an interactive block goes into the composer, like a
+  /// dialogue option (ADR0045); it is never sent for the user.
+  void _askFromUiBlock(String text) {
+    ref.read(dialogueOptionPickProvider(widget.conversationId).notifier).state =
+        DialogueOptionPick(text: text);
   }
 }
 

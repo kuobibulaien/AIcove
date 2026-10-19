@@ -5,7 +5,6 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/plugins/tts/tts_available_models.dart';
@@ -17,6 +16,7 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
+import '../../../../core/storage/app_data_directory.dart';
 
 Future<void> showTtsVoicePresetEditorSheet({
   required BuildContext context,
@@ -194,7 +194,7 @@ class _TtsVoicePresetEditorSheetContentState
 
       final sourceFile = File(picked.path!);
       final bytes = await sourceFile.readAsBytes();
-      final appDir = await getApplicationDocumentsDirectory();
+      final appDir = await appDataDirectory();
       final voicesDir = Directory('${appDir.path}/voices');
       if (!await voicesDir.exists()) {
         await voicesDir.create(recursive: true);

@@ -21,6 +21,7 @@ import '../data/cloud_local_store.dart';
 import '../data/cloud_sync_engine.dart';
 import '../data/cloud_sync_scheduler.dart';
 import '../data/device_names.dart';
+import '../../../core/storage/app_data_directory.dart';
 
 export '../data/cloud_sync_engine.dart' show CloudProgress;
 
@@ -80,7 +81,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     return _connecting = () async {
       try {
         final preferences = await SharedPreferences.getInstance();
-        final documents = await getApplicationDocumentsDirectory();
+        final documents = await appDataDirectory();
         final support = await getApplicationSupportDirectory();
         if (!mounted || generation != _generation) return;
         final media = await MediaStore.shared;

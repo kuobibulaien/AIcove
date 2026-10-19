@@ -40,6 +40,18 @@ class _ThrowingApprovals implements ApprovalPort {
   }
 }
 
+/// Asks for every call and leaves a numbered note in the call's scope.
+class _ScopeGate implements ToolGate {
+  var _count = 0;
+
+  @override
+  GateVerdict check(KernelToolCall call, ToolEffect effect) {
+    final scope = ToolCallScope.current;
+    if (scope != null) scope.notes['gate'] = ++_count;
+    return const GateVerdict.ask('确认');
+  }
+}
+
 class _EffectGate implements ToolGate {
   _EffectGate(this.byEffect);
   final Map<ToolEffect, GateVerdict> byEffect;
@@ -59,6 +71,17 @@ class _Approvals implements ApprovalPort {
     requests.add(request);
     return answer(request);
   }
+}
+
+class _Explaining implements ExplainingApprovalPort {
+  _Explaining(this.reply);
+  final ApprovalAnswer reply;
+
+  @override
+  Future<ApprovalAnswer> answer(ApprovalRequest request) async => reply;
+
+  @override
+  Future<bool> request(ApprovalRequest request) async => reply.approved;
 }
 
 void main() {
@@ -395,6 +418,54 @@ void main() {
           BatchMode.parallel);
       expect(executor.modeFor([_call('diag'), _call('set')], _ctx()),
           BatchMode.serial);
+    });
+
+    test('an explained rejection reaches the model with its reason',
+        () async {
+      final rejected = await gated(
+        _Explaining(const ApprovalAnswer.rejected('只改用户提到的角色')),
+      ).executeOne(_call('set'), _ctx());
+      final approved = await gated(
+        _Explaining(const ApprovalAnswer.approved()),
+      ).executeOne(_call('set'), _ctx());
+      final silent = await gated(
+        _Explaining(const ApprovalAnswer.rejected()),
+      ).executeOne(_call('set'), _ctx());
+
+      expect(rejected.isError, isTrue);
+      expect(rejected.content, '未获允许：只改用户提到的角色');
+      expect(approved.content, 'ran:set');
+      expect(silent.content, '用户未允许：set');
+    });
+
+    test('each call runs in its own scope, shared by its gate and its tool',
+        () async {
+      final seen = <ToolCallScope?>[];
+      final gate = _ScopeGate();
+      final executor = GatedToolExecutor(
+        registry([
+          KernelTool(
+            name: 'set',
+            schema: const {'name': 'set'},
+            effect: ToolEffect.write,
+            handler: (_) async {
+              seen.add(ToolCallScope.current);
+              return 'ran';
+            },
+          ),
+        ]),
+        gate: gate,
+        effectOf: (_) => ToolEffect.write,
+        approvals: _Approvals((_) async => true),
+      );
+      // Same provider id twice: the scopes must still differ.
+      await executor.executeOne(_call('set', 'same'), _ctx());
+      await executor.executeOne(_call('set', 'same'), _ctx());
+      expect(seen, hasLength(2));
+      expect(identical(seen[0], seen[1]), isFalse);
+      expect(seen.map((s) => s!.notes['gate']), [1, 2]);
+      expect(seen.map((s) => s!.outcome), everyElement(GateOutcome.approved));
+      expect(ToolCallScope.current, isNull);
     });
 
     test('allow-all gate keeps ordinary chat behaviour', () async {

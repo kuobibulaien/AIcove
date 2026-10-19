@@ -185,7 +185,8 @@ void main() {
 
       expect(messagesOf(config), contains(_prompt));
       expect(messagesOf(config), contains('<mood>开心</mood>'));
-      expect(toolsOf(config), [_tool]);
+      // delegate_task is built in for every chat run (ADR0088).
+      expect(toolsOf(config), [_tool, 'delegate_task']);
       final tool = config.boundTools!.singleWhere((t) => t.name == _tool);
       expect(await tool.handler({'name': 'guide'}), '# 写诗指南\n押韵。');
     },

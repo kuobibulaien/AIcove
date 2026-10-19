@@ -44,30 +44,18 @@ class SettingsContent extends ConsumerStatefulWidget {
 
 class _SettingsContentState extends ConsumerState<SettingsContent> {
   // Size text, touch targets and whitespace independently of display density.
-  static const double _outerInset = 12;
+  static const double _outerInset = MoeSettingsLayout.inset;
   static const double _innerInset = 16;
 
   static const _entries = [
-    (
-      label: '模型',
-      icon: Icons.layers_rounded,
-      page: ModelListPage(),
-    ),
-    (
-      label: '通用',
-      icon: Icons.tune_rounded,
-      page: UiSettingsPage(),
-    ),
+    (label: '模型', icon: Icons.layers_rounded, page: ModelListPage()),
+    (label: '通用', icon: Icons.tune_rounded, page: UiSettingsPage()),
     (
       label: '插件',
       icon: Icons.extension_rounded,
       page: ChatPluginSettingsPage(),
     ),
-    (
-      label: '调试',
-      icon: Icons.terminal_rounded,
-      page: DebugCenterPage(),
-    ),
+    (label: '调试', icon: Icons.terminal_rounded, page: DebugCenterPage()),
   ];
 
   void _openProfile() => MoeWorkspace.open(context, const ProfilePage());
@@ -150,7 +138,7 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
                     context,
                     icon: entry.icon,
                     label: entry.label,
-                    page: entry.page,
+                    onTap: () => MoeWorkspace.open(context, entry.page),
                   ),
               ],
             ),
@@ -164,7 +152,7 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
     BuildContext context, {
     required IconData icon,
     required String label,
-    required Widget page,
+    required VoidCallback onTap,
   }) {
     return MoeSettingsRow(
       label: label,
@@ -177,22 +165,53 @@ class _SettingsContentState extends ConsumerState<SettingsContent> {
       ),
       labelStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.normal),
       iconContainerWidth: 30,
-      iconWidget: Container(
-        width: 30,
-        height: 30,
-        decoration: MoeG2Decoration(
-          radius: 7,
-          color: context.moeColors.primary.withValues(
-            alpha: Theme.of(context).brightness == Brightness.dark ? 0.24 : 0.16,
-          ),
-        ),
-        child: Icon(icon, color: context.moeAccentInk, size: 19),
-      ),
+      iconWidget: _EntryIcon(icon: icon),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: _innerInset,
         vertical: 11,
       ),
-      onTap: () => MoeWorkspace.open(context, page),
+      onTap: onTap,
+    );
+  }
+}
+
+/// 入口图标：纯色档用强调色淡染底块；模糊／玻璃档不画底块，
+/// 图标直接透出面板材质，用文字色。
+class _EntryIcon extends StatelessWidget {
+  const _EntryIcon({required this.icon});
+
+  final IconData icon;
+
+  static const double _size = 30;
+  static const double _radius = 7;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = context.moeColors;
+    final glassy =
+        (MoeGlassTheme.maybeOf(context)?.material ??
+            MoeSurfaceMaterial.solid) !=
+        MoeSurfaceMaterial.solid;
+    if (!glassy) {
+      return Container(
+        width: _size,
+        height: _size,
+        decoration: MoeG2Decoration(
+          radius: _radius,
+          color: colors.primary.withValues(alpha: isDark ? 0.24 : 0.16),
+        ),
+        child: Icon(icon, color: context.moeAccentInk, size: 19),
+      );
+    }
+    return SizedBox(
+      width: _size,
+      height: _size,
+      child: Icon(
+        icon,
+        color: colors.text.withValues(alpha: isDark ? 0.82 : 0.68),
+        size: 19,
+      ),
     );
   }
 }

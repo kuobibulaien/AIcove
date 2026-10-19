@@ -117,7 +117,8 @@ AI 在一条回复里可以自然地混合多种内容：
 | 平台 | 文件 | 备注 |
 |---|---|---|
 | Android | `AIcove-*-android.apk` | 直接安装 |
-| macOS (Apple Silicon) | `AIcove-*-macos-arm64.zip` | 临时签名、未公证；首次打开需在「系统设置 → 隐私与安全性」中允许 |
+| macOS (Apple Silicon) | `AIcove-*-macos-arm64.dmg` | 打开后把 AIcove 拖进「应用程序」；升级时覆盖旧版，数据保留。临时签名、未公证，首次打开需在「系统设置 → 隐私与安全性」中允许 |
+| Windows (x64) | `AIcove-*-windows-x64-setup.exe` | 装到当前用户、无需管理员；升级时直接运行新版安装程序，数据保留。未签名，SmartScreen 提示时点「更多信息 → 仍要运行」 |
 
 每个版本都附带 `SHA256SUMS`，可用来核对下载文件是否完整。
 

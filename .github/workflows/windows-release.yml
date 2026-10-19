@@ -1,4 +1,4 @@
-# Builds the Windows package for a published GitHub release and attaches it
+# Builds the Windows installer for a published GitHub release and attaches it
 # to that release. The Android/macOS/iOS packages are built locally by
 # apps/aicove_flutter/tool/publish_release.py; Flutter cannot cross-compile
 # Windows apps, so this one runs on a GitHub-hosted Windows runner.
@@ -46,7 +46,7 @@ jobs:
             echo "VERSION=$version"
             echo "BUILD_NAME=${version%%-*}"
             echo "BUILD_NUMBER=$(echo "$created" | cut -c1-10 | tr -d -)01"
-            echo "ZIP_NAME=AIcove-$version-windows-x64.zip"
+            echo "SETUP_NAME=AIcove-$version-windows-x64-setup"
           } >> "$GITHUB_ENV"
 
       - uses: subosito/flutter-action@v2
@@ -73,20 +73,29 @@ jobs:
         working-directory: apps/aicove_flutter
         run: flutter test --reporter expanded test/core/runtime/quickjs_test.dart
 
-      - name: Package
+      - name: Package installer
         shell: pwsh
         working-directory: apps/aicove_flutter
         run: |
-          $out = "build/package/AIcove"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item -Recurse -Path "build/windows/x64/runner/Release/*" -Destination $out
-          Compress-Archive -Path $out -DestinationPath "build/package/$env:ZIP_NAME" -Force
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $release = (Resolve-Path "build/windows/x64/runner/Release").Path
+          New-Item -ItemType Directory -Force -Path "build/package" | Out-Null
+          $package = (Resolve-Path "build/package").Path
+          & $iscc /Q "/DAppVersion=$env:VERSION" "/DBuildDir=$release" "/DOutputDir=$package" `
+            "/DOutputBaseName=$env:SETUP_NAME" windows/installer/aicove.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$package/$env:SETUP_NAME.exe")) { throw "installer not produced" }
 
       - name: Attach to release
         working-directory: apps/aicove_flutter/build/package
         run: |
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p SHA256SUMS
-          grep -v " $ZIP_NAME\$" SHA256SUMS > SHA256SUMS.new || true
-          sha256sum "$ZIP_NAME" | sed 's/ \*/  /' >> SHA256SUMS.new
+          file="$SETUP_NAME.exe"
+          grep -v " $file\$" SHA256SUMS > SHA256SUMS.new || true
+          sha256sum "$file" | sed 's/ \*/  /' >> SHA256SUMS.new
           mv SHA256SUMS.new SHA256SUMS
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "$ZIP_NAME" SHA256SUMS --clobber
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "$file" SHA256SUMS --clobber

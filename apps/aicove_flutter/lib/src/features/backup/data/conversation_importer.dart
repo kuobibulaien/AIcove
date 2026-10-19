@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import 'transfer_safety.dart';
 import '../models/export_format.dart';
@@ -12,6 +11,8 @@ import '../../../core/database/database.dart' hide SyncScope;
 import '../../../core/database/repositories/repositories.dart';
 import '../../../core/models/message_block.dart' as domain;
 import '../../chat/id_gen.dart';
+import '../../../core/storage/app_data_directory.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// 会话导入服务
 class ConversationImporter {
@@ -33,7 +34,7 @@ class ConversationImporter {
         _temporaryDirectoryResolver =
             temporaryDirectoryResolver ?? getTemporaryDirectory,
         _documentsDirectoryResolver =
-            documentsDirectoryResolver ?? getApplicationDocumentsDirectory;
+            documentsDirectoryResolver ?? appDataDirectory;
 
   /// (注释已丢失)
   Future<ImportPreview> preview(File file, {String? password}) async {

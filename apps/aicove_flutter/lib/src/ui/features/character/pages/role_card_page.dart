@@ -12,43 +12,8 @@ import '../../../theme/tokens.dart';
 import '../../chat/widgets/message_search_results.dart';
 import '../services/open_role_chat.dart';
 
-class RoleCardPage extends StatefulWidget {
-  const RoleCardPage({super.key});
-
-  @override
-  State<RoleCardPage> createState() => _RoleCardPageState();
-}
-
-class _RoleCardPageState extends State<RoleCardPage> {
-  String _query = '';
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: MoeSurfaceGroup.contains(context)
-        ? Colors.transparent
-        : context.moeColors.surface,
-    extendBodyBehindAppBar: true,
-    appBar: MoeAppBar(
-      title: '角色',
-      centerTitle: true,
-      bottom: MoeSearchField(
-        hintText: '搜索',
-        onChanged: (value) => setState(() => _query = value),
-      ),
-      bottomHeight: MoeSearchField.heightFor(context),
-      actions: [
-        MoeIconButton(
-          tooltip: '创建角色',
-          icon: Icons.person_add_alt_1_outlined,
-          onTap: () => MoeWorkspace.openLocation(context, '/contact/new'),
-        ),
-      ],
-    ),
-    body: RoleCardContent(query: _query),
-  );
-}
-
-/// Shared, ungrouped role directory with one row per role.
+/// Role directory used by the chat page's search: one row per role,
+/// including preset roles not chatted with yet.
 ///
 /// A non-empty [query] filters roles by name and also matches chat records
 /// across all conversations.

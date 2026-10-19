@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
@@ -27,6 +28,29 @@ class ProfileContent extends ConsumerStatefulWidget {
 
 class _ProfileContentState extends ConsumerState<ProfileContent> {
   bool _checkingUpdate = false;
+  String _packageVersionText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPackageVersion();
+  }
+
+  /// Fills the subtitle of a development build, which has no release tag.
+  Future<void> _loadPackageVersion() async {
+    String version;
+    try {
+      version = (await PackageInfo.fromPlatform()).version;
+    } catch (_) {
+      return;
+    }
+    if (mounted) setState(() => _packageVersionText = version);
+  }
+
+  /// Subtitle for a development build, which has no release tag to show.
+  String _developmentSubtitle() => _packageVersionText.isEmpty
+      ? '开发版本'
+      : '开发版 · 当前版本 $_packageVersionText';
 
   Future<void> _pickImage() async {
     // 与"添加角色"一致：使用 FilePicker 获取字节并存为 data:image/... 的数据URL
@@ -113,14 +137,9 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
 
   Future<void> _checkForUpdate() async {
     if (_checkingUpdate) return;
-    final service = AppUpdateService();
-    if (!service.canCheck) {
-      MoeToast.show(context, '开发版本不检查更新');
-      return;
-    }
     setState(() => _checkingUpdate = true);
     try {
-      final release = await service.checkForUpdate(manual: true);
+      final release = await AppUpdateService.checkInstalled(manual: true);
       if (!mounted) return;
       if (release == null) {
         MoeToast.show(context, '已是最新版本', type: ToastType.success);
@@ -252,9 +271,9 @@ class _ProfileContentState extends ConsumerState<ProfileContent> {
                 label: '检查更新',
                 subtitle: _checkingUpdate
                     ? '检查中…'
-                    : kAppReleaseTag.isEmpty
-                        ? '开发版本'
-                        : '当前版本 $kAppReleaseTag',
+                    : kAppReleaseTag.isNotEmpty
+                        ? '当前版本 $kAppReleaseTag'
+                        : _developmentSubtitle(),
                 onTap: _checkForUpdate,
               ),
             ],

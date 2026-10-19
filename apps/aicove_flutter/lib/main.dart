@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'src/app.dart';
 import 'src/core/app_logger.dart';
+import 'src/core/storage/app_data_directory.dart';
 import 'src/ui/theme/tokens.dart';
 import 'src/core/frontend_error_capture.dart';
 import 'src/features/observability/frontend_diagnostics_service.dart';
@@ -23,6 +24,8 @@ void main(List<String> args) async {
     return runVoiceCallWindow(args[2]);
   }
   WidgetsFlutterBinding.ensureInitialized();
+  // Before anything reads or writes app data (database, logs, preferences).
+  await AppDataMigration.run();
   FrontendErrorCapture(FrontendDiagnosticsService.instance).install();
   FrontendDiagnosticsService.instance
       .setRuntimeIdentity(await readDiagnosticRuntimeIdentity());

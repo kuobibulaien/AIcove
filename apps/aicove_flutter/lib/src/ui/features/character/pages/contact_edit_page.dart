@@ -35,6 +35,7 @@ import '../widgets/character_text_editor_sheet.dart';
 import '../widgets/tavern_greeting_picker_sheet.dart';
 import '../../../../features/plugins/mcp/mcp_connector.dart';
 import '../../../../features/plugins/packages/aicove_package.dart';
+import '../../../../features/workspace/domain/workspace_grants.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
@@ -152,7 +153,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         for (final id in conv.enabledPlugins!)
           if (allPluginIds.contains(id) ||
               McpToolNaming.isConnectorPluginId(id) ||
-              AicovePackage.isPackagePluginId(id))
+              AicovePackage.isPackagePluginId(id) ||
+              // 本机没有的工作区也保留授权（ADR0087 第 1 条）
+              WorkspaceGrants.isGrantId(id))
             id,
       };
     }

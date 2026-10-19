@@ -8,8 +8,8 @@ import '../sync/cloud_tracking.dart';
 import '../sync/lan_tracking.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import '../storage/app_data_directory.dart';
 
 part 'database.g.dart';
 
@@ -233,7 +233,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 23;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration {
@@ -244,6 +244,7 @@ class AppDatabase extends _$AppDatabase {
         await _ensureContextMemoryTables();
         await _ensureMessageStateTable();
         await _ensureVoiceCallTables();
+        await _ensureAgentTaskTables();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // v1 -> v2 的旧记忆表已随 v18 退役（ADR0038），不再创建。
@@ -331,10 +332,15 @@ class AppDatabase extends _$AppDatabase {
           await _safeAddColumn(
               'conversations', 'chat_background_framing TEXT');
         }
+        // v23 -> v24: 杂活 Agent 任务、待转告与已消费的控制事件（ADR0088），只存本机
+        if (from < 24) {
+          await _ensureAgentTaskTables();
+        }
       },
       // 只补物理访问索引，不改变表/记录格式或user_version。
       // 已有v16也能获得索引，且回退到此前v16应用无需降级数据库。
       beforeOpen: (_) async {
+        await AppDataMigration.rewriteDatabase(this);
         await _ensureChatEntryIndexes();
         await _ensureAutoReplyClaimCompletion();
         await _ensureProactiveCallTable();
@@ -472,6 +478,51 @@ CREATE TABLE IF NOT EXISTS call_turns (
 )''');
   }
 
+  /// 杂活 Agent（ADR0088）：任务状态机、待转告的回执、已消费的控制事件与
+  /// 总开关。由 AgentTaskStore 以参数化 SQL 访问；只存本机，不同步——回执
+  /// 本身是一条随聊天同步的消息。
+  Future<void> _ensureAgentTaskTables() async {
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id TEXT PRIMARY KEY NOT NULL,
+  request_key TEXT UNIQUE,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  instruction TEXT NOT NULL,
+  status TEXT NOT NULL,
+  frozen INTEGER NOT NULL DEFAULT 0,
+  notify TEXT NOT NULL,
+  receipt_seq INTEGER NOT NULL DEFAULT 0,
+  question_receipt_id TEXT,
+  pending_receipt TEXT,
+  side_effect_uncertain INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)''');
+    await customStatement('''
+CREATE INDEX IF NOT EXISTS agent_tasks_status ON agent_tasks(status, created_at)''');
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS agent_task_deliveries (
+  receipt_id TEXT PRIMARY KEY NOT NULL,
+  task_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+)''');
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS agent_task_controls (
+  control_id TEXT PRIMARY KEY NOT NULL,
+  task_id TEXT NOT NULL,
+  consumed_at INTEGER NOT NULL
+)''');
+    await customStatement('''
+CREATE TABLE IF NOT EXISTS agent_task_switch (
+  id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
+  enabled INTEGER NOT NULL,
+  generation INTEGER NOT NULL
+)''');
+  }
+
   /// 主动回复触发器执行权认领表：前台轮询与后台 WorkManager 发送前
   /// 必须先认领，认领失败即另一方正在执行或已送达（见 AutoReplyClaimStore）。
   /// 不走 drift 表定义（仅 raw SQL 访问），避免为单一互斥表引入 codegen。
@@ -583,7 +634,7 @@ CREATE TABLE IF NOT EXISTS proactive_calls (
 
 LazyDatabase _openConnection() {
   return LazyDatabase(() async {
-    final dbFolder = await getApplicationDocumentsDirectory();
+    final dbFolder = await appDataDirectory();
     final file = File(p.join(dbFolder.path, 'aicove.db'));
     return NativeDatabase.createInBackground(
       file,

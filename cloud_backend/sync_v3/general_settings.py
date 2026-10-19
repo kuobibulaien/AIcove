@@ -3,16 +3,20 @@ import json
 from .contracts import canonical
 from .setting_merge import media_references
 
-LOCAL_GENERAL_SETTINGS = {
+LOCAL_GENERAL_SETTINGS = {  # Keep in sync with localGeneralSettings (Dart).
     'message_chunking_enabled', 'message_format_config',
     'stream_segment_delay_seconds', 'chat_display_style',
-    'text_scale_factor', 'ui_scale_factor', 'image_preview_scale',
-    'windows_window_controls_side', 'chat_background_color',
-    'global_background_color', 'is_dark_mode', 'use_system_theme',
+    'auto_scroll_on_send', 'text_scale_factor', 'ui_scale_factor',
+    'image_preview_scale', 'windows_window_controls_side',
+    'windows_close_behavior', 'chat_background_color',
+    'global_background_color', 'global_wallpaper',
+    'global_wallpaper_custom_image', 'global_wallpaper_mask',
+    'global_wallpaper_customs', 'global_wallpaper_custom_id',
+    'global_wallpaper_styles', 'is_dark_mode', 'use_system_theme',
     'hide_user_avatar', 'expand_audio_text', 'skip_vision_compat_dialog',
     'interface_skin', 'accent_color', 'glass_effect_enabled',
-    'glass_blur_sigma', 'use_liquid_glass',
-    'user_name', 'user_avatar',
+    'glass_blur_sigma', 'frosted_blur_sigma', 'glass_tint_fill',
+    'frosted_tint_fill', 'use_liquid_glass', 'user_name', 'user_avatar',
 }
 
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show debugPrint, protected;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/thinking/thinking_level.dart';
@@ -8,6 +9,8 @@ import 'domain/chat_display_policy.dart';
 import 'domain/conversation.dart';
 import 'id_gen.dart';
 import 'data/preset_characters_loader.dart';
+import '../assistant/domain/assistant_onboarding.dart' show kAicoveAssistantId;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/database/database.dart' as db;
 import '../../core/database/database_provider.dart';
 import '../../core/database/converters/database_converters.dart';
@@ -26,18 +29,76 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   @override
   Future<List<Conversation>> build() async {
     final convRepo = ref.read(conversationRepositoryProvider);
-    ref.onDispose(() => _watchSub?.cancel());
+    var disposed = false;
+    ref.onDispose(() {
+      disposed = true;
+      _watchSub?.cancel();
+    });
 
     final dbConvs = await convRepo.getAll();
+    final List<Conversation> list;
     if (dbConvs.isEmpty) {
       final conv = await _createInitialConversation();
       await _saveOne(conv);
-      _bindWatch(convRepo);
-      return <Conversation>[conv];
+      list = <Conversation>[conv];
+    } else {
+      list = _mapConversations(dbConvs);
     }
+    final assistant = await _seedAssistantOnce(list);
+    if (assistant != null) list.insert(0, assistant);
 
-    _bindWatch(convRepo);
-    return _mapConversations(dbConvs);
+    // Loading awaits the database and the assistant seed; a container
+    // disposed meanwhile has closed the database.
+    if (!disposed) _bindWatch(convRepo);
+    return list;
+  }
+
+  static const _assistantSeededKey = 'aicove_assistant_seeded_v1';
+
+  /// Adds the built-in assistant role once per device (new installs and
+  /// upgrades alike); a user who deletes it is not given it back on restart.
+  Future<Conversation?> _seedAssistantOnce(List<Conversation> list) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_assistantSeededKey) == true) return null;
+      await prefs.setBool(_assistantSeededKey, true);
+      if (list.any((c) => c.id == kAicoveAssistantId)) return null;
+      final assistant = await _loadAssistant();
+      if (assistant == null) return null;
+      await _saveOne(assistant);
+      return assistant;
+    } catch (error) {
+      // A missing assistant must never keep the contact list from loading.
+      debugPrint('[ConversationsNotifier] 内置助手写入失败：$error');
+      return null;
+    }
+  }
+
+  Future<Conversation?> _loadAssistant() async {
+    final presets = await PresetCharactersLoader.load();
+    final preset = presets.where((c) => c.id == kAicoveAssistantId).firstOrNull;
+    if (preset == null) return null;
+    final now = DateTime.now();
+    return preset.copyWith(createdAt: now, updatedAt: now, isPinned: true);
+  }
+
+  /// Brings the assistant back from the settings page: restores it from the
+  /// trash, or recreates it with the same id when it is gone.
+  Future<Conversation?> restoreAssistant() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_assistantSeededKey, true);
+    final existing =
+        state.value?.where((c) => c.id == kAicoveAssistantId).firstOrNull;
+    if (existing != null) return existing;
+    final convRepo = ref.read(conversationRepositoryProvider);
+    await convRepo.restore(kAicoveAssistantId);
+    final restored = await convRepo.getById(kAicoveAssistantId);
+    if (restored != null && restored.deletedAt == null) {
+      return ConversationConverter.fromDb(restored);
+    }
+    final assistant = await _loadAssistant();
+    if (assistant != null) await _saveOne(assistant);
+    return assistant;
   }
 
   void _bindWatch(ConversationRepository convRepo) {
@@ -123,18 +184,36 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     bool persist = true,
   }) async {
     final current = state.value ?? <Conversation>[];
+    Conversation? changed;
     final next = [
       for (final c in current)
-        if (c.id == id) fn(c) else c
+        if (c.id == id) changed = fn(c) else c
     ];
-    await setAll(next, persist: persist);
+    // Only the row that changed: writing the whole list back would put this
+    // state's older copies of other roles over newer saves. Both start
+    // before any await, as a single setAll did.
+    await Future.wait([
+      setAll(next, persist: false),
+      if (persist && changed != null) saveOne(changed),
+    ]);
   }
+
+  /// Adds [conv] (a preset opened for the first time) without writing the
+  /// other rows back.
+  Future<void> addOne(Conversation conv) async {
+    final list = <Conversation>[...(state.value ?? <Conversation>[]), conv];
+    await Future.wait([setAll(list, persist: false), saveOne(conv)]);
+  }
+
+  /// Writes one row; tests replace it together with [setAll].
+  @protected
+  Future<void> saveOne(Conversation conv) => _saveOne(conv);
 
   Future<String> createNew() async {
     final list = <Conversation>[...(state.value ?? <Conversation>[])];
     final c = _createConversation();
     list.insert(0, c);
-    await setAll(list);
+    await Future.wait([setAll(list, persist: false), saveOne(c)]);
     return c.id;
   }
 

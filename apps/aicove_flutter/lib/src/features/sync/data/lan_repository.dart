@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../../../core/app_logger.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
 import '../domain/lan_contract.dart';
@@ -221,6 +222,25 @@ class LanRepository {
     return result;
   }
 
+  /// One unreadable entity must not take the whole conflict list (and LAN
+  /// initialization) down with it; it is skipped and logged instead.
+  Future<List<LanRevision>?> _readableHeads(Map<String, dynamic> row) async {
+    try {
+      return await _heads(row);
+    } on LanSyncFailure catch (e) {
+      AppLogger.warning(
+        'LanSync',
+        '跳过无法读取的同步记录',
+        metadata: {
+          'kind': row['kind'],
+          'entity_id': row['entity_id'],
+          'error': e.message,
+        },
+      );
+      return null;
+    }
+  }
+
   Future<void> _save(LanRevision r) => local.execute(
     'INSERT OR IGNORE INTO lan_revisions(hash,kind,entity_id,document_json) VALUES(?,?,?,?)',
     [r.hash, r.kind, r.id, canonicalJson(r.toJson())],
@@ -420,7 +440,8 @@ class LanRepository {
     for (final row in await local.rows(
       'SELECT * FROM lan_entities WHERE json_array_length(heads_json)>1',
     )) {
-      result.add(await _heads(row));
+      final heads = await _readableHeads(row);
+      if (heads != null) result.add(heads);
     }
     final pending = await local.rows(
       r"SELECT DISTINCT json_extract(document_json,'$.entity_id') AS entity_id FROM lan_pending_deletions",
@@ -435,11 +456,10 @@ class LanRepository {
       }
       final row = await _entity('conversations', id);
       if (row == null) continue;
+      final heads = await _readableHeads(row);
+      if (heads == null) continue;
       final versions = {
-        for (final r in [
-          ...await _heads(row),
-          ...await _pendingHeads('conversations', id),
-        ])
+        for (final r in [...heads, ...await _pendingHeads('conversations', id)])
           r.hash: r,
       }.values.toList();
       if (versions.length > 1) {
@@ -507,6 +527,18 @@ class LanRepository {
             fieldsToStamp.addAll(
               (head.payload['setting_times'] as Map).keys.cast<String>(),
             );
+          }
+          if (kind == 'settings') {
+            // A legacy head may carry device-local General fields; the
+            // resolution is a new revision and must not re-publish them.
+            final key = payload['key'] as String;
+            payload['json_value'] = projectCloudPreference(
+              key,
+              payload['json_value'],
+            );
+            if (key == cloudUiModelsKey) {
+              fieldsToStamp.removeAll(localGeneralSettings);
+            }
           }
           payload['setting_times'] = {
             for (final field in fieldsToStamp)

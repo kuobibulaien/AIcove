@@ -61,6 +61,8 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.0  # Android/iOS/macOS/Windows SQLite
   path: ^1.9.0
   yaml: ^3.1.2  # MVU 变量初始化与宏输出（ADR0071）
+  unorm_dart: 0.3.2 # 工作区文件名统一为 NFC（ADR0087）
+  characters: ^1.4.0 # 回执按字形截断（ADR0088），Flutter 已带
   # 数据备份导入导出
   archive: ^3.6.0  # ZIP 压缩解压
   share_plus: ^9.0.0  # 分享文件
@@ -115,6 +117,7 @@ flutter:
     - assets/preset_runtime/
     - assets/agent_context_defaults.json
     - assets/prompt_defaults.json
+    - assets/aicove_docs/
     - assets/characters/
     - assets/characters/images/
     - assets/characters/prompts/

@@ -34,6 +34,7 @@ class _Runner implements ApiRunner {
     void Function()? onStreamToolCallObserved,
     void Function()? onStreamingFallback,
     traceContext,
+    cancellation,
   }) async {
     seenTraceContext = traceContext;
     seenTurnId = turnId;

@@ -5,9 +5,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'trace_models.dart';
+import '../../core/storage/app_data_directory.dart';
 
 typedef TraceRootDirResolver = Future<Directory> Function();
 typedef TraceNowProvider = DateTime Function();
@@ -47,7 +47,7 @@ class TraceStore {
   int _payloadFileSeq = 0;
 
   static Future<Directory> _defaultRootDirResolver() async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     return Directory('${appDir.path}/$_logDirName');
   }
 

@@ -73,6 +73,9 @@ class _FakeConversationsNotifier extends ConversationsNotifier {
   }) async {
     state = AsyncValue.data(list);
   }
+
+  @override
+  Future<void> saveOne(Conversation conv) async {}
 }
 
 class _SpyModelFailoverPromptController extends ModelFailoverPromptController {

@@ -11,6 +11,7 @@ import 'diagnostic_access_port.dart';
 import 'diagnostic_bundle.dart';
 import 'diagnostic_runtime_identity.dart';
 import 'storage_inventory.dart';
+import '../../core/storage/app_data_directory.dart';
 
 class DiagnosticAccessService implements DiagnosticAccessPort {
   DiagnosticAccessService({
@@ -43,7 +44,7 @@ class DiagnosticAccessService implements DiagnosticAccessPort {
     _busy = true;
     try {
       if (_bundleBuilder != null) return await _bundleBuilder();
-      final path = '${(await getApplicationDocumentsDirectory()).path}/logs';
+      final path = '${(await appDataDirectory()).path}/logs';
       return await Isolate.run(() => createDiagnosticBundle(path));
     } finally {
       _busy = false;

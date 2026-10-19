@@ -50,7 +50,15 @@ class LanService implements LanSyncPort {
       _enabled && _foreground && !_closed && transport.listening;
 
   @override
-  Future<void> initialize() => _initializing ??= () async {
+  Future<void> initialize() => _initializing ??= _initialize().catchError((
+    Object error,
+    StackTrace stack,
+  ) {
+    // Let a later call retry instead of replaying the cached failure.
+    _initializing = null;
+    Error.throwWithStackTrace(error, stack);
+  });
+  Future<void> _initialize() async {
     await peers.load();
     _name = await ownDeviceName(repository.local.preferences);
     await publishDeviceName(repository.local.preferences, repository.deviceId);
@@ -58,7 +66,8 @@ class LanService implements LanSyncPort {
         repository.local.preferences.getBool('aicove.lan.enabled') == true;
     await _reconcile();
     await _publish();
-  }();
+  }
+
   Future<void> _publish() async {
     if (_closed) return;
     final conflicts = await repository.conflicts();
@@ -192,10 +201,7 @@ class LanService implements LanSyncPort {
     if (value.isEmpty || value.length > 50) {
       throw const LanSyncFailure('设备名称需要 1～50 个字');
     }
-    if (!await repository.local.preferences.setString(
-      lanNameKey,
-      value,
-    )) {
+    if (!await repository.local.preferences.setString(lanNameKey, value)) {
       throw const LanSyncFailure('设备名称保存失败');
     }
     _name = value;

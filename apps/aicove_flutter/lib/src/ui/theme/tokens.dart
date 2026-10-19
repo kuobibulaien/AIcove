@@ -197,6 +197,9 @@ const double telegramPrimaryRadius = 28;
 const double telegramCompactTitleBarHeight = 40;
 const double telegramChatHeaderHeight = 48;
 const double telegramChatHeaderVerticalInset = 6;
+
+/// Side inset of the floating header; settings content columns share it.
+const double telegramChatHeaderHorizontalInset = 12;
 const double telegramChatHeaderGap = 8;
 const double telegramChatHeaderAvatarSize = 32;
 const double telegramChatHeaderTitleSize = 16;
@@ -777,10 +780,8 @@ class MoeInputSizes {
 class MoeSettingsLayout {
   MoeSettingsLayout._();
 
-  static const double maxContentWidth = 760;
-  static const double insetFraction = 0.04;
-  static const double minInset = 12;
-  static const double maxInset = 32;
+  /// Card edges line up with the floating header capsules above them.
+  static const double inset = telegramChatHeaderHorizontalInset;
   static const double cardRadius = 20;
   static const double sectionGap = 16;
   static const EdgeInsets verticalListPadding = EdgeInsets.only(
@@ -788,10 +789,4 @@ class MoeSettingsLayout {
     bottom: 24,
   );
   static const EdgeInsets contentPadding = EdgeInsets.all(16);
-
-  static double insetFor(double panelWidth) =>
-      (panelWidth * insetFraction).clamp(minInset, maxInset);
-
-  static double contentWidthFor(double panelWidth) =>
-      (panelWidth - 2 * insetFor(panelWidth)).clamp(0.0, maxContentWidth);
 }

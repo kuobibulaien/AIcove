@@ -6,6 +6,7 @@ import 'package:aicove_flutter/src/ui/features/debug/pages/ui_gallery_page.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const backKey = ValueKey('spring-demo-back');
@@ -24,7 +25,13 @@ void main() {
           tester.view.physicalSize = Size(width, 1000);
           tester.view.devicePixelRatio = 1;
           addTearDown(tester.view.reset);
-          await tester.pumpWidget(const MaterialApp(home: UiGalleryPage()));
+          await tester.pumpWidget(const ProviderScope(child: MaterialApp(home: UiGalleryPage())));
+          // The entry sits below the interactive-block samples.
+          final entry = find.byKey(ValueKey('spring-demo-${demo.name}'));
+          await tester.scrollUntilVisible(entry, 300, scrollable: find.byType(Scrollable).first);
+          // Bring it out from under the translucent app bar.
+          await tester.drag(find.byType(Scrollable).first, const Offset(0, 300));
+          await tester.pump();
           await tester.tap(find.byKey(ValueKey('spring-demo-${demo.name}')));
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 100));
@@ -143,12 +150,14 @@ void main() {
     addTearDown(tester.view.reset);
     final boundary = GlobalKey();
     await tester.pumpWidget(
-      RepaintBoundary(
-        key: boundary,
-        child: MaterialApp(
-          debugShowCheckedModeBanner: false,
-          theme: ThemeData(fontFamily: 'Preview'),
-          home: const UiGalleryPage(),
+      ProviderScope(
+        child: RepaintBoundary(
+          key: boundary,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(fontFamily: 'Preview'),
+            home: const UiGalleryPage(),
+          ),
         ),
       ),
     );

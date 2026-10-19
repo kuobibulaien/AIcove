@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import '../../core/storage/app_data_directory.dart';
 
 /// Copies a picked image into app storage as the custom global wallpaper.
 /// Each save gets a fresh name so cached images of the old file never stick.
@@ -11,7 +11,7 @@ Future<String> saveCustomWallpaperFile(
   String fileName,
 ) async {
   final dir = Directory(
-    p.join((await getApplicationDocumentsDirectory()).path, 'wallpapers'),
+    p.join((await appDataDirectory()).path, 'wallpapers'),
   );
   await dir.create(recursive: true);
   final ext = p.extension(fileName).toLowerCase();
@@ -29,7 +29,7 @@ Future<String> saveCustomWallpaperFile(
 /// Removes a replaced custom wallpaper; only files inside app storage.
 Future<void> deleteCustomWallpaperFile(String path) async {
   final dir = p.join(
-    (await getApplicationDocumentsDirectory()).path,
+    (await appDataDirectory()).path,
     'wallpapers',
   );
   if (!p.isWithin(dir, path)) return;

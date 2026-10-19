@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show ToolEffect;
 import 'tool_parameter.dart';
 
@@ -98,4 +100,30 @@ class AITool {
       },
     };
   }
+}
+
+/// Who is calling a tool. The runner sets it around every handler call, so
+/// a handler can tell runs, rounds and calls apart without new arguments.
+class ToolCallContext {
+  const ToolCallContext({
+    required this.sessionId,
+    required this.turnId,
+    required this.round,
+    required this.toolCallId,
+  });
+
+  static const _key = #aicoveToolCallContext;
+
+  /// Null outside a runner (tests calling a handler directly).
+  static ToolCallContext? get current => Zone.current[_key] as ToolCallContext?;
+
+  final String sessionId;
+  final String turnId;
+  final int round;
+
+  /// As the provider gave it; not unique across conversations or runs.
+  final String toolCallId;
+
+  Future<T> run<T>(Future<T> Function() body) =>
+      runZoned(body, zoneValues: {_key: this});
 }

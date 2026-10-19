@@ -1,142 +1,53 @@
-# MCP 接入现状与标准兼容改造
+# MCP 连接器
 
-## 1. 当前接入方式（实际）
+> 更新日期：2026-10-16（按当时代码重写。旧版写于 2026-07，描述的 `/mcp/config` 自定义 REST 接口与 `McpApi` 已删除）
+> 决策：ADR0072（远程 HTTP、每个连接器一个插件、按角色显式开启）
+> 代码：`lib/src/features/plugins/mcp/`；界面：`lib/src/ui/features/plugins/pages/mcp_connectors_page.dart`、`mcp_connector_detail_page.dart`
 
-### 1.1 聊天主链路
+## 1. 做什么
 
-1. `ChatActions.send*()` 调用 `ChatSendService.prepareApiConfig()`
-2. `prepareApiConfig()` 会调用 `McpApi.fetchConfig()` 拉取 `/mcp/config`
-3. 把返回配置转换成 `tool_prefs`（`auto_tools_enabled` / `mcp_enabled_tools` / `mcp_delegate`）
-4. 发送阶段走 `AgentApiClient.sendMessageRich()`，直接请求 OpenAI/Claude/Gemini 官方接口
-5. 工具定义来自本地插件 `AITool`，通过模型 function calling 触发并在本地执行
+用户自己接入远程 MCP 服务，把服务提供的工具交给聊天模型调用。AIcove 只实现标准 MCP 的工具能力（`initialize`、`tools/list`、`tools/call`），不做资源、提示词等其他能力。
 
-### 1.2 关键事实
+## 2. 边界
 
-- 现在的 “MCP” 本质是自定义 REST 配置接口 + LLM function calling，不是标准 MCP 会话
-- 现有代码里没有标准 MCP 的 `initialize` / `tools/list` / `tools/call` 会话流
-- `cloud_backend` 仓库内没有 `/mcp/*` 实现，说明该接口当前不是由本仓库后端直接提供
+- **传输**：只支持 Streamable HTTP，响应接受 `application/json` 和 `text/event-stream`。不做本地进程（stdio）和旧版 HTTP+SSE 传输，所以全平台都能用。
+- **鉴权**：Bearer 令牌（`Authorization: Bearer <token>`）加可选的自定义请求头。不支持 OAuth 授权流程，需要 OAuth 的服务暂时接不了。
+- **开启**：每个连接器是一个独立插件 `mcp:<连接器id>`，角色必须在「管理开启的插件」里逐个显式开启；「全部插件」不包含连接器。
+- **只走 Function Calling**：模型不支持工具调用时连接器不生效。
 
-## 2. 当前数据格式
+## 3. 流程
 
-### 2.1 现有配置接口（legacy）
-
-`GET /mcp/config`
-
-```json
-{
-  "config": {
-    "enabled": true,
-    "enabled_tools": ["tool.a", "tool.b"],
-    "delegate": {
-      "enabled": false,
-      "provider": "openai",
-      "model": "gpt-4o-mini",
-      "api_base": "https://...",
-      "prompt": "..."
-    }
-  },
-  "tools": [
-    {"id": "tool.a", "description": "...", "enabled": true}
-  ]
-}
+```text
+设置页添加连接器（地址＋令牌）
+  → 测试连接／刷新：initialize ＋ tools/list，工具清单随配置保存
+聊天请求
+  → 角色开启了该连接器、连接器启用、地址有效且有工具清单 → 向模型提供工具（请求时不再联网列举）
+  → 模型调用工具 → McpClientPool 复用会话发 tools/call → 结果压平成文本回给模型
 ```
 
-### 2.2 聊天侧转发格式（内部）
+- 会话 id 由服务端在 `initialize` 时下发；带会话 id 的请求返回 404（会话过期）时自动重新握手一次。
+- 单次工具结果超过 20000 字符会截断，避免一次调用撑爆上下文。
+- 服务端的 `inputSchema` 会收成各家模型都接受的顶层 object，并去掉部分供应商不认识的元信息字段。
+- 用户可以在连接器里单独关掉某些工具。
 
-`tool_prefs`：
+## 4. 工具命名
 
-```json
-{
-  "tts_enabled": true,
-  "auto_tools_enabled": true,
-  "mcp_enabled_tools": ["tool.a", "tool.b"],
-  "mcp_delegate": {"provider": "...", "model": "...", "api_base": "...", "prompt": "..."}
-}
-```
+模型看到的工具名是 `mcp__<连接器id>__<服务端工具名>`：连接器 id 只含小写字母和数字（1～16 位）；服务端工具名里的非法字符换成 `_`；总长超过 64 字符时截断并补一段哈希，保证不重名。`McpToolNaming.connectorIdOfTool` 可以从工具名反查连接器。
 
-### 2.3 工具调用格式（模型）
+## 5. 存储与同步
 
-- 工程内统一为 OpenAI 风格 message/tool_call（再由 adapter 转 Claude/Gemini）
-- 这部分是 function calling 适配，不是 MCP protocol
+连接器配置和其他插件配置一样存在 `aicove.plugins.mcp.connectors.v1`，随云同步和局域网同步走，所以角色在别的设备上也能找到绑定的连接器。令牌是配置的一部分，会随同步到用户自己的设备和自部署服务器。
 
-## 3. 与标准 MCP 的差异
+## 6. 文件
 
-1. 协议层
-- 当前：REST（`/mcp/config` 等）
-- 标准 MCP：JSON-RPC 2.0 会话（`initialize` -> `notifications/initialized` -> `tools/list|call`）
+| 文件 | 职责 |
+|---|---|
+| `mcp_connector.dart` | 连接器配置、工具信息、工具命名规则 |
+| `mcp_http_client.dart` | Streamable HTTP 客户端、会话复用池 `McpClientPool`、错误类型 |
+| `mcp_connector_plugin.dart` | 每个连接器对应的插件，工具 schema 整理与调用转发 |
+| `mcp_connector_agent_plugin.dart` | 在内核 v2 上注册，只贡献工具，只对显式开启的角色生效 |
+| `mcp_connector_providers.dart` | 连接器配置的状态管理与存储 |
 
-2. 传输层
-- 当前：普通 HTTP
-- 标准 MCP：stdio / SSE / WebSocket（取决于 host 与 server）
+## 7. 现状
 
-3. 能力模型
-- 当前：仅工具配置与测试
-- 标准 MCP：`capabilities`、`tools`、`resources`、`prompts`、`sampling` 等
-
-4. 运行时边界
-- 当前：工具在 App 本地插件执行
-- 标准 MCP：通常由 MCP Server 执行，客户端只发起 `tools/call`
-
-## 4. 移动端约束（必须考虑）
-
-1. iOS/Android 不适合直接承载 stdio MCP Server 进程
-2. 后台存活与长连接受系统策略限制（电量、网络切换、Doze）
-3. 弱网下应减少握手与重试，避免每条消息都触发配置探测
-4. 工具结果需限制大小，避免 UI 卡顿与高内存
-
-推荐原则：
-
-- 移动端只连接 MCP Gateway（HTTP/SSE/WebSocket），不直连本地 stdio server
-- 配置和工具目录做缓存（含失败负缓存）
-- 会话短平快，必要时延迟初始化（lazy init）
-
-## 5. 建议改造路径
-
-### P0（已完成，前端兼容层）
-
-本次已在客户端落地：
-
-1. `mcp_api.dart` 增加标准 MCP fallback
-- 先尝试 legacy `/mcp/config`
-- 失败后尝试 JSON-RPC `/mcp/rpc`（`initialize` + `tools/list`）
-- 再失败尝试 `/mcp/tools`
-
-2. `McpConfigResponseDto` 兼容解析
-- 可解析 `result.tools`（标准 JSON-RPC 风格）
-- `McpToolInfoDto` 支持 `name` 作为工具标识
-
-3. 移动端缓存优化
-- MCP 配置缓存统一改为 `McpApi.mobileConfigCacheTtl`（2 分钟）
-- 增加失败负缓存，弱网下避免反复请求
-
-### P1（需要后端/Gateway）
-
-提供稳定标准入口（建议）：
-
-- `POST /mcp/rpc`
-  - 请求体：标准 JSON-RPC 2.0
-  - 由 Gateway 负责会话管理、server 连接、鉴权与超时
-
-最低支持：
-
-1. `initialize`
-2. `tools/list`
-3. `tools/call`
-
-### P2（聊天执行模型切换）
-
-将 “工具执行” 从本地插件为主，演进为：
-
-1. MCP 工具优先（`tools/call`）
-2. 本地插件工具作为 fallback
-3. 两者统一回填到现有 `tool_calls` 回合流程
-
-### P3（收敛与下线）
-
-- 稳定后逐步下线 legacy `/mcp/config` 私有字段
-- 保留一段灰度期的兼容解析
-
-## 6. 结论
-
-当前系统的 “MCP” 是命名上的 MCP，不是协议层标准 MCP。  
-建议采用 “前端兼容层 + 后端 MCP Gateway” 的双层方案：前端保持轻量和移动端友好，协议兼容责任集中在网关，能最小成本实现标准 MCP 对接并降低移动端风险。
+第一批已实施：离线测试与公开 MCP 服务冒烟通过，真实模型对话与实机未验。

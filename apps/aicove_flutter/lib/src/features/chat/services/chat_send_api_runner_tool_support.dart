@@ -84,7 +84,12 @@ Future<_ToolExecutionOutcome> _executeToolCall({
       'args': executionArgs,
     });
 
-    final result = await tool.handler(executionArgs).timeout(toolTimeout);
+    final result = await ToolCallContext(
+      sessionId: sessionId,
+      turnId: turnId,
+      round: round,
+      toolCallId: toolCall.id,
+    ).run(() => tool.handler(executionArgs)).timeout(toolTimeout);
     final resultStr = result ?? '';
     finishMeta['rawResultLength'] = resultStr.length;
     AppLogger.info(ChatSendApiRunner._logTag, '工具调用完成', metadata: {

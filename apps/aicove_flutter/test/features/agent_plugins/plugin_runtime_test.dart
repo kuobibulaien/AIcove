@@ -68,6 +68,7 @@ class _SpyMemoryPlugin extends MemoryPlugin {
   Future<String?> buildMemoryPrompt({
     String? userMessage,
     String? conversationId,
+    bool resumeBackgroundWork = true,
   }) async {
     lastConversationId = conversationId;
     return 'memory_prompt';

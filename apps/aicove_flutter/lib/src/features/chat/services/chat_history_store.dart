@@ -456,10 +456,13 @@ class ChatHistoryStore {
         );
   }
 
+  /// [updatePreview] false keeps the conversation list preview, for messages
+  /// that are never shown (task control events).
   Future<void> appendUserMessage({
     required String conversationId,
     required Message message,
     required String displayText,
+    bool updatePreview = true,
   }) async {
     await _clearStaleShortWindowIfConversationEmpty(conversationId);
     await _upsertMessages(
@@ -467,6 +470,7 @@ class ChatHistoryStore {
       messages: [message],
       previewText: displayText,
       previewTime: message.createdAt,
+      updatePreview: updatePreview,
     );
   }
 
@@ -1248,6 +1252,7 @@ class ChatHistoryStore {
     required List<Message> messages,
     required String previewText,
     required DateTime previewTime,
+    bool updatePreview = true,
   }) async {
     if (messages.isEmpty) return;
     final frontendMessages = _projectRawMessagesForFrontendSurface(messages);
@@ -1260,6 +1265,7 @@ class ChatHistoryStore {
       for (final message in messages) {
         await _upsertSingleMessage(conversationId, message);
       }
+      if (!updatePreview) return;
       await _ref.read(conversationRepositoryProvider).updateSummary(
             conversationId,
             effectiveTailMessage.displayText.isNotEmpty

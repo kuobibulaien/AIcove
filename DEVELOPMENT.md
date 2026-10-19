@@ -52,7 +52,9 @@ AgentDefinition
 | Plugin | `Plugin` / `BasePlugin` | `apps/aicove_flutter/lib/src/features/plugins/domain/` | 插件能力统一入口，用于文本、TTS、图片、表情包等扩展 |
 | Image Provider | `ImageProviderAdapter` | `apps/aicove_flutter/lib/src/core/api/image_providers/image_provider_adapter.dart` | 生图供应商适配接口 |
 | TTS | `TtsSynthesisAdapter` / `TtsVoiceProvider` | `apps/aicove_flutter/lib/src/features/plugins/tts/` | 语音合成与声音目录供应商接口 |
-| Memory | `EmbeddingService` | `apps/aicove_flutter/lib/src/features/memory/services/embedding_service.dart` | 记忆向量化能力接口 |
+| Agent Kernel | `PluginHost` / `KernelPlugin` | `apps/aicove_flutter/packages/aicove_agent_kernel/lib/src/plugin_host.dart` | 纯 Dart 内核的插件宿主与插件声明（ADR0064） |
+| Plugin v2 | `AicovePlugin` / `PluginRuntime` / `PluginRequestScope` | `apps/aicove_flutter/lib/src/features/agent_plugins/` | App 侧插件 API：请求期贡献提示词、工具与提醒 |
+| Memory | `MemoryStorePort` / `MemoryRetriever` / `MemoryAgentPort` | `apps/aicove_flutter/lib/src/features/memory/domain/memory_ports.dart` | 长期记忆存储、检索与整理端口；接向量检索时只换 `MemoryRetriever` 实现 |
 
 ### 新功能契约规则
 

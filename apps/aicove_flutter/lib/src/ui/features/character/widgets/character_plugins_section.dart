@@ -19,6 +19,9 @@ import '../../../../features/plugins/packages/package_providers.dart';
 import '../../../../features/plugins/plugin_providers.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../features/workspace/domain/workspace_grants.dart';
+import '../../../../features/workspace/domain/workspace_models.dart';
+import '../../../../features/workspace/workspace_providers.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../../plugins/widgets/drawing_preset_picker_sheet.dart';
@@ -128,6 +131,14 @@ class _CharacterPluginsSectionState
       // 声明式包同样须由角色显式开启。
       for (final package in ref.watch(aicovePackagesProvider))
         _PluginSpec(id: package.pluginId, label: package.name),
+      // 工作区授权给这个角色的后台助手（ADR0087 第 1 条），只列本机有的。
+      for (final workspace
+          in ref.watch(workspacesProvider).valueOrNull ?? const <WorkspaceInfo>[])
+        _PluginSpec(
+          id: WorkspaceGrants.pluginIdOf(workspace.id),
+          label: '空间 · ${workspace.name}',
+          binding: const _BindingSpec(value: '后台助手可读写'),
+        ),
     ];
 
     final active = plugins.where(_isActive).toList();

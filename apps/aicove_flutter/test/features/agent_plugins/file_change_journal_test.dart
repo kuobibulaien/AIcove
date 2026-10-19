@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
@@ -54,5 +55,25 @@ void main() {
     final entries = await journal().recent();
     expect(entries, hasLength(3));
     expect(entries.where((e) => e.undoneAt != null), hasLength(1));
+  });
+
+  test('an undo cannot pick up a guarded change before its write decides',
+      () async {
+    final writing = Completer<bool>();
+    final commit = journal().commitIf('write', _change('a'), () => writing.future);
+    await pumpEventQueue();
+    // The undo list may already show the record; undoing it has to wait.
+    final pending = (await journal().recent()).single;
+    final undo = journal().undo(pending.id);
+    writing.complete(false);
+    expect(await commit, isNull);
+    await expectLater(undo, throwsStateError);
+    expect(await journal().recent(), isEmpty);
+  });
+
+  test('a guarded change that lands keeps its record', () async {
+    final entry = await journal().commitIf('write', _change('a'), () async => true);
+    expect(entry, isNotNull);
+    expect((await journal().recent()).single.id, entry!.id);
   });
 }

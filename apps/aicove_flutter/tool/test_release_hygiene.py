@@ -54,6 +54,20 @@ class ReleaseHygieneTest(unittest.TestCase):
                 self.assertNotIn('opusdocs', path.read_text(),
                                  f'public test depends on private opusdocs: {path}')
 
+    def test_private_tooling_is_not_published(self):
+        repo_root = APP_ROOT.parent.parent
+        attributes = (repo_root / '.gitattributes').read_text().splitlines()
+        names = ('.agents', '.claude', '.codex', '.gemini', '.pi', '.vscode', '.mcp.json',
+                 'CLAUDE.md', 'GEMINI.md', 'hooks', 'design', 'website-deploy')
+        for name in names:
+            self.assertIn(f'{name} export-ignore', attributes)
+        remote = subprocess.run(['git', '-C', str(repo_root), 'remote'],
+                                capture_output=True, text=True).stdout.strip()
+        if remote:
+            for name in names:
+                self.assertFalse((repo_root / name).exists(),
+                                 f'{name} must not exist in the public repository checkout')
+
     def test_private_preset_audits_are_excluded_from_archives(self):
         repo_root = APP_ROOT.parent.parent
         attributes = (repo_root / '.gitattributes').read_text().splitlines()

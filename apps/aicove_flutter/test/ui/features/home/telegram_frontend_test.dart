@@ -4,7 +4,6 @@ import 'package:aicove_flutter/src/features/chat/presentation/widgets/composer.d
 import 'package:aicove_flutter/src/ui/shared/widgets/desktop_window_frame.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/character_list_item.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/custom_bottom_nav.dart';
-import 'package:aicove_flutter/src/features/chat/providers2.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_page.dart';
 import 'package:aicove_flutter/src/ui/features/home/pages/main_page.dart';
@@ -28,7 +27,7 @@ import '../../../../tool/chat_segmented_fixture.dart';
 void main() {
   for (final width in [360.0, 1000.0]) {
     for (final scale in [1.0, 1.8]) {
-      testWidgets('真实首页搜索、聊天、设置与角色入口 $width / $scale', (tester) async {
+      testWidgets('真实首页搜索、聊天、设置与工作区入口 $width / $scale', (tester) async {
         rootBundle.clear();
         await tester.binding.setSurfaceSize(Size(width, 850));
         addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -134,7 +133,7 @@ void main() {
             ),
             findsOneWidget,
           );
-          for (final label in ['聊天', '角色', '设置']) {
+          for (final label in ['聊天', '空间', '设置']) {
             final item = tester.widget<Semantics>(navigationItem(label));
             expect(item.properties.button, isTrue);
             expect(item.properties.selected, label == title);
@@ -147,7 +146,7 @@ void main() {
 
         expectPrimaryPage('聊天');
         expect(find.byType(CharacterListItem), findsOneWidget);
-        expect(find.byType(MoeSearchField), findsNothing, reason: '聊天页不放搜索框');
+        expect(find.byType(MoeSearchField), findsOneWidget, reason: '搜索框在聊天页');
         expect(find.text('全部聊天'), findsNothing);
         expect(find.text('未读'), findsNothing);
         await tester.tap(find.byType(CharacterListItem));
@@ -275,7 +274,7 @@ void main() {
             matching: find.byType(MoeSearchField),
           ),
           findsNothing,
-          reason: '只有角色页保留搜索框',
+          reason: '只有聊天页有搜索框',
         );
         await tester.tap(find.text('编辑头像和名字'));
         await tester.pumpAndSettle();
@@ -340,52 +339,43 @@ void main() {
         expectPrimaryPage('设置');
         expect(tester.takeException(), isNull);
 
-        await tester.tap(navigationItem('角色'));
-        await tester.pumpAndSettle();
-        expectPrimaryPage('角色');
-        for (final removed in [
-          '收藏的角色',
-          '创建新角色',
-          '我的角色',
-          '收藏',
-          '推荐角色',
-          '查看角色资料',
-        ]) {
-          expect(find.text(removed), findsNothing);
-        }
+        await tester.tap(navigationItem('空间'));
+        await tester.pump();
         await tester.runAsync(
-          () => fixture.container
-              .read(conversationsProvider.notifier)
-              .updateConversationSettings(
-                fixture.conversation.id,
-                isFavorite: true,
-              ),
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
         );
         await tester.pumpAndSettle();
+        expectPrimaryPage('空间');
+        expect(find.byTooltip('新建空间'), findsOneWidget);
+
+        await tester.tap(navigationItem('聊天'));
+        await tester.pumpAndSettle();
+        expectPrimaryPage('聊天');
         final roleRow = find.byKey(
           ValueKey('role-directory-${fixture.conversation.id}'),
         );
-        expect(roleRow, findsOneWidget, reason: '收藏的角色仍只显示一行');
+        expect(roleRow, findsNothing, reason: '不搜索时显示聊天列表');
         final roleSearch = find.descendant(
           of: find.byType(MoeSearchField),
           matching: find.byType(TextField),
         );
-        await tester.enterText(roleSearch, '不存在的角色');
-        await tester.pumpAndSettle();
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 50)),
-        );
-        await tester.pump();
-        expect(find.text('没有找到角色或聊天记录'), findsOneWidget);
-        expect(roleRow, findsNothing);
-        await tester.enterText(roleSearch, '橘子汽水');
-        await tester.pump(const Duration(milliseconds: 300));
-        for (var i = 0; i < 5 && find.text('聊天记录').evaluate().isEmpty; i++) {
-          await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 50)),
-          );
-          await tester.pump(const Duration(milliseconds: 50));
+        Future<void> settleSearch() async {
+          await tester.pump(const Duration(milliseconds: 300));
+          for (var i = 0; i < 5; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 50)),
+            );
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          await tester.pumpAndSettle();
         }
+
+        await tester.enterText(roleSearch, '不存在的角色');
+        await settleSearch();
+        expect(find.text('没有找到角色或聊天记录'), findsOneWidget);
+        expect(find.byType(CharacterListItem), findsNothing);
+        await tester.enterText(roleSearch, '橘子汽水');
+        await settleSearch();
         expect(find.text('聊天记录'), findsOneWidget);
         expect(roleRow, findsNothing, reason: '名字不匹配时不显示角色行');
         expect(
@@ -395,6 +385,9 @@ void main() {
         await tester.tap(find.byTooltip('清除搜索'));
         await tester.pumpAndSettle();
         expect(find.text('聊天记录'), findsNothing);
+        expect(find.byType(CharacterListItem), findsOneWidget);
+        await tester.enterText(roleSearch, fixture.conversation.displayName);
+        await settleSearch();
         expect(roleRow, findsOneWidget);
         await tester.tap(
           find.descendant(of: roleRow, matching: find.byType(MoeAvatar)),
@@ -408,7 +401,7 @@ void main() {
         );
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('创建角色'));
+        await tester.tap(find.byTooltip('新建聊天'));
         await tester.pumpAndSettle();
         expect(find.byType(ContactEditPage), findsOneWidget);
         expect(

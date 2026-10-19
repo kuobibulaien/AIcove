@@ -1,5 +1,14 @@
 library;
 
+import '../../agent_context/domain/agent_runtime_contracts.dart'
+    show AgentToolAuthorization;
+import '../../agent_plugins/tool_policy.dart';
+import '../../assistant/application/assistant_approvals.dart';
+import '../../assistant/application/assistant_plugin.dart';
+import '../../assistant/application/assistant_review.dart';
+import '../../assistant/application/assistant_settings_tools.dart';
+import '../../assistant/assistant_providers.dart';
+import '../../assistant/domain/assistant_onboarding.dart' show kAicoveAssistantId;
 import '../../agent_context/domain/preset_script_runtime.dart';
 import '../../agent_context/domain/preset_tag_mapping.dart';
 import 'dart:async';
@@ -33,6 +42,9 @@ import '../../plugins/plugin_providers.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
 import '../../plugins/tts/voice_preset_application.dart';
 import '../../plugins/tavern_compat/tavern_compat_agent_plugin.dart';
+import '../../task_agent/application/delegate_task_plugin.dart';
+import '../../task_agent/domain/task_relay.dart';
+import '../../task_agent/task_agent_providers.dart';
 import '../../agent_plugins/plugin_request_context.dart';
 import '../../agent_plugins/plugin_request_scope.dart';
 import '../../agent_plugins/plugin_response.dart';
@@ -209,6 +221,7 @@ class ChatSendBackendService {
             name: entry.pluginName,
             injected: entry.injected,
             reason: entry.error ?? entry.reason,
+            failed: entry.error != null,
           ),
       ],
       inputTokens: renderedContextTokens(config.messages, config.tools),
@@ -303,6 +316,8 @@ class ChatSendBackendService {
       );
     }
 
+    // ADR0088 §7: one relay per receipt reaches the model.
+    history = dropSupersededTaskRelays(history);
     final originalHistory = history;
     final context = _ref.read(conversationContextProvider);
     final automaticHandoff = await context.loadAuto(
@@ -395,9 +410,38 @@ class ChatSendBackendService {
     final pluginRuntime = PluginRuntime.fromPlugins(
       _ref.read(pluginManagerProvider).getAllPlugins(),
     )..install(tavernCompatAgentPlugin());
+    // ADR0088: office plugins (web search, MCP) go to the errand agent; the
+    // chat model only gets delegate_task.
+    if (delegateTaskEnabled) {
+      pluginRuntime.install(
+        delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider)),
+      );
+    }
+    // ADR0073: the assistant's abilities belong to its conversation, not to
+    // its editable role card.
+    if (conv.id == kAicoveAssistantId) {
+      pluginRuntime.install(
+        assistantAgentPlugin(
+          _ref.read(assistantToolsetProvider),
+          // Writes need the review gate, which only the kernel runner has.
+          writes: kAgentKernelChat
+              ? _ref.read(assistantWriteToolsProvider)
+              : null,
+          settings: kAgentKernelChat
+              ? _ref.read(assistantSettingsToolsProvider)
+              : null,
+          cards: _ref.read(assistantCardToolsProvider),
+          checkup: _ref.read(assistantCheckupProvider),
+        ),
+      );
+    }
+    final selectedPluginIds = [
+      for (final id in pluginRuntime.selectForRole(enabledPluginIds))
+        if (!delegateTaskEnabled || !isOfficePluginId(id)) id,
+    ];
     final pluginScopes = pluginRuntime.requestScopes(
       pluginRuntime.snapshot(),
-      pluginRuntime.selectForRole(enabledPluginIds),
+      selectedPluginIds,
       PluginRequestInputs(
         ref: _ref,
         settings: settings,
@@ -478,6 +522,7 @@ class ChatSendBackendService {
       supportsToolCalling: supportsToolCalling,
       conversationId: resolvedConversationId,
       hasInternalImageContext: includeInternalImageRule,
+      readOnly: preview != null,
     );
     final rawPluginPromptBuild = await _pluginContextBuilder
         .buildPromptEntries([
@@ -893,7 +938,7 @@ class ChatSendBackendService {
       ]);
     }
 
-    return ApiConfig(
+    final config = ApiConfig(
       requestInputTokenLimit: inputLimit,
       openPresetRuntime: pluginRuntime.scope.lookup(
         TavernCompatServices.presetRuntime,
@@ -929,10 +974,12 @@ class ChatSendBackendService {
           boundPreset?.temperature ?? requestConfig.modelTemperature,
       modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
       modelContextMessageLimit: requestConfig.modelContextMessageLimit,
-      // 联网搜索插件接管时，本轮去掉模型内置搜索，只走插件工具。
+      // 办事交给杂活 Agent 后，聊天 run 一律去掉模型内置搜索（ADR0088）；
+      // 关闭派活时沿用旧规则：联网搜索插件接管才去掉。
       providerRequestOptions:
-          supportsToolCalling &&
-              pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
+          delegateTaskEnabled ||
+              supportsToolCalling &&
+                  pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
           ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
           : providerRequestOptions,
       // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
@@ -951,7 +998,7 @@ class ChatSendBackendService {
       reminders: deferReminders ? remindersAt : null,
       responseProcessors: pluginRuntime.responseProcessors(
         pluginRuntime.snapshot(),
-        pluginRuntime.selectForRole(enabledPluginIds),
+        selectedPluginIds,
         PluginResponseInputs(
           ref: _ref,
           voiceRequest: voiceRequest,
@@ -960,7 +1007,105 @@ class ChatSendBackendService {
         ),
       ),
     );
+    if (conv.id != kAicoveAssistantId || preview != null || !kAgentKernelChat) {
+      return config;
+    }
+    return config.copyWith(
+      toolPolicy: _assistantToolPolicy(
+        alwaysAsk: await _ref.read(assistantAlwaysAskProvider.future),
+        config: config,
+        history: history,
+        userText: userText,
+        settings: settings,
+      ),
+    );
   }
+
+  /// The AIcove assistant's review gate (ADR0073, batch T3): rules rate each
+  /// call, the reviewer model judges the middle tier and the user decides
+  /// major changes.
+  AgentToolPolicy _assistantToolPolicy({
+    required ApiConfig config,
+    required List<Message> history,
+    required String? userText,
+    required AppSettings settings,
+    required bool alwaysAsk,
+  }) {
+    bool alwaysAskNow() =>
+        _ref.read(assistantAlwaysAskProvider).valueOrNull ?? alwaysAsk;
+    final toolset = _ref.read(assistantToolsetProvider);
+    final writes = _ref.read(assistantWriteToolsProvider);
+    final settingsTools = _ref.read(assistantSettingsToolsProvider);
+    final riskOf = AssistantRequestScope.riskOf(
+      toolset,
+      writes,
+      settings: settingsTools,
+    );
+    final descriptions = {
+      for (final tool in [
+        ...toolset.tools(),
+        ...writes.tools(),
+        ...settingsTools.tools(),
+      ])
+        tool.name: tool.description,
+    };
+    final userMessages = [
+      for (final message in history)
+        if (message.role == 'user' && message.content.trim().isNotEmpty)
+          message.content.trim(),
+    ];
+    final current = userText?.trim() ?? '';
+    if (current.isNotEmpty &&
+        (userMessages.isEmpty || userMessages.last != current)) {
+      userMessages.add(current);
+    }
+    final reviewer = AssistantReviewer(
+      (messages) async => (await executeApiCall(
+        config: _reviewConfig(config, messages),
+        sessionId: '${kAicoveAssistantId}_review',
+        userText: null,
+        maxRounds: 1,
+      )).replyText,
+    );
+    return AgentToolPolicy(
+      authorization: AgentToolAuthorization.manual,
+      customGate: AssistantToolGate(riskOf, alwaysAsk: alwaysAskNow),
+      redactor: redactorForCredentials(settings: settings),
+      approvalTimeout: const Duration(minutes: 5),
+      approvals: AssistantApprovalPort(
+        riskOf: riskOf,
+        describe: (name, args) => name == AssistantSettingsTools.setTool
+            ? settingsTools.describe(args)
+            : writes.describe(name, args),
+        toolDescription: (name) => descriptions[name] ?? name,
+        userMessages: userMessages.length <= 6
+            ? userMessages
+            : userMessages.sublist(userMessages.length - 6),
+        review: reviewer.review,
+        askUser: _ref.read(assistantApprovalsProvider.notifier).ask,
+        alwaysAsk: alwaysAskNow,
+      ),
+    );
+  }
+
+  /// The reviewer's request: the assistant's model and channel, nothing of
+  /// its assembly (no preset, tools or reply processors).
+  static ApiConfig _reviewConfig(
+    ApiConfig base,
+    List<Map<String, dynamic>> messages,
+  ) => ApiConfig(
+    settings: base.settings,
+    modelFullId: base.modelFullId,
+    providerApiBase: base.providerApiBase,
+    providerApiKey: base.providerApiKey,
+    providerId: base.providerId,
+    providerApiKeyItemId: base.providerApiKeyItemId,
+    providerApiKeyItemIndex: base.providerApiKeyItemIndex,
+    providerApiKeyStrategy: base.providerApiKeyStrategy,
+    customConfig: base.customConfig,
+    messages: messages,
+    providerRequestOptions: base.providerRequestOptions,
+  );
 
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,

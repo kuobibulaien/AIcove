@@ -24,6 +24,9 @@ class _Roles extends ConversationsNotifier {
     if (persist) writes++;
     state = AsyncData(roles);
   }
+
+  @override
+  Future<void> saveOne(Conversation role) async => writes++;
 }
 
 void main() {
@@ -47,7 +50,7 @@ void main() {
                 navigatorKey: navigator,
                 observers: [observer],
                 builder: (_, __, child) => MoeAdaptiveShell(
-                  primary: const RoleCardPage(),
+                  primary: const Scaffold(body: RoleCardContent()),
                   detail: child,
                   navigatorKey: navigator,
                   observer: observer,

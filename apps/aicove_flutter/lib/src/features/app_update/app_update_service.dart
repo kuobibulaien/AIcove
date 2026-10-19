@@ -2,13 +2,17 @@
 ///
 /// The installed version comes from `--dart-define=AICOVE_RELEASE_TAG=<tag>`,
 /// injected by `tool/publish_release.py`, because `--build-name` only carries
-/// the numeric core (e.g. `0.1.0`) and drops the `-test.N` suffix. Local
-/// development builds have no tag and therefore never check automatically.
+/// the numeric core (e.g. `0.1.0`) and drops the `-test.N` suffix.
+///
+/// Builds without a tag are local development builds, installed the same way
+/// as released ones, so they check too: they compare their package version and
+/// build number with the release's, see [AppUpdateService].
 library;
 
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/app_logger.dart';
@@ -23,6 +27,7 @@ class AppRelease {
     required this.version,
     required this.highlights,
     required this.url,
+    this.buildNumber,
   });
 
   /// Version without the `v` prefix, e.g. `0.1.0-test.5`.
@@ -30,6 +35,9 @@ class AppRelease {
   /// One short line per change, see [releaseHighlights].
   final List<String> highlights;
   final String url;
+
+  /// Build number from the release notes, see [releaseBuildNumber].
+  final int? buildNumber;
 }
 
 /// Compares two semantic versions (leading `v` and `+build` ignored).
@@ -62,14 +70,37 @@ List<String> releaseHighlights(String body, {int limit = 5}) {
   return highlights;
 }
 
+/// Build number written by `tool/publish_release.py` into the release notes
+/// (`构建号 2026101602`), or null when the notes do not carry one.
+int? releaseBuildNumber(String body) {
+  final match = RegExp(r'构建号\s*(\d+)').firstMatch(body);
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
+
 class AppUpdateService {
-  AppUpdateService({http.Client? client, this.currentVersion = kAppReleaseTag})
-      : _client = client ?? http.Client();
+  AppUpdateService({
+    http.Client? client,
+    String? currentVersion,
+    this.packageVersion = '',
+    this.packageBuildNumber = '',
+  })  : _client = client ?? http.Client(),
+        currentVersion = currentVersion ?? kAppReleaseTag;
 
   final http.Client _client;
+
+  /// The installed release tag, empty for a local development build.
   final String currentVersion;
 
-  bool get canCheck => _SemVer.tryParse(currentVersion) != null;
+  /// Package `version` and build number of a development build, e.g. `0.3.0`
+  /// and `2026101602`; only read when [currentVersion] carries no version.
+  final String packageVersion;
+  final String packageBuildNumber;
+
+  bool get isDevelopmentBuild => _SemVer.tryParse(currentVersion) == null;
+
+  /// A development build without even a package version cannot compare.
+  bool get canCheck =>
+      !isDevelopmentBuild || _SemVer.tryParse(packageVersion.trim()) != null;
 
   /// Returns the newest published release, or null when none is usable.
   Future<AppRelease?> fetchLatest() async {
@@ -101,9 +132,29 @@ class AppUpdateService {
         version: version,
         highlights: body is String ? releaseHighlights(body) : const [],
         url: url,
+        buildNumber: body is String ? releaseBuildNumber(body) : null,
       );
     }
     return latest;
+  }
+
+  /// Whether [release] is newer than the installed build.
+  ///
+  /// A development build only knows its numeric core and build number, so a
+  /// release of a higher core is newer, and one of the same core is newer when
+  /// it was built with a higher build number (the release notes carry it).
+  bool _isNewer(AppRelease release) {
+    if (!isDevelopmentBuild) {
+      return compareReleaseVersions(release.version, currentVersion)! > 0;
+    }
+    final core = _SemVer.tryParse(packageVersion.trim())!.core;
+    final latest = _SemVer.tryParse(release.version)!.core;
+    for (var i = 0; i < 3; i++) {
+      if (latest[i] != core[i]) return latest[i] > core[i];
+    }
+    final installed = int.tryParse(packageBuildNumber.trim());
+    final built = release.buildNumber;
+    return installed != null && built != null && built > installed;
   }
 
   /// Returns a release newer than the installed one, or null.
@@ -111,13 +162,13 @@ class AppUpdateService {
   /// Automatic checks honour the skipped version and swallow errors; manual
   /// checks ignore the skipped version and rethrow so the caller can report.
   Future<AppRelease?> checkForUpdate({bool manual = false}) async {
-    if (!canCheck) return null;
+    if (!canCheck) {
+      if (manual) throw StateError('读不到当前版本号，无法检查更新');
+      return null;
+    }
     try {
       final latest = await fetchLatest();
-      if (latest == null) return null;
-      if (compareReleaseVersions(latest.version, currentVersion)! <= 0) {
-        return null;
-      }
+      if (latest == null || !_isNewer(latest)) return null;
       if (!manual && await skippedVersion() == latest.version) return null;
       return latest;
     } catch (error) {
@@ -128,6 +179,28 @@ class AppUpdateService {
       if (manual) rethrow;
       return null;
     }
+  }
+
+  /// Checks the installed build; development builds read their package
+  /// version and build number at runtime because they carry no tag.
+  static Future<AppRelease?> checkInstalled({bool manual = false}) async {
+    var version = '';
+    var buildNumber = '';
+    if (kAppReleaseTag.isEmpty) {
+      try {
+        final info = await PackageInfo.fromPlatform();
+        version = info.version;
+        buildNumber = info.buildNumber;
+      } catch (error) {
+        AppLogger.warning('AppUpdate', '读取应用版本失败', metadata: {
+          'error': error.toString(),
+        });
+      }
+    }
+    return AppUpdateService(
+      packageVersion: version,
+      packageBuildNumber: buildNumber,
+    ).checkForUpdate(manual: manual);
   }
 
   static Future<String?> skippedVersion() async {

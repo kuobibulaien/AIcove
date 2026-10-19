@@ -201,16 +201,9 @@ class MoeSettingsContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final contentWidth = constraints.hasBoundedWidth
-            ? MoeSettingsLayout.contentWidthFor(constraints.maxWidth)
-            : MoeSettingsLayout.maxContentWidth;
-        return Align(
-          alignment: Alignment.topCenter,
-          child: SizedBox(width: contentWidth, child: child),
-        );
-      },
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: MoeSettingsLayout.inset),
+      child: child,
     );
   }
 }

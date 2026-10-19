@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'features/task_agent/application/delegate_task_plugin.dart';
+import 'features/task_agent/task_agent_providers.dart';
 import 'features/sync/providers/cloud_sync_provider.dart';
 import 'features/sync/providers/lan_sync_provider.dart';
 
@@ -82,6 +84,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       unawaited(_applyFactoryNahidaVoice());
       // 后台响过的角色来电：点了通知就接通，没接的记为未接（方案 12 §4.8）。
       unawaited(ref.read(incomingCallNotificationBridgeProvider).start());
+      // 杂活任务：启动恢复，之后定时接收同步来的回执与控制（ADR0088）。
+      if (delegateTaskEnabled) {
+        unawaited(ref.read(taskAgentSupervisorProvider).start());
+      }
       _requestRecentConversationsWarmup();
       unawaited(_syncAndroidKeepAliveGuard());
       // 预热供应商 SVG 图标
@@ -153,6 +159,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       unawaited(_syncAndroidKeepAliveGuard());
       unawaited(ref.read(analyzerSchedulerProvider).onAppResumed());
       unawaited(ref.read(proactiveCallSettlerProvider).settle());
+      if (delegateTaskEnabled) {
+        unawaited(ref.read(taskAgentSupervisorProvider).scan());
+      }
       // 后台投递的多模态消息在回前台时补跑插件链
       unawaited(ref
           .read(backgroundMessageReprocessorProvider)

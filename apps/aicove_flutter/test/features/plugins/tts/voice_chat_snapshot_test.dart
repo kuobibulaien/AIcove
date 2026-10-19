@@ -13,6 +13,7 @@ import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_service.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/voice_request.dart';
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show KernelCancellation;
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_backend_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
@@ -34,7 +35,8 @@ class _Runner extends ChatSendApiRunner {
       void Function()? onStreamTextReset,
       void Function()? onStreamToolCallObserved,
       void Function()? onStreamingFallback,
-      TraceContext? traceContext}) async {
+      TraceContext? traceContext,
+      KernelCancellation? cancellation}) async {
     onStreamTextDelta?.call('<tts>测试语音</tts>');
     final result = await runResponseProcessors(
         responseProcessors, '<tts>测试语音</tts>',

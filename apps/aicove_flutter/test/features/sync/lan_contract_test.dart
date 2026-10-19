@@ -79,7 +79,7 @@ void main() {
       payload: {
         'storage': 'preference',
         'key': 'aicove.ui_models.v1',
-        'json_value': '{"ui_scale_factor":2}',
+        'json_value': '"not a map"',
         'setting_times_version': 1,
         'setting_times': {},
       },
@@ -88,5 +88,25 @@ void main() {
       () => LanRevision.fromJson(bad.toJson()),
       throwsA(isA<LanSyncFailure>()),
     );
+  });
+  test('revisions carrying fields that later became device-local stay '
+      'readable', () {
+    // Written before frosted_tint_fill joined localGeneralSettings; rejecting
+    // it made LAN initialization fail on every start.
+    final legacy = LanRevision(
+      kind: 'settings',
+      id: 'prefs',
+      vector: {'phone': 1},
+      payload: {
+        'storage': 'preference',
+        'key': 'aicove.ui_models.v1',
+        'json_value': '{"frosted_tint_fill":0.4,"model":"x"}',
+        'setting_times_version': 1,
+        'setting_times': {
+          'frosted_tint_fill': {'at_ms': 1, 'device_id': 'phone'},
+        },
+      },
+    );
+    expect(LanRevision.fromJson(legacy.toJson()).hash, legacy.hash);
   });
 }

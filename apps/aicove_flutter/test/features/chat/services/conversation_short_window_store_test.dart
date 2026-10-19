@@ -16,6 +16,8 @@ import 'package:aicove_flutter/src/core/database/repositories/repositories.dart'
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
+import 'package:aicove_flutter/src/features/task_agent/domain/task_relay.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 import 'package:aicove_flutter/src/features/chat/services/image_dimension_probe/image_dimension_probe.dart';
 import 'package:aicove_flutter/src/features/chat/services/image_dimension_probe/probe_stub.dart'
@@ -539,6 +541,61 @@ void main() {
       reason: '同一轮流式占位拆成多条前端气泡时，短窗应按共享 pending source id 把它们算作一个 raw 槽位。',
     );
     expect(window.hasMoreMessages, isTrue);
+  });
+
+  test('同一回执的多条转告只显示最早一条，原始历史全部保留', () async {
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    final baseTime = DateTime(2026, 10, 17, 9).millisecondsSinceEpoch;
+    await _insertConversation(database, 'conv-relay', baseTime);
+    final container = ProviderContainer(
+      overrides: [databaseProvider.overrideWithValue(database)],
+    );
+    addTearDown(container.dispose);
+
+    Message relay(String id, int offset, String receiptId) {
+      final createdAt = DateTime.fromMillisecondsSinceEpoch(baseTime + offset);
+      return Message.text(
+        id: id,
+        role: 'assistant',
+        content: '转告 $id',
+        createdAt: createdAt,
+      ).copyWith(
+        rawPayload: {
+          // Exercises the slim display read that keeps only projections.
+          'projectedMessages': ChatMessageProjectionCodec.serializeMessages([
+            Message.text(
+              id: '${id}__proj_00_text',
+              role: 'assistant',
+              content: '转告 $id',
+              createdAt: createdAt,
+            ),
+          ]),
+          taskRelayReceiptKey: receiptId,
+        },
+      );
+    }
+
+    // Device B relayed later; device A's relay synced in afterwards.
+    await _persistMessage(container, 'conv-relay', relay('relay_b', 2, 'r1'));
+    await _persistMessage(container, 'conv-relay', relay('relay_a', 1, 'r1'));
+    // Same moment: the smaller raw ID wins.
+    await _persistMessage(container, 'conv-relay', relay('relay_y', 3, 'r2'));
+    await _persistMessage(container, 'conv-relay', relay('relay_x', 3, 'r2'));
+    await _persistMessage(container, 'conv-relay', relay('relay_c', 4, 'r3'));
+
+    final window = await container
+        .read(conversationTimelineCacheProvider)
+        .watchWindow(conversationId: 'conv-relay', limit: 20)
+        .first;
+    expect(
+      window.messages.map((m) => m.sourceMessageIdOrSelf).toList(),
+      ['relay_a', 'relay_x', 'relay_c'],
+    );
+    final raw = await container
+        .read(messageRepositoryProvider)
+        .getByConversation('conv-relay');
+    expect(raw, hasLength(5));
   });
 
   test('loadOlderMessages 返回值应按 raw 消息条数计算，而不是按投影气泡数计算', () async {

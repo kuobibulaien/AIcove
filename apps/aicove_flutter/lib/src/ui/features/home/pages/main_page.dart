@@ -11,8 +11,9 @@ import '../../../theme/tokens.dart';
 import '../../../shared/widgets/moe_chat_wallpaper.dart';
 import '../../../shared/widgets/moe_floating_surface.dart';
 import '../../../shared/widgets/moe_adaptive_shell.dart';
-import '../../character/pages/role_card_page.dart';
+import '../../assistant/assistant_entry.dart';
 import '../../settings/pages/settings_page.dart';
+import '../../workspace/pages/workspace_list_page.dart';
 import 'contacts_page.dart';
 
 /// The same primary interface is used on phones and in the left pane.
@@ -36,6 +37,8 @@ class _MainPageState extends ConsumerState<MainPage> {
 
   /// The release announcement goes first so the two dialogs never stack.
   Future<void> _showAnnouncementThenCheckUpdate() async {
+    await maybeAutoOpenAssistant(context, ref);
+    if (!mounted) return;
     final announcement = await pendingReleaseAnnouncement();
     if (announcement != null && mounted) {
       await showReleaseAnnouncementDialog(context, announcement);
@@ -74,7 +77,7 @@ class _MainPageState extends ConsumerState<MainPage> {
           children: [
             const ContactsPage(),
             _visited.contains(1)
-                ? const RoleCardPage()
+                ? const WorkspaceListPage()
                 : const SizedBox.shrink(),
             _visited.contains(2)
                 ? const SettingsPage()
@@ -91,9 +94,9 @@ class _MainPageState extends ConsumerState<MainPage> {
               label: '聊天',
             ),
             BottomNavItem(
-              icon: Icons.people_outline_rounded,
-              activeIcon: Icons.people_rounded,
-              label: '角色',
+              icon: Icons.folder_outlined,
+              activeIcon: Icons.folder_rounded,
+              label: '空间',
             ),
             BottomNavItem(
               icon: Icons.settings_outlined,

@@ -17,7 +17,7 @@ Future<void> openRoleChat(
     if (!context.mounted) return;
     final current = roles.where((item) => item.id == role.id).firstOrNull;
     if (current == null) {
-      await notifier.setAll([...roles, role]);
+      await notifier.addOne(role);
     }
     if (!context.mounted) return;
     ref.read(activeConversationIdProvider.notifier).state = role.id;

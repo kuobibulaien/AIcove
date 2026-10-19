@@ -1,6 +1,7 @@
 import 'package:aicove_flutter/src/ui/features/debug/pages/ui_gallery_page.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -10,9 +11,14 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(const MaterialApp(home: UiGalleryPage()));
+      await tester.pumpWidget(const ProviderScope(child: MaterialApp(home: UiGalleryPage())));
       expect(tester.takeException(), isNull);
       for (final label in ['横向切页', '自定义横向转场', '底部堆叠']) {
+        // The entries sit below the interactive-block samples; bring each
+        // out from under the translucent app bar.
+        await tester.scrollUntilVisible(find.text(label), 300, scrollable: find.byType(Scrollable).first);
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, 300));
+        await tester.pump();
         await tester.tap(find.text(label));
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));

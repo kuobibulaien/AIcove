@@ -6,6 +6,7 @@ class PluginRequestContext {
     required this.supportsToolCalling,
     this.conversationId,
     this.hasInternalImageContext = false,
+    this.readOnly = false,
   });
 
   final String userMessage;
@@ -16,4 +17,8 @@ class PluginRequestContext {
 
   /// The request messages carry internal image context blocks.
   final bool hasInternalImageContext;
+
+  /// A context preview: assemble only, start no background work and write
+  /// nothing.
+  final bool readOnly;
 }

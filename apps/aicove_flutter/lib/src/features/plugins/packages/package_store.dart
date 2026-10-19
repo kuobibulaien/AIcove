@@ -5,9 +5,9 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart' hide ZLibDecoder;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import 'aicove_package.dart';
+import '../../../core/storage/app_data_directory.dart';
 
 /// Installed declarative packages under `Documents/aicove/packages/<id>/`.
 /// Local only: packages are not part of cloud or LAN sync in v1.
@@ -17,7 +17,7 @@ class PackageStore {
   final Directory root;
 
   static Future<PackageStore> defaultStore() async {
-    final documents = await getApplicationDocumentsDirectory();
+    final documents = await appDataDirectory();
     return PackageStore(
       Directory(p.join(documents.path, 'aicove', 'packages')),
     );

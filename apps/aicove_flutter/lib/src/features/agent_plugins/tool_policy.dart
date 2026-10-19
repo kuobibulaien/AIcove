@@ -39,16 +39,21 @@ class AgentToolPolicy {
     this.approvals,
     this.redactor,
     this.approvalTimeout = const Duration(minutes: 2),
+    this.customGate,
   });
 
   final AgentToolAuthorization authorization;
+
+  /// Replaces the gate of [authorization], for agents that rate risk per
+  /// call such as the AIcove assistant (ADR0073).
+  final ToolGate? customGate;
 
   /// Asks the user; without one every `ask` verdict becomes a rejection.
   final ApprovalPort? approvals;
   final SecretRedactor? redactor;
   final Duration approvalTimeout;
 
-  ToolGate get gate => AuthorizationToolGate(authorization);
+  ToolGate get gate => customGate ?? AuthorizationToolGate(authorization);
 }
 
 /// A redactor holding the credentials the app keeps: model channel keys, MCP

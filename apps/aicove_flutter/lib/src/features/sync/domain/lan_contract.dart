@@ -131,14 +131,14 @@ class LanRevision {
         }
       }
     }
+    // Device-local general fields are ignored on apply (keepLocalGeneralSettings),
+    // not rejected: the local list grows over time, and revisions written
+    // before a field became local must stay readable.
     if (revision.kind == 'settings' &&
         revision.payload['key'] == cloudUiModelsKey) {
       final value = revision.payload['json_value'];
-      if (value is! String ||
-          jsonDecode(value) is! Map ||
-          (jsonDecode(value) as Map).keys.any(localGeneralSettings.contains) ||
-          (times as Map).keys.any(localGeneralSettings.contains)) {
-        throw const LanSyncFailure('通用设置只允许保存在本机');
+      if (value is! String || jsonDecode(value) is! Map) {
+        throw const LanSyncFailure('通用设置格式无效');
       }
     }
     return revision;

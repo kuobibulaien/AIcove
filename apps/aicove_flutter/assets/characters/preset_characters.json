@@ -8,6 +8,14 @@
       "avatarUrl": "assets/characters/images/nahida.jpg#top",
       "personaPromptFile": "assets/characters/prompts/nahida.md",
       "voiceFile": "built_in_nahida_fish"
+    },
+    {
+      "id": "aicove_assistant",
+      "displayName": "AIcove 助手",
+      "description": "带你上手 AIcove，有问题随时问我",
+      "characterImage": "assets/characters/images/aicove_assistant.png",
+      "avatarUrl": "assets/characters/images/aicove_assistant.png",
+      "personaPromptFile": "assets/characters/prompts/aicove_assistant.md"
     }
   ]
 }

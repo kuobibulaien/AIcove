@@ -294,6 +294,7 @@ python3 apps/aicove_flutter/tool/publish_release.py 0.1.0-test.5 --notes <说明
 
 - 脚本在 `/private/tmp/aicove-release-<版本>/` 隔离目录里依次完成：`git archive`、删除第三方预设原件及引用它们的测试、脱敏（本机用户名、git 邮箱、`/home/` 路径、设备序列号；额外的私密词放在 `~/.config/aicove/release_private.json`，不入库）、隐私扫描、同步公开仓库、卫生测试。为什么必须在隔离目录构建，见[经验教训「公开安装包不能在本机仓库路径下构建」](../../../docs/项目记忆/经验教训.md)。
 - 完整测试与构建并行；完整测试没全绿时，自动标为预发布。`--skip-tests` 跳过完整测试。构建时注入 `--dart-define=AICOVE_RELEASE_TAG=<版本>`，应用内更新检测（`features/app_update/`）拿它和 GitHub Release 的 `v<版本>` 标签比较，所以标签必须保持这个格式。
-- 产物：Android APK、macOS ZIP、未签名 iOS IPA（签名与侧载由用户自理）。安装包剥离符号，按原 entitlements 重签，扫描结果必须为 0 命中，最后生成 `SHA256SUMS`。Windows ZIP 由公开仓库的 `.github/workflows/windows-release.yml` 在 Release 发布后追加。
+- 产物：Android APK、macOS DMG（App＋「应用程序」快捷方式，拖入即装）、未签名 iOS IPA（签名与侧载由用户自理）。安装包剥离符号，按原 entitlements 重签，扫描结果必须为 0 命中，最后生成 `SHA256SUMS`。Windows 安装程序（Inno Setup，脚本 `windows/installer/aicove.iss`，按用户安装、免管理员，`AppId` 不得改动，否则无法覆盖升级）由公开仓库的 `.github/workflows/windows-release.yml` 在 Release 发布后追加。三端都不需要付费证书；应用内更新只打开 Release 页，由用户下载新包覆盖安装。
+- **安装包规则**：各端一律发系统标准安装包，不发 ZIP 让用户自己找地方放：Android APK、macOS DMG（拖进「应用程序」）、Windows 安装程序（装到系统规定的程序目录，开始菜单可找到、可在系统里卸载）。新版本必须装回原路径覆盖升级（Windows 靠固定 `AppId`，macOS 覆盖 `/Applications` 里的同名 App，Android 靠同一签名），用户数据放在安装目录以外，升级、卸载都不动数据。
 - 说明文件只写「新增与改进」。加 `--publish` 后会推送公开仓库、创建 Release，并下载回来核对哈希。各阶段都有完成标记，中断后用相同参数重跑即可续做。
 - `opusdocs/` 由根 `.gitattributes` 的 `export-ignore` 排除，公开仓库里不得出现。

@@ -70,6 +70,7 @@ class KernelApiRunner implements ApiRunner {
     void Function()? onStreamToolCallObserved,
     void Function()? onStreamingFallback,
     TraceContext? traceContext,
+    kernel.KernelCancellation? cancellation,
   }) async {
     if (needsLegacyRunner(maxRounds: maxRounds)) {
       AppLogger.info(
@@ -93,6 +94,7 @@ class KernelApiRunner implements ApiRunner {
         onStreamToolCallObserved: onStreamToolCallObserved,
         onStreamingFallback: onStreamingFallback,
         traceContext: traceContext,
+        cancellation: cancellation,
       );
     }
 
@@ -142,7 +144,10 @@ class KernelApiRunner implements ApiRunner {
       );
       final kernel.AgentLoopResult result;
       try {
-        result = await loop.run(run.initialMessages);
+        result = await loop.run(
+          run.initialMessages,
+          cancellation: cancellation,
+        );
       } on kernel.KernelContextOverflow catch (overflow, stack) {
         // Non-recoverable overflow: rethrow the provider error unchanged.
         Error.throwWithStackTrace(

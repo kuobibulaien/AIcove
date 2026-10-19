@@ -3,3 +3,17 @@ opusdocs export-ignore
 opusdocs/** export-ignore
 apps/aicove_flutter/test/features/agent_context/domain/silly_tavern_actual_presets_test.dart export-ignore
 apps/aicove_flutter/test/features/agent_context/domain/preset_tag_mapping_local_presets_test.dart export-ignore
+
+# Agent tooling, art briefs and deploy scripts: kept in the private repository only.
+.agents export-ignore
+.claude export-ignore
+.codex export-ignore
+.gemini export-ignore
+.pi export-ignore
+.vscode export-ignore
+.mcp.json export-ignore
+CLAUDE.md export-ignore
+GEMINI.md export-ignore
+hooks export-ignore
+design export-ignore
+website-deploy export-ignore

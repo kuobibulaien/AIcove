@@ -32,6 +32,9 @@ class _FakeConversationsNotifier extends ConversationsNotifier {
   Future<void> setAll(List<Conversation> list, {bool persist = true}) async {
     state = AsyncData(list);
   }
+
+  @override
+  Future<void> saveOne(Conversation conv) async {}
 }
 
 Conversation _conversation(String id, String name, {bool hidden = false}) {

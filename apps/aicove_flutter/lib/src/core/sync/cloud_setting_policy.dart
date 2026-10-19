@@ -10,7 +10,9 @@ const cloudPreferenceTimesKey = 'aicove.sync.setting_times.v1';
 const privacySpacePasswordKey = 'aicove.privacy_space.v1';
 
 /// Fields owned by the General page remain on the current device. Model,
-/// provider and plugin configuration keep their own scope.
+/// provider and plugin configuration keep their own scope. Mirrored by
+/// LOCAL_GENERAL_SETTINGS in cloud_backend/sync_v3/general_settings.py
+/// (checked by test_general_settings_match_client_list).
 const localGeneralSettings = <String>{
   'message_chunking_enabled',
   'message_format_config',

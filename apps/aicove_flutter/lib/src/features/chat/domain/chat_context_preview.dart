@@ -61,9 +61,13 @@ class ChatContextPluginStatus {
     required this.name,
     required this.injected,
     this.reason,
+    this.failed = false,
   });
 
   final String name;
   final bool injected;
   final String? reason;
+
+  /// [reason] is an exception message rather than a fixed explanation.
+  final bool failed;
 }

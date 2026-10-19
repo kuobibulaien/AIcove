@@ -67,7 +67,7 @@ class MoeChatHeader extends StatelessWidget implements PreferredSizeWidget {
       bottom: false,
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: 12,
+          horizontal: telegramChatHeaderHorizontalInset,
           vertical: telegramChatHeaderVerticalInset,
         ),
         child: SizedBox(

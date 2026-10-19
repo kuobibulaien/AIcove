@@ -9,6 +9,7 @@ import 'package:aicove_flutter/src/ui/features/home/pages/main_page.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_adaptive_shell.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_liquid_glass.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_search_field.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_chat_wallpaper.dart';
 import 'package:aicove_flutter/src/ui/theme/moe_wallpaper.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
@@ -46,7 +47,7 @@ void main() {
   for (final width in [420.0, 1000.0]) {
     for (final dark in [false, true]) {
       testWidgets(
-        'root background and empty-state controls share material: $dark $width',
+        'root background follows the full material: $dark $width',
         (tester) async {
           tester.view.devicePixelRatio = 1;
           tester.view.physicalSize = Size(width, 800);
@@ -91,45 +92,58 @@ void main() {
           final root = tester.widget<MoeFloatingSurface>(
             find.byType(MoeFloatingSurface).first,
           );
-          expect(root.useLiquid, isFalse);
+          // The root follows the global material in full, lens rim included.
+          expect(root.useLiquid, isNull);
           expect(root.border, BorderSide.none);
           expect(root.radius, width >= 900 ? telegramPrimaryRadius : 0);
-          for (final lens in find.byType(MoeLiquidGlass).evaluate()) {
-            expect((lens.renderObject as RenderBox).size.height, lessThan(800));
-          }
           expect(root.shadows, isEmpty);
+          final rootLens = find.descendant(
+            of: find.byWidget(root),
+            matching: find.byType(MoeLiquidGlass),
+          );
           if (width >= 900) {
             expect(root.blurEnabled, isNull);
-            expect(find.byType(BackdropFilter), findsWidgets);
-            // The glass level paints the root with the glass recipe like every
-            // other surface: the glass tint, no lens rim.
-            final rootMaterial = tester.widget<Material>(
-              find
-                  .descendant(
-                    of: find.byWidget(root),
-                    matching: find.byType(Material),
-                  )
-                  .first,
-            );
+            // The wide root pane is one full-height liquid surface.
+            final lens = tester.widget<MoeLiquidGlass>(rootLens.first);
             expect(
-              rootMaterial.color,
-              (dark ? MoeColors.dark() : MoeColors.light())
-                  .glassTintForFill(kDefaultGlassTintFill),
+              tester.getSize(rootLens.first),
+              const Size(360, 800),
             );
+            expect(lens.border, BorderSide.none);
+            expect(lens.shadows, isEmpty);
+            expect(lens.baseline, MoeMaterialBaseline.background);
           } else {
             // Full-screen narrow roots paint the plain page color.
             expect(root.blurEnabled, isFalse);
+            for (final lens in find.byType(MoeLiquidGlass).evaluate()) {
+              expect(
+                (lens.renderObject as RenderBox).size.height,
+                lessThan(800),
+              );
+            }
           }
-          // The empty contact list has no search field. Its navigation buttons
-          // inherit the root surface instead of creating duplicate lens layers.
+          // The chat list carries the search field (ADR0087 §8). Its
+          // navigation buttons inherit the root surface instead of creating
+          // duplicate lens layers.
           expect(find.text('暂无角色'), findsOneWidget);
-          expect(find.byType(TextField), findsNothing);
+          expect(find.byType(TextField), findsOneWidget);
           final navigation = find.byType(CustomBottomNav);
           expect(find.descendant(of: navigation,
               matching: find.byType(MoeButtonSurface)), findsNothing);
           expect(find.descendant(of: navigation,
               matching: find.byType(MoeFloatingSurface)), findsNothing);
-          expect(find.byType(MoeLiquidGlass), findsNothing);
+          // Besides the wide root pane, only the search field has its own glass.
+          expect(
+            find.byType(MoeLiquidGlass).evaluate().length,
+            find
+                    .descendant(
+                      of: find.byType(MoeSearchField),
+                      matching: find.byType(MoeLiquidGlass),
+                    )
+                    .evaluate()
+                    .length +
+                (width >= 900 ? 1 : 0),
+          );
           expect(tester.takeException(), isNull);
           if (capture) {
             await tester.runAsync(() async {
@@ -190,7 +204,17 @@ void main() {
         await tester.pump();
         final wallpaper = find.byType(MoeGlobalWallpaper);
         expect(wallpaper, findsOneWidget);
-        expect(find.byType(MoeFloatingSurface), findsNothing);
+        // The root adds no floating surface; only the search field has one.
+        expect(
+          find.byType(MoeFloatingSurface).evaluate().length,
+          find
+              .descendant(
+                of: find.byType(MoeSearchField),
+                matching: find.byType(MoeFloatingSurface),
+              )
+              .evaluate()
+              .length,
+        );
         // Only the wallpaper's own mask covers the image.
         final masks = tester
             .widgetList<ColoredBox>(

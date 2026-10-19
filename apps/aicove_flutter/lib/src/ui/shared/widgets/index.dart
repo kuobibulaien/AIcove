@@ -87,3 +87,5 @@ export 'form/moe_auto_save.dart';
 export 'moe_page_scaffold.dart';
 export 'moe_code_block.dart';
 export 'moe_markdown_view.dart';
+export 'ui_blocks/moe_ui_block.dart';
+export 'ui_blocks/moe_ui_block_scope.dart';

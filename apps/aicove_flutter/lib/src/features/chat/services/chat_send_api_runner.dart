@@ -87,7 +87,10 @@ class ChatSendApiRunner implements ApiRunner {
     void Function()? onStreamToolCallObserved,
     void Function()? onStreamingFallback,
     TraceContext? traceContext,
+    kernel.KernelCancellation? cancellation,
   }) async {
+    // The legacy loop has no stage checks; it only refuses to start.
+    cancellation?.throwIfCancelled();
     final presetRuntime = config.presetScript == null
         ? null
         : await (config.openPresetRuntime ?? QuickJsPresetRuntime.open)(

@@ -145,6 +145,51 @@ void main() {
         'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa');
     expect(find.text('退出编辑'), findsNothing);
   });
+
+  testWidgets('保存角色时保留本机没有的工作区授权', (tester) async {
+    final conversation = buildConversation().copyWith(
+      enabledPlugins: const ['imageGeneration', 'workspace:not-on-this-device'],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          conversationsProvider.overrideWith(() => _Roles(conversation)),
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[
+              PresetRecipeSummary(
+                id: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
+                name: '酒馆测试预设',
+                description: '',
+              ),
+            ],
+          ),
+        ],
+        child: MaterialApp(
+          home: ContactEditPage(
+            conversation: conversation,
+            initialSnapshot: ContactEditSnapshot.fromConversation(conversation),
+            editMode: EditMode.editConversation,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('跟随默认 · 空预设'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('跟随默认 · 空预设'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('酒馆测试预设'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    final container =
+        ProviderScope.containerOf(tester.element(find.byType(ContactEditPage)));
+    final saved = container.read(conversationsProvider).requireValue.single;
+    expect(saved.recipeId, 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(saved.enabledPlugins, contains('workspace:not-on-this-device'));
+  });
 }
 
 Finder _headerNameField() => find.descendant(

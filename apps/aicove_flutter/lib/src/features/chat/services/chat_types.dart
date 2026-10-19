@@ -202,6 +202,7 @@ class ApiConfig {
     List<AITool>? boundTools,
     ProviderChatRequestOptions? providerRequestOptions,
     bool? presetStreamResponse,
+    AgentToolPolicy? toolPolicy,
   }) => ApiConfig(
     presetScript: presetScript,
     requestInputTokenLimit: requestInputTokenLimit,
@@ -232,6 +233,8 @@ class ApiConfig {
     boundImageArtistPresetName: boundImageArtistPresetName,
     drawingConfig: drawingConfig,
     voiceRequest: voiceRequest,
+    // A copy must never lose the run's tool gate.
+    toolPolicy: toolPolicy ?? this.toolPolicy,
     reminders: reminders,
   );
 }

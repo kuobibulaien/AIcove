@@ -6,10 +6,10 @@ import 'dart:ui' as ui;
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
-import 'package:path_provider/path_provider.dart';
 
 import 'avatar_helper.dart';
 import 'data_image.dart';
+import '../storage/app_data_directory.dart';
 
 /// 统一的角色模糊背景服务。
 ///
@@ -188,7 +188,7 @@ class BlurredBackgroundService {
   static Future<Directory> _getCacheDir() async {
     if (_cacheDir != null) return _cacheDir!;
 
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     _cacheDir = Directory('${appDir.path}/blurred_backgrounds');
     if (!await _cacheDir!.exists()) {
       await _cacheDir!.create(recursive: true);

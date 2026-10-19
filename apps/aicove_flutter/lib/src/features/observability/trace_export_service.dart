@@ -3,12 +3,12 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/app_logger.dart';
 import 'frontend_diagnostics_port.dart';
 import 'trace_models.dart';
 import 'trace_store.dart';
+import '../../core/storage/app_data_directory.dart';
 
 class TraceExportAdapter implements TraceExportPort {
   const TraceExportAdapter();
@@ -202,7 +202,7 @@ class TraceExportService {
       }
       return debugLogDir;
     }
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final logDir = Directory('${appDir.path}/$_logDirName');
     if (!await logDir.exists()) {
       await logDir.create(recursive: true);

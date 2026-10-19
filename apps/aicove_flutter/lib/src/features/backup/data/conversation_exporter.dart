@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../../core/models/image_generation_snapshot.dart';
+import '../../../core/models/message_block.dart' show taskReceiptExportLine;
 
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
@@ -715,10 +716,19 @@ class ConversationExporter {
     List<Map<String, dynamic>> blocks,
     Map<String, String> fileMapping,
   ) {
+    String? receiptLine;
     // 更新 blocks 中的文件路径
     final updatedBlocks = blocks.map((block) {
       final data = block['data'] as Map<String, dynamic>?;
       if (data == null) return block;
+      // ADR0088 §4: receipts leave as one line of text, never as live cards.
+      if (data['taskReceipt'] is Map) {
+        receiptLine = taskReceiptExportLine(data['content'] as String? ?? '');
+        return {
+          ...block,
+          'data': {...data, 'content': receiptLine}..remove('taskReceipt'),
+        };
+      }
 
       final newData = Map<String, dynamic>.from(data);
 
@@ -749,7 +759,7 @@ class ConversationExporter {
       'source_message_id': dbMsg.sourceMessageId,
       'conversation_id': dbMsg.conversationId,
       'role': dbMsg.role,
-      'content': dbMsg.content,
+      'content': receiptLine ?? dbMsg.content,
       'status': dbMsg.status,
       'created_at': _toEpochMillis(dbMsg.createdAt),
       'blocks': updatedBlocks,

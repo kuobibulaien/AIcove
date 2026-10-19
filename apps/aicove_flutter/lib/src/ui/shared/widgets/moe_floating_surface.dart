@@ -223,7 +223,7 @@ class MoeSurfaceGroup extends InheritedWidget {
 }
 
 /// 浮在壁纸上的整页底色材质：宽屏左侧的根界面和桌面端通话小窗共用，
-/// 跟着用户选的纯色／毛玻璃／玻璃档模糊与填充（页面背景不要透镜边缘）。
+/// 完整跟随用户选的纯色／模糊／玻璃档；玻璃档走完全体液态玻璃，含透镜边缘。
 class MoePageSurface extends StatelessWidget {
   const MoePageSurface({
     super.key,
@@ -241,7 +241,6 @@ class MoePageSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MoeFloatingSurface(
     baseline: MoeMaterialBaseline.background,
-    useLiquid: false,
     blurEnabled: blurEnabled,
     radius: radius,
     solidColor: context.moeColors.surface,

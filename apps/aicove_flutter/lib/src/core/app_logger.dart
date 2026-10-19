@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'storage/app_data_directory.dart';
 
 /// 日志级别
 enum LogLevel {
@@ -131,7 +131,7 @@ class AppLogger {
   static Future<String> _getLogDirPath() async {
     if (_cachedLogDirPath != null) return _cachedLogDirPath!;
 
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final logDir = Directory('${appDir.path}/$_logDirName');
     if (!await logDir.exists()) {
       await logDir.create(recursive: true);

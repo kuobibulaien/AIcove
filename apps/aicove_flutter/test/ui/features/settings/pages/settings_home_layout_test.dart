@@ -94,9 +94,16 @@ void main() {
             tester.getSize(find.byWidget(row)).height,
             greaterThanOrEqualTo(52),
           );
-          final tile = row.iconWidget! as Container;
+          final tile = tester.widget<Container>(
+            find
+                .descendant(
+                  of: find.byWidget(row.iconWidget!),
+                  matching: find.byType(Container),
+                )
+                .first,
+          );
           final decoration = tile.decoration! as MoeG2Decoration;
-          // 入口图标统一强调色：淡染底＋强调色图标，不再四色实底。
+          // 纯色档入口图标用强调色：淡染底＋强调色图标，不再四色实底。
           final accent = MoeColors.light().primary;
           expect(decoration.color, accent.withValues(alpha: 0.16));
           expect(decoration.radius, 7);
@@ -166,7 +173,14 @@ void main() {
         .toList();
     expect(rows.length, 4);
     for (final row in rows) {
-      final tile = row.iconWidget! as Container;
+      final tile = tester.widget<Container>(
+        find
+            .descendant(
+              of: find.byWidget(row.iconWidget!),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
       final decoration = tile.decoration! as MoeG2Decoration;
       expect(
         decoration.color,
@@ -216,6 +230,19 @@ void main() {
         find.descendant(of: surface, matching: find.byType(AdaptiveGlass)),
         findsWidgets,
       );
+    }
+    // 模糊／玻璃档入口图标不画底块，图标用文字色。
+    final rows = tester.widgetList<MoeSettingsRow>(find.byType(MoeSettingsRow));
+    for (final row in rows) {
+      final icon = find.byWidget(row.iconWidget!);
+      expect(
+        find.descendant(of: icon, matching: find.byType(DecoratedBox)),
+        findsNothing,
+      );
+      final glyph = tester.widget<Icon>(
+        find.descendant(of: icon, matching: find.byType(Icon)),
+      );
+      expect(glyph.color, MoeColors.light().text.withValues(alpha: 0.68));
     }
     expect(tester.takeException(), isNull);
   });

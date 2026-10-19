@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:characters/characters.dart';
+
 import '../media/media_asset.dart';
 import 'image_generation_snapshot.dart';
 export 'image_generation_snapshot.dart';
@@ -7,6 +11,7 @@ import 'block_status.dart';
 
 part 'call_record_block.dart';
 part 'chat_record_block.dart';
+part 'task_receipt_block.dart';
 
 const _uuid = Uuid();
 
@@ -134,6 +139,8 @@ class TextBlock extends MessageBlock {
   factory TextBlock.fromJson(Map<String, dynamic> json) {
     if (json['chatRecord'] is Map) return ChatRecordBlock.fromJson(json);
     if (json['callRecord'] is Map) return CallRecordBlock.fromJson(json);
+    if (json['taskReceipt'] is Map) return TaskReceiptBlock.fromJson(json);
+    if (json['taskControl'] is Map) return TaskControlBlock.fromJson(json);
     return TextBlock(
       id: json['id'] as String,
       messageId: json['messageId'] as String,

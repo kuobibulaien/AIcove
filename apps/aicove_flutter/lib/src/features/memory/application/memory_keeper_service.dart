@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../../core/app_logger.dart';
+import '../../../core/models/message_block.dart';
 import '../../chat/domain/message.dart';
 import '../data/background_memory_agent_adapter.dart';
 import '../domain/memory_item.dart';
@@ -58,13 +59,18 @@ class MemoryKeeperService implements MemoryMaintenancePort {
   /// 等待当前任务结束（测试与界面暂停时使用）。
   Future<void> idle(String ownerId) => _running[ownerId] ?? Future.value();
 
-  /// 只保留参与记忆整理的原文：用户与助手的已发送消息。
+  /// 只保留参与记忆整理的原文：用户与助手的已发送消息。杂活回执与控制事件
+  /// 不是对话内容，不进记忆（ADR0088）；角色转告的那条消息照常参与。
   static List<Message> eligible(List<Message> all) => all
       .where(
         (m) =>
             (m.role == 'user' || m.role == 'assistant') &&
             m.status != 'failed' &&
-            m.status != 'sending',
+            m.status != 'sending' &&
+            !(m.blocks?.any(
+                  (b) => b is TaskReceiptBlock || b is TaskControlBlock,
+                ) ??
+                false),
       )
       .toList();
 

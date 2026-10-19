@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "dart": {
-      "directTools": true,
-      "requestTimeoutMs": 120000
-    }
-  }
-}

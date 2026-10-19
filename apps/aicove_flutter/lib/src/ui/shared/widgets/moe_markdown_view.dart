@@ -3,11 +3,12 @@ import 'package:gpt_markdown/gpt_markdown.dart';
 
 import '../../theme/tokens.dart';
 import 'moe_code_block.dart';
+import 'ui_blocks/moe_ui_block.dart';
 
 /// Markdown 正文组件（MoeMarkdownView）：文档模式下助手消息的唯一渲染入口（ADR0047）。
 ///
 /// 薄封装 `gpt_markdown`，只负责项目口径：配色与字号取主题，围栏代码交给
-/// [MoeCodeBlock]，链接只上样式不跳转，图片只显示占位文字不发起网络加载，
+/// [MoeCodeBlock]（`aicove-ui` 交给 [MoeUiBlock] 画成交互组件），链接只上样式不跳转，图片只显示占位文字不发起网络加载，
 /// 公式按原文显示。不自行解析 Markdown。
 class MoeMarkdownView extends StatelessWidget {
   const MoeMarkdownView(
@@ -68,12 +69,20 @@ class MoeMarkdownView extends StatelessWidget {
             headerTextStyle: base.copyWith(fontWeight: FontWeight.w600),
           ),
         ),
-        codeBuilder: (context, language, code, closed) => MoeCodeBlock(
-          code: code,
-          language: language,
-          foregroundColor: fg,
-          fontSize: fontSize - 2,
-        ),
+        codeBuilder: (context, language, code, closed) =>
+            MoeUiBlock.handles(language)
+            ? MoeUiBlock(
+                code: code,
+                closed: closed,
+                foregroundColor: fg,
+                fontSize: fontSize,
+              )
+            : MoeCodeBlock(
+                code: code,
+                language: language,
+                foregroundColor: fg,
+                fontSize: fontSize - 2,
+              ),
         imageBuilder: (context, url, width, height) => Text(
           '［图片］',
           style: base.copyWith(color: fg.withValues(alpha: 0.55)),

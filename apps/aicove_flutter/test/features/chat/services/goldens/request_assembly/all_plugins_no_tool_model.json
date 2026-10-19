@@ -23,7 +23,7 @@
   ],
   "tools": null,
   "toolChoice": null,
-  "disableBuiltinWebSearch": false,
+  "disableBuiltinWebSearch": true,
   "boundTools": [],
   "enabledPluginIds": null,
   "presetStreamResponse": null,

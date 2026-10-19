@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/media/media_store.dart';
 import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
+import 'package:aicove_flutter/src/features/sync/data/cloud_document.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_local_store.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_media_codec.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_repository.dart';
@@ -304,6 +305,73 @@ void main() {
     expect(av['active_model'], isNull);
     expect(bv['active_model'], isNull);
     expect(await a.repo.conflicts(), isEmpty);
+  });
+  test('an unreadable entity is skipped instead of failing conflicts', () async {
+    final bad = ['b' * 64, 'c' * 64];
+    for (final hash in bad) {
+      await a.local.execute(
+        'INSERT INTO lan_revisions(hash,kind,entity_id,document_json) VALUES(?,?,?,?)',
+        [hash, 'messages', 'broken', '{"kind":"messages"}'],
+      );
+    }
+    await a.local.execute(
+      'INSERT INTO lan_entities(kind,entity_id,heads_json,local_fingerprint) VALUES(?,?,?,?)',
+      ['messages', 'broken', jsonEncode(bad), 'x'],
+    );
+    expect(await a.repo.conflicts(), isEmpty);
+  });
+  test('resolving a legacy head drops device-local General fields', () async {
+    const key = 'aicove.ui_models.v1';
+    await saveCloudPreference(
+      a.local.preferences,
+      key,
+      jsonEncode({'frosted_tint_fill': 0.2}),
+      atMs: 1000,
+    );
+    LanRevision legacy(String device, Map<String, dynamic> value) =>
+        LanRevision(
+          kind: 'settings',
+          id: cloudObjectId('preference:$key'),
+          vector: {device: 1},
+          payload: {
+            'storage': 'preference',
+            'key': key,
+            'json_value': jsonEncode(value),
+            'setting_times_version': 1,
+            'setting_times': <String, dynamic>{},
+          },
+        );
+    final dirty = legacy('old', {
+      'active_model': 'x',
+      'frosted_tint_fill': 0.9,
+    });
+    await a.repo.receive(dirty);
+    await a.repo.receive(legacy('phone', {'active_model': 'y'}));
+    final conflict = (await a.repo.conflicts()).single;
+    await a.repo.resolve(
+      'settings',
+      dirty.id,
+      dirty.hash,
+      conflict.map((r) => r.hash).toList(),
+    );
+    final row = (await a.local.rows(
+      'SELECT heads_json FROM lan_entities WHERE kind=? AND entity_id=?',
+      ['settings', dirty.id],
+    )).single;
+    final head = await a.repo.revision(
+      (jsonDecode(row['heads_json'] as String) as List).single as String,
+    );
+    expect(jsonDecode(head.payload['json_value'] as String), {
+      'active_model': 'x',
+    });
+    expect(
+      (head.payload['setting_times'] as Map).keys,
+      isNot(contains('frosted_tint_fill')),
+    );
+    expect(
+      jsonDecode(a.local.preferences.getString(key)!)['frosted_tint_fill'],
+      0.2,
+    );
   });
   test(
     'delete vs offline edit remains conflict, repeated delivery creates no extra edits',

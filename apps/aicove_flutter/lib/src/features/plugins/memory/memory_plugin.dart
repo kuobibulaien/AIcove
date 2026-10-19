@@ -37,12 +37,15 @@ class MemoryPlugin extends BasePlugin {
   Future<String?> buildMemoryPrompt({
     String? userMessage,
     String? conversationId,
+    bool resumeBackgroundWork = true,
   }) async {
     // 缺少请求作用域时失败关闭；活动页面可能已经切到别的角色。
     final ownerId = conversationId?.trim() ?? '';
     if (ownerId.isEmpty) return null;
     // 上次中途退出留下的整理任务，借本次启动后第一次发送在后台续跑。
-    _ref.read(memoryKeeperProvider).resumeOnce(ownerId);
+    // 上下文预览只读，不能借预览启动整理（会请求记忆模型并写库）。
+    if (resumeBackgroundWork)
+      _ref.read(memoryKeeperProvider).resumeOnce(ownerId);
     final recent = await _ref
         .read(chatHistoryStoreProvider)
         .loadRecentProjectedMessages(ownerId, limit: 4);
@@ -67,7 +70,9 @@ class MemoryPlugin extends BasePlugin {
   }
 
   Future<String> _roleLabel(String ownerId) async {
-    final row = await _ref.read(conversationRepositoryProvider).getById(ownerId);
+    final row = await _ref
+        .read(conversationRepositoryProvider)
+        .getById(ownerId);
     final name = row?.displayName.trim() ?? '';
     if (name.isNotEmpty) return name;
     final title = row?.title.trim() ?? '';

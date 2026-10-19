@@ -77,6 +77,7 @@ void main() {
                     historyCount: 0,
                     settings: segmentedProbeSettings.copyWith(
                         messageFormatConfig: MessageFormatConfig(
+                            chunkPunctuations: segmentedProbeChunkPunctuations,
                             minSegmentLength: compact ? 60 : 5)),
                   )))!;
           final viewport = ChatViewportController();

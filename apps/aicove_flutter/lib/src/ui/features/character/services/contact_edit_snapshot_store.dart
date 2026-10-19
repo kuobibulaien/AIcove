@@ -5,9 +5,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../core/storage/app_data_directory.dart';
 
 /// 角色编辑页持久快照。
 ///
@@ -252,7 +252,7 @@ class ContactEditSnapshotStore {
 
   Future<Directory> _getCacheDir() async {
     if (_cacheDir != null) return _cacheDir!;
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     _cacheDir = Directory('${appDir.path}/$_cacheDirName');
     if (!await _cacheDir!.exists()) {
       await _cacheDir!.create(recursive: true);

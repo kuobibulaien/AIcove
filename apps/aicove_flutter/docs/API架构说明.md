@@ -1,7 +1,8 @@
 # API 架构说明
 
-> 更新日期：2026-05-05
-> 适用范围：`apps/mygril_flutter/lib/src/features/chat/`、`apps/mygril_flutter/lib/src/core/api/`
+> 更新日期：2026-10-16（核对当时代码：补内核执行路径，删已不存在的文件与插件描述）
+> 适用范围：`apps/aicove_flutter/lib/src/features/chat/`、`apps/aicove_flutter/lib/src/core/api/`
+> 各模块在哪见 [后端公共服务库](后端公共服务库.md)；本文只讲一次聊天请求怎么走。
 
 ## 当前实现
 
@@ -24,10 +25,12 @@
 | `services/chat_send_service.dart` | 发送门面（前台接口层）：保留创建消息、历史准备、回复构建等稳定接口，把重型发送细节委托出去 |
 | `services/chat_send_backend_service.dart` | 后台发送执行服务：负责请求配置组装、插件上下文、工具 schema、trace 记录与 API 调用委托 |
 | `services/chat_send_trace_payload_builder.dart` | trace payload 组装器：负责 runtimeContext / promptAssembly 等可观测 payload 拼装 |
-| `services/chat_request_config.dart` | 请求配置构建器（MCP 缓存、直连模式回退、模型/Provider 解析） |
+| `services/chat_request_config.dart` | 请求配置构建器（直连模式回退、模型/Provider 解析） |
 | `services/chat_request_message_builder.dart` | 请求消息构建器：历史消息转请求消息（图片/文件/非视觉回退） |
 | `services/chat_plugin_context_builder.dart` | 插件上下文构建器：筛选插件、拼接插件 prompt、收集工具定义 |
-| `services/chat_send_api_runner.dart` | API 执行器：模型请求 + 工具循环 + 流式回退 + 结果汇总 |
+| `services/api_runner.dart` | `ApiRunner` 接口与内核开关（`AICOVE_AGENT_KERNEL_CHAT`／`_BG`，默认走内核） |
+| `services/chat_send_api_runner_kernel.dart` | 默认执行器：基于 `packages/aicove_agent_kernel` 的 `KernelApiRunner`（ADR0064） |
+| `services/chat_send_api_runner.dart` | 旧执行器（构建期回退路径）：模型请求 + 工具循环 + 流式回退 + 结果汇总 |
 | `services/chat_types.dart` | 公共数据类型（`SendRequest`/`ApiCallResult`/`ApiConfig`/TTS 相关类型） |
 | `services/chat_message_processor.dart` | 把文本/插件内容切成可展示的 `Message`（含图片/语音等 Block） |
 | `services/chat_message_builder.dart` | 消息构建工具 |
@@ -44,8 +47,8 @@
 | `core/api/providers/claude_adapter.dart` | Claude API 适配器 |
 | `core/api/providers/gemini_adapter.dart` | Gemini API 适配器 |
 | `core/api/providers/provider_capabilities.dart` | 模型能力注册表（哪些模型支持 vision/tool 等） |
-| `plugins/plugin_manager.dart` | 插件系统（生成 system prompt、处理回复得到事件/多媒体内容） |
-| `core/models/message_block.dart` | 多模态 Block 定义（`TextBlock`/`ImageBlock`/`AudioBlock`/`FileBlock` 等） |
+| `features/agent_plugins/` | 插件 API v2：请求期贡献（提示词、工具、提醒）与回复后处理 |
+| `core/models/message_block.dart` | 消息块定义（`TextBlock`/`ThinkingBlock`/`ImageBlock`/`AudioBlock`/`ToolBlock`/`FileBlock` 等） |
 | `domain/message.dart` | 消息模型与 `toHistoryJson()`（用于拼请求历史） |
 | `ui/features/debug/pages/call_flow_management_page.dart` | 调试页：配置模型/工具默认超时（生图路径切换已移到绘图设置） |
 
@@ -59,20 +62,19 @@
 4. `ChatSendUseCase` 加载 `AppSettings`、从数据库准备历史、决定模型故障切换顺序，并在流式场景下回调 `ChatActions` 建立占位气泡
 5. `ChatSendService.prepareApiConfig(...)` 进入发送门面，再委托 `ChatSendBackendService.prepareApiConfig(...)` 组装请求配置：
    - `ChatRequestConfigBuilder.buildRequestConfig(...)` 解析模型/Provider/API Key
-   - 拉取 MCP 配置（带缓存 TTL）并构建 `toolPrefs`
    - `ChatRequestMessageBuilder.buildRequestMessages(...)` 把历史消息转换成 API 所需 `messages`（支持图片/文件）
-   - `ChatPluginContextBuilder` 负责筛选有效插件、拼接插件 prompt、收集工具定义
+   - `ChatPluginContextBuilder` 负责筛选有效插件、拼接插件 prompt、收集工具定义；各插件的请求前提醒经 `collectPluginReminders` 合并后放进 system-reminder（ADR0063）
    - `ChatSendTracePayloadBuilder` 负责 runtimeContext / promptAssembly 的 trace payload 组装
-   - 超出上下文限制时触发 memory 插件预刷新（保存即将丢弃的历史）
+   - 超出上下文窗口时由 `features/context` 的自动压缩处理（ADR0038），原文不改
 6. `ChatSendUseCase` 通过 `ChatSendPort.executeApiCall(...)` 发起请求并处理模型故障切换：
-   - 当前基础设施实现由 `ChatSendBackendService` 组织参数，底层执行委托给 `ChatSendApiRunner.executeApiCall(...)`
+   - 当前基础设施实现由 `ChatSendBackendService` 组织参数，底层执行委托给 `ApiRunner.executeApiCall(...)`：默认是内核版 `KernelApiRunner`，关掉开关时回退 `ChatSendApiRunner`
    - 根据 `call_flow_settings` 决定生图路径：
      - `auto`：只有聊天模型同时具备 `vision + tools` 能力且未禁用工具调用时，才向模型暴露 `draw_image`，走“模型请求 -> 工具执行 -> 再请求模型”的稳定链路，并进入审图/返工闭环
      - `fast`：不向模型暴露 `draw_image`，改为注入 `<image>英文提示词</image>` 规则，让模型直接用标签触发生图；若仍有其他非生图工具，则继续按常规工具循环处理
    - 模型请求超时与工具超时都来自 `call_flow_settings`
    - `AgentApiClient.sendMessageRich(...)` 发起请求（通过 `ProviderAdapterFactory` 适配不同 provider）
    - 若模型不支持原生 tool call，`ChatToolFallbackParser` 从回复文本中提取工具调用
-   - `pluginManager.processResponse(...)` 处理插件（产出 `pluginEvents/pluginContents`）
+   - 插件的回复后处理（v2 `ResponseFunction`）产出 `pluginEvents/pluginContents`
 7. `ChatSendUseCase` 调用 `ChatSendPort.buildAssistantMessages(...)` 把回复转换成可展示消息列表（可能包含语音/表情等）
 8. `ChatActions` + `ChatTtsHandler` 根据流式/非流式场景完成占位提交、TTS 分段交付与最终写入时间线
 9. 异常时 `ChatSendPort.markUserMessageFailed(...)` 并更新 `errorProvider`
@@ -111,11 +113,11 @@ Provider 多 Key 配置保存在 `ProviderAuth.customConfig`：
 - `AgentApiClient.sendMessageRichStream(...)` 已支持 3 类直连流式：`openai`、`gemini`、`claude`。
 - `gemini` 走 `:streamGenerateContent?alt=sse`，并解析 `candidates[].content.parts[].text/functionCall`。
 - `claude` 走 `/v1/messages` + `stream=true`，并解析 `content_block_delta`（`text_delta` / `input_json_delta`）恢复工具调用参数。
-- 仍保持原有回退机制：流式失败时 `ChatSendApiRunner` 自动切回非流式整段响应。
+- 仍保持原有回退机制：流式失败时执行器自动切回非流式整段响应。
 
 ### 工具状态文案显示策略（2026-02-27）
 
-- `ChatSendApiRunner` 在工具调用后会保留状态文案到日志（如 `Image generated and sent.` / `图片已生成并发送。`），用于排查。
+- 执行器在工具调用后会保留状态文案到日志（如 `Image generated and sent.` / `图片已生成并发送。`），用于排查。
 - 这些“纯状态文案”不会再作为聊天正文返回给消息层，避免出现在用户聊天气泡中。
 - 图片、音频等 `PluginContent` 仍按原流程正常展示与入库。
 
@@ -158,10 +160,15 @@ core/api/providers/
 
 | Block类型 | 说明 | 用途 |
 |----------|------|------|
-| `TextBlock` | 文本内容 | AI的回复文字 |
-| `ImageBlock` | 图片 | 用户上传/AI生成的图片 |
-| `AudioBlock` | 音频 | TTS合成的语音 |
+| `TextBlock` | 文本内容 | AI 的回复文字 |
+| `ThinkingBlock` | 思考内容 | 模型的推理过程，不进正文 |
+| `ImageBlock` | 图片 | 用户上传／AI 生成的图片 |
+| `AudioBlock` | 音频 | TTS 合成的语音 |
+| `ToolBlock` | 工具调用 | 工具名、参数与结果原文（run 成功后落库） |
 | `FileBlock` | 文件 | 用户上传的文件 |
+| `EmojiBlock`、`CodeBlock`、`ErrorBlock`、`PlaceholderBlock` | 表情、代码、错误、占位 | 见 `message_block.dart` |
+
+通话气泡、聊天记录转发另有 `core/models/call_record_block.dart`、`chat_record_block.dart`。
 
 示例：
 ```dart
@@ -177,98 +184,21 @@ final message = Message.fromBlocks(
 
 ## 插件系统
 
-插件系统负责扩展 AI 的能力，包括：
+内置插件在 `features/plugins/` 下按目录分（绘图、语音、主动关怀、时间感知、联网搜索、记忆、表情包、酒馆兼容、MCP 连接器），每个插件经 `*_agent_plugin.dart` 注册到内核 v2 插件宿主。发送时：
 
-- **TTS 插件**：文字转语音（支持阿里云/MiniMax/SiliconFlow 三个 provider）
-- **Memory 插件**：记忆管理（embedding 向量召回）
-- **Trigger 插件**：自动回复触发（主动关怀）
-- **Sticker 插件**：表情包
-- **Image 插件**：AI 绘图
-- **Time Awareness 插件**：时间感知
+1. 按角色选择收集生效插件（ADR0035；MCP 连接器需角色显式开启，ADR0072）
+2. 插件贡献系统提示词片段、工具定义、请求前提醒
+3. 插件处理 AI 回复，产出事件与多媒体内容
 
-插件通过 `PluginManager` 统一管理，在发送消息时：
-1. 收集启用的插件及其工具定义
-2. 生成 system prompt（各插件的提示词）
-3. 处理 AI 回复（解析插件事件和内容）
-
-## 架构设计原则
-
-遵循以下设计原则：
-
-- **KISS**：保持简单，避免过度设计
-- **DRY**：不重复代码，提取公共逻辑
-- **SOLID**：单一职责、开闭原则、依赖倒置
-- **YAGNI**：只实现需要的功能
-
-## 文件结构
-
-```
-lib/src/
-├── core/
-│   ├── api/
-│   │   ├── agent_api.dart                    # API 门面客户端
-│   │   ├── agent_api_direct_chat_support.dart # 普通直连聊天 support
-│   │   ├── agent_api_stream_support.dart     # 直连流式 support（SSE / tool call 聚合）
-│   │   ├── agent_image_api_support.dart      # 图片 support（含 NovelAI 特判）
-│   │   └── providers/                        # Provider 适配器层
-│   │       ├── provider_adapter.dart         # 抽象接口
-│   │       ├── provider_adapter_factory.dart  # 适配器工厂
-│   │       ├── openai_adapter.dart           # OpenAI 适配
-│   │       ├── claude_adapter.dart           # Claude 适配
-│   │       ├── gemini_adapter.dart           # Gemini 适配
-│   │       └── provider_capabilities.dart    # 模型能力注册
-│   ├── network/
-│   │   └── json_http_client.dart             # JSON HTTP 客户端
-│   ├── models/
-│   │   └── message_block.dart                # 多模态 Block 定义
-│   └── utils/
-│       ├── content_normalizer.dart           # 内容规范化
-│       ├── mime_utils.dart                   # MIME 类型检测
-│       └── token_estimator.dart              # Token 计数估算
-├── features/
-│   ├── chat/
-│   │   ├── chat_actions.dart                 # 聊天入口（门面 + failover）
-│   │   ├── conversation_providers.dart       # 会话状态管理
-│   │   ├── domain/
-│   │   │   ├── message.dart                  # 消息模型
-│   │   │   └── conversation.dart             # 会话模型
-│   │   ├── data/
-│   │   │   ├── session_manager.dart          # 会话生命周期管理
-│   │   │   ├── chat_request_builder.dart     # 请求组装
-│   │   │   ├── chat_response_handler.dart    # 响应处理
-│   │   │   ├── context_analyzer.dart         # 对话上下文分析
-│   │   │   └── analyzer_scheduler.dart       # AI 管家分析调度
-│   │   └── services/
-│   │       ├── chat_send_service.dart        # 发送门面（前台接口层）
-│   │       ├── chat_send_backend_service.dart # 后台发送执行服务
-│   │       ├── chat_send_trace_payload_builder.dart # trace payload 组装器
-│   │       ├── chat_request_config.dart      # 请求配置构建器
-│   │       ├── chat_request_message_builder.dart # 请求消息构建器
-│   │       ├── chat_plugin_context_builder.dart # 插件上下文构建器
-│   │       ├── chat_send_api_runner.dart     # API 执行器（工具循环/流式）
-│   │       ├── chat_types.dart               # 公共类型定义
-│   │       ├── chat_message_processor.dart   # 消息处理（多模态分段）
-│   │       ├── chat_message_builder.dart     # 消息构建工具
-│   │       ├── chat_tts_handler.dart         # TTS 处理
-│   │       ├── chat_tool_fallback_parser.dart # 工具调用回退解析
-│   │       └── tts_fallback_notification.dart # TTS 失败通知
-│   └── plugins/
-│       ├── plugin_manager.dart               # 插件管理器
-│       ├── tts/                              # TTS 插件（含 3 个 provider）
-│       ├── memory/                           # 记忆插件
-│       ├── trigger/                          # 触发器插件
-│       ├── sticker/                          # 表情包插件
-│       ├── image/                            # 绘图插件
-│       └── time_awareness/                   # 时间感知插件
-```
+插件关闭时，请求副本里对应的标签与工具对被屏蔽，原始历史保留（ADR0017）。语音渠道按 `TtsRequestFormat` 注册表路由（ADR0081），长期记忆是常驻层＋档案层的词法检索（ADR0038，向量检索未做）。
 
 ## 常见问题
 
 **Q: 如何添加新的消息类型？**
-A: 在 `message_block.dart` 中定义新的 Block 类型，然后在 `MessageBubble` 中添加渲染逻辑。
+A: 在 `message_block.dart` 中定义新的 Block 类型，然后在消息气泡中添加渲染逻辑。
 
 **Q: 如何添加新的插件？**
-A: 实现 `Plugin` 接口，然后在 `PluginManager` 中注册。
+A: 实现 `AicovePlugin`（`features/agent_plugins/aicove_plugin.dart`），在启用时通过注册器贡献提示词、工具或提醒。发送核心不需要改动；需要新标签时在 `content_tags` 注册表登记（ADR0044）。
 
 **Q: 如何切换 AI 提供商？**
 A: 在设置页面配置不同的 Provider（OpenAI、Claude、Gemini 等）和对应的 API Key。`ProviderAdapterFactory` 会根据 provider id 自动选择对应的适配器。

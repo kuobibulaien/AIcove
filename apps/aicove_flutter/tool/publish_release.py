@@ -6,9 +6,9 @@ Stages (each resumes from its done marker in the work directory):
            -> sync into a fresh clone of the public repository -> hygiene test
   test     full Flutter suite on a copy of the sanitized source (runs in
            parallel with build; skip with --skip-tests)
-  build    Android APK + macOS app + unsigned iOS IPA from a sanitized copy,
+  build    Android APK + macOS DMG + unsigned iOS IPA from a sanitized copy,
            strip (and re-sign the Mac app), privacy-scan all packages,
-           write SHA256SUMS. The Windows ZIP is built afterwards by
+           write SHA256SUMS. The Windows installer is built afterwards by
            .github/workflows/windows-release.yml in the public repository.
   publish  only with --publish: commit and push the public repository,
            create the GitHub release, download it again and verify hashes
@@ -151,7 +151,7 @@ class Release:
         self.test_src = self.work / 'test-src'
         self.assets = self.work / 'assets'
         self.apk_name = f'AIcove-{self.version}-android.apk'
-        self.zip_name = f'AIcove-{self.version}-macos-arm64.zip'
+        self.dmg_name = f'AIcove-{self.version}-macos-arm64.dmg'
         self.ipa_name = f'AIcove-{self.version}-ios-unsigned.ipa'
         self.private = Private()
 
@@ -298,7 +298,7 @@ class Release:
         self.package_mac(app / 'build/macos/Build/Products/Release/AIcove.app')
         self.package_ios(app / 'build/ios/iphoneos/Runner.app')
         sums = []
-        for name in (self.apk_name, self.zip_name, self.ipa_name):
+        for name in (self.apk_name, self.dmg_name, self.ipa_name):
             sums.append(f'{hashlib.sha256((self.assets / name).read_bytes()).hexdigest()}  {name}')
         (self.assets / 'SHA256SUMS').write_text('\n'.join(sums) + '\n')
         log('build: assets ready in ' + str(self.assets))
@@ -347,8 +347,13 @@ class Release:
         hits = scan_tree(app, self.private, bundle=True)
         if hits:
             sys.exit(f'build: Mac app privacy scan failed: {hits}')
-        run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(app), str(self.assets / self.zip_name)])
-        log('build: Mac app stripped, re-signed with original entitlements, scan 0 hits')
+        # Drag-to-install disk image: the app plus a link to /Applications.
+        (app.parent / 'Applications').symlink_to('/Applications')
+        dmg = self.assets / self.dmg_name
+        run(['hdiutil', 'create', '-volname', 'AIcove', '-srcfolder', str(app.parent), '-fs', 'HFS+',
+             '-format', 'UDZO', '-ov', str(dmg)], capture_output=True)
+        run(['hdiutil', 'verify', str(dmg)], capture_output=True)
+        log('build: Mac app stripped, re-signed with original entitlements, scan 0 hits, packed as DMG')
 
     def package_ios(self, source):
         if source.is_symlink() or not source.is_dir():
@@ -382,10 +387,12 @@ class Release:
         download = (f'下载：\n'
                     f'- Android APK：{self.version.split("-")[0]}，构建号 {self.args.build_number}；'
                     f'签名证书与之前公开测试版相同。\n'
-                    f'- macOS Apple Silicon ZIP：临时签名、未公证，沙盒与网络权限保留。\n'
+                    f'- macOS Apple Silicon DMG：打开后把 AIcove 拖进「应用程序」，升级时覆盖旧版即可，数据保留；'
+                    f'临时签名、未公证，沙盒与网络权限保留。\n'
                     f'- iOS IPA：未签名，需自行签名或侧载安装。\n'
-                    f'- Windows x64 ZIP：发布后由 GitHub Actions 构建并追加，约需 15 分钟；未签名，'
-                    f'首次运行可能出现 SmartScreen 提示。\n'
+                    f'- Windows x64 安装程序（setup.exe）：发布后由 GitHub Actions 构建并追加，约需 15 分钟；'
+                    f'装到当前用户目录、无需管理员，升级时直接运行新版安装程序即可覆盖，数据保留；'
+                    f'未签名，首次运行可能出现 SmartScreen 提示。\n'
                     f'- SHA256SUMS：文件校验值；安装包个人路径扫描 0 命中。')
         text = f'{notes}\n\n{verify}\n\n{download}\n'
         (self.work / 'release-notes.md').write_text(text, encoding='utf-8')
@@ -418,7 +425,7 @@ class Release:
         cmd = ['gh', 'release', 'create', tag, '-R', PUBLIC_REPO, '--target', 'main',
                '--title', self.args.title or f'AIcove {self.version}',
                '--notes-file', str(self.work / 'release-notes.md'),
-               str(self.assets / self.apk_name), str(self.assets / self.zip_name), str(self.assets / self.ipa_name),
+               str(self.assets / self.apk_name), str(self.assets / self.dmg_name), str(self.assets / self.ipa_name),
                str(self.assets / 'SHA256SUMS')]
         if self.prerelease():
             cmd.insert(4, '--prerelease')

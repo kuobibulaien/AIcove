@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
+import 'storage/app_data_directory.dart';
 
 /// 日志历史文件信息
 class LogHistoryFile {
@@ -55,7 +55,7 @@ class LogHistoryService {
 
   /// 获取日志存储目录
   static Future<Directory> _getLogDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final logDir = Directory('${appDir.path}/$_logDirName');
     if (!await logDir.exists()) {
       await logDir.create(recursive: true);
@@ -65,7 +65,7 @@ class LogHistoryService {
 
   /// 获取旧日志目录（兼容）
   static Future<Directory?> _getOldLogDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final logDir = Directory('${appDir.path}/$_oldLogDirName');
     if (await logDir.exists()) {
       return logDir;

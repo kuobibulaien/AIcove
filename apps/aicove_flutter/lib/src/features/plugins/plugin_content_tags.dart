@@ -1,6 +1,7 @@
 import '../content_tags/domain/content_tag_registry.dart';
 import '../content_tags/domain/content_tag_scanner.dart';
 import '../content_tags/domain/content_tag_spec.dart';
+import '../task_agent/application/delegate_task_plugin.dart';
 import 'image/image_plugin.dart';
 import 'tts/tts_plugin.dart';
 import 'web_search/web_search_plugin.dart';
@@ -10,6 +11,7 @@ const List<ContentTagProvider> firstPartyContentTagProviders = [
   TtsPlugin.contentTags,
   ImagePlugin.contentTags,
   WebSearchPlugin.contentTags,
+  delegateTaskContentTags,
 ];
 
 /// 与开关无关的解析（落库拆分、流式显示）使用的扫描器：全部提供方视为生效。

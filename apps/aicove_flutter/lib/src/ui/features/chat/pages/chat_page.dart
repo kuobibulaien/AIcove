@@ -36,6 +36,7 @@ import '../../../../features/chat/services/conversation_short_window_store.dart'
     show ConversationTimelineCache, conversationTimelineCacheProvider;
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
+import '../../../../features/chat/domain/model_request_error_report.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
@@ -54,6 +55,11 @@ import '../../../../features/observability/trace_query_service.dart';
 import '../../../../features/observability/trace_store.dart';
 import '../../../../ui/features/settings/pages/log_formatters.dart';
 import 'deferred_conversation_activation.dart';
+import '../../../../features/assistant/application/assistant_approvals.dart';
+import '../../assistant/widgets/assistant_activity_panel.dart';
+import '../../assistant/widgets/assistant_onboarding_view.dart';
+import '../../../../features/assistant/application/assistant_onboarding_controller.dart';
+import '../../../../features/assistant/domain/assistant_onboarding.dart';
 import '../widgets/chat_message_list.dart';
 import '../widgets/model_failover_error_content.dart';
 import '../widgets/topic_compaction_button.dart';
@@ -301,6 +307,34 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     ));
   }
 
+  void _measureAssistantPanel(bool visible) =>
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final box = _assistantPanelKey.currentContext?.findRenderObject();
+        final height = visible && box is RenderBox ? box.size.height : 0.0;
+        if ((height - _assistantPanelHeight).abs() >= 0.5) {
+          setState(() => _assistantPanelHeight = height);
+        }
+      });
+
+  Widget _buildAssistantPanel(bool visible) {
+    _measureAssistantPanel(visible);
+    if (!visible) return const SizedBox.shrink();
+    // Cards come and go inside the panel without rebuilding this page.
+    return NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        _measureAssistantPanel(true);
+        return true;
+      },
+      child: SizeChangedLayoutNotifier(
+        child: KeyedSubtree(
+          key: _assistantPanelKey,
+          child: const AssistantActivityPanel(),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSelectionToolbar(Conversation? conv) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_selection.active) return;
@@ -395,8 +429,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ChatTavernPresetPage(conversationId: conv.id),
           ),
         ),
+        if (conv.id == kAicoveAssistantId)
+          MoePopupMenuItem(
+            label: ref.read(assistantAlwaysAskProvider).valueOrNull == true
+                ? '修改前不再每次问我'
+                : '修改前每次问我',
+            onTap: () async {
+              final next =
+                  ref.read(assistantAlwaysAskProvider).valueOrNull != true;
+              await ref.read(assistantAlwaysAskProvider.notifier).set(next);
+              if (mounted) {
+                MoeToast.brief(
+                  context,
+                  next ? '之后助手的每次修改都会先问你' : '可撤销的修改将直接执行',
+                );
+              }
+            },
+          ),
         MoePopupMenuItem(
-          label: '压缩并开启新话题',
+          label: '压缩上下文',
           onTap: () => showTopicCompactionDialog(
             context,
             ref,
@@ -547,6 +598,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   String? _preloadedConversationId;
   bool _didSchedulePrecache = false;
   double _composerOverlayHeight = 0;
+
+  /// Height of the assistant's approval and undo panel above the composer.
+  double _assistantPanelHeight = 0;
+  final _assistantPanelKey = GlobalKey();
   late final ChatViewportController _viewportController;
   Timer? _imagePrecacheTimer;
   Timer? _clearUnreadTimer;
@@ -1122,32 +1177,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  String _buildBriefSendErrorMessage(String rawError) {
-    final text = rawError.trim();
-    if (text.isEmpty) {
-      return '发送失败，请到日志中心看详情';
-    }
-
-    final httpMatch = RegExp(
-      r'HTTP\s*(\d{3})',
-      caseSensitive: false,
-    ).firstMatch(text);
-    if (httpMatch != null) {
-      return '发送失败（HTTP ${httpMatch.group(1)}）';
-    }
-
-    final lower = text.toLowerCase();
-    if (lower.contains('timeout') || lower.contains('timed out')) {
-      return '发送超时，请稍后重试';
-    }
-    if (lower.contains('socketexception') ||
-        lower.contains('failed host lookup') ||
-        lower.contains('connection refused')) {
-      return '网络异常，请检查连接';
-    }
-    return '发送失败，请到日志中心看详情';
-  }
-
   /// (注释已丢失)
   void _triggerImagePreload() {
     final targetId = widget.conversationId;
@@ -1380,6 +1409,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ? initial
         : targetConversation ?? initial;
     final currentConversationId = conv?.id ?? targetId;
+    final isAssistant = conv?.id == kAicoveAssistantId;
+    final assistantScript =
+        isAssistant && ref.watch(assistantScriptActiveProvider);
+    // Loaded ahead so the「更多」menu shows the current choice.
+    if (isAssistant) ref.watch(assistantAlwaysAskProvider);
+    final assistantNeedsModel = isAssistant &&
+        ref.watch(
+          appSettingsProvider.select(
+            (s) => s.valueOrNull != null && !hasUsableChatModel(s.value!),
+          ),
+        );
     _ensureImplicitConversationEntrySideEffects(currentConversationId);
     final messagesAsync = currentConversationId == null
         ? const AsyncValue.data(<Message>[])
@@ -1452,12 +1492,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     // 监听发送错误，弹出失败原因提示
     ref.listen<String?>(errorProvider, (prev, next) {
       if (next != null && next.isNotEmpty && mounted) {
-        final briefMessage = _buildBriefSendErrorMessage(next);
+        final briefMessage = ModelRequestErrorReport.brief(next);
         MoeToast.show(
           context,
           briefMessage,
           type: ToastType.error,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 4),
         );
       }
     });
@@ -1607,7 +1647,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   onCollapse: callHere.minimize,
                 )
               : null,
-          child: Stack(
+          child: assistantScript && conv != null
+              ? AssistantOnboardingView(
+                  displayName: conv.displayName,
+                  avatarUrl: conv.avatarUrl ?? conv.characterImage,
+                  topPadding: listTopSpacing,
+                )
+              : Stack(
             children: [
               if (conv != null && messagesAsync.hasValue && messages.isEmpty)
                 Center(
@@ -1618,7 +1664,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       vertical: 12,
                     ),
                     child: Text(
-                      '暂无消息',
+                      assistantNeedsModel
+                          ? '先到「设置 · 模型」配好模型，就能和我聊啦'
+                          : '暂无消息',
                       style: TextStyle(color: colors.text, fontSize: 14),
                     ),
                   ),
@@ -1656,7 +1704,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               avatarUrl: conv.avatarUrl ?? conv.characterImage,
                               displayName: conv.displayName,
                               topOverlayHeight: listTopSpacing,
-                              bottomOverlayHeight: _composerOverlayHeight,
+                              bottomOverlayHeight:
+                                  _composerOverlayHeight + _assistantPanelHeight,
                               viewportController: _viewportController,
                               contextStartMessageId: conv.contextStartMessageId,
                               onLoadMore: () => _loadMoreMessages(conv.id),
@@ -1711,6 +1760,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    _buildAssistantPanel(isAssistant && !_selection.active),
                     if (_selection.active) _buildSelectionToolbar(conv),
                     Offstage(
                       offstage: _selection.active,

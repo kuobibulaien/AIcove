@@ -8,8 +8,7 @@ import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 double _expectedContentWidth(double panelWidth) {
-  final inset = (panelWidth * 0.04).clamp(12.0, 32.0);
-  return math.min(760.0, math.max(0.0, panelWidth - 2 * inset));
+  return math.max(0.0, panelWidth - 2 * MoeSettingsLayout.inset);
 }
 
 Widget _wrap({
@@ -106,25 +105,6 @@ void main() {
     final expected = _expectedContentWidth(460);
     final card = tester.getRect(find.byType(MoeContentSurface));
     expect(card.width, closeTo(expected, 0.01));
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('unbounded horizontal constraints fall back to max width', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        child: const SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: MoeSettingsContent(
-            child: MoeSettingsGroup(children: [Text('无界')]),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    final card = tester.getRect(find.byType(MoeContentSurface));
-    expect(card.width, closeTo(760, 0.01));
     expect(tester.takeException(), isNull);
   });
 

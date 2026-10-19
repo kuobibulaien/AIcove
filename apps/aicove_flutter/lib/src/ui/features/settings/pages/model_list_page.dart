@@ -201,99 +201,26 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
       onTap: _selectMode ? _exitSelectMode : null,
       child: Stack(
         children: [
-          Builder(
-            builder: (context) => ListView(
-              padding: moeUnderBarPadding(
-                context,
-                const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              ),
-              children: [
-                // ============ 默认模型设置 ============
-                MoeSettingsGroup(
-                  margin: EdgeInsets.zero,
-                  padding: EdgeInsets.zero,
-                  children: [
-                    MoeSettingsRow(
-                      label: '默认模型设置',
-                      trailingType: MoeSettingsRowTrailing.chevron,
-                      onTap: () {
-                        Navigator.of(context).push(
-                          ParallaxSlidePageRoute(
-                            page: const DefaultModelSettingsPage(),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+          MoeSettingsContent(
+            child: Builder(
+              builder: (context) => ListView(
+                padding: moeUnderBarPadding(
+                  context,
+                  const EdgeInsets.only(top: 12),
                 ),
-
-                const SizedBox(height: 16),
-
-                // ============ 渠道供应商列表 ============
-                if (providers.isEmpty)
-                  MoeEmptyState(
-                    icon: Icons.cloud_off,
-                    title: '还没有任何供应商',
-                    description: '右上角可以「新增」供应商',
-                    action: MoePrimaryButton(
-                      label: '新增供应商',
-                      icon: Icons.add,
-                      onPressed: () => showAddProviderSheet(context),
-                    ),
-                  )
-                else
+                children: [
+                  // ============ 默认模型设置 ============
                   MoeSettingsGroup(
                     margin: EdgeInsets.zero,
                     padding: EdgeInsets.zero,
                     children: [
-                      ReorderableListView.builder(
-                        shrinkWrap: true,
-                        padding: EdgeInsets.zero,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: providers.length,
-                        onReorder: _onReorderProviders,
-                        buildDefaultDragHandles: false,
-                        proxyDecorator: (child, index, animation) {
-                          return AnimatedBuilder(
-                            animation: animation,
-                            builder: (context, child) {
-                              final t = Curves.easeInOut.transform(
-                                animation.value,
-                              );
-                              final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
-                              return Transform.scale(
-                                scale: scale,
-                                child: Opacity(opacity: 0.95, child: child),
-                              );
-                            },
-                            child: child,
-                          );
-                        },
-                        itemBuilder: (context, index) {
-                          final entry = providerEntries[index];
-                          return ReorderableDelayedDragStartListener(
-                            key: ValueKey(entry.provider.id),
-                            index: index,
-                            child: _SettleAnim(
-                              active: _settleKeys.contains(entry.provider.id),
-                              child: _ProviderRow(
-                                entry: entry,
-                                selectMode: _selectMode,
-                                selected: _selected.contains(entry.provider.id),
-                                onToggleSelect: () =>
-                                    _toggleSelected(entry.provider.id),
-                                onOpenDetail: () {
-                                  Navigator.of(context).push(
-                                    ParallaxSlidePageRoute(
-                                      page: ProviderDetailPage(
-                                        providerId: entry.provider.id,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                showDivider:
-                                    index != providerEntries.length - 1,
-                              ),
+                      MoeSettingsRow(
+                        label: '默认模型设置',
+                        trailingType: MoeSettingsRowTrailing.chevron,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            ParallaxSlidePageRoute(
+                              page: const DefaultModelSettingsPage(),
                             ),
                           );
                         },
@@ -301,8 +228,85 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                     ],
                   ),
 
-                const SizedBox(height: 80), // 底部留白
-              ],
+                  const SizedBox(height: 16),
+
+                  // ============ 渠道供应商列表 ============
+                  if (providers.isEmpty)
+                    MoeEmptyState(
+                      icon: Icons.cloud_off,
+                      title: '还没有任何供应商',
+                      description: '右上角可以「新增」供应商',
+                      action: MoePrimaryButton(
+                        label: '新增供应商',
+                        icon: Icons.add,
+                        onPressed: () => showAddProviderSheet(context),
+                      ),
+                    )
+                  else
+                    MoeSettingsGroup(
+                      margin: EdgeInsets.zero,
+                      padding: EdgeInsets.zero,
+                      children: [
+                        ReorderableListView.builder(
+                          shrinkWrap: true,
+                          padding: EdgeInsets.zero,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: providers.length,
+                          onReorder: _onReorderProviders,
+                          buildDefaultDragHandles: false,
+                          proxyDecorator: (child, index, animation) {
+                            return AnimatedBuilder(
+                              animation: animation,
+                              builder: (context, child) {
+                                final t = Curves.easeInOut.transform(
+                                  animation.value,
+                                );
+                                final scale = lerpDouble(1.0, 0.98, t) ?? 1.0;
+                                return Transform.scale(
+                                  scale: scale,
+                                  child: Opacity(opacity: 0.95, child: child),
+                                );
+                              },
+                              child: child,
+                            );
+                          },
+                          itemBuilder: (context, index) {
+                            final entry = providerEntries[index];
+                            return ReorderableDelayedDragStartListener(
+                              key: ValueKey(entry.provider.id),
+                              index: index,
+                              child: _SettleAnim(
+                                active: _settleKeys.contains(entry.provider.id),
+                                child: _ProviderRow(
+                                  entry: entry,
+                                  selectMode: _selectMode,
+                                  selected: _selected.contains(
+                                    entry.provider.id,
+                                  ),
+                                  onToggleSelect: () =>
+                                      _toggleSelected(entry.provider.id),
+                                  onOpenDetail: () {
+                                    Navigator.of(context).push(
+                                      ParallaxSlidePageRoute(
+                                        page: ProviderDetailPage(
+                                          providerId: entry.provider.id,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  showDivider:
+                                      index != providerEntries.length - 1,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+
+                  const SizedBox(height: 80), // 底部留白
+                ],
+              ),
             ),
           ),
           Positioned(

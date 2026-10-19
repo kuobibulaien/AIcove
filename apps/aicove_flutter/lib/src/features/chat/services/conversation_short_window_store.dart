@@ -14,6 +14,7 @@ import '../../../core/models/message_block.dart';
 import '../domain/message.dart';
 import '../../observability/frontend_diagnostics_port.dart';
 import 'history_display_decoder.dart';
+import '../../task_agent/domain/task_relay.dart';
 import '../../observability/frontend_diagnostics_provider.dart';
 import 'image_dimension_probe/image_dimension_probe.dart';
 
@@ -50,6 +51,11 @@ class ConversationTimelineCache {
   _visibilityByConversation = <String, _ConversationFrontendVisibilityState>{};
   final Map<String, StreamController<void>> _changeControllers =
       <String, StreamController<void>>{};
+
+  /// Relay markers seen in loaded raw rows; only rows present in a snapshot
+  /// take part in the dedupe (ADR0088 §7).
+  final Map<String, TaskRelayMark> _taskRelaysByRawId =
+      <String, TaskRelayMark>{};
   final Map<String, Future<void>> _conversationTasks = <String, Future<void>>{};
   final Map<String, Future<void>> _snapshotUpgradeTasks =
       <String, Future<void>>{};
@@ -130,6 +136,7 @@ class ConversationTimelineCache {
       snapshot,
       limit: limit,
       visibility: _visibilityFor(normalizedConversationId),
+      taskRelays: _taskRelaysByRawId,
     );
   }
 
@@ -700,6 +707,7 @@ class ConversationTimelineCache {
         hot,
         limit: limit,
         visibility: _visibilityFor(conversationId),
+        taskRelays: _taskRelaysByRawId,
       );
     }
     final snapshot = await _loadSnapshot(conversationId);
@@ -707,6 +715,7 @@ class ConversationTimelineCache {
       snapshot,
       limit: limit,
       visibility: _visibilityFor(conversationId),
+      taskRelays: _taskRelaysByRawId,
     );
   }
 
@@ -1615,6 +1624,14 @@ class ConversationTimelineCache {
       return const <Message>[];
     }
 
+    for (final row in dbMessages) {
+      final receiptId = taskRelayReceiptIdFromEncoded(row.rawPayload);
+      if (receiptId == null) continue;
+      _taskRelaysByRawId[row.id] = (
+        receiptId: receiptId,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(row.createdAt),
+      );
+    }
     final clock = Stopwatch()..start();
     final messageIds = dbMessages
         .map((message) => message.id)
@@ -1987,11 +2004,13 @@ ConversationTimelineWindowState _buildWindow(
   _ConversationTimelineSnapshot snapshot, {
   required int limit,
   required _ConversationFrontendVisibilityState visibility,
+  required Map<String, TaskRelayMark> taskRelays,
 }) {
   final normalizedLimit = limit < 1 ? 1 : limit;
   final filteredMessages = _filterMessagesByVisibility(
     snapshot.messages,
     visibility,
+    _supersededTaskRelays(snapshot.messages, taskRelays),
   );
   final visibleMessages = List<Message>.unmodifiable(
     _selectNewestProjectedMessagesByRawWindow(
@@ -2010,18 +2029,47 @@ ConversationTimelineWindowState _buildWindow(
 List<Message> _filterMessagesByVisibility(
   List<Message> messages,
   _ConversationFrontendVisibilityState visibility,
+  Set<String> supersededRelayRawIds,
 ) {
   if (messages.isEmpty ||
       (visibility.hiddenRawMessageIds.isEmpty &&
-          visibility.hiddenProjectedMessageIds.isEmpty)) {
+          visibility.hiddenProjectedMessageIds.isEmpty &&
+          supersededRelayRawIds.isEmpty &&
+          !messages.any(_isTaskControlMessage))) {
     return messages;
   }
 
   return <Message>[
     for (final message in messages)
-      if (!_isMessageHiddenByFrontendVisibility(message, visibility)) message,
+      if (!_isTaskControlMessage(message) &&
+          !supersededRelayRawIds.contains(_messageRawSourceId(message)) &&
+          !_isMessageHiddenByFrontendVisibility(message, visibility))
+        message,
   ];
 }
+
+/// Duplicate relays of one receipt from different devices: the display keeps
+/// the earliest (ADR0088 §7); raw history keeps all of them.
+Set<String> _supersededTaskRelays(
+  List<Message> messages,
+  Map<String, TaskRelayMark> taskRelays,
+) {
+  if (taskRelays.length < 2) return const <String>{};
+  final present = <String, TaskRelayMark>{};
+  for (final message in messages) {
+    final rawId = _messageRawSourceId(message);
+    final mark = taskRelays[rawId];
+    if (mark != null) present[rawId] = mark;
+  }
+  return present.length < 2
+      ? const <String>{}
+      : supersededTaskRelayIds(present);
+}
+
+/// Task control events travel as chat messages but are never shown
+/// (ADR0088 §6).
+bool _isTaskControlMessage(Message message) =>
+    _messageRawSourceId(message).startsWith('task_control_');
 
 bool _isMessageHiddenByFrontendVisibility(
   Message message,

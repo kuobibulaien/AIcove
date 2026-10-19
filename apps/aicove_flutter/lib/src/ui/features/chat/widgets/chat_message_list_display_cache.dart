@@ -3,9 +3,9 @@ import 'dart:io';
 import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
+import '../../../../core/storage/app_data_directory.dart';
 
 class ChatMessageListDisplayCacheEntry {
   const ChatMessageListDisplayCacheEntry({
@@ -202,7 +202,7 @@ class ChatMessageListDisplayCache {
     if (_persistentDir != null) {
       return _persistentDir!;
     }
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final dir = Directory('${appDir.path}/chat_message_list_cache');
     if (!await dir.exists()) {
       await dir.create(recursive: true);

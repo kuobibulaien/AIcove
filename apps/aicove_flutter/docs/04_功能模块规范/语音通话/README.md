@@ -192,6 +192,7 @@ AICOVE_SHERPA_MODELS=<模型目录> AICOVE_SHERPA_NATIVE=$HOME/.pub-cache/hosted
 
 ## 待办
 
+- 通话派活（ADR0090，待审未施工）：通话只加 `delegate_task`，先回话再等结果，回执作为新一轮输入，见[通话派活方案](通话派活方案.md)。
 - 真机测试：在一加 13T 上用 4G／Wi-Fi 重测端到端延迟。
 - 手机听筒／外放切换（`audio_session` 有接口，但 `mp_audio_stream` 的播放用途可能不跟随通话路由，要真机验证）。
 - 回声消除：手机外放时防止麦克风录进角色的声音，可以试 `record` 的系统回声消除，或先用耳机模式规避；桌面端见「全双工前置条件」。

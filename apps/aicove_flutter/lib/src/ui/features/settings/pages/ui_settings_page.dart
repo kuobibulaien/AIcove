@@ -950,8 +950,8 @@ class UiSettingsPage extends ConsumerWidget {
         (sets.isNotEmpty
             ? sets.first
             : const MessageChunkPunctuationSet(
-                id: 'default',
-                name: '默认',
+                id: 'conservative',
+                name: '保守',
                 punctuations: <String>[],
               ));
 

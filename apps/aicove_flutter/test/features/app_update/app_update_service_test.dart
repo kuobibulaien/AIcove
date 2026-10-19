@@ -100,10 +100,78 @@ void main() {
     );
   });
 
-  test('builds without a release tag never check', () async {
+  test('development builds compare package version and build number',
+      () async {
+    AppUpdateService dev(List<(String, int?)> releases) => AppUpdateService(
+          currentVersion: '',
+          packageVersion: '0.3.0',
+          packageBuildNumber: '2026101602',
+          client: MockClient(
+            (_) async => http.Response.bytes(
+              utf8.encode(jsonEncode([
+                for (final (tag, build) in releases)
+                  {
+                    ..._release(tag),
+                    if (build != null)
+                      'body': '新增与改进：\n- notes\n\n构建号 $build；',
+                  },
+              ])),
+              200,
+            ),
+          ),
+        );
+
+    expect(dev(const []).isDevelopmentBuild, isTrue);
+    expect(dev(const []).canCheck, isTrue);
+    // A higher core is newer whatever its build number.
+    expect((await dev([('v0.4.0-test.1', null)]).checkForUpdate())?.version,
+        '0.4.0-test.1');
+    // The same core is newer only when built later than this build.
+    expect(
+        (await dev([('v0.3.0-test.2', 2026101701)]).checkForUpdate())?.version,
+        '0.3.0-test.2');
+    expect(await dev([('v0.3.0-test.1', 2026101602)]).checkForUpdate(), isNull);
+    expect(await dev([('v0.3.0-test.1', null)]).checkForUpdate(), isNull);
+    // Older lines are never offered.
+    expect(await dev([('v0.2.0-test.5', 2026101801)]).checkForUpdate(), isNull);
+  });
+
+  test('development builds honour the skipped version automatically',
+      () async {
+    final service = AppUpdateService(
+      currentVersion: '',
+      packageVersion: '0.2.0',
+      client: MockClient(
+        (_) async => http.Response.bytes(
+          utf8.encode(jsonEncode([_release('v0.3.0-test.1')])),
+          200,
+        ),
+      ),
+    );
+    await AppUpdateService.skipVersion('0.3.0-test.1');
+    expect(await service.checkForUpdate(), isNull);
+    expect((await service.checkForUpdate(manual: true))?.version,
+        '0.3.0-test.1');
+  });
+
+  test('reads the build number from release notes', () {
+    expect(releaseBuildNumber('- Android APK：0.3.0，构建号 2026101602；'),
+        2026101602);
+    expect(releaseBuildNumber('no number'), isNull);
+  });
+
+  test('builds without any version never pretend to be up to date', () async {
     final service = _service([_release('v9.0.0')], current: '');
     expect(service.canCheck, isFalse);
-    expect(await service.checkForUpdate(manual: true), isNull);
+    expect(await service.checkForUpdate(), isNull);
+    expect(service.checkForUpdate(manual: true), throwsA(anything));
+  });
+
+  test('describes the installed version for release and dev builds', () {
+    expect(describeInstalledVersion('0.3.0-test.1'), '0.3.0-test.1');
+    expect(describeInstalledVersion('v0.3.0'), '0.3.0');
+    expect(describeInstalledVersion('', numeric: '0.3.0'), '开发版 0.3.0');
+    expect(describeInstalledVersion(''), '开发版本');
   });
 
   test('automatic check swallows errors, manual check rethrows', () async {

@@ -24,6 +24,9 @@ import 'package:aicove_flutter/src/features/chat/services/conversation_short_win
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
+/// 探针固定按句读标点切段，不随用户默认档变化。
+const segmentedProbeChunkPunctuations = ['。', '！', '？', '，', '、', '；', '…'];
+
 const segmentedProbeSettings = AppSettings(
   ttsEnabled: false,
   defaultModelName: 'offline:probe',
@@ -43,7 +46,10 @@ const segmentedProbeSettings = AppSettings(
   modelProviderMap: {},
   backendApiKey: '',
   messageChunkingEnabled: true,
-  messageFormatConfig: MessageFormatConfig(enableChunking: true),
+  messageFormatConfig: MessageFormatConfig(
+    enableChunking: true,
+    chunkPunctuations: segmentedProbeChunkPunctuations,
+  ),
   textScaleFactor: 1,
   uiScaleFactor: 1,
   imagePreviewScale: 1,
@@ -73,6 +79,9 @@ class _Conversations extends ConversationsNotifier {
     // 禁止触碰用户会话索引；消息仍由真实 ChatActions 写入内存 DB。
     state = AsyncData(list);
   }
+
+  @override
+  Future<void> saveOne(Conversation conv) async {}
 }
 
 // 自动关怀与本次滚动无关；禁用它的真实偏好存储和后台任务。

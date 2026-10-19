@@ -32,6 +32,7 @@ import '../../../settings/app_settings.dart';
 import 'audio_player_widget.dart';
 import 'chat_record_bubble.dart';
 import '../../../../ui/features/voice_call/widgets/call_record_bubble.dart';
+import '../../../../ui/features/task_agent/task_receipt_bubble.dart';
 import 'incremental_message_text.dart';
 
 /// 语音消息转文字单条展开状态覆盖（null 表示跟随全局设置）
@@ -496,6 +497,10 @@ class MessageBubble extends ConsumerWidget {
     if (block is ChatRecordBlock) {
       return ChatRecordBubble(record: block, textColor: textColor);
     }
+    if (block is TaskReceiptBlock) {
+      return TaskReceiptBubble(receipt: block, textColor: textColor);
+    }
+    if (block is TaskControlBlock) return const SizedBox.shrink();
     if (block is TextBlock) {
       // streaming 状态统一显示三点闪动，避免模型首段返回过快时看不到“加载中”反馈。
       if (allowStreamingPlaceholder && block.status == BlockStatus.streaming) {
@@ -929,11 +934,17 @@ class MessageBubble extends ConsumerWidget {
   /// 消息正文：文档模式的助手消息按 Markdown 渲染，其余走 [_buildMessageText]。
   /// 用户的引用回复把开头的引用摘要画成气泡内引用块。
   Widget _buildBodyText(String text, TextStyle style) {
-    if (documentStyle && !isMe) {
-      return MoeMarkdownView(
-        text,
-        fontSize: style.fontSize ?? fontSize,
-        color: style.color,
+    if (!isMe) {
+      // Interactive blocks store what the user changed under the raw message.
+      return MoeUiBlockMessage(
+        messageId: message.sourceMessageIdOrSelf,
+        child: documentStyle
+            ? MoeMarkdownView(
+                text,
+                fontSize: style.fontSize ?? fontSize,
+                color: style.color,
+              )
+            : _buildMessageText(text, style),
       );
     }
     final quoted = isMe ? QuotedReply.parse(text) : null;
@@ -961,7 +972,8 @@ class MessageBubble extends ConsumerWidget {
     );
   }
 
-  /// 正文里的围栏代码块用 [MoeCodeBlock] 渲染，其余保持纯文本（ADR0047）。
+  /// 正文里的围栏代码块用 [MoeCodeBlock] 渲染，助手的 `aicove-ui` 块画成交互
+  /// 组件（[MoeUiBlock]），其余保持纯文本（ADR0047）。
   Widget _buildMessageText(String text, TextStyle style) {
     final parts = text.contains('```') || text.contains('~~~')
         ? splitFencedText(text)
@@ -977,6 +989,14 @@ class MessageBubble extends ConsumerWidget {
         for (final part in parts)
           switch (part) {
             FencedProsePart(:final text) => _buildPlainMessageText(text, style),
+            FencedCodePart(:final block) when !isMe &&
+                    MoeUiBlock.handles(block.language) =>
+              MoeUiBlock(
+                code: block.code,
+                closed: block.closed,
+                foregroundColor: style.color,
+                fontSize: style.fontSize ?? fontSize,
+              ),
             FencedCodePart(:final block) => MoeCodeBlock(
                 code: block.code,
                 language: block.language,

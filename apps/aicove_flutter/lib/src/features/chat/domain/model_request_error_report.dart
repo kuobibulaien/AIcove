@@ -24,11 +24,54 @@ class ModelRequestErrorReport {
     504: '网关超时',
   };
 
+  static const int _maxBriefLength = 80;
+
+  static const List<String> _contextOverflowMarkers = [
+    'context_length_exceeded',
+    'context length',
+    'context window',
+    'maximum context',
+    'prompt is too long',
+    'input is too long',
+    'too many tokens',
+    'input token count',
+    'reduce the length',
+  ];
+
+  /// 发送失败弹出的一句短提示：能看出原因就直说，看不出才指向日志中心。
+  static String brief(String rawError) {
+    final text = _stripExceptionPrefix(rawError.trim());
+    if (text.isEmpty) {
+      return '发送失败，详情见日志中心';
+    }
+    final known = _knownCause(text);
+    if (known != null) {
+      return known;
+    }
+    return '发送失败：${_truncate(summarize(text), _maxBriefLength)}';
+  }
+
+  /// 不用看日志就能说清的常见原因。
+  static String? _knownCause(String text) {
+    if (text.contains('Missing providerApiKey')) {
+      return '没有配置 API Key，请到渠道详情里填写';
+    }
+    final lower = text.toLowerCase();
+    if (_contextOverflowMarkers.any(lower.contains)) {
+      return '上下文超出模型上限，可以整理上下文或换上下文更长的模型';
+    }
+    return null;
+  }
+
   /// 从原始异常文本中提取一句主要原因。
   static String summarize(String rawError) {
     final text = _stripExceptionPrefix(rawError.trim());
     if (text.isEmpty) {
       return '未知错误';
+    }
+    final known = _knownCause(text);
+    if (known != null) {
+      return known;
     }
 
     final httpMatch =
@@ -206,7 +249,6 @@ class ModelRequestErrorReport {
   static String _collapse(String text) =>
       text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
-  static String _truncate(String text) => text.length <= _maxSummaryLength
-      ? text
-      : '${text.substring(0, _maxSummaryLength)}…';
+  static String _truncate(String text, [int max = _maxSummaryLength]) =>
+      text.length <= max ? text : '${text.substring(0, max)}…';
 }

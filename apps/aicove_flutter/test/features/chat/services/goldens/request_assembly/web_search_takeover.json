@@ -2,7 +2,7 @@
   "messages": [
     {
       "role": "system",
-      "content": "你是测试角色。"
+      "content": "你是测试角色。\n\n## 派活\n你自己不能上网、不能查资料、不能读写文件。需要查询、搜索、整理文件这类事时，调用 delegate_task（action=start）交给后台助手去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n收到「杂活回执」之前，只能说在处理，绝不能编造结果。回执里有问题时，用你的口吻转问用户；用户回答后用 action=reply 把回答交回去。用户说不用了，用 action=cancel 取消。"
     },
     {
       "role": "user",
@@ -21,44 +21,34 @@
     {
       "type": "function",
       "function": {
-        "name": "web_search",
-        "description": "联网搜索网页。需要最新信息、实时事件、你不确定的事实或用户要求查资料时调用。返回若干条结果（标题、链接、发布时间、正文摘录）。query 用一句完整的自然语言描述想找的内容，不要只堆关键词。",
+        "name": "delegate_task",
+        "description": "把需要上网、查资料、读写文件的事交给后台助手。start 派活（写清楚要做什么）；reply 回答助手的提问；cancel 取消任务。只返回受理结果，不等任务完成；结果之后以「杂活回执」送达。",
         "parameters": {
           "type": "object",
           "properties": {
-            "query": {
+            "action": {
               "type": "string",
-              "description": "搜索内容，用自然语言描述理想的网页"
+              "enum": [
+                "start",
+                "reply",
+                "cancel"
+              ]
             },
-            "num_results": {
-              "type": "integer",
-              "description": "返回条数，1~10，默认 5"
+            "instruction": {
+              "type": "string",
+              "description": "start 时必填：完整的任务说明，包含需要的全部细节"
+            },
+            "task_id": {
+              "type": "string",
+              "description": "reply／cancel 时必填"
+            },
+            "answer": {
+              "type": "string",
+              "description": "reply 时必填：用户的回答"
             }
           },
           "required": [
-            "query"
-          ]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "web_fetch",
-        "description": "读取指定网页的正文。搜索结果摘录不够、或用户给了链接需要阅读时调用。一次最多 5 个链接。",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "urls": {
-              "type": "array",
-              "description": "要读取的网页链接列表（http/https）",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "urls"
+            "action"
           ]
         }
       }
@@ -67,8 +57,7 @@
   "toolChoice": null,
   "disableBuiltinWebSearch": true,
   "boundTools": [
-    "web_search",
-    "web_fetch"
+    "delegate_task"
   ],
   "enabledPluginIds": [
     "web_search"

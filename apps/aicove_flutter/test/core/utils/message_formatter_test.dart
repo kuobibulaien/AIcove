@@ -201,4 +201,60 @@ void main() {
       expect(config.chunkPunctuationSets.first.punctuations, ['...', '。']);
     });
   });
+
+  group('MessageFormatConfig chunk punctuation sets', () {
+    const legacyDefault = ['。', '！', '？', '，', '、', '；', '…'];
+
+    test('defaults to conservative and has no default set', () {
+      const config = MessageFormatConfig();
+      expect(config.activeChunkPunctuationSetId, 'conservative');
+      expect(config.effectiveChunkPunctuations, isEmpty);
+      expect(
+        config.chunkPunctuationSets.map((item) => item.id),
+        isNot(contains('default')),
+      );
+      expect(MessageFormatConfig.fromJson(const {}), config);
+    });
+
+    test('migrates saved untouched default set to conservative', () {
+      final config = MessageFormatConfig.fromJson({
+        'chunkPunctuations': legacyDefault,
+        'activeChunkPunctuationSetId': 'default',
+        'chunkPunctuationSets': [
+          {'id': 'default', 'name': '默认', 'punctuations': legacyDefault},
+          {'id': 'simple', 'name': '精简', 'punctuations': ['。', '！', '？']},
+          {'id': 'conservative', 'name': '保守', 'punctuations': <String>[]},
+          {'id': 'custom', 'name': '我的', 'punctuations': ['～']},
+        ],
+      });
+      expect(config.activeChunkPunctuationSetId, 'conservative');
+      expect(config.effectiveChunkPunctuations, isEmpty);
+      expect(
+        config.chunkPunctuationSets.map((item) => item.id),
+        ['simple', 'conservative', 'custom'],
+      );
+    });
+
+    test('keeps another active set when dropping default set', () {
+      final config = MessageFormatConfig.fromJson({
+        'chunkPunctuations': ['～'],
+        'activeChunkPunctuationSetId': 'custom',
+        'chunkPunctuationSets': [
+          {'id': 'default', 'name': '默认', 'punctuations': legacyDefault},
+          {'id': 'custom', 'name': '我的', 'punctuations': ['～']},
+        ],
+      });
+      expect(config.activeChunkPunctuationSetId, 'custom');
+      expect(config.effectiveChunkPunctuations, ['～']);
+      expect(config.chunkPunctuationSets.map((item) => item.id), ['custom']);
+    });
+
+    test('migrates legacy flat default punctuation list', () {
+      final config = MessageFormatConfig.fromJson({
+        'chunkPunctuations': legacyDefault,
+      });
+      expect(config.activeChunkPunctuationSetId, 'conservative');
+      expect(config.effectiveChunkPunctuations, isEmpty);
+    });
+  });
 }

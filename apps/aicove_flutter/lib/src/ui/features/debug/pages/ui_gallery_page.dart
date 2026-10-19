@@ -2,6 +2,7 @@ import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'spring_transition_demo.dart';
+import 'ui_block_gallery_section.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -65,6 +66,10 @@ class _UiGalleryPageState extends State<UiGalleryPage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _buildHeader('交互组件 (aicove-ui)'),
+              const UiBlockGallerySection(),
+              const SizedBox(height: MoeSpacing.xl),
+
               _buildHeader('连续打断转场'),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: MoeSpacing.md),

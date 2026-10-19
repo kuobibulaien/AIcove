@@ -17,10 +17,14 @@ class ContentTagRegistry {
       for (final tool in provider.toolNames) {
         _toolOwners.putIfAbsent(tool, () => provider.providerId);
       }
+      for (final label in provider.eventLabels) {
+        _eventLabels.putIfAbsent(label.name, () => label);
+      }
     }
   }
 
   final Map<String, ContentTagSpec> _specsByName = {};
+  final Map<String, ContentEventLabelSpec> _eventLabels = {};
   final Map<String, String> _toolOwners = {};
 
   /// null 表示全部生效（落库拆分、显示等与开关无关的场景）。
@@ -30,6 +34,14 @@ class ContentTagRegistry {
 
   ContentTagSpec? lookup(String tagName) =>
       _specsByName[tagName.toLowerCase()];
+
+  /// 正文开头的系统事件标签；没有登记的方括号文字当普通文本。
+  ContentEventLabelSpec? eventLabelOf(String text) {
+    for (final label in _eventLabels.values) {
+      if (label.detailOf(text) != null) return label;
+    }
+    return null;
+  }
 
   bool isOwnerActive(String ownerId) =>
       ownerId == ContentTagSpec.builtinOwnerId ||
@@ -54,6 +66,7 @@ class StaticContentTagProvider implements ContentTagProvider {
     required this.providerId,
     required this.tagSpecs,
     this.toolNames = const <String>{},
+    this.eventLabels = const <ContentEventLabelSpec>[],
   });
 
   @override
@@ -62,4 +75,6 @@ class StaticContentTagProvider implements ContentTagProvider {
   final List<ContentTagSpec> tagSpecs;
   @override
   final Set<String> toolNames;
+  @override
+  final List<ContentEventLabelSpec> eventLabels;
 }

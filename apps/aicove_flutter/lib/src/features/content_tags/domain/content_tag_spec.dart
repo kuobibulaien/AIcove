@@ -71,10 +71,36 @@ class ContentTagSpec {
   }
 }
 
+/// 系统事件标签：宿主写在消息正文开头的 `[名称：详情]`，结构化数据存在
+/// 消息块里，模型与旧客户端只看到这段正文（ADR0074 通话记录、ADR0088 回执）。
+/// 不经 [ContentTagSpec] 的尖括号扫描，按正文开头匹配。
+class ContentEventLabelSpec {
+  const ContentEventLabelSpec({required this.name, required this.ownerId});
+
+  final String name;
+
+  /// 提供方 id，同 [ContentTagSpec.ownerId]。
+  final String ownerId;
+
+  String format(String detail) => '[$name：$detail]';
+
+  /// 正文以本标签开头时返回详情，否则返回 null。
+  String? detailOf(String text) {
+    final head = '[$name：';
+    final trimmed = text.trimLeft();
+    if (!trimmed.startsWith(head)) return null;
+    final end = trimmed.indexOf(']', head.length);
+    return end < 0 ? null : trimmed.substring(head.length, end);
+  }
+}
+
 /// 内容扩展：插件与预设都实现它，向注册表提供标签与工具归属。
 abstract interface class ContentTagProvider {
   String get providerId;
   List<ContentTagSpec> get tagSpecs;
+
+  /// 本提供方写入的系统事件标签。
+  List<ContentEventLabelSpec> get eventLabels;
 
   /// 归属该提供方的工具名；提供方未生效时，请求副本成对移除这些工具调用。
   Set<String> get toolNames;

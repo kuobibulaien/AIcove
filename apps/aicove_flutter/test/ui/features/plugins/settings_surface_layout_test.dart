@@ -30,6 +30,7 @@ import 'package:aicove_flutter/src/ui/features/settings/pages/chat_plugin_settin
 import 'package:aicove_flutter/src/ui/features/settings/pages/ui_settings_page.dart';
 import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 class _Settings extends AppSettingsNotifier {
   _Settings({this.embedding = true});
@@ -75,8 +76,7 @@ class _FakeTriggerController extends AutoReplyTriggerController {
 }
 
 double _expectedContentWidth(double panelWidth) {
-  final inset = (panelWidth * 0.04).clamp(12.0, 32.0);
-  return math.min(760.0, math.max(0.0, panelWidth - 2 * inset));
+  return math.max(0.0, panelWidth - 2 * MoeSettingsLayout.inset);
 }
 
 Future<void> _settle(WidgetTester tester) async {
@@ -301,12 +301,6 @@ void main() {
           await _settle(tester);
           expect(tester.takeException(), isNull);
           _expectUnifiedSurfaceWidth(tester);
-          final surfaces = _groupCardRects(tester);
-          expect(
-            surfaces.every((r) => r.width <= 760.5),
-            isTrue,
-            reason: '宽屏内容列封顶 760',
-          );
         });
       }
     }

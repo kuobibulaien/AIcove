@@ -471,7 +471,10 @@ class MessageRepository {
                 "CASE WHEN json_type(m.raw_payload, '\$.projectedMessages') = 'array' "
                 "AND json_array_length(m.raw_payload, '\$.projectedMessages') > 0 "
                 "THEN json_object('__aicoveDisplayRead', 1, 'projectedMessages', "
-                "json_extract(m.raw_payload, '\$.projectedMessages')) "
+                "json_extract(m.raw_payload, '\$.projectedMessages'), "
+                // ADR0088 §7: the display dedupes relays by receipt.
+                "'taskRelayReceiptId', "
+                "json_extract(m.raw_payload, '\$.taskRelayReceiptId')) "
                 "ELSE m.raw_payload END ELSE m.raw_payload END AS raw_payload";
           }).join(', ')
         : 'm.*';

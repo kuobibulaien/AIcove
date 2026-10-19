@@ -6,7 +6,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../../../core/api/agent_api.dart';
 import '../../../core/api/image_providers/image_provider_adapter_factory.dart';
@@ -28,6 +27,7 @@ import '../plugin_content_tags.dart';
 import 'image_agent_plugin.dart';
 import 'image_config.dart';
 import 'drawing_parameters.dart';
+import '../../../core/storage/app_data_directory.dart';
 
 class ImagePlugin extends BasePlugin {
   /// 绘图插件拥有的语义标签与工具（ADR0044）。带属性的
@@ -1167,7 +1167,7 @@ class ImagePlugin extends BasePlugin {
     required String providerId,
     required String modelId,
   }) async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final appDir = await appDataDirectory();
     final outputDir = Directory(
       p.join(appDir.path, 'generated_images', providerId, modelId),
     );

@@ -6,6 +6,17 @@ import '../../ui/shared/widgets/moe_toast.dart';
 import '../../ui/theme/tokens.dart';
 import 'app_update_service.dart';
 
+/// Wording for the installed version in the prompt; a development build has no
+/// release tag, so its numeric core is shown instead.
+String describeInstalledVersion(String installed, {String? numeric}) {
+  final tag = installed.trim();
+  if (RegExp(r'^v?\d+\.\d+\.\d+').hasMatch(tag)) {
+    return tag.startsWith('v') ? tag.substring(1) : tag;
+  }
+  final core = numeric?.trim() ?? '';
+  return core.isEmpty ? '开发版本' : '开发版 $core';
+}
+
 enum _UpdateAction { download, later, skip }
 
 /// Shows the update prompt with download / later / skip-this-version actions.
@@ -13,6 +24,7 @@ Future<void> showAppUpdateDialog(
   BuildContext context,
   AppRelease release, {
   String currentVersion = kAppReleaseTag,
+  String? numericVersion,
 }) async {
   final colors = context.moeColors;
   final action = await showDialog<_UpdateAction>(
@@ -33,7 +45,8 @@ Future<void> showAppUpdateDialog(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${release.version}（当前 $currentVersion）',
+            '${release.version}（当前 '
+            '${describeInstalledVersion(currentVersion, numeric: numericVersion)}）',
             style: TextStyle(
               fontSize: 15,
               fontWeight: MoeFontWeights.emphasis,

@@ -1,6 +1,6 @@
 # 0060 Agent 统一装配：配方与调度分离
 
-- 状态：accepted
+- 状态：accepted（已实施：随 ADR0064 第二批落地，10-14 合入 main；`BackgroundContextSpec` 改为 `ConversationWindowSpec`，`_fetchAiReply` 已删，前后台主动回复共用装配；后台主动消息实机未验）
 - 日期：2026-10-07
 - 关联：ADR0064（Dart 微内核运行时，取代 ADR0001）、ADR0038（记忆与上下文两层）；规则落点：[Agent上下文运行时规范](../Agent上下文运行时规范.md) 开发规则第 7 条
 
