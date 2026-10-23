@@ -63,6 +63,8 @@ class _AgentApiDirectChatSupport {
     final chatMessages = preparedRequest.chatMessages;
     final payload = preparedRequest.payload;
     final requestBodyJson = preparedRequest.requestBodyJson;
+    final logRequestBodyJson = ToolMedia.logJson(requestBodyJson);
+    final logContextJson = jsonEncode(ToolMedia.log(chatMessages));
     final headers = preparedRequest.headers;
     final requestDiagnostics = preparedRequest.requestDiagnostics;
 
@@ -73,7 +75,7 @@ class _AgentApiDirectChatSupport {
       'hasCustomConfig': customConfig != null,
     });
 
-    final promptPreview = _buildPromptPreview(chatMessages);
+    final promptPreview = _buildPromptPreview((ToolMedia.log(chatMessages) as List).map((m) => Map<String, dynamic>.from(m as Map)).toList());
     final totalChars = promptPreview.totalChars;
     final round = roundIndex ?? 0;
 
@@ -110,13 +112,12 @@ class _AgentApiDirectChatSupport {
       );
 
       final sw = Stopwatch()..start();
-      final resp = await _client
-          .post(
-            requestUri,
-            headers: headers,
-            body: requestBodyJson,
-          )
-          .timeout(timeout);
+      final request = RequestControl.request('POST', requestUri)
+        ..headers.addAll(headers)
+        ..body = requestBodyJson;
+      final resp = await http.Response.fromStream(
+        await _client.send(request).timeout(timeout),
+      ).timeout(timeout);
       sw.stop();
 
       final responseBodyStr = utf8.decode(resp.bodyBytes);
@@ -133,8 +134,8 @@ class _AgentApiDirectChatSupport {
           traceId: traceId,
           stage: TraceStage.modelResponseReceived.value,
           payload: {
-            'rawContext': jsonEncode(chatMessages),
-            'rawRequestBody': requestBodyJson,
+            'rawContext': logContextJson,
+            'rawRequestBody': logRequestBodyJson,
             'rawResponseBody': responseBodyStr,
             'rawToolCalls': _owner._encodeToolCalls(result.toolCalls),
           },
@@ -168,12 +169,12 @@ class _AgentApiDirectChatSupport {
           url: endpoint,
           status: resp.statusCode,
           durationMs: sw.elapsedMilliseconds,
-          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
           responseBody: ApiLogger.safeSnippet(responseBodyStr),
           ok: true,
-          rawContext: jsonEncode(chatMessages),
+          rawContext: logContextJson,
           rawAiResponse: result.text,
-          rawRequestBody: requestBodyJson,
+          rawRequestBody: logRequestBodyJson,
           rawResponseBody: responseBodyStr,
           rawToolCalls: _owner._encodeToolCalls(result.toolCalls),
           sessionId: sessionId,
@@ -206,6 +207,7 @@ class _AgentApiDirectChatSupport {
           hiddenThoughtParts: result.hiddenThoughtParts,
           rawResponse: result.rawResponse,
           rawFinishReason: result.rawFinishReason,
+          reasoning: result.reasoning,
         );
       }
 
@@ -218,8 +220,8 @@ class _AgentApiDirectChatSupport {
         traceId: traceId,
         stage: TraceStage.modelResponseReceived.value,
         payload: {
-          'rawContext': jsonEncode(chatMessages),
-          'rawRequestBody': requestBodyJson,
+          'rawContext': logContextJson,
+          'rawRequestBody': logRequestBodyJson,
           'rawResponseBody': responseBodyStr,
         },
       );
@@ -251,11 +253,11 @@ class _AgentApiDirectChatSupport {
         url: endpoint,
         status: resp.statusCode,
         durationMs: sw.elapsedMilliseconds,
-        requestBody: ApiLogger.safeSnippet(requestBodyJson),
+        requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
         responseBody: ApiLogger.safeSnippet(responseBodyStr),
         ok: false,
-        rawContext: jsonEncode(chatMessages),
-        rawRequestBody: requestBodyJson,
+        rawContext: logContextJson,
+        rawRequestBody: logRequestBodyJson,
         rawResponseBody: responseBodyStr,
         sessionId: sessionId,
         turnId: turnId,
@@ -274,7 +276,8 @@ class _AgentApiDirectChatSupport {
         'responseBody': ApiLogger.safeSnippet(responseBodyStr, max: 2000),
         ...requestDiagnostics,
       });
-      throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
+      throw ModelHttpException(resp.statusCode, resp.body,
+        retryAfter: ModelHttpException.parseRetryAfter(resp.headers['retry-after']));
     } catch (e) {
       Map<String, dynamic>? catchPayloadRef;
       int? catchTraceEventSeq;
@@ -288,8 +291,8 @@ class _AgentApiDirectChatSupport {
           traceId: traceId,
           stage: TraceStage.modelResponseReceived.value,
           payload: {
-            'rawContext': jsonEncode(chatMessages),
-            'rawRequestBody': requestBodyJson,
+            'rawContext': logContextJson,
+            'rawRequestBody': logRequestBodyJson,
             'error': e.toString(),
           },
         );
@@ -317,8 +320,8 @@ class _AgentApiDirectChatSupport {
           traceId: traceId,
           stage: TraceStage.modelResponseReceived.value,
           payload: {
-            'rawContext': jsonEncode(chatMessages),
-            'rawRequestBody': requestBodyJson,
+            'rawContext': logContextJson,
+            'rawRequestBody': logRequestBodyJson,
             'error': e.toString(),
           },
         );
@@ -328,11 +331,11 @@ class _AgentApiDirectChatSupport {
           url: endpoint,
           status: null,
           durationMs: 0,
-          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
           responseBody: ApiLogger.safeSnippet(e.toString()),
           ok: false,
-          rawContext: jsonEncode(chatMessages),
-          rawRequestBody: requestBodyJson,
+          rawContext: logContextJson,
+          rawRequestBody: logRequestBodyJson,
           rawResponseBody: jsonEncode({'error': e.toString()}),
           sessionId: sessionId,
           turnId: turnId,

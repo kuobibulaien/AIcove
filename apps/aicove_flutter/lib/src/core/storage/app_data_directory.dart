@@ -10,24 +10,31 @@ import '../app_logger.dart';
 
 /// Root directory for the app's own data (database, logs, wallpapers, ...).
 ///
-/// Mobile and macOS keep using the sandboxed documents directory. On Windows
-/// and Linux that directory is the user's visible "Documents" folder (often
-/// synced by OneDrive), so the app keeps its data in the per-user application
-/// support directory instead. Files the user exports on purpose still go to
-/// Documents; they are not resolved through here.
-Future<Directory> appDataDirectory() {
-  if (!AppDataMigration.usesSupportDirectory || AppDataMigration._legacy) {
+/// Mobile apps keep using their sandboxed documents directory. On Windows,
+/// Linux and the unsandboxed macOS app (ADR0106) that directory is the user's
+/// visible "Documents" folder (often synced by OneDrive or iCloud), so the app
+/// keeps its data in the per-user application support directory instead.
+/// Files the user exports on purpose still go to Documents; they are not
+/// resolved through here.
+Future<Directory> appDataDirectory() async {
+  final legacy = AppDataMigration._legacyDirectory;
+  if (legacy != null) return legacy;
+  if (!AppDataMigration.usesSupportDirectory) {
     return getApplicationDocumentsDirectory();
   }
   return getApplicationSupportDirectory();
 }
 
-/// Moves data that older Windows/Linux builds wrote into Documents to
-/// [appDataDirectory], and rewrites stored absolute paths that point at it.
+/// Moves data that older builds wrote elsewhere to [appDataDirectory], and
+/// rewrites stored absolute paths that point at it:
+/// - Windows/Linux builds wrote into Documents;
+/// - sandboxed macOS builds wrote into their container, both its Documents
+///   and its application support directory (preferences are copied natively
+///   in `MainFlutterWindow.swift` before Flutter starts).
 ///
 /// Runs once per launch before anything touches app data. Moving is skipped
-/// when nothing is left in Documents; path rewriting runs until it succeeded
-/// once (marker in preferences and in the database).
+/// when nothing is left in the old place; path rewriting runs until it
+/// succeeded once (marker in preferences and in the database).
 class AppDataMigration {
   AppDataMigration._();
 
@@ -58,31 +65,47 @@ class AppDataMigration {
   @visibleForTesting
   static bool? debugUsesSupportDirectory;
 
-  static bool get usesSupportDirectory =>
-      debugUsesSupportDirectory ?? (Platform.isWindows || Platform.isLinux);
+  /// A sandboxed process always has this variable; the unsandboxed one never.
+  static bool get _unsandboxedMac =>
+      Platform.isMacOS &&
+      !Platform.environment.containsKey('APP_SANDBOX_CONTAINER_ID');
 
-  static bool _legacy = false;
+  static bool get usesSupportDirectory =>
+      debugUsesSupportDirectory ??
+      (Platform.isWindows || Platform.isLinux || _unsandboxedMac);
+
+  static Directory? _legacyDirectory;
   static PathRewrites? _rewrites;
 
   static Future<void> run() async {
     if (!usesSupportDirectory) return;
     Directory? from;
     try {
-      from = await getApplicationDocumentsDirectory();
       final to = await getApplicationSupportDirectory();
+      var extra = const <(String, String)>[];
+      if (_unsandboxedMac) {
+        final home = Platform.environment['HOME'];
+        if (home == null) return;
+        final old = MacContainer(home, p.basename(to.path));
+        from = old.documents;
+        extra = [(old.support.path, to.path)];
+        await moveSupport(old.support, to);
+      } else {
+        from = await getApplicationDocumentsDirectory();
+      }
       if (p.equals(from.path, to.path)) return;
       if (!await moveEntries(from, to)) {
-        _legacy = true;
+        _legacyDirectory = from;
         return;
       }
-      final rewrites = PathRewrites(from.path, to.path);
+      final rewrites = PathRewrites(from.path, to.path, extra: extra);
       _rewrites = rewrites;
       await rewritePreferences(await SharedPreferences.getInstance(), rewrites);
     } catch (error) {
       // Keep using the old location while the old database is still there.
       if (from != null &&
           await File(p.join(from.path, databaseFiles.first)).exists()) {
-        _legacy = true;
+        _legacyDirectory = from;
         _rewrites = null;
       }
       AppLogger.error('AppDataMigration', '数据目录迁移失败：$error');
@@ -91,8 +114,29 @@ class AppDataMigration {
 
   @visibleForTesting
   static void debugReset() {
-    _legacy = false;
+    _legacyDirectory = null;
     _rewrites = null;
+  }
+
+  /// Moves every entry of the sandboxed app's support directory; it holds
+  /// nothing but this app's data. Best-effort per entry, like [moveEntries].
+  static Future<void> moveSupport(Directory from, Directory to) async {
+    if (!await from.exists()) return;
+    await to.create(recursive: true);
+    await for (final entry in from.list(followLinks: false)) {
+      final name = p.basename(entry.path);
+      try {
+        if (entry is Directory) {
+          await _moveDirectory(entry, Directory(p.join(to.path, name)));
+        } else if (entry is File &&
+            !await File(p.join(to.path, name)).exists()) {
+          await entry.rename(p.join(to.path, name));
+        }
+      } catch (error) {
+        AppLogger.warning('AppDataMigration', '迁移 $name 未完成，下次启动重试：$error');
+      }
+    }
+    if (await from.list().isEmpty) await from.delete();
   }
 
   /// Moves the database first, as one unit. Returns false when the database
@@ -259,8 +303,8 @@ class AppDataMigration {
           final field = column.data['name'] as String;
           final rows = await db.customSelect(
             'SELECT rowid AS rid, "$field" AS value FROM "$name" '
-            'WHERE instr("$field", ?) > 0',
-            variables: [Variable.withString(pairs.probe)],
+            'WHERE ${[for (final _ in pairs.probes) 'instr("$field", ?) > 0'].join(' OR ')}',
+            variables: [for (final probe in pairs.probes) Variable.withString(probe)],
           ).get();
           for (final row in rows) {
             final value = row.data['value'];
@@ -296,19 +340,37 @@ class AppDataMigration {
   }
 }
 
+/// Where the sandboxed macOS app kept its data (ADR0106).
+class MacContainer {
+  MacContainer(String home, this.bundleId)
+    : data = Directory(p.join(home, 'Library', 'Containers', bundleId, 'Data'));
+
+  final String bundleId;
+  final Directory data;
+
+  Directory get documents => Directory(p.join(data.path, 'Documents'));
+  Directory get support => Directory(
+    p.join(data.path, 'Library', 'Application Support', bundleId),
+  );
+}
+
 /// Old→new prefixes of moved entries, in every spelling a stored path may
 /// use: native, JSON escaped and forward slashes. Directory prefixes end with
-/// a separator so unrelated names sharing a prefix are left alone.
+/// a separator so unrelated names sharing a prefix are left alone. [extra]
+/// directories moved as a whole are rewritten below any name.
 class PathRewrites {
-  PathRewrites(String from, String to)
-      : probe = from.split(RegExp(r'[\\/]')).lastWhere((part) => part.isNotEmpty) {
-    final spellings = <(String, String)>{
+  PathRewrites(String from, String to, {List<(String, String)> extra = const []})
+      : probes = [
+          for (final old in [from, for (final (dir, _) in extra) dir])
+            old.split(RegExp(r'[\\/]')).lastWhere((part) => part.isNotEmpty),
+        ] {
+    Set<(String, String)> spellingsOf(String from, String to) => {
       (from, to),
       (from.replaceAll(r'\', r'\\'), to.replaceAll(r'\', r'\\')),
       (from.replaceAll(r'\', '/'), to.replaceAll(r'\', '/')),
     };
     final rewrites = <(String, String)>{};
-    for (final (oldBase, newBase) in spellings) {
+    for (final (oldBase, newBase) in spellingsOf(from, to)) {
       for (final separator in const [r'\', r'\\', '/']) {
         for (final name in AppDataMigration.databaseFiles) {
           rewrites.add(('$oldBase$separator$name', '$newBase$separator$name'));
@@ -321,18 +383,26 @@ class PathRewrites {
         }
       }
     }
+    for (final (oldDir, newDir) in extra) {
+      for (final (oldBase, newBase) in spellingsOf(oldDir, newDir)) {
+        for (final separator in const [r'\', r'\\', '/']) {
+          rewrites.add(('$oldBase$separator', '$newBase$separator'));
+        }
+      }
+    }
     // Longest first, so an escaped spelling is not half-rewritten by a
     // shorter one.
     pairs = rewrites.toList()
       ..sort((a, b) => b.$1.length.compareTo(a.$1.length));
   }
 
-  /// Text every stored old path contains; a cheap filter before [apply].
-  final String probe;
+  /// Every stored old path contains one of these; a cheap filter before
+  /// [apply].
+  final List<String> probes;
   late final List<(String, String)> pairs;
 
   String apply(String value) {
-    if (!value.contains(probe)) return value;
+    if (!probes.any(value.contains)) return value;
     var result = value;
     for (final (oldPrefix, newPrefix) in pairs) {
       if (result.contains(oldPrefix)) {

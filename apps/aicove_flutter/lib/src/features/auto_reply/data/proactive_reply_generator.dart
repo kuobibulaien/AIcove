@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/converters/database_converters.dart';
@@ -7,6 +9,8 @@ import '../../chat/domain/conversation.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../chat/services/chat_send_service.dart';
 import '../../chat/services/chat_types.dart';
+import '../../observability/trace_models.dart';
+import '../../observability/trace_store.dart';
 import '../../settings/app_settings.dart';
 import '../domain/proactive_action.dart';
 import 'auto_reply_agent_helpers.dart';
@@ -28,14 +32,66 @@ final proactiveReplyExecutorProvider = Provider<ProactiveReplyExecutor>((ref) {
     required sessionId,
     required userText,
     required turnId,
-  }) => service.executeApiCall(
-    config: config,
-    sessionId: sessionId,
-    userText: userText,
-    turnId: turnId,
-    maxRounds: 1,
-  );
+  }) async {
+    // Without a trace the request never shows in the log center's
+    // conversation view, only in the raw API log.
+    final trace = await _startProactiveTrace(sessionId, turnId);
+    try {
+      final result = await service.executeApiCall(
+        config: config.copyWith(traceContext: trace),
+        sessionId: sessionId,
+        userText: userText,
+        turnId: turnId,
+      );
+      _recordProactiveTrace(trace, TraceStage.turnCompleted);
+      return result;
+    } catch (_) {
+      _recordProactiveTrace(
+        trace,
+        TraceStage.turnFailed,
+        status: TraceEventStatus.failed,
+      );
+      rethrow;
+    }
+  };
 });
+
+Future<TraceContext?> _startProactiveTrace(
+  String sessionId,
+  String turnId,
+) async {
+  try {
+    return await TraceStore.instance.startTurn(
+      sessionId: sessionId,
+      turnId: turnId,
+      source: 'ProactiveReply',
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+void _recordProactiveTrace(
+  TraceContext? trace,
+  TraceStage stage, {
+  TraceEventStatus status = TraceEventStatus.success,
+}) {
+  if (trace == null) return;
+  unawaited(() async {
+    try {
+      await TraceStore.instance.record(
+        traceId: trace.traceId,
+        sessionId: trace.sessionId,
+        turnId: trace.turnId,
+        stage: stage,
+        status: status,
+        source: 'ProactiveReply',
+      );
+    } catch (_) {
+      // The trace is for debugging only; a failed write must not fail the reply.
+    }
+  }());
+}
 
 final proactiveReplyGeneratorProvider = Provider<ProactiveReplyGenerator>(
   ProactiveReplyGenerator.new,

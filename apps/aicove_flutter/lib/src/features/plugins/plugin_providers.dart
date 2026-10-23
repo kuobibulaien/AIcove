@@ -184,6 +184,23 @@ class TtsPluginConfigNotifier extends StateNotifier<TtsConfig> {
     });
   }
 
+  /// Changes one stored preset in the write queue; [change] returns null
+  /// to leave everything as it is.
+  Future<void> updatePreset(
+    String id,
+    VoicePreset? Function(VoicePreset stored) change,
+  ) => _transact((current) {
+    final stored = current.voicePresets.where((p) => p.id == id).firstOrNull;
+    if (stored == null) throw StateError('音色预设已经不在了：$id');
+    final next = change(stored);
+    if (next == null) return current;
+    return current.copyWith(
+      voicePresets: [
+        for (final item in current.voicePresets) item.id == id ? next : item,
+      ],
+    );
+  });
+
   Future<void> savePreset(VoicePreset preset) => _transact((current) {
     final existing = current.voicePresets
         .where((p) => p.id == preset.id)

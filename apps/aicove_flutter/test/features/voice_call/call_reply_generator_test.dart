@@ -26,7 +26,6 @@ class _Runner implements ApiRunner {
     availableTools,
     String? turnId,
     trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,

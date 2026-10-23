@@ -1,3 +1,5 @@
+import '../prompts/prompt_pack.dart';
+
 /// One complete voice preset's synthesis parameters. Credentials remain in
 /// provider management; providerId references that exact configuration, not an
 /// adapter type, display name or model vendor.
@@ -10,6 +12,7 @@ class VoiceSynthesisSettings {
     this.maxCharsPerChunk = 20,
     this.voiceFrequency = 60,
     this.systemPromptTemplate,
+    this.prompts = const PresetPromptBinding(),
   });
 
   final String providerId;
@@ -18,7 +21,23 @@ class VoiceSynthesisSettings {
   final double speed;
   final int maxCharsPerChunk;
   final int voiceFrequency;
+  /// Legacy per-preset `<tts>` text; ignored since ADR0054, kept for rollback.
   final String? systemPromptTemplate;
+
+  /// Prompt pack and preset-only sections (ADR0092).
+  final PresetPromptBinding prompts;
+
+  VoiceSynthesisSettings withPrompts(PresetPromptBinding prompts) =>
+      VoiceSynthesisSettings(
+        providerId: providerId,
+        modelId: modelId,
+        voiceId: voiceId,
+        speed: speed,
+        maxCharsPerChunk: maxCharsPerChunk,
+        voiceFrequency: voiceFrequency,
+        systemPromptTemplate: systemPromptTemplate,
+        prompts: prompts,
+      );
 
   bool get hasValidParameters =>
       providerId.trim().isNotEmpty &&
@@ -39,6 +58,7 @@ class VoiceSynthesisSettings {
     'voiceFrequency': voiceFrequency,
     if (systemPromptTemplate != null)
       'systemPromptTemplate': systemPromptTemplate,
+    if (!prompts.isEmpty) 'prompts': prompts.toJson(),
   };
 
   factory VoiceSynthesisSettings.fromJson(Map<String, dynamic> json) =>
@@ -50,5 +70,6 @@ class VoiceSynthesisSettings {
         maxCharsPerChunk: json['maxCharsPerChunk'] as int? ?? 20,
         voiceFrequency: json['voiceFrequency'] as int? ?? 60,
         systemPromptTemplate: json['systemPromptTemplate'] as String?,
+        prompts: PresetPromptBinding.fromJson(json['prompts']),
       );
 }

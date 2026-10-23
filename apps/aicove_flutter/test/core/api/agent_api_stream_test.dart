@@ -132,6 +132,7 @@ void main() {
       final message = firstChoice['message'] as Map<String, dynamic>?;
       expect(message, isNotNull);
       expect(message?['reasoning_content'], 'step_1 + step_2');
+      expect(result.reasoning, 'step_1 + step_2');
       expect(message?['tool_calls'], isA<List>());
       expect(message?['content'], isNull);
     });

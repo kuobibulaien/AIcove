@@ -6,30 +6,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
-import '../image/drawing_preset.dart';
-import '../image/drawing_preset_provider.dart';
-import '../image/image_config.dart';
 import '../sticker/sticker_config.dart';
 import '../time_awareness/time_awareness_config.dart';
-import '../tts/tts_config.dart';
 
-/// 插件提示词：所有角色共用的一份标签／工具说明。
+/// 插件提示词：所有角色共用的一份标签说明（ADR0054）。
 ///
-/// 角色只能改自己的专属提示词（人设、角色专属绘图提示词），
-/// 不能改这里的通用说明；预设也不再携带这些文本。
+/// 语音、绘图已改为按模型的提示词包，由预设绑定（ADR0092）；这里只剩
+/// 尚未改造的插件，全部迁走后整页退役。
 enum PluginPromptSlot {
-  image(
-    plugin: '绘图',
-    title: '<image> 标签说明',
-    hint: '角色专属绘图要求请在角色设置里填写',
-    defaultText: ImageConfig.defaultInlinePromptTemplate,
-  ),
-  tts(
-    plugin: '语音',
-    title: '<tts> 标签说明',
-    hint: '可用占位符：{max_chars_per_chunk}、{voice_frequency}',
-    defaultText: TtsConfig.defaultSystemPromptTemplate,
-  ),
   sticker(
     plugin: '表情包',
     title: '表情包说明',
@@ -153,33 +137,6 @@ class PreferencesPluginPromptStore implements PluginPromptStore {
       }
     }
 
-    take(PluginPromptSlot.image, () {
-      final catalogJson = read(PreferencesDrawingPresetStore.storageKey);
-      final ImageConfig config;
-      if (catalogJson != null) {
-        final catalog = DrawingPresetCatalog.fromJson(catalogJson);
-        config = catalog.require(catalog.defaultPresetId).config;
-      } else {
-        final legacy = read(PreferencesDrawingPresetStore.legacyKey);
-        if (legacy == null) return null;
-        config = ImageConfig.fromJson(legacy);
-      }
-      final text = config.effectiveInlinePromptTemplate;
-      return text.trim() ==
-              ImageConfig.runtimeDefaultInlinePromptTemplate.trim()
-          ? null
-          : text;
-    });
-    take(PluginPromptSlot.tts, () {
-      final json = read('aicove.plugins.tts.config');
-      if (json == null) return null;
-      final config = TtsConfig.fromJson(json);
-      final preset = config.voicePresets
-          .where((p) => p.id == config.defaultVoicePresetId)
-          .firstOrNull;
-      return preset?.synthesis?.systemPromptTemplate ??
-          config.systemPromptTemplate;
-    });
     take(PluginPromptSlot.sticker, () {
       final json = read('aicove.plugins.sticker.config');
       return json == null
@@ -210,6 +167,25 @@ class PluginPromptsNotifier extends AsyncNotifier<PluginPrompts> {
 
   @override
   Future<PluginPrompts> build() => ref.read(pluginPromptStoreProvider).load();
+
+  /// [setText] only while [slot] still reads [expected], checked in the same
+  /// turn of the write queue; false when it does not.
+  Future<bool> setTextIf(
+    PluginPromptSlot slot,
+    String expected,
+    String text,
+  ) {
+    final operation = _writes.then((_) async {
+      final current = await future;
+      if (current.of(slot) != expected) return false;
+      final next = current.withText(slot, text);
+      await ref.read(pluginPromptStoreProvider).save(next);
+      state = AsyncData(next);
+      return true;
+    });
+    _writes = operation.then((_) {}, onError: (Object _, StackTrace __) {});
+    return operation;
+  }
 
   /// 空文本或与默认相同视为恢复默认。
   Future<void> setText(PluginPromptSlot slot, String text) {

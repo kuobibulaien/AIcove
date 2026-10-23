@@ -129,6 +129,7 @@ class SegmentedChatFixture {
     List<Override> extraOverrides = const [],
     List<Message>? historyMessages,
     Conversation Function(Conversation conversation)? decorate,
+    ApiCallResult Function(String streamedText)? finalResult,
   }) async {
     // 整个探针是独立入口；连插件/主动回复的旁路偏好也只用内存替身。
     // ignore: invalid_use_of_visible_for_testing_member
@@ -181,7 +182,8 @@ class SegmentedChatFixture {
       streamProjectionPolicyProvider.overrideWithValue(
           const StreamProjectionPolicy(useActiveStreamChannel: true)),
       chatSendServiceProvider.overrideWith(
-          (ref) => _OfflineSendService(ref, settings, input.stream, ready)),
+          (ref) => _OfflineSendService(
+              ref, settings, input.stream, ready, finalResult)),
       ...extraOverrides,
     ]);
     container.read(activeConversationIdProvider.notifier).state =
@@ -255,10 +257,14 @@ class SegmentedChatFixture {
 }
 
 class _OfflineSendService extends ChatSendService {
-  _OfflineSendService(super.ref, this.settings, this.input, this.ready);
+  _OfflineSendService(
+      super.ref, this.settings, this.input, this.ready, this.finalResult);
   final AppSettings settings;
   final Stream<String> input;
   final Completer<void> ready;
+
+  /// Shapes the reply the run ends with, e.g. tool rounds; plain text if null.
+  final ApiCallResult Function(String streamedText)? finalResult;
 
   @override
   Future<ApiConfig> prepareApiConfig({
@@ -311,6 +317,8 @@ class _OfflineSendService extends ChatSendService {
       text.write(delta);
       onStreamTextDelta(delta);
     }
+    final shaped = finalResult?.call(text.toString());
+    if (shaped != null) return shaped;
     return ApiCallResult(
         replyText: text.toString(),
         processedText: text.toString(),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../features/ui_blocks/domain/ui_block.dart';
 import '../../../../features/ui_blocks/domain/ui_block_catalog.dart';
 import '../../../../features/ui_blocks/domain/ui_expression.dart';
+import '../../../../features/ui_blocks/domain/ui_saved_state.dart';
 import '../buttons/moe_choice_chip.dart';
 import '../form/moe_slider.dart';
 import '../form/moe_switch.dart';
@@ -78,7 +79,7 @@ Widget buildUiNode(
         pages: children(),
       );
     case 'collapse':
-      return _UiCollapse(
+      return UiCollapse(
         title: node.text('title') ?? '',
         initiallyOpen: node.flag('open'),
         style: style,
@@ -134,7 +135,12 @@ Widget buildUiNode(
       return _UiButton(node: node, rt: rt);
   }
   if (kUiCatalogNames.contains(node.component)) {
-    return UiCatalogView(node: node, style: style, saved: null, onChanged: null, ask: rt.ask);
+    // Keyed by position so two tabs holding the same kind of component never
+    // share its state.
+    return KeyedSubtree(
+      key: ValueKey('catalog-${node.path}'),
+      child: UiCatalogView(node: node, style: style, saved: null, onChanged: null, ask: rt.ask),
+    );
   }
   return Text('（不支持的组件 ${node.component}）', style: style.caption);
 }
@@ -249,13 +255,15 @@ class _UiTabsState extends State<_UiTabs> {
             ),
         ],
       ),
-      widget.pages[index],
+      KeyedSubtree(key: ValueKey(index), child: widget.pages[index]),
     ]);
   }
 }
 
-class _UiCollapse extends StatefulWidget {
-  const _UiCollapse({
+/// A titled section that unfolds in place.
+class UiCollapse extends StatefulWidget {
+  const UiCollapse({
+    super.key,
     required this.title,
     required this.initiallyOpen,
     required this.style,
@@ -267,10 +275,10 @@ class _UiCollapse extends StatefulWidget {
   final List<Widget> children;
 
   @override
-  State<_UiCollapse> createState() => _UiCollapseState();
+  State<UiCollapse> createState() => _UiCollapseState();
 }
 
-class _UiCollapseState extends State<_UiCollapse> {
+class _UiCollapseState extends State<UiCollapse> {
   late bool _open = widget.initiallyOpen;
 
   @override
@@ -461,7 +469,8 @@ class _UiSlider extends StatelessWidget {
     var max = (node.number('max') ?? 100).toDouble();
     if (max <= min) max = min + 1;
     final step = node.number('step')?.toDouble();
-    final divisions = step != null && step > 0 ? ((max - min) / step).round().clamp(1, 1000) : null;
+    final steps = step != null && step > 0 ? (max - min) / step : double.nan;
+    final divisions = steps.isFinite ? steps.round().clamp(1, 1000) : null;
     final current = (node.number('value') ?? min).toDouble().clamp(min, max);
     final unit = node.text('unit') ?? '';
     final bind = node.bind;
@@ -486,10 +495,13 @@ class _UiSlider extends StatelessWidget {
           onChanged: bind == null
               ? null
               : (v) {
-                  final snapped = step != null && step > 0
-                      ? ((v - min) / step).round() * step + min
-                      : v;
-                  rt.setValues({bind: double.parse(snapped.toStringAsFixed(6))});
+                  final snapped = divisions != null ? ((v - min) / step!).round() * step + min : v;
+                  // Drop float noise (0.1 * 3), then clamp last: snapping can
+                  // land past max when the range is not a whole number of
+                  // steps, and the stored value must stay where the thumb is.
+                  final scaled = snapped * 1e10;
+                  final clean = scaled.isFinite && scaled.abs() < 1e18 ? scaled.round() / 1e10 : snapped;
+                  rt.setValues({bind: clean.clamp(min, max)});
                 },
         ),
       ],
@@ -546,7 +558,23 @@ class _UiInput extends StatefulWidget {
 
 class _UiInputState extends State<_UiInput> {
   late final TextEditingController _controller =
-      TextEditingController(text: uiStringify(widget.node.props['value']));
+      TextEditingController(text: _text(widget.node.props['value']));
+
+  static String _text(Object? value) => uiEditText(value);
+
+  @override
+  void didUpdateWidget(_UiInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Follow the state when something else changed it (a set button, saved
+    // values loading late), but leave text that already means this value,
+    // such as a number the user is still typing ("1.").
+    final value = widget.node.props['value'];
+    final typed = _controller.text;
+    final same = widget.node.props['type'] == 'number'
+        ? uiValuesEqual(num.tryParse(typed.trim()) ?? 0, value)
+        : typed == uiStringify(value);
+    if (!same) _controller.text = _text(value);
+  }
 
   @override
   void dispose() {
@@ -559,6 +587,15 @@ class _UiInputState extends State<_UiInput> {
     final style = widget.rt.style;
     final number = widget.node.props['type'] == 'number';
     final bind = widget.node.bind;
+    final label = widget.node.text('label') ?? '';
+    if (uiFieldIsSecret(type: widget.node.text('type'), words: [bind, label, widget.node.text('placeholder')])) {
+      return UiCallout(
+        title: label,
+        text: '这是机密信息，不要填在这里：组件里的值会发给模型。需要 Key 时请让 AIcove酱给你一张 Key 输入卡片。',
+        tone: 'warning',
+        style: style,
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -572,18 +609,11 @@ class _UiInputState extends State<_UiInput> {
           enabled: bind != null,
           keyboardType: number ? const TextInputType.numberWithOptions(decimal: true, signed: true) : null,
           style: style.small,
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: widget.node.text('placeholder'),
-            hintStyle: style.small.copyWith(color: style.muted),
-            filled: true,
-            fillColor: style.faint,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-          ),
+          decoration: uiInputDecoration(style, hint: widget.node.text('placeholder')),
           onChanged: (text) {
             if (bind == null) return;
-            widget.rt.setValues({bind: number ? (num.tryParse(text.trim()) ?? 0) : text});
+            final parsed = num.tryParse(text.trim());
+            widget.rt.setValues({bind: number ? (parsed != null && parsed.isFinite ? parsed : 0) : text});
           },
         ),
       ],

@@ -13,6 +13,9 @@ import '../../chat/services/chat_history_store.dart';
 import '../../chat/services/chat_send_service.dart';
 import '../../context/providers/context_providers.dart';
 import '../../observability/trace_store.dart';
+import '../../plugins/prompts/plugin_prompt_resolution.dart';
+import '../../plugins/prompts/prompt_pack.dart';
+import '../../plugins/prompts/prompt_pack_store.dart';
 import '../../plugins/tts/voice_preset_application.dart';
 import '../../settings/app_settings.dart';
 import '../application/active_voice_call.dart';
@@ -162,7 +165,7 @@ class VoiceCallFactory {
     String? openingLine,
   }) async {
     final settings = await _ref.read(appSettingsProvider.future);
-    final tts = await _resolveTts(conversation);
+    final (:tts, :speechGuide) = await _resolveTts(conversation);
     final recognizer = await _resolveRecognizer(settings);
     final watch = Stopwatch()..start();
     final chat = _ref.read(chatSendServiceProvider);
@@ -181,13 +184,11 @@ class VoiceCallFactory {
           '${watch.elapsedMilliseconds} ms',
     );
     final generator = ApiRunnerCallReplyGenerator(
-      runner: createApiRunner(useKernel: kAgentKernelChat),
+      runner: createApiRunner(),
       base: base,
       sessionId: 'voice_call_${conversation.id}',
       traceStore: TraceStore.instance,
-      speechGuide: tts is FishAudioStreamingTts
-          ? kFishAudioCallSpeechGuide
-          : null,
+      speechGuide: speechGuide,
     );
     if (split.earlier.isNotEmpty) {
       // 接通不等摘要；整理好之后从下一轮起带上。
@@ -225,7 +226,11 @@ class VoiceCallFactory {
   }
 
   /// 复用角色的音色预设，保证通话和语音条是同一个声音（ADR0074 决定 1）。
-  Future<StreamingTtsPort> _resolveTts(Conversation conversation) async {
+  /// The streaming synthesizer and the call section of the voice preset's
+  /// prompt pack (ADR0092); an empty guide forbids tags in the call.
+  Future<({StreamingTtsPort tts, String? speechGuide})> _resolveTts(
+    Conversation conversation,
+  ) async {
     final request = await _ref
         .read(voicePresetApplicationProvider)
         .forRole(conversation);
@@ -248,12 +253,24 @@ class VoiceCallFactory {
         'Fish Audio 渠道还没有填写 API Key，请先在「设置 · 模型」里填写',
       );
     }
-    return FishAudioStreamingTts(
-      apiKey: apiKey,
-      referenceId: voiceId,
-      model: service.model?.trim().isNotEmpty == true
-          ? service.model!.trim()
-          : 's2.1-pro-free',
+    final String speechGuide;
+    try {
+      speechGuide = resolveVoicePrompts(
+        await _ref.read(promptPackProvider.notifier).library,
+        service,
+      ).render(PromptScopes.ttsCall, voicePromptVariables(service.config));
+    } on PromptPackMissingException catch (e) {
+      throw VoiceCallUnavailable(e.toString());
+    }
+    return (
+      tts: FishAudioStreamingTts(
+        apiKey: apiKey,
+        referenceId: voiceId,
+        model: service.model?.trim().isNotEmpty == true
+            ? service.model!.trim()
+            : 's2.1-pro-free',
+      ),
+      speechGuide: speechGuide.isEmpty ? null : speechGuide,
     );
   }
 

@@ -401,7 +401,6 @@ ProactiveDecisionPort _defaultDecisionPort(
               ),
               modelRef: modelRef,
               temperature: 0.2,
-              maxRounds: 1,
             ),
             conversationId: conversation.id,
             contextMessages: <Message>[

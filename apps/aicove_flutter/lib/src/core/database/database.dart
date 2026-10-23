@@ -53,6 +53,8 @@ class Conversations extends Table {
   TextColumn get thinkingLevels => text().nullable()();
   // 会话级聊天样式覆盖：'bubble' | 'document'，null 跟随全局（ADR0047）
   TextColumn get chatDisplayStyle => text().nullable()();
+  // 角色工作模式：'chat' | 'tool'，null 为聊天模式（ADR0097）
+  TextColumn get agentMode => text().nullable()();
 
   // 会话摘要缓存
   TextColumn get lastMessage => text().nullable()();
@@ -233,7 +235,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 
   @override
   MigrationStrategy get migration {
@@ -335,6 +337,10 @@ class AppDatabase extends _$AppDatabase {
         // v23 -> v24: 杂活 Agent 任务、待转告与已消费的控制事件（ADR0088），只存本机
         if (from < 24) {
           await _ensureAgentTaskTables();
+        }
+        // v24 -> v25: 角色工作模式（ADR0097）
+        if (from < 25) {
+          await _safeAddColumn('conversations', 'agent_mode TEXT');
         }
       },
       // 只补物理访问索引，不改变表/记录格式或user_version。

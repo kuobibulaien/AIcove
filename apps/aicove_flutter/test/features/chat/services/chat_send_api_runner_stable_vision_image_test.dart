@@ -135,7 +135,7 @@ AppSettings _buildVisionSettings() {
     accentColor: 'FC96AA',
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
-    callFlowSettings: CallFlowSettings(mode: CallFlowMode.auto),
+    callFlowSettings: CallFlowSettings(mode: CallFlowMode.call),
   );
 }
 
@@ -428,7 +428,6 @@ void _runAll(RunnerFactory createRunner) {
       availableTools: testTools(<TestPlugin>[
         _SequencedVisionDrawImagePlugin(<String>[firstImage]),
       ]),
-      maxRounds: 4,
     );
 
     expect(fakeHttpClient.callCount, 2);
@@ -506,7 +505,6 @@ void _runAll(RunnerFactory createRunner) {
       availableTools: testTools(<TestPlugin>[
         _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
       ]),
-      maxRounds: 5,
     );
 
     expect(fakeHttpClient.callCount, 3);

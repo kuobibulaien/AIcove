@@ -4,20 +4,73 @@
 /// - 2025-12-31: 提取数据模型到 settings_models.dart
 library;
 
-import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/thinking/thinking_fallback.dart';
+import '../../core/sync/cloud_local_write.dart';
 import '../../core/utils/message_formatter.dart';
 import '../../ui/theme/tokens.dart';
 import 'custom_wallpaper_store.dart';
+import 'data/support/ui_models_store_support.dart'
+    show buildDefaultUiModelsStoreData;
 import 'settings_models.dart';
 import 'ui_models_api.dart';
 
 // 重新导出模型类，保持向后兼容
 export 'settings_models.dart';
+
+/// Stored fields of the global interface settings: what 「恢复默认界面设置」
+/// resets and its undo puts back. Chats, roles and their own styles, models,
+/// providers, the user's profile, imported wallpaper files and the window
+/// close behavior are not interface settings.
+const kInterfaceSettingKeys = <String>[
+  'is_dark_mode',
+  'use_system_theme',
+  'glass_effect_enabled',
+  'use_liquid_glass',
+  'glass_blur_sigma',
+  'frosted_blur_sigma',
+  'glass_tint_fill',
+  'frosted_tint_fill',
+  'interface_skin',
+  'accent_color',
+  'chat_background_color',
+  'global_background_color',
+  'global_wallpaper',
+  'global_wallpaper_custom_id',
+  'global_wallpaper_styles',
+  // Legacy single-wallpaper mask, still read when the styles are empty.
+  'global_wallpaper_mask',
+  'text_scale_factor',
+  'ui_scale_factor',
+  'image_preview_scale',
+  'chat_display_style',
+  'auto_scroll_on_send',
+  'auto_scroll_on_ai_reply',
+  'bubble_show_thinking',
+  'document_show_thinking',
+  'document_show_tool_calls',
+  'message_chunking_enabled',
+  'message_format_config',
+  'stream_segment_delay_seconds',
+  'hide_user_avatar',
+  'expand_audio_text',
+  'windows_window_controls_side',
+];
+
+/// The fresh-install values of [kInterfaceSettingKeys]; keys the default
+/// store leaves out are null, which reads as their default.
+Map<String, Object?> interfaceResetPatch() {
+  final defaults = buildDefaultUiModelsStoreData();
+  return {for (final key in kInterfaceSettingKeys) key: defaults[key]};
+}
+
+/// Resets the interface settings in storage without reading them as
+/// [AppSettings], for when they no longer load.
+Future<void> resetStoredInterfaceSettings() =>
+    UiModelsApi().updatePartial(interfaceResetPatch());
 
 // ===== 辅助类型和函数 =====
 
@@ -337,6 +390,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       ChatDisplayStyle.fromValue(data['chat_display_style'] as String?) ??
       ChatDisplayStyle.bubble;
   final autoScrollOnSend = data['auto_scroll_on_send'] != false;
+  final autoScrollOnAiReply = data['auto_scroll_on_ai_reply'] != false;
+  final bubbleShowThinking = data['bubble_show_thinking'] != false;
+  final documentShowThinking = data['document_show_thinking'] != false;
+  final documentShowToolCalls = data['document_show_tool_calls'] != false;
   final chatBackgroundColor = ChatBackgroundColor.fromValue(
     data['chat_background_color'] as String?,
   );
@@ -505,6 +562,10 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     streamSegmentDelaySeconds: streamSegmentDelaySeconds,
     chatDisplayStyle: chatDisplayStyle,
     autoScrollOnSend: autoScrollOnSend,
+    autoScrollOnAiReply: autoScrollOnAiReply,
+    bubbleShowThinking: bubbleShowThinking,
+    documentShowThinking: documentShowThinking,
+    documentShowToolCalls: documentShowToolCalls,
   );
 }
 
@@ -517,13 +578,14 @@ final appSettingsProvider =
 
 class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   UiModelsApi get _api => UiModelsApi();
-  Future<void> _materialWrite = Future<void>.value();
 
   @override
-  Future<AppSettings> build() async {
-    final data = await _api.fetchAll();
-    return _mapToSettings(data);
-  }
+  Future<AppSettings> build() => readStored();
+
+  /// Read persistence directly; safe inside a transaction during a rebuild.
+  /// Never await appSettingsProvider.future while holding the storage lock.
+  Future<AppSettings> readStored() async =>
+      _mapToSettings(await _api.fetchAll());
 
   Future<void> refresh() async {
     state = const AsyncLoading();
@@ -1127,6 +1189,28 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() => _api.updatePartial({'auto_scroll_on_send': enabled}));
   }
 
+  Future<void> setAutoScrollOnAiReply(bool enabled) async {
+    await _commit(
+      () => _api.updatePartial({'auto_scroll_on_ai_reply': enabled}),
+    );
+  }
+
+  Future<void> setBubbleShowThinking(bool enabled) async {
+    await _commit(() => _api.updatePartial({'bubble_show_thinking': enabled}));
+  }
+
+  Future<void> setDocumentShowThinking(bool enabled) async {
+    await _commit(
+      () => _api.updatePartial({'document_show_thinking': enabled}),
+    );
+  }
+
+  Future<void> setDocumentShowToolCalls(bool enabled) async {
+    await _commit(
+      () => _api.updatePartial({'document_show_tool_calls': enabled}),
+    );
+  }
+
   Future<void> setGlobalBackgroundColor(GlobalBackgroundColor color) async {
     await _commit(
       () => _api.updatePartial({'global_background_color': color.value}),
@@ -1199,18 +1283,18 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   }
 
   /// 保存某张壁纸的遮罩与模糊；内置壁纸的 key 是 value，自定义是 id。
-  Future<void> setGlobalWallpaperStyle(String key, WallpaperStyle style) async {
-    final current = state.valueOrNull;
-    if (current == null) return;
-    await _commit(
-      () => _api.updatePartial(
-        _customWallpaperPatch(
-          current,
-          styles: {...current.globalWallpaperStyles, key: style},
-        ),
-      ),
-    );
-  }
+  /// The patch is built from the stored settings under the write lock, so a
+  /// concurrent edit of another wallpaper is not overwritten.
+  Future<void> setGlobalWallpaperStyle(String key, WallpaperStyle style) =>
+      _commit(() async {
+        final current = await readStored();
+        return _api.updatePartial(
+          _customWallpaperPatch(
+            current,
+            styles: {...current.globalWallpaperStyles, key: style},
+          ),
+        );
+      });
 
   /// 写回壁纸列表与调节；旧版单张字段已并入列表，一并清空。
   Map<String, dynamic> _customWallpaperPatch(
@@ -1249,6 +1333,40 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
+  /// Writes the skin and both custom colors in one step (undo of a color
+  /// change puts all three back together).
+  Future<void> setSkinColors({
+    required InterfaceSkin skin,
+    required String accentColor,
+    required ChatBackgroundColor chatBackground,
+  }) => _commit(
+    () => _api.updatePartial({
+      'interface_skin': skin.value,
+      'accent_color': accentColor,
+      'chat_background_color': chatBackground.value,
+    }),
+  );
+
+  /// The stored values of [kInterfaceSettingKeys], in that order; a missing
+  /// key reads as null.
+  Future<Map<String, Object?>> readInterfaceSettings() => transaction(() async {
+    final data = await _api.fetchAll();
+    return {for (final key in kInterfaceSettingKeys) key: data[key]};
+  });
+
+  /// Writes stored values of [kInterfaceSettingKeys] back as they were read.
+  Future<void> writeInterfaceSettings(Map<String, Object?> values) => _commit(
+    () => _api.updatePartial({
+      for (final key in kInterfaceSettingKeys)
+        if (values.containsKey(key)) key: values[key],
+    }),
+  );
+
+  /// 「恢复默认界面设置」：全局界面设置回到新装时的样子（不动聊天、角色、
+  /// 模型和渠道、用户资料与已导入的壁纸）。
+  Future<void> resetInterfaceSettings() =>
+      writeInterfaceSettings(interfaceResetPatch());
+
   Future<void> setDarkMode(bool isDark) async {
     await _commit(() => _api.updatePartial({'is_dark_mode': isDark}));
   }
@@ -1257,21 +1375,13 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() => _api.updatePartial({'use_system_theme': useSystem}));
   }
 
-  Future<void> setSurfaceMaterial(MoeSurfaceMaterial material) {
-    final next = _materialWrite.then(
-      (_) => _commit(
-        () => _api.updatePartial({
-          'glass_effect_enabled': material != MoeSurfaceMaterial.solid,
-          'use_liquid_glass': material == MoeSurfaceMaterial.liquid,
-        }),
-      ),
-    );
-    _materialWrite = next.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return next;
-  }
+  /// Ordered with every other write by the settings write lock.
+  Future<void> setSurfaceMaterial(MoeSurfaceMaterial material) => _commit(
+    () => _api.updatePartial({
+      'glass_effect_enabled': material != MoeSurfaceMaterial.solid,
+      'use_liquid_glass': material == MoeSurfaceMaterial.liquid,
+    }),
+  );
 
   Future<void> setGlassEffectEnabled(bool enabled) async {
     await _commit(() => _api.updatePartial({'glass_effect_enabled': enabled}));
@@ -1295,20 +1405,17 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
   /// Writes one material slider and pins the other three, so values that
   /// older stores derive from each other stop following the changed one.
-  Future<void> _setMaterialValue(String key, double value) async {
-    final current = state.value;
-    await _commit(
-      () => _api.updatePartial({
-        if (current != null) ...{
-          'glass_blur_sigma': current.glassBlurSigma,
-          'frosted_blur_sigma': current.frostedBlurSigma,
-          'glass_tint_fill': current.glassTintFill,
-          'frosted_tint_fill': current.frostedTintFill,
-        },
-        key: value,
-      }),
-    );
-  }
+  /// The pinned values are read under the write lock.
+  Future<void> _setMaterialValue(String key, double value) => _commit(() async {
+    final current = await readStored();
+    return _api.updatePartial({
+      'glass_blur_sigma': current.glassBlurSigma,
+      'frosted_blur_sigma': current.frostedBlurSigma,
+      'glass_tint_fill': current.glassTintFill,
+      'frosted_tint_fill': current.frostedTintFill,
+      key: value,
+    });
+  });
 
   Future<void> setUseLiquidGlass(bool useLiquid) async {
     await _commit(() => _api.updatePartial({'use_liquid_glass': useLiquid}));
@@ -1350,8 +1457,14 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
-  Future<void> _commit(Future<Map<String, dynamic>> Function() mutation) async {
-    final data = await mutation();
-    state = AsyncData(_mapToSettings(data));
-  }
+  Future<void> _commit(Future<Map<String, dynamic>> Function() mutation) =>
+      transaction(() async {
+        final data = await mutation();
+        state = AsyncData(_mapToSettings(data));
+      });
+
+  /// Shares the storage lock with normalization, direct API edits and sync.
+  /// Nested mutations join the current operation. Read through [readStored]
+  /// inside [body], never through a provider future that may be rebuilding.
+  Future<T> transaction<T>(Future<T> Function() body) => cloudLocalWrite(body);
 }

@@ -30,6 +30,7 @@ enum MessageAction {
 /// [targetBox] 消息气泡的 RenderBox，用于定位菜单位置
 /// [isUserMessage] 是否是用户消息，决定显示哪些操作
 /// [messageText] 消息文本内容，用于复制
+/// [selectedText] 气泡内选中的文字，有值时复制它而不是整条消息
 /// [onAction] 操作回调
 Future<void> showMessageActionMenu(
   BuildContext context, {
@@ -37,6 +38,9 @@ Future<void> showMessageActionMenu(
   Offset? globalPosition,
   required bool isUserMessage,
   required String messageText,
+
+  /// 用户在气泡里选中的文字；有值时「复制」只复制这部分。
+  String? selectedText,
   bool allowSelect = false,
   bool showEnhanceRegenerate = false,
   bool regenerateAudio = false,
@@ -56,9 +60,10 @@ Future<void> showMessageActionMenu(
       ),
     MoePopupMenuItem(
       icon: Icons.copy_rounded,
-      label: '复制',
+      label: selectedText == null ? '复制' : '复制选中',
+      width: selectedText == null ? 56 : 72,
       onTap: () {
-        Clipboard.setData(ClipboardData(text: messageText));
+        Clipboard.setData(ClipboardData(text: selectedText ?? messageText));
         onAction(MessageAction.copy);
       },
     ),

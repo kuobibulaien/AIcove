@@ -16,7 +16,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
-import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../../core/api/providers/google_api_mode.dart';
 import '../../../../core/api/providers/provider_chat_api_path.dart';
 import '../../../../features/plugins/tts/tts_request_format.dart';
@@ -27,7 +26,6 @@ import '../../../../features/settings/data/support/ui_models_store_support.dart'
 import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
-import '../widgets/comfyui_workflow_editor.dart';
 import '../widgets/tts_request_template_editor.dart';
 
 /// 显示添加供应商底部弹窗
@@ -191,7 +189,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   ProviderCategory _category = ProviderCategory.chat;
   ApiFormat _selectedFormat = ApiFormat.openai;
   bool _submitting = false;
-  Map<String, dynamic> _comfyConfig = {};
   bool get _isComfyUI => _selectedFormat == ApiFormat.comfyui;
   Map<String, dynamic> _ttsTemplate = Map<String, dynamic>.of(
     TtsRequestFormat.defaultCustomRestTemplate,
@@ -305,7 +302,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     if (_isComfyUI) {
       try {
         ComfyUIImageAdapter.endpoint(apiBaseUrl, 'prompt');
-        ComfyUIWorkflow.validate(_comfyConfig);
       } catch (error) {
         MoeToast.show(context, error.toString(), type: ToastType.error);
         return;
@@ -322,7 +318,6 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
             if (asr == null) 'requestFormat': format.value,
             if (asr != null) AsrRequestFormat.configKey: asr.value,
             ...credentials,
-            if (_isComfyUI) ..._comfyConfig,
             if (_isCustomRestTts)
               TtsRequestFormat.customRestTemplateKey: _ttsTemplate,
           }, apiPath);
@@ -529,36 +524,11 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                               ),
                           ],
                         ),
-                        if (_isComfyUI) ...[
-                          const SizedBox(height: 16),
-                          MoeSettingsGroup(
-                            margin: EdgeInsets.zero,
-                            children: [
-                              MoeSettingsRow(
-                                label: 'ComfyUI 工作流',
-                                detailText: _comfyConfig.isEmpty
-                                    ? '导入并绑定提示词'
-                                    : '已配置',
-                                trailingType: MoeSettingsRowTrailing.text,
-                                showDivider: false,
-                                onTap: () async {
-                                  final config =
-                                      await showComfyUIWorkflowEditor(
-                                        context,
-                                        _comfyConfig,
-                                      );
-                                  if (config != null && mounted) {
-                                    setState(() => _comfyConfig = config);
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
+                        if (_isComfyUI)
                           _buildHint(
-                            '同机可用 127.0.0.1；手机连接电脑时填写电脑的局域网地址。模型与 LoRA 由工作流指定。',
+                            '同机可用 127.0.0.1；手机连接电脑时填写电脑的局域网地址。添加后将自动拉取基础模型列表，可在绘图预设中绑定 LoRA 或导入自定义工作流 JSON。',
                             colors,
                           ),
-                        ],
                         if (_isCustomRestTts) ...[
                           const SizedBox(height: 16),
                           MoeSettingsGroup(
@@ -591,17 +561,11 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
                             colors,
                           ),
                         ],
-                        if (_selectedFormat.asr != null)
-                          _buildHint(
-                            [
-                              for (final field
-                                  in _selectedFormat.asr!.credentialFields)
-                                if (field.hint != null)
-                                  '${field.label}：${field.hint}',
-                              '识别模型已按厂商预置，添加后可在详情页增删。',
-                            ].join('\n'),
-                            colors,
-                          ),
+                        for (final field
+                            in _selectedFormat.asr?.credentialFields ??
+                                const <AsrCredentialField>[])
+                          if (field.hint != null)
+                            _buildHint('${field.label}：${field.hint}', colors),
                         ValueListenableBuilder<TextEditingValue>(
                           valueListenable: _urlCtrl,
                           builder: (context, value, _) {

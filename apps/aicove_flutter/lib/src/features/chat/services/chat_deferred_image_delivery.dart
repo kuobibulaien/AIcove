@@ -58,6 +58,30 @@ class ChatDeferredImageDelivery {
     return lastCreatedAt.add(const Duration(milliseconds: 1));
   }
 
+  /// Prepares an image for an atomic snapshot without touching the timeline.
+  Future<Message> prepareSnapshotImage({
+    required String convId,
+    required String prompt,
+    required String messageId,
+  }) async {
+    final previous = _ref.read(chatStatusProvider);
+    try {
+      final result = await _buildImageMessage(
+        convId: convId,
+        prompt: prompt,
+        messageId: messageId,
+      );
+      if (result.message == null) {
+        throw StateError('Background image preparation failed');
+      }
+      return result.message!;
+    } finally {
+      if (_ref.read(chatStatusProvider) == ChatStatus.generatingImage) {
+        _ref.read(chatStatusProvider.notifier).state = previous;
+      }
+    }
+  }
+
   void scheduleJobs({
     required String convId,
     required List<DeferredImageJob> jobs,

@@ -5,8 +5,10 @@
 /// unescaped double quotes inside text (typical when Chinese prose uses ASCII
 /// quotes): a quote ends a string only when the next significant character is
 /// structural (`,` `}` `]` `:`) or the input ends there. Rules follow
-/// DEEIX-Chat `packages/core/src/ui-block/partial-json.ts`; only complete
-/// input is read, an unfinished document is a [FormatException].
+/// DEEIX-Chat `packages/core/src/ui-block/partial-json.ts`. Objects and
+/// arrays still open when the input ends are closed there (models often drop
+/// the final `]}`); callers only pass text whose fence has closed. A cut-off
+/// string or a key without a value is still a [FormatException].
 ///
 /// Objects become `Map<String, Object?>`, arrays `List<Object?>`.
 Object? readLenientJson(String text) => _Reader(text).readDocument();
@@ -91,9 +93,8 @@ class _Reader {
     final result = <String, Object?>{};
     while (true) {
       _skip();
-      if (_atEnd) throw FormatException('unclosed object', text, index);
-      if (_char == '}') {
-        index += 1;
+      if (_atEnd || _char == '}') {
+        if (!_atEnd) index += 1;
         return result;
       }
       if (_char == ',') {
@@ -127,9 +128,8 @@ class _Reader {
     final result = <Object?>[];
     while (true) {
       _skip();
-      if (_atEnd) throw FormatException('unclosed array', text, index);
-      if (_char == ']') {
-        index += 1;
+      if (_atEnd || _char == ']') {
+        if (!_atEnd) index += 1;
         return result;
       }
       if (_char == ',') {
@@ -218,7 +218,10 @@ class _Reader {
     if (match == null) throw FormatException('bad number', text, index);
     index = match.end;
     final source = match.group(0)!;
-    return int.tryParse(source) ?? double.parse(source);
+    final value = int.tryParse(source) ?? double.parse(source);
+    // 1e999 parses to infinity, which JSON cannot hold or write back.
+    if (!value.isFinite) throw FormatException('number out of range', text, index);
+    return value;
   }
 
   static bool _isDigit(String char) =>

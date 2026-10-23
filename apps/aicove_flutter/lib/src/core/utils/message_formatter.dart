@@ -139,9 +139,6 @@ class MessageFormatConfig {
   /// Punctuation list used by trailing punctuation filtering.
   final List<String> filterPunctuations;
 
-  /// Sticker send probability (0.0 - 1.0).
-  final double stickerProbability;
-
   /// Minimum chunk length. Short chunks may be merged.
   final int minSegmentLength;
 
@@ -155,7 +152,6 @@ class MessageFormatConfig {
     this.chunkPunctuationSets = _kDefaultChunkPunctuationSets,
     this.activeChunkPunctuationSetId = _kDefaultChunkPunctuationSetId,
     this.filterPunctuations = _kDefaultFilterPunctuations,
-    this.stickerProbability = 0.3,
     this.minSegmentLength = 5,
     this.protectQuotes = true,
   });
@@ -173,7 +169,6 @@ class MessageFormatConfig {
         _listContentEquals(other.chunkPunctuationSets, chunkPunctuationSets) &&
         other.activeChunkPunctuationSetId == activeChunkPunctuationSetId &&
         _listContentEquals(other.filterPunctuations, filterPunctuations) &&
-        other.stickerProbability == stickerProbability &&
         other.minSegmentLength == minSegmentLength &&
         other.protectQuotes == protectQuotes;
   }
@@ -186,7 +181,6 @@ class MessageFormatConfig {
         Object.hashAll(chunkPunctuationSets),
         activeChunkPunctuationSetId,
         Object.hashAll(filterPunctuations),
-        stickerProbability,
         minSegmentLength,
         protectQuotes,
       );
@@ -200,6 +194,40 @@ class MessageFormatConfig {
     return chunkPunctuations;
   }
 
+  /// Punctuation tokens from whitespace-separated [text], cleaned the way
+  /// the config stores them.
+  static List<String> parsePunctuations(String text) =>
+      _sanitizePunctuations(text.split(RegExp(r'\s+')));
+
+  /// The set [setId] with [punctuations]; the runtime list follows when it
+  /// is the active set. Null when there is no such set.
+  MessageFormatConfig? withSetPunctuations(
+    String setId,
+    List<String> punctuations,
+  ) {
+    final index = chunkPunctuationSets.indexWhere((s) => s.id == setId);
+    if (index < 0) return null;
+    final sets = [...chunkPunctuationSets];
+    sets[index] = sets[index].copyWith(punctuations: punctuations);
+    return copyWith(
+      chunkPunctuationSets: sets,
+      chunkPunctuations: setId == activeChunkPunctuationSetId
+          ? punctuations
+          : chunkPunctuations,
+    );
+  }
+
+  /// Switches to the set [setId], with the runtime list set to
+  /// [punctuations] (the set's own when null). Null when there is no such set.
+  MessageFormatConfig? withActiveSet(String setId, [List<String>? punctuations]) {
+    final set = _findSetById(chunkPunctuationSets, setId);
+    if (set == null) return null;
+    return copyWith(
+      activeChunkPunctuationSetId: setId,
+      chunkPunctuations: punctuations ?? set.punctuations,
+    );
+  }
+
   MessageFormatConfig copyWith({
     bool? enableChunking,
     bool? filterPunctuation,
@@ -207,7 +235,6 @@ class MessageFormatConfig {
     List<MessageChunkPunctuationSet>? chunkPunctuationSets,
     String? activeChunkPunctuationSetId,
     List<String>? filterPunctuations,
-    double? stickerProbability,
     int? minSegmentLength,
     bool? protectQuotes,
   }) {
@@ -238,7 +265,6 @@ class MessageFormatConfig {
       activeChunkPunctuationSetId: activeSetId,
       filterPunctuations:
           _sanitizePunctuations(filterPunctuations ?? this.filterPunctuations),
-      stickerProbability: stickerProbability ?? this.stickerProbability,
       minSegmentLength: minSegmentLength ?? this.minSegmentLength,
       protectQuotes: protectQuotes ?? this.protectQuotes,
     );
@@ -253,7 +279,6 @@ class MessageFormatConfig {
           chunkPunctuationSets.map((item) => item.toJson()).toList(),
       'activeChunkPunctuationSetId': activeChunkPunctuationSetId,
       'filterPunctuations': filterPunctuations,
-      'stickerProbability': stickerProbability,
       'minSegmentLength': minSegmentLength,
       'protectQuotes': protectQuotes,
     };
@@ -315,8 +340,6 @@ class MessageFormatConfig {
         (json['filterPunctuations'] as List<dynamic>?)?.cast<String>() ??
             _kDefaultFilterPunctuations,
       ),
-      stickerProbability:
-          (json['stickerProbability'] as num?)?.toDouble() ?? 0.3,
       minSegmentLength: json['minSegmentLength'] as int? ?? 5,
       protectQuotes: json['protectQuotes'] as bool? ?? true,
     );

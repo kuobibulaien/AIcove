@@ -7,6 +7,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
+import 'package:aicove_flutter/src/core/database/database.dart' as db;
+import 'package:aicove_flutter/src/core/database/database_provider.dart';
+import 'package:aicove_flutter/src/features/assistant/domain/assistant_onboarding.dart';
+import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
+import 'package:drift/native.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/features/context/data/background_context_summarizer.dart';
 import 'package:aicove_flutter/src/features/context/providers/context_providers.dart';
@@ -80,6 +87,50 @@ void main() {
     expect((await agent()).modelRef, 'a:same');
     await notifier.setCompactionModel('');
     expect((await summarizer()).modelRef, 'a:same');
+  });
+  test('聊天模式角色按陪伴整理，工具模式与 AIcove酱按任务整理，运行时压缩恒按任务', () async {
+    final appDb = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final container = ProviderContainer(
+      overrides: [
+        appSettingsProvider.overrideWith(Settings.new),
+        databaseProvider.overrideWithValue(appDb),
+      ],
+    );
+    addTearDown(() async {
+      container.dispose();
+      await appDb.close();
+    });
+    final repo = container.read(conversationRepositoryProvider);
+    final now = DateTime(2026, 10, 22);
+    for (final (id, mode) in [
+      ('chat_role', null),
+      ('tool_role', RoleAgentMode.tool),
+      (kAicoveAssistantId, null),
+    ]) {
+      await repo.upsert(
+        ConversationConverter.toCompanion(
+          Conversation(
+            id: id,
+            title: id,
+            displayName: id,
+            agentMode: mode,
+            createdAt: now,
+            updatedAt: now,
+            messages: const [],
+          ),
+        ),
+      );
+    }
+    final chat =
+        await container.read(contextSummarizerProvider.future)
+            as BackgroundContextSummarizer;
+    expect(await chat.isCompanion('chat_role'), isTrue);
+    expect(await chat.isCompanion('tool_role'), isFalse);
+    expect(await chat.isCompanion(kAicoveAssistantId), isFalse);
+    final runtime =
+        await container.read(runtimeContextSummarizerProvider.future)
+            as BackgroundContextSummarizer;
+    expect(await runtime.isCompanion('chat_role'), isFalse);
   });
   test('旧长期记忆插件里的总结模型在新设置为空时沿用', () async {
     SharedPreferences.setMockInitialValues({

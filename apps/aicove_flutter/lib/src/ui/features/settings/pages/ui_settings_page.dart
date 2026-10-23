@@ -313,12 +313,40 @@ class UiSettingsPage extends ConsumerWidget {
                     context,
                   ).push(ParallaxSlidePageRoute(page: const CustomSkinPage())),
                 ),
+                MoeSettingsRow(
+                  label: '恢复默认界面设置',
+                  subtitle: '界面被改乱时用，聊天记录不受影响',
+                  trailingType: MoeSettingsRowTrailing.none,
+                  onTap: () => _confirmResetInterface(context, ref),
+                ),
               ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _confirmResetInterface(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final confirmed = await showMeoTalkConfirm(
+      context: context,
+      title: '恢复默认界面设置',
+      message:
+          '深浅色、材质、皮肤、全局壁纸、缩放、聊天样式、分段和思维链显示会回到新装时的样子。\n'
+          '聊天记录、角色、各聊天自己设的样式和壁纸、模型和渠道、你的资料、导入过的壁纸都会保留。',
+      cancelText: '取消',
+      confirmText: '恢复',
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(appSettingsProvider.notifier).resetInterfaceSettings();
+      if (context.mounted) MoeToast.success(context, '已恢复默认界面设置');
+    } catch (_) {
+      if (context.mounted) MoeToast.error(context, '没能恢复，请重试');
+    }
   }
 
   /// 分组内自定义块之间的分割线，与 MoeSettingsRow 的行间分割线一致。

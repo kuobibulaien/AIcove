@@ -1,10 +1,16 @@
 import '../../../core/api/thinking/thinking_level.dart';
+import '../../assistant/domain/assistant_onboarding.dart';
 import 'chat_display_policy.dart';
 import 'message.dart';
+import 'role_agent_mode.dart';
 
 /// Sentinel value used by [Conversation.copyWith] to distinguish
 /// "parameter not provided" from "explicitly set to null".
 const Object _sentinel = Object();
+
+/// Plugins a role starts with: new roles, built-in roles, and roles that had
+/// never narrowed their plugin list ([Conversation.enabledPlugins] null).
+const List<String> kDefaultRolePluginIds = ['memory', 'time_awareness'];
 
 class Conversation {
   final String id;
@@ -49,6 +55,20 @@ class Conversation {
   // 会话级聊天样式覆盖；null 跟随全局默认（ADR0047）
   final ChatDisplayStyle? chatDisplayStyle;
 
+  /// 实际生效的会话样式覆盖：AIcove酱没手动选过时用文档模式。她的回复以
+  /// Markdown 为主，气泡模式只显示纯文本并按段切开（ADR0047）。
+  ChatDisplayStyle? get effectiveDisplayStyle =>
+      chatDisplayStyle ??
+      (id == kAicoveAssistantId ? ChatDisplayStyle.document : null);
+
+  // 角色工作模式（ADR0097）；null 为聊天模式，AIcove酱恒为工具模式
+  final RoleAgentMode? agentMode;
+
+  /// 实际生效的工作模式：AIcove酱固定工具模式，其余角色没设过时为聊天模式。
+  RoleAgentMode get effectiveAgentMode => id == kAicoveAssistantId
+      ? RoleAgentMode.tool
+      : agentMode ?? RoleAgentMode.chat;
+
   // 上下文截断：新话题起始消息ID，此ID之后的消息才纳入AI上下文
   final String? contextStartMessageId;
 
@@ -87,6 +107,7 @@ class Conversation {
     this.recipeId,
     this.thinkingLevels = const {},
     this.chatDisplayStyle,
+    this.agentMode,
     this.contextStartMessageId,
     this.lastMessage,
     this.lastMessageTime,
@@ -138,6 +159,7 @@ class Conversation {
     Object? recipeId = _sentinel,
     Map<String, ThinkingLevel>? thinkingLevels,
     Object? chatDisplayStyle = _sentinel,
+    Object? agentMode = _sentinel,
     Object? contextStartMessageId = _sentinel,
     Object? lastMessage = _sentinel,
     Object? lastMessageTime = _sentinel,
@@ -196,6 +218,9 @@ class Conversation {
       chatDisplayStyle: chatDisplayStyle == _sentinel
           ? this.chatDisplayStyle
           : chatDisplayStyle as ChatDisplayStyle?,
+      agentMode: agentMode == _sentinel
+          ? this.agentMode
+          : agentMode as RoleAgentMode?,
       contextStartMessageId: contextStartMessageId == _sentinel
           ? this.contextStartMessageId
           : contextStartMessageId as String?,

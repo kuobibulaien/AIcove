@@ -1,16 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
+import '../../../../core/api/image_providers/comfyui_workflow.dart';
+import '../../../../core/api/image_providers/image_provider_adapter_factory.dart';
 import '../../../../features/chat/id_gen.dart';
 import '../../../../features/plugins/image/drawing_parameters.dart';
 import '../../../../features/plugins/image/drawing_preset.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/plugins/image/image_config.dart';
+import '../../../../features/plugins/prompts/plugin_prompt_resolution.dart';
+import '../../../../features/plugins/prompts/prompt_pack.dart';
 import '../../../../features/settings/app_settings.dart';
-import '../../../../core/api/image_providers/image_provider_adapter_factory.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
+import '../../settings/widgets/comfyui_workflow_editor.dart';
+import '../widgets/preset_prompt_group.dart';
 import 'image_generation_test_page.dart';
 
 class DrawingPresetEditorPage extends ConsumerStatefulWidget {
@@ -31,13 +37,16 @@ class _DrawingPresetEditorPageState
     with MoeAutoSaveState<DrawingPresetEditorPage> {
   final _fields = <String, TextEditingController>{};
   late ImageConfig _config;
+  late PresetPromptBinding _prompts;
   late final String _presetId;
   bool _deleted = false;
+  int _comfyFetchSeq = 0;
 
   @override
   void initState() {
     super.initState();
     _config = widget.preset.config;
+    _prompts = widget.preset.prompts;
     _presetId = widget.isNew ? genId('drawing') : widget.preset.id;
     final values = <String, String>{
       'name': widget.isNew ? '${widget.preset.name}副本' : widget.preset.name,
@@ -50,6 +59,8 @@ class _DrawingPresetEditorPageState
       'guidance_scale': '${_config.defaultGuidanceScale}',
       'count': '${_config.defaultCount}',
       'timeout': '${_config.timeoutSeconds}',
+      'lora_name': _config.comfyLoraName ?? '',
+      'lora_strength': '${_config.comfyLoraStrength}',
     };
     for (final entry in values.entries) {
       _fields[entry.key] = TextEditingController(text: entry.value);
@@ -62,6 +73,7 @@ class _DrawingPresetEditorPageState
       },
       snapshot: () => moeAutoSaveSignature([
         _config.toJson(),
+        _prompts.toJson(),
         for (final c in _fields.values) c.text,
       ]),
       fields: _fields.values,
@@ -77,6 +89,11 @@ class _DrawingPresetEditorPageState
   }
 
   String _text(String key) => _fields[key]!.text.trim();
+
+  /// A modal-comfy gateway template keeps its own tuned sampling settings.
+  bool _usesGatewayTemplate(String rawModelId, String comfyMode) =>
+      ComfyUIWorkflow.isTemplateModel(rawModelId) &&
+      comfyMode != ComfyUIWorkflow.customMode;
 
   Widget _field(
     String key,
@@ -95,8 +112,9 @@ class _DrawingPresetEditorPageState
     ),
   );
 
-  Future<void> _save(AppSettings settings) async {
-    if (_deleted) return;
+  /// Builds and validates the current [ImageConfig] from the form fields.
+  /// Only validates fields that belong to the active provider and workflow mode.
+  ImageConfig _buildValidatedConfig(AppSettings settings) {
     if (_text('name').isEmpty) throw const FormatException('请填写预设名称');
     final provider = settings.providers
         .where((p) => p.id == _config.selectedProviderId)
@@ -112,19 +130,25 @@ class _DrawingPresetEditorPageState
             .contains(modelId)) {
       throw const FormatException('请重新选择可用的绘图渠道和模型');
     }
-    final novelAi =
-        ImageProviderAdapterFactory.resolveProvider(
-          provider.id,
-          customConfig: provider.customConfig,
-        ) ==
-        'novelai';
+    final resolvedProvider = ImageProviderAdapterFactory.resolveProvider(
+      provider.id,
+      customConfig: provider.customConfig,
+    );
+    final novelAi = resolvedProvider == 'novelai';
+    final isComfyUI = resolvedProvider == 'comfyui';
+    final effectiveComfyMode = isComfyUI
+        ? _config.effectiveComfyWorkflowMode(
+            modelId: modelId,
+            providerCustomConfig: provider.customConfig,
+          )
+        : ComfyUIWorkflow.inheritMode;
     final sampling =
         novelAi ||
-        ImageProviderAdapterFactory.resolveProvider(
-              provider.id,
-              customConfig: provider.customConfig,
-            ) ==
-            'comfyui';
+        (isComfyUI &&
+            !_usesGatewayTemplate(
+              settings.getRawModelId(modelId),
+              effectiveComfyMode,
+            ));
     final args = <String, dynamic>{
       for (final key in ['width', 'height', 'count']) key: _text(key),
       if (sampling) ...{
@@ -142,12 +166,27 @@ class _DrawingPresetEditorPageState
     if (timeout == null || timeout < 5 || timeout > 600) {
       throw const FormatException('超时请填写 5–600 秒');
     }
+
+    final isStandardComfy =
+        isComfyUI && effectiveComfyMode == ComfyUIWorkflow.standardMode;
+
+    final loraName = _text('lora_name');
+    final loraStrength = double.tryParse(_text('lora_strength'));
+    if (isStandardComfy &&
+        loraName.isNotEmpty &&
+        (loraStrength == null ||
+            !loraStrength.isFinite ||
+            loraStrength < -2 ||
+            loraStrength > 2)) {
+      throw const FormatException('LoRA 强度请填写 -2.0 到 2.0 之间的数值');
+    }
+
     final style = ArtistPreset(
       name: '预设风格',
       content: _text('style'),
       negativeContent: _text('negativeStyle'),
     );
-    final config = _config.copyWith(
+    final nextConfig = _config.copyWith(
       defaultWidth: values.width,
       defaultHeight: values.height,
       defaultCount: values.count,
@@ -157,11 +196,32 @@ class _DrawingPresetEditorPageState
       timeoutSeconds: timeout,
       artistPresets: [style],
       selectedArtistPresetName: style.name,
+      comfyLoraName: isStandardComfy
+          ? (loraName.isEmpty ? null : loraName)
+          : _config.comfyLoraName,
+      clearComfyLoraName: isStandardComfy && loraName.isEmpty,
+      comfyLoraStrength: isStandardComfy
+          ? (loraStrength ?? 1.0)
+          : _config.comfyLoraStrength,
     );
+    if (isComfyUI) {
+      nextConfig.validateComfyConfiguration(
+        modelId: modelId,
+        providerCustomConfig: provider.customConfig,
+      );
+    }
+    return nextConfig;
+  }
+
+  Future<void> _save(AppSettings settings) async {
+    if (_deleted) return;
+    final config = _buildValidatedConfig(settings);
+    _config = config;
     final preset = DrawingPreset(
       id: _presetId,
       name: _text('name'),
       config: config,
+      prompts: _prompts,
     );
     await ref.read(drawingPresetCatalogProvider.notifier).savePreset(preset);
   }
@@ -216,12 +276,186 @@ class _DrawingPresetEditorPageState
     });
   }
 
+  /// Fetches one option list from the ComfyUI server and lets the user pick.
+  /// Returns `''` for the empty choice and null when cancelled or stale.
+  Future<String?> _pickComfyOption(
+    ProviderAuth provider, {
+    required String title,
+    required String label,
+    required String emptyLabel,
+    required String current,
+    required Future<List<String>> Function({
+      required String baseUrl,
+      String apiKey,
+    })
+    fetch,
+  }) async {
+    final reqSeq = ++_comfyFetchSeq;
+    final requestedProviderId = provider.id;
+    bool stale() =>
+        !mounted ||
+        reqSeq != _comfyFetchSeq ||
+        _config.selectedProviderId != requestedProviderId;
+
+    List<String> options;
+    try {
+      options = await fetch(
+        baseUrl: provider.apiBaseUrl,
+        apiKey: provider.apiKeys.isNotEmpty
+            ? provider.apiKeys.first.trim()
+            : '',
+      );
+    } catch (error) {
+      if (mounted && !stale()) {
+        MoeToast.error(context, '拉取$label列表失败：$error');
+      }
+      return null;
+    }
+    if (!mounted || stale()) return null;
+    if (options.isEmpty) {
+      MoeToast.warning(context, '服务端未返回可用$label');
+      return null;
+    }
+    final selected = await showMoeBottomSheet<String>(
+      context: context,
+      title: title,
+      showCloseButton: true,
+      maxHeight: MediaQuery.sizeOf(context).height * .7,
+      builder: (ctx) => ListView.builder(
+        shrinkWrap: true,
+        itemCount: options.length + 1,
+        itemBuilder: (_, i) {
+          final item = i == 0 ? '' : options[i - 1];
+          return ListTile(
+            title: Text(i == 0 ? emptyLabel : item),
+            selected: item == current,
+            onTap: () => Navigator.pop(ctx, item),
+          );
+        },
+      ),
+    );
+    return selected == null || stale() ? null : selected;
+  }
+
+  Future<void> _pickLora(ProviderAuth provider) async {
+    final selected = await _pickComfyOption(
+      provider,
+      title: '选择 LoRA 模型',
+      label: ' LoRA ',
+      emptyLabel: '不使用 LoRA',
+      current: _text('lora_name'),
+      fetch: ComfyUIImageAdapter.fetchLoras,
+    );
+    if (selected == null) return;
+    setState(() => _fields['lora_name']!.text = selected);
+  }
+
+  Future<void> _pickSampler(ProviderAuth provider, String emptyLabel) async {
+    final selected = await _pickComfyOption(
+      provider,
+      title: '选择采样器',
+      label: '采样器',
+      emptyLabel: emptyLabel,
+      current: _config.comfySampler ?? '',
+      fetch: ComfyUIImageAdapter.fetchSamplers,
+    );
+    if (selected == null) return;
+    setState(() {
+      _config = _config.copyWith(
+        comfySampler: selected,
+        clearComfySampler: selected.isEmpty,
+      );
+    });
+  }
+
+  Future<void> _pickScheduler(ProviderAuth provider, String emptyLabel) async {
+    final selected = await _pickComfyOption(
+      provider,
+      title: '选择调度器',
+      label: '调度器',
+      emptyLabel: emptyLabel,
+      current: _config.comfyScheduler ?? '',
+      fetch: ComfyUIImageAdapter.fetchSchedulers,
+    );
+    if (selected == null) return;
+    setState(() {
+      _config = _config.copyWith(
+        comfyScheduler: selected,
+        clearComfyScheduler: selected.isEmpty,
+      );
+    });
+  }
+
+  Future<void> _editPresetWorkflow(ProviderAuth? provider) async {
+    final initial =
+        _config.comfyWorkflowConfig ??
+        (provider != null &&
+                ComfyUIWorkflow.hasCustomWorkflow(provider.customConfig)
+            ? <String, dynamic>{
+                for (final key in [
+                  ComfyUIWorkflow.workflowKey,
+                  ComfyUIWorkflow.bindingsKey,
+                  ComfyUIWorkflow.outputKey,
+                ])
+                  if (provider.customConfig.containsKey(key))
+                    key: provider.customConfig[key],
+              }
+            : const <String, dynamic>{});
+    final updated = await showComfyUIWorkflowEditor(context, initial);
+    if (updated == null || !mounted) return;
+    setState(() {
+      _config = _config.copyWith(
+        comfyWorkflowConfig: updated,
+        comfyWorkflowMode: ComfyUIWorkflow.customMode,
+      );
+    });
+  }
+
+  void _restoreStandardMode(AppSettings settings, ProviderAuth provider) {
+    final currentRawModel = _config.selectedModelId == null
+        ? ''
+        : settings.getRawModelId(_config.selectedModelId!);
+    var nextModelRef = _config.selectedModelId;
+    if (currentRawModel.isEmpty || currentRawModel == ComfyUIWorkflow.modelId) {
+      final candidate = settings
+          .getProviderVisibleModelsByType(provider.id, type: ModelType.image)
+          .where((m) => m != ComfyUIWorkflow.modelId)
+          .firstOrNull;
+      if (candidate != null) {
+        nextModelRef = settings.buildModelRef(provider.id, candidate);
+      } else {
+        MoeToast.warning(context, '请先选择具体的 ComfyUI 基础模型');
+      }
+    }
+    setState(() {
+      _config = _config.copyWith(
+        selectedModelId: nextModelRef,
+        clearComfyWorkflowConfig: true,
+        comfyWorkflowMode: ComfyUIWorkflow.standardMode,
+      );
+    });
+  }
+
   void _test(BuildContext context) {
+    final settings = ref.read(appSettingsProvider).valueOrNull;
+    var testConfig = _config;
+    if (settings != null) {
+      try {
+        testConfig = _buildValidatedConfig(settings);
+        _config = testConfig;
+      } on FormatException catch (error) {
+        MoeToast.error(context, error.message);
+        return;
+      } catch (error) {
+        MoeToast.error(context, '$error');
+        return;
+      }
+    }
     Navigator.push(
       context,
       ParallaxSlidePageRoute(
         page: ImageGenerationTestPage(
-          drawingConfig: _config,
+          drawingConfig: testConfig,
           initialModelLabel: _text('name').isNotEmpty
               ? _text('name')
               : widget.preset.name,
@@ -235,7 +469,10 @@ class _DrawingPresetEditorPageState
       context,
       ParallaxSlidePageRoute(
         page: DrawingPresetEditorPage(
-          preset: widget.preset.copyWith(name: '${_text('name')}副本'),
+          preset: widget.preset.copyWith(
+            name: '${_text('name')}副本',
+            config: _config,
+          ),
           isNew: true,
         ),
       ),
@@ -327,21 +564,44 @@ class _DrawingPresetEditorPageState
                       customConfig: provider.customConfig,
                     ) ==
                     'novelai';
-            final sampling =
-                novelAi ||
-                (provider != null &&
-                    ImageProviderAdapterFactory.resolveProvider(
-                          provider.id,
-                          customConfig: provider.customConfig,
-                        ) ==
-                        'comfyui');
+            final isComfyUI =
+                provider != null &&
+                ImageProviderAdapterFactory.resolveProvider(
+                      provider.id,
+                      customConfig: provider.customConfig,
+                    ) ==
+                    'comfyui';
+            final rawModelId = _config.selectedModelId == null
+                ? ''
+                : settings.getRawModelId(_config.selectedModelId!);
+            final effectiveComfyMode = isComfyUI
+                ? _config.effectiveComfyWorkflowMode(
+                    modelId: rawModelId,
+                    providerCustomConfig: provider.customConfig,
+                  )
+                : ComfyUIWorkflow.inheritMode;
+            final hasCustomWorkflow =
+                isComfyUI && effectiveComfyMode == ComfyUIWorkflow.customMode;
+            final gatewayTemplate =
+                isComfyUI &&
+                _usesGatewayTemplate(rawModelId, effectiveComfyMode);
+            final sampling = novelAi || (isComfyUI && !gatewayTemplate);
+            final comfyDefaultSampler = hasCustomWorkflow
+                ? '沿用工作流'
+                : '默认（${ComfyUIWorkflow.defaultSampler}）';
+            final comfyDefaultScheduler = hasCustomWorkflow
+                ? '沿用工作流'
+                : '默认（${ComfyUIWorkflow.defaultScheduler}）';
             return Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 760),
                 child: Builder(
                   builder: (context) => ListView(
-                    padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
+                    padding: moeUnderBarPadding(
+                      context,
+                      const EdgeInsets.all(16),
+                    ),
                     children: [
                       _field('name', '预设名称'),
                       MoeSettingsGroup(
@@ -373,6 +633,79 @@ class _DrawingPresetEditorPageState
                           ],
                         ],
                       ),
+                      if (isComfyUI) ...[
+                        MoeSettingsGroup(
+                          title: 'ComfyUI 工作流',
+                          margin: const EdgeInsets.only(bottom: 16),
+                          children: [
+                            MoeSettingsRow(
+                              label: '工作流模式',
+                              subtitle: hasCustomWorkflow
+                                  ? '自定义 JSON 工作流（已导入并绑定）'
+                                  : gatewayTemplate
+                                  ? '服务端模板 ${ComfyUIWorkflow.templateName(rawModelId)}（步数、提示词强度和采样器由模板决定）'
+                                  : '标准基础模型工作流（支持直接附加 LoRA）',
+                              detailText: hasCustomWorkflow
+                                  ? '编辑 JSON'
+                                  : '导入 JSON',
+                              trailingType: MoeSettingsRowTrailing.text,
+                              onTap: () => _editPresetWorkflow(provider),
+                            ),
+                            if (!gatewayTemplate) ...[
+                              MoeSettingsRow(
+                                label: '采样器',
+                                subtitle:
+                                    _config.comfySampler ?? comfyDefaultSampler,
+                                detailText: '拉取列表',
+                                trailingType: MoeSettingsRowTrailing.text,
+                                onTap: () =>
+                                    _pickSampler(provider, comfyDefaultSampler),
+                              ),
+                              MoeSettingsRow(
+                                label: '调度器',
+                                subtitle:
+                                    _config.comfyScheduler ??
+                                    comfyDefaultScheduler,
+                                detailText: '拉取列表',
+                                trailingType: MoeSettingsRowTrailing.text,
+                                onTap: () => _pickScheduler(
+                                  provider,
+                                  comfyDefaultScheduler,
+                                ),
+                              ),
+                            ],
+                            if (hasCustomWorkflow)
+                              MoeSettingsRow(
+                                label: '恢复标准模型模式',
+                                subtitle: '清除自定义 JSON，改用所选基础模型与 LoRA',
+                                trailingType: MoeSettingsRowTrailing.chevron,
+                                onTap: () =>
+                                    _restoreStandardMode(settings, provider),
+                              )
+                            else
+                              MoeSettingsRow(
+                                label: '从服务端选择 LoRA',
+                                subtitle: _text('lora_name').isEmpty
+                                    ? '可留空（仅使用基础模型）'
+                                    : _text('lora_name'),
+                                detailText: '拉取列表',
+                                trailingType: MoeSettingsRowTrailing.text,
+                                onTap: () => _pickLora(provider),
+                              ),
+                          ],
+                        ),
+                        if (!hasCustomWorkflow) ...[
+                          _field(
+                            'lora_name',
+                            'LoRA 名称（可选，如 style_v1.safetensors）',
+                          ),
+                          _field(
+                            'lora_strength',
+                            'LoRA 强度（-2.0 到 2.0，默认 1.0）',
+                            number: true,
+                          ),
+                        ],
+                      ],
                       _field('style', '画师串 / 正面风格', lines: 4),
                       _field('negativeStyle', '负面风格', lines: 3),
                       const Text(
@@ -396,7 +729,41 @@ class _DrawingPresetEditorPageState
                           _field('timeout', '请求超时（5–600 秒）', number: true),
                         ],
                       ),
-                      const SizedBox(height: 24),
+                      if (provider != null &&
+                          _config.selectedModelId != null) ...[
+                        const SizedBox(height: 16),
+                        PresetPromptGroup(
+                          pluginId: 'image',
+                          binding: _prompts,
+                          onChanged: (next) => setState(() => _prompts = next),
+                          format: imagePromptFormat(
+                            provider.id,
+                            provider.customConfig,
+                          ),
+                          model: settings.getRawModelId(
+                            _config.selectedModelId!,
+                          ),
+                          presetName: _text('name'),
+                          variables: {
+                            'default_width':
+                                int.tryParse(_text('width')) ??
+                                _config.defaultWidth,
+                            'default_height':
+                                int.tryParse(_text('height')) ??
+                                _config.defaultHeight,
+                            'default_count':
+                                int.tryParse(_text('count')) ??
+                                _config.defaultCount,
+                            'default_steps':
+                                int.tryParse(_text('steps')) ??
+                                _config.defaultSteps,
+                            'default_guidance_scale':
+                                double.tryParse(_text('guidance_scale')) ??
+                                _config.defaultGuidanceScale,
+                          },
+                        ),
+                      ],
+                      const SizedBox(height: 8),
                       MoeSecondaryButton(
                         label: '生图测试',
                         onPressed: () => _test(context),

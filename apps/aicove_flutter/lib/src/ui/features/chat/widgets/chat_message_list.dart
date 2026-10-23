@@ -13,6 +13,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
 import '../../../../features/chat/conversation_providers.dart'
@@ -46,12 +47,18 @@ import '../../../../ui/shared/widgets/ui_blocks/moe_ui_block_scope.dart';
 import 'chat_end_anchored_sliver.dart';
 import 'chat_message_list_display_cache.dart';
 import 'chat_message_list_items.dart';
+import 'chat_run_status_line.dart';
+import 'chat_reply_action_bar.dart';
+import '../../task_agent/task_running_bar.dart';
 import 'chat_message_selection.dart';
 import 'chat_selection_region.dart';
 import 'chat_message_list_media_save.dart';
 import 'chat_viewport_controller.dart';
 import 'regenerate_guidance_dialog.dart';
 import 'frontend_message_probe.dart';
+import '../../../../features/assistant/domain/assistant_onboarding.dart'
+    show kAicoveAssistantId;
+import '../../assistant/widgets/assistant_quick_panels.dart';
 import '../../../../features/observability/frontend_diagnostics_port.dart';
 import '../../../../features/observability/frontend_diagnostics_provider.dart';
 import '../../voice_call/widgets/voice_call_live_messages.dart'
@@ -315,6 +322,39 @@ class _ChatHistoryPagingScrollPhysics extends BouncingScrollPhysics {
         _applyCustomFriction(overscrollPast, offset.abs(), friction);
   }
 
+  /// 停在底部时底部内容变矮（生成结束换成更短的最终消息等），视口会越过
+  /// 底边；直接收回，不留给弹簧回弹。reverse 列表的底边是 minScrollExtent。
+  /// 只认上一刻在底、底边上移而顶边不动的情况，顶边一起变的（历史区
+  /// 增删、分区挪动）照旧交给原逻辑；用户拖动或惯性滚动时照常回弹。
+  @override
+  double adjustPositionForNewDimensions({
+    required ScrollMetrics oldPosition,
+    required ScrollMetrics newPosition,
+    required bool isScrolling,
+    required double velocity,
+  }) {
+    final pixels = super.adjustPositionForNewDimensions(
+      oldPosition: oldPosition,
+      newPosition: newPosition,
+      isScrolling: isScrolling,
+      velocity: velocity,
+    );
+    final tolerance = Tolerance.defaultTolerance.distance;
+    final wasAtBottom =
+        (oldPosition.pixels - oldPosition.minScrollExtent).abs() <= tolerance;
+    final bottomContentShrank =
+        newPosition.minScrollExtent > oldPosition.minScrollExtent + tolerance &&
+            (newPosition.maxScrollExtent - oldPosition.maxScrollExtent).abs() <=
+                tolerance;
+    if (!isScrolling &&
+        wasAtBottom &&
+        bottomContentShrank &&
+        pixels < newPosition.minScrollExtent) {
+      return newPosition.minScrollExtent;
+    }
+    return pixels;
+  }
+
   double _topFrictionFactor(double overscrollFraction) {
     return topOverscrollFrictionBase *
         math.pow(1 - overscrollFraction, 2).toDouble();
@@ -367,6 +407,9 @@ class ChatMessageList extends ConsumerStatefulWidget {
 
   /// 会话级聊天样式覆盖；null 跟随全局默认（ADR0047）。
   final ChatDisplayStyle? chatDisplayStyle;
+
+  /// 是否显示时间小气泡；跟随时间感知插件（全局与角色）开关。
+  final bool showTimeDividers;
   final String? avatarUrl;
   final String displayName;
   final ChatMessageSelection? selection;
@@ -413,6 +456,7 @@ class ChatMessageList extends ConsumerStatefulWidget {
     required this.conversationId,
     this.recipeId,
     this.chatDisplayStyle,
+    this.showTimeDividers = true,
     this.avatarUrl,
     required this.displayName,
     this.selection,
@@ -468,6 +512,26 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
 
   /// 缓存的消息格式化配置（用于检测配置变化）
   MessageFormatConfig? _cachedFormatConfig;
+  bool? _cachedShowTimeDividers;
+
+  /// 当前样式下思维链／工具调用折叠段是否显示（聊天界面「更多选项」）。
+  _FoldVisibility _foldVisibility = const (
+    thinking: true,
+    tools: false,
+    replyActions: false,
+  );
+  _FoldVisibility? _cachedFoldVisibility;
+
+  /// 文档模式下鼠标停在哪一轮回复上（该轮最后一条消息 id），操作栏跟着浮现。
+  final ValueNotifier<String?> _hoveredReplyId = ValueNotifier(null);
+
+  /// 消息 id → 所在回复轮的操作栏 id，随列表项重建。
+  List<ChatMessageListItem>? _replyTurnSource;
+  Map<String, String> _replyTurnOf = const {};
+  String? _latestReplyId;
+
+  /// 停在底部时 AI 回复是否跟着往下滚（聊天界面「行为」）。
+  bool _followAiOutput = true;
 
   /// 当前会话是否为文档样式（ADR0047），build 时更新，供气泡渲染读取。
   bool _documentStyle = false;
@@ -620,11 +684,15 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (_currentTimelineMessages.isNotEmpty) {
       _latestAnimatedAt = _currentTimelineMessages.last.createdAt;
     }
-    _hydrateInitialListItems(
-      ref
-          .read(chatDisplayPolicyProvider(widget.chatDisplayStyle))
-          .effectiveFormatConfig,
+    final initialPolicy =
+        ref.read(chatDisplayPolicyProvider(widget.chatDisplayStyle));
+    final initialSettings = ref.read(appSettingsProvider).valueOrNull;
+    _foldVisibility = _resolveFoldVisibility(
+      initialSettings,
+      document: initialPolicy.style == ChatDisplayStyle.document,
     );
+    _followAiOutput = initialSettings?.autoScrollOnAiReply ?? true;
+    _hydrateInitialListItems(initialPolicy.effectiveFormatConfig);
     _prepareTailFirstEntryLayout();
 
     // 滚动控制只保留“用户手势优先 + 软跟随”语义，不再做像素补偿。
@@ -682,6 +750,7 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _showJumpToBottom.dispose();
+    _hoveredReplyId.dispose();
     _historyLoadingOverlayHideTimer?.cancel();
     _transientHandoffHoldTimer?.cancel();
     super.dispose();
@@ -738,9 +807,28 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       _tagPresentationSignature = tagSignature;
     }
 
+    // 只订阅这几项，别的设置变化不重建整个列表。
+    final document = _documentStyle;
+    final display = ref.watch(
+      appSettingsProvider.select((async) {
+        final settings = async.valueOrNull;
+        return (
+          fold: _resolveFoldVisibility(settings, document: document),
+          followAi: settings?.autoScrollOnAiReply ?? true,
+        );
+      }),
+    );
+    _followAiOutput = display.followAi;
+    _foldVisibility = display.fold;
+
     // 检测配置变化，需要重新构建列表项
+    final timeDividersChanged =
+        _cachedShowTimeDividers != widget.showTimeDividers;
     if (_hasHydratedInitialListItems &&
-        (_cachedFormatConfig != formatConfig || tagsChanged)) {
+        (_cachedFormatConfig != formatConfig ||
+            tagsChanged ||
+            timeDividersChanged ||
+            _cachedFoldVisibility != _foldVisibility)) {
       _updateListItems(formatConfig);
     }
 
@@ -944,6 +1032,10 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
       child: MoeUiBlockScope(
         conversationId: widget.conversationId,
         onAsk: _askFromUiBlock,
+        // Quick panels change settings: only in AIcove酱's chat (ADR0094).
+        actions: widget.conversationId == kAicoveAssistantId
+            ? kAssistantQuickPanels
+            : null,
         child: content,
       ),
     );
@@ -961,3 +1053,18 @@ String _signTagPresentation(TagPresentationMap map) =>
     (map.entries.map((e) => '${e.key}=${e.value.presentation.name}:${e.value.title}').toList()
           ..sort())
         .join(',');
+
+typedef _FoldVisibility = ({bool thinking, bool tools, bool replyActions});
+
+/// 工具调用和回复底部操作栏只在文档模式显示；思维链两种样式各有一个开关。
+_FoldVisibility _resolveFoldVisibility(
+  AppSettings? settings, {
+  required bool document,
+}) =>
+    (
+      thinking: document
+          ? settings?.documentShowThinking ?? true
+          : settings?.bubbleShowThinking ?? true,
+      tools: document && (settings?.documentShowToolCalls ?? true),
+      replyActions: document,
+    );

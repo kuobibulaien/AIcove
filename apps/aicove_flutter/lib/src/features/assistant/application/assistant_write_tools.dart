@@ -73,6 +73,25 @@ abstract final class RoleField {
   static const addressUser = 'address_user';
   static const enabledPlugins = 'enabled_plugins';
   static const recipeId = 'recipe_id';
+  static const avatarUrl = 'avatar_url';
+  static const characterImage = 'character_image';
+  static const chatBackground = 'chat_background';
+  static const voiceFile = 'voice_file';
+  static const thinkingLevels = 'thinking_levels';
+  static const pinned = 'pinned';
+  static const muted = 'muted';
+
+  /// This chat's display style: `bubble`, `document`, or null to follow the
+  /// default.
+  static const displayStyle = 'display_style';
+
+  /// Mask and blur of the chat's own wallpaper; null uses the default.
+  static const wallpaperMask = 'wallpaper_mask';
+  static const wallpaperBlur = 'wallpaper_blur';
+
+  /// The role's drawing preset binding: `{id?, tool?, artist?}` (the last
+  /// two are legacy bindings by name), null to follow the default preset.
+  static const drawingPreset = 'drawing_preset';
 
   static const labels = {
     displayName: '名字',
@@ -83,6 +102,17 @@ abstract final class RoleField {
     addressUser: '称呼用户',
     enabledPlugins: '插件选择',
     recipeId: '酒馆预设',
+    avatarUrl: '头像',
+    characterImage: '立绘',
+    chatBackground: '聊天壁纸',
+    voiceFile: '音色',
+    thinkingLevels: '思考档位',
+    pinned: '置顶',
+    muted: '免打扰',
+    displayStyle: '聊天样式',
+    wallpaperMask: '聊天壁纸遮罩',
+    wallpaperBlur: '聊天壁纸模糊',
+    drawingPreset: '绘图预设',
   };
 
   static Object? read(Conversation role, String key) {
@@ -99,11 +129,44 @@ abstract final class RoleField {
       addressUser => text(role.addressUser),
       enabledPlugins => role.enabledPlugins,
       recipeId => text(role.recipeId),
+      avatarUrl => text(role.avatarUrl),
+      characterImage => text(role.characterImage),
+      // The picture and how it is framed move together.
+      chatBackground => text(role.chatBackgroundImage) == null
+          ? null
+          : {
+              'image': role.chatBackgroundImage,
+              'framing': role.chatBackgroundFraming,
+            },
+      voiceFile => text(role.voiceFile),
+      thinkingLevels => {
+        for (final MapEntry(:key, :value) in role.thinkingLevels.entries)
+          key: value.name,
+      },
+      pinned => role.isPinned,
+      muted => role.isMuted,
+      displayStyle => role.chatDisplayStyle?.name,
+      wallpaperMask => role.chatBackgroundMaskOpacity,
+      wallpaperBlur => role.chatBackgroundBlurSigma,
+      drawingPreset => _drawingBinding(role),
       _ => throw ArgumentError.value(key, 'key', '未知字段'),
     };
   }
 
   static bool same(Object? a, Object? b) => jsonEncode(a) == jsonEncode(b);
+
+  static Map<String, String>? _drawingBinding(Conversation role) {
+    final parts = PersonaPromptCodec.parse(role.personaPrompt);
+    final binding = {
+      for (final (key, value) in [
+        ('id', parts.drawingPresetId),
+        ('tool', parts.drawingToolPresetName),
+        ('artist', parts.drawingArtistPresetName),
+      ])
+        if (value != null && value.trim().isNotEmpty) key: value.trim(),
+    };
+    return binding.isEmpty ? null : binding;
+  }
 }
 
 /// Change kinds written to the journal by the assistant.
@@ -244,12 +307,11 @@ class AssistantWriteTools {
     _tool(
       updateRole,
       '修改一个已有角色卡的字段。只传要改的字段；可选文本字段传空字符串表示清空。'
-      '会经过审核，用户可以撤销。',
+      '默认直接生效，用户可以撤销。',
       {
         'role_id': _string('aicove_list_roles 给出的角色 id'),
         RoleField.displayName: _string('名字'),
         RoleField.personaPrompt: _string('完整的新人设提示词（整体替换，不是追加）'),
-        RoleField.customDrawingPrompt: _string('自定义绘图提示'),
         RoleField.selfAddress: _string('角色的自称'),
         RoleField.addressUser: _string('角色对用户的称呼'),
       },
@@ -259,7 +321,7 @@ class AssistantWriteTools {
     _tool(
       createRole,
       '新建一个角色卡。新角色默认不开任何插件，需要的话再用 aicove_set_role_plugins 开启。'
-      '会经过审核，用户可以撤销（撤销会把它移进回收站）。',
+      '默认直接生效，用户可以撤销（撤销会把它移进回收站）。',
       {
         'name': _string('名字'),
         RoleField.personaPrompt: _string('人设提示词'),
@@ -273,7 +335,7 @@ class AssistantWriteTools {
       setRolePlugins,
       '设置角色开启哪些插件。all=true 表示全部插件；否则 plugins 列出要开启的全部插件 id'
       '（${[for (final e in kAssistantRolePlugins.entries) '${e.key}=${e.value}'].join('，')}）。'
-      'MCP 连接器、空间授权保持原样。开启联网搜索需要用户确认。',
+      'MCP 连接器、空间授权保持原样。开启联网搜索默认直接生效。',
       {
         'role_id': _string('角色 id'),
         'all': {'type': 'boolean', 'description': '是否开启全部插件'},
@@ -289,7 +351,7 @@ class AssistantWriteTools {
     _tool(
       bindPreset,
       '给角色绑定一个酒馆预设，preset_id 传空字符串表示解除绑定（回到全局默认预设或 AIcove 自己的装配）。'
-      '会经过审核，用户可以撤销。',
+      '默认直接生效，用户可以撤销。',
       {
         'role_id': _string('角色 id'),
         'preset_id': _string('aicove_list_presets 给出的预设 id；空字符串表示解除绑定'),
@@ -318,7 +380,7 @@ class AssistantWriteTools {
     _tool(
       authorizeRegex,
       '授权或取消授权一个预设的正则脚本；未授权时该预设的正则全部不执行。'
-      '会经过审核，用户可以撤销。',
+      '默认直接生效，用户可以撤销。',
       {
         'preset_id': _string('预设 id'),
         'authorized': {'type': 'boolean'},
@@ -439,6 +501,34 @@ class AssistantWriteTools {
     return {'ok': true, 'change': description, 'undo': '用户可以在聊天页撤销这次修改'};
   }
 
+  /// Edits [fields] of a visible role through the undo journal, for tool
+  /// groups outside this class. Fails with a [StateError] the tool reports.
+  /// With [guarded], the write lands only while the fields still hold what
+  /// the change records as `before`.
+  Future<Map<String, Object?>> editRole(
+    String toolName,
+    String roleId,
+    Map<String, Object?> fields, {
+    bool guarded = false,
+  }) async {
+    final role =
+        _visible(await roles.load(), roleId) ??
+        (throw StateError('没有 id 为「$roleId」的角色'));
+    return _editRole(
+      toolName,
+      role,
+      fields,
+      guard: guarded
+          ? (current) => fields.keys.every(
+              (key) => RoleField.same(
+                RoleField.read(current, key),
+                RoleField.read(role, key),
+              ),
+            )
+          : null,
+    );
+  }
+
   static String? _optionalText(Object? value) {
     final text = (value ?? '').toString().trim();
     return text.isEmpty ? null : text;
@@ -448,6 +538,12 @@ class AssistantWriteTools {
     final role = await _role(args);
     if (args.containsKey(RoleField.description))
       throw _Invalid(_descriptionNotSaved);
+    if (args.containsKey(RoleField.customDrawingPrompt)) {
+      throw _Invalid(
+        '角色的绘图要求已并入绘图预设：用 aicove_read_role 看它的 drawing_preset_id，'
+        '再用 aicove_add_prompt_section／aicove_edit_prompt_section 改这个预设的专属节',
+      );
+    }
     for (final key in RoleField.labels.keys) {
       if (args.containsKey(key) && args[key] is! String) {
         throw _Invalid('${RoleField.labels[key]}应为文本');
@@ -455,7 +551,6 @@ class AssistantWriteTools {
     }
     final fields = <String, Object?>{};
     for (final key in const [
-      RoleField.customDrawingPrompt,
       RoleField.selfAddress,
       RoleField.addressUser,
     ]) {
@@ -494,8 +589,8 @@ class AssistantWriteTools {
       RoleField.personaPrompt: prompt,
       RoleField.selfAddress: _optionalText(args[RoleField.selfAddress]),
       RoleField.addressUser: _optionalText(args[RoleField.addressUser]),
-      // New roles start with no plugins, as on the role edit page.
-      RoleField.enabledPlugins: const <String>[],
+      // New roles start with the default plugins, as on the role edit page.
+      RoleField.enabledPlugins: kDefaultRolePluginIds,
     });
     const description = '新建了角色';
     final created = _visible(await roles.load(), id);
@@ -602,6 +697,7 @@ class AssistantWriteTools {
         rated?.risk == AssistantRisk.major &&
         scope?.outcome == GateOutcome.approved;
     bool covered(Conversation current) =>
+        AssistantToolGate.unrestricted ||
         approvedMajor || _pluginRiskFor(current, args) != AssistantRisk.major;
     if (!covered(role) ||
         (rated != null &&
@@ -691,9 +787,10 @@ class AssistantWriteTools {
 /// must not claim to have changed it.
 const _descriptionNotSaved = '角色简介目前不会保存（已知问题），暂时不能改；可以把要写的简介告诉用户';
 
-class _Invalid implements Exception {
-  _Invalid(this.message);
-  final String message;
+/// A refused call; a [StateError] so tool groups that report state errors
+/// report it too.
+class _Invalid extends StateError {
+  _Invalid(super.message);
 }
 
 class _RoleApplier extends CheckedChangeApplier {

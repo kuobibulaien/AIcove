@@ -8,6 +8,7 @@ import '../../chat/domain/conversation.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../domain/aicove_docs.dart';
+import '../domain/assistant_onboarding.dart' show kAicoveAssistantId;
 
 /// Read-only tools of the AIcove assistant (ADR0073, batch T2): the docs
 /// library, roles, tavern presets and a role's assembled request context.
@@ -54,7 +55,7 @@ class AssistantToolset {
     ),
     _tool(
       'aicove_read_role',
-      '读取一个角色卡的完整设定：人设提示词、自定义绘图提示、称呼、插件选择、预设、思考档位等。',
+      '读取一个角色卡的完整设定：人设提示词、称呼、插件选择、预设（含绘图预设 id）、思考档位等。',
       {
         'role_id': {
           'type': 'string',
@@ -198,8 +199,11 @@ class AssistantToolset {
       ..._roleSummary(role, presetNames),
       'description': role.description,
       'persona_prompt': parts.userPrompt,
+      if (parts.drawingPresetId != null)
+        'drawing_preset_id': parts.drawingPresetId,
+      // Not moved into the drawing preset yet (ADR0092); read only.
       if (parts.customDrawingPrompt.isNotEmpty)
-        'custom_drawing_prompt': parts.customDrawingPrompt,
+        'legacy_drawing_prompt': parts.customDrawingPrompt,
       if (role.selfAddress != null) 'self_address': role.selfAddress,
       if (role.addressUser != null) 'address_user': role.addressUser,
       if (role.voiceFile != null) 'voice_preset': role.voiceFile,
@@ -209,7 +213,22 @@ class AssistantToolset {
             entry.key: entry.value.name,
         },
       if (role.sessionProvider != null) 'model_override': role.sessionProvider,
+      // chat：只派活；tool：完整 Agent 直接用插件（ADR0097）。AIcove酱恒为 tool。
+      'agent_mode': role.effectiveAgentMode.name,
       'has_avatar': (role.avatarUrl ?? role.characterImage) != null,
+      'chat_view': {
+        // What the user picked for this chat; `follow` means none.
+        'display_style': role.chatDisplayStyle?.name ?? 'follow',
+        // The assistant's own chat shows documents unless the user picks.
+        'effective_display_style':
+            role.chatDisplayStyle?.name ??
+            (role.id == kAicoveAssistantId
+                ? 'document'
+                : 'follow_global_default'),
+        'has_wallpaper': role.chatBackgroundImage?.trim().isNotEmpty == true,
+        'wallpaper_mask': ?role.chatBackgroundMaskOpacity,
+        'wallpaper_blur': ?role.chatBackgroundBlurSigma,
+      },
     };
   }
 
@@ -341,7 +360,7 @@ class AssistantToolset {
             'injected': plugin.injected,
             // Exception text is free-form and may quote request content.
             if (plugin.failed)
-              'reason': '插件提示词构建出错，详情见「设置 · 调试 · 联系人上下文」'
+              'reason': '插件提示词构建出错，详情见「设置 · 调试 · 角色完整上下文」'
             else if (plugin.reason != null)
               'reason': plugin.reason,
           },

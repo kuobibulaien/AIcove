@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:aicove_flutter/src/core/models/image_generation_snapshot.dart';
 import 'package:aicove_flutter/src/core/api/image_providers/comfyui_workflow.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
@@ -21,6 +22,103 @@ class _LocalHttp extends HttpOverrides {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'explicit modes roundtrip and share validation with effective requests',
+    () {
+      final channel = {
+        'comfyWorkflow': {
+          '6': {
+            'class_type': 'CLIPTextEncode',
+            'inputs': {'text': '%prompt%'},
+          },
+        },
+        'comfyBindings': {'prompt': '6.text'},
+        'comfyOutputNode': '6',
+        'requestFormat': 'comfyui',
+      };
+      final legacy = ImageConfig.fromJson({});
+      expect(legacy.comfyWorkflowMode, 'inherit');
+      expect(
+        legacy.effectiveComfyWorkflowMode(
+          modelId: ComfyUIWorkflow.modelId,
+          providerCustomConfig: channel,
+        ),
+        'custom',
+      );
+      expect(
+        legacy.effectiveComfyWorkflowMode(
+          modelId: 'model.safetensors',
+          providerCustomConfig: channel,
+        ),
+        'standard',
+      );
+      final standard = legacy.copyWith(
+        comfyWorkflowMode: 'standard',
+        comfyWorkflowConfig: channel,
+      );
+      expect(
+        ImageConfig.fromJson(standard.toJson()).comfyWorkflowMode,
+        'standard',
+      );
+      final effective = standard.buildComfyCustomConfig(
+        modelId: 'model.safetensors',
+        providerCustomConfig: channel,
+      );
+      for (final key in ['comfyWorkflow', 'comfyBindings', 'comfyOutputNode']) {
+        expect(effective.containsKey(key), false);
+        expect(channel.containsKey(key), true);
+      }
+      expect(
+        () => standard.validateComfyConfiguration(
+          modelId: ComfyUIWorkflow.modelId,
+          providerCustomConfig: channel,
+        ),
+        throwsFormatException,
+      );
+      final custom = legacy.copyWith(
+        comfyWorkflowMode: 'custom',
+        comfyWorkflowConfig: channel,
+        comfyLoraName: 'inactive.safetensors',
+        comfyLoraStrength: 3,
+      );
+      expect(
+        () => custom.validateComfyConfiguration(
+          modelId: ComfyUIWorkflow.modelId,
+          providerCustomConfig: channel,
+        ),
+        returnsNormally,
+      );
+      expect(
+        custom
+            .buildComfyCustomConfig(
+              modelId: ComfyUIWorkflow.modelId,
+              providerCustomConfig: channel,
+            )
+            .containsKey('comfyLoraName'),
+        false,
+      );
+      expect(
+        () => legacy
+            .copyWith(comfyWorkflowMode: 'custom')
+            .validateComfyConfiguration(
+              modelId: 'model.safetensors',
+              providerCustomConfig: channel,
+            ),
+        throwsFormatException,
+      );
+      expect(
+        () => legacy
+            .copyWith(
+              comfyWorkflowMode: 'standard',
+              comfyLoraName: 'active',
+              comfyLoraStrength: 3,
+            )
+            .validateComfyConfiguration(modelId: 'model.safetensors'),
+        throwsFormatException,
+      );
+    },
+  );
 
   test(
     'keyless tool, inline save and regenerate reuse the original workflow',
@@ -88,6 +186,7 @@ void main() {
       };
       final settings = mapUiModelsToAppSettings({}).copyWith(
         imageGenerationEnabled: true,
+        callFlowSettings: const CallFlowSettings(mode: CallFlowMode.call),
         modelTypes: {'local:${ComfyUIWorkflow.modelId}': 'image'},
         providers: [
           ProviderAuth(
@@ -163,6 +262,160 @@ void main() {
         expect(submissions.last['prompt'].containsKey('6'), true);
         expect(submissions.last['prompt'].containsKey('changed'), false);
         expect(submissions.last['prompt']['3']['inputs']['steps'], 12);
+
+        // Preset-level standard Checkpoint + LoRA mode (no custom workflow JSON).
+        submissions.clear();
+        final ckptSettings = settings.copyWith(
+          modelTypes: {'local:illustrious.safetensors': 'image'},
+          providers: [
+            ProviderAuth(
+              id: 'local',
+              apiBaseUrl: 'http://127.0.0.1:${server.port}',
+              apiKeys: const [],
+              models: const ['illustrious.safetensors'],
+              visibleModels: const ['illustrious.safetensors'],
+              capabilities: const ['image'],
+              customConfig: const {
+                'requestFormat': 'comfyui',
+                'comfyWorkflow': workflow,
+                'comfyBindings': {'prompt': '6.text'},
+                'comfyOutputNode': '9',
+              },
+            ),
+          ],
+        );
+        const loraConfig = ImageConfig(
+          selectedProviderId: 'local',
+          selectedModelId: 'local:illustrious.safetensors',
+          comfyLoraName: 'kokomi_v1.safetensors',
+          comfyLoraStrength: 0.75,
+          comfySampler: 'dpmpp_2m',
+          comfyScheduler: 'karras',
+        );
+        final loraPlugin = container.read(
+          Provider(
+            (ref) => ImagePlugin(
+              loraConfig,
+              ref,
+              requestSettings: ckptSettings,
+              isRequestSnapshot: true,
+            ),
+          ),
+        );
+        final loraResult = await loraPlugin.generateInlineImage(
+          prompt: '{"prompt":"1girl, smile","steps":20,"guidance_scale":5.0}',
+        );
+        expect(loraResult.error, isNull);
+        expect(
+          submissions.single['prompt']['4']['inputs']['ckpt_name'],
+          'illustrious.safetensors',
+        );
+        expect(
+          submissions.single['prompt']['10']['inputs']['lora_name'],
+          'kokomi_v1.safetensors',
+        );
+        expect(
+          submissions.single['prompt']['10']['inputs']['strength_model'],
+          0.75,
+        );
+        expect(
+          submissions.single['prompt']['3']['inputs']['sampler_name'],
+          'dpmpp_2m',
+        );
+        expect(submissions.single['prompt']['3']['inputs']['scheduler'], 'karras');
+        // Replay keeps the original sampler even after the preset changes.
+        final changedSamplerPlugin = container.read(
+          Provider(
+            (ref) => ImagePlugin(
+              loraConfig.copyWith(
+                comfySampler: 'euler_ancestral',
+                clearComfyScheduler: true,
+              ),
+              ref,
+              requestSettings: ckptSettings,
+              isRequestSnapshot: true,
+            ),
+          ),
+        );
+        final loraReplay = await changedSamplerPlugin.regenerateImage(
+          loraResult.generationSnapshot!,
+        );
+        expect(loraReplay.error, isNull);
+        expect(
+          submissions.last['prompt']['3']['inputs']['sampler_name'],
+          'dpmpp_2m',
+        );
+        expect(submissions.last['prompt']['3']['inputs']['scheduler'], 'karras');
+        expect(
+          submissions.last['prompt']['10']['inputs']['lora_name'],
+          'kokomi_v1.safetensors',
+        );
+
+        final noLoraPlugin = container.read(
+          Provider(
+            (ref) => ImagePlugin(
+              loraConfig.copyWith(clearComfyLoraName: true),
+              ref,
+              requestSettings: ckptSettings,
+              isRequestSnapshot: true,
+            ),
+          ),
+        );
+        final noLora = await noLoraPlugin.generateInlineImage(prompt: 'cat');
+        expect(noLora.error, isNull);
+        expect(
+          noLora.generationSnapshot!.customParameters.containsKey(
+            'comfyLoraName',
+          ),
+          true,
+        );
+        expect(
+          noLora.generationSnapshot!.customParameters['comfyLoraName'],
+          isNull,
+        );
+        expect(
+          noLora.generationSnapshot!.customParameters['comfyLoraStrength'],
+          1.0,
+        );
+        final changedLora = ckptSettings.copyWith(
+          providers: [
+            ckptSettings.providers.single.copyWith(
+              customConfig: {
+                ...ckptSettings.providers.single.customConfig,
+                'comfyLoraName': 'later.safetensors',
+                'comfyLoraStrength': 0.2,
+              },
+            ),
+          ],
+        );
+        final noLoraReplay = container.read(
+          Provider(
+            (ref) => ImagePlugin(
+              loraConfig,
+              ref,
+              requestSettings: changedLora,
+              isRequestSnapshot: true,
+            ),
+          ),
+        );
+        await noLoraReplay.regenerateImage(noLora.generationSnapshot!);
+        expect(submissions.last['prompt'].containsKey('10'), false);
+        // Legacy snapshots may omit both no-LoRA state and default strength.
+        final oldNoLora = noLora.generationSnapshot!.toJson();
+        oldNoLora['customParameters'] = <String, dynamic>{};
+        await noLoraReplay.regenerateImage(
+          ImageGenerationSnapshot.tryRead(oldNoLora)!,
+        );
+        expect(submissions.last['prompt'].containsKey('10'), false);
+        final oldLora = loraResult.generationSnapshot!.toJson();
+        (oldLora['customParameters'] as Map).remove('comfyLoraStrength');
+        await noLoraReplay.regenerateImage(
+          ImageGenerationSnapshot.tryRead(oldLora)!,
+        );
+        expect(
+          submissions.last['prompt']['10']['inputs']['strength_model'],
+          1.0,
+        );
       }, _LocalHttp());
     },
   );

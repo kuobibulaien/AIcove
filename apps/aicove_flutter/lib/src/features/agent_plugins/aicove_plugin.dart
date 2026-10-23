@@ -1,5 +1,5 @@
 /// App-side plugin API v2 on top of the kernel plugin host (ADR0064 batch 2,
-/// see docs/02_前后端分离与架构规范/Agent运行时第二批实施方案.md §3.2).
+/// see docs/05_历史归档/20261022_文档进度更新/02_前后端分离与架构规范/Agent运行时第二批实施方案.md §3.2).
 ///
 /// Plugins only contribute through the registrar; the assembly core collects
 /// contributions in registration order and never checks plugin types.

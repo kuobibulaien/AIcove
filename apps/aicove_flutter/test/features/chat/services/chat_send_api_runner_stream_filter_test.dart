@@ -58,7 +58,7 @@ AppSettings _buildTestSettings() {
     accentColor: 'FC96AA',
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
-    callFlowSettings: CallFlowSettings(mode: CallFlowMode.auto),
+    callFlowSettings: CallFlowSettings(mode: CallFlowMode.call),
   );
 }
 
@@ -178,6 +178,67 @@ class _SplitThinkStreamingClient extends AgentApiClient {
     return const SendMessageRichResult(
       text: '第一句。<think>内部思考过程</think>第二句。',
       toolResults: <Map<String, dynamic>>[],
+    );
+  }
+}
+
+class _StickerStreamingClient extends AgentApiClient {
+  _StickerStreamingClient(Duration timeout, this.chunks) : super(timeout: timeout);
+
+  final List<String> chunks;
+
+  @override
+  Future<SendMessageRichResult> sendMessageRich({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
+    List<Map<String, dynamic>>? tools,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) {
+    throw UnsupportedError('这个测试只应该命中流式调用');
+  }
+
+  @override
+  Future<SendMessageRichResult> sendMessageRichStream({
+    required String agentId,
+    required String sessionId,
+    required String modelFullId,
+    required List<Map<String, dynamic>> messages,
+    required String userText,
+    double? temperature,
+    double? topP,
+    String? token,
+    String? providerApiBase,
+    String? providerApiKey,
+    Map<String, dynamic>? customConfig,
+    ProviderChatRequestOptions? requestOptions,
+    List<Map<String, dynamic>>? tools,
+    void Function(String delta)? onTextDelta,
+    void Function()? onToolCallsDetected,
+    void Function(List<ToolCall> Function() snapshot)? onToolCallProgress,
+    TraceLogger? trace,
+    String? turnId,
+    int? roundIndex,
+    String? traceId,
+  }) async {
+    for (final chunk in chunks) {
+      onTextDelta?.call(chunk);
+    }
+    return SendMessageRichResult(
+      text: chunks.join(),
+      toolResults: const [],
     );
   }
 }
@@ -500,6 +561,39 @@ class _SplitPresetThinkStreamingClient extends AgentApiClient {
 void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  for (final (chunks, visible) in <(List<String>, String)>[
+    (['晚安。<st', 'icker tag="晚安', '"/', '>好梦。'], '晚安。好梦。'),
+    (['前<STICKER TAG="开>心"', '/>后'], '前后'),
+    (['前<sticker tag="收到">收到啦</sti', 'cker>后'], '前收到啦后'),
+    (['前<sticker tag="收到">收到啦</sticker><think>内部</think>后'], '前收到啦后'),
+    (['前<stickers>普通文字</stickers>后'], '前<stickers>普通文字</stickers>后'),
+  ]) {
+    test('stream hides sticker markup without losing following text: $chunks', () async {
+      final raw = chunks.join();
+      final runner = createRunner(
+        agentClientFactory: (timeout) => _StickerStreamingClient(timeout, chunks),
+      );
+      final deltas = <String>[];
+      final result = await runner.executeApiCall(
+        config: ApiConfig(
+          settings: _buildTestSettings(),
+          modelFullId: 'openai:gpt-3.5-turbo',
+          providerApiBase: 'https://api.openai.com/v1',
+          providerApiKey: 'test-key',
+          customConfig: const {},
+          messages: const [{'role': 'user', 'content': '晚安'}],
+        ),
+        sessionId: 'sticker_stream',
+        userText: '晚安',
+        responseProcessors: const [],
+        enableStreaming: true,
+        onStreamTextDelta: deltas.add,
+      );
+      expect(deltas.join(), visible);
+      expect(result.rawReplyText, raw);
+    });
+  }
+
   test(
       'stream callback should receive visible text only before inline image tags',
       () async {
@@ -532,7 +626,6 @@ void _runAll(RunnerFactory createRunner) {
       availableTools: testTools(<TestPlugin>[_InlineImageStripPlugin()]),
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(streamedDeltas, <String>['第一句。', '第二句。']);
@@ -569,7 +662,6 @@ void _runAll(RunnerFactory createRunner) {
       responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(streamedDeltas, <String>['第一句。', '第二句。']);
@@ -609,7 +701,6 @@ void _runAll(RunnerFactory createRunner) {
       responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(streamedDeltas, <String>['第一句。', '第二句。']);
@@ -647,7 +738,6 @@ void _runAll(RunnerFactory createRunner) {
       responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(
@@ -692,7 +782,6 @@ void _runAll(RunnerFactory createRunner) {
       responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(
@@ -725,7 +814,6 @@ void _runAll(RunnerFactory createRunner) {
       responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(streamedDeltas.join(), '正文。');
@@ -756,7 +844,6 @@ void _runAll(RunnerFactory createRunner) {
       responseProcessors: const [],
       enableStreaming: true,
       onStreamTextDelta: streamedDeltas.add,
-      maxRounds: 1,
     );
 
     expect(

@@ -41,9 +41,10 @@ void main() {
     Object? testError,
     bool dark = false,
     GlobalKey? capture,
+    Size size = const Size(390, 844),
   }) async {
     SharedPreferences.setMockInitialValues(prefs);
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final settings = FakeSettings(
@@ -68,17 +69,44 @@ void main() {
               : (context, child) =>
                     RepaintBoundary(key: capture, child: child!),
           home: Scaffold(
-            body: Consumer(
-              builder: (context, ref, _) =>
-                  ref.watch(assistantScriptActiveProvider)
-                  ? const AssistantOnboardingView(displayName: 'AIcove 助手')
-                  : const Center(child: Text('chat list')),
+            body: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (capture != null)
+                  Image.asset(
+                    'assets/wallpapers/catnap_${dark ? 'dark' : 'light'}.webp',
+                    fit: BoxFit.cover,
+                    alignment: Alignment.centerLeft,
+                  ),
+                MoeGlassTheme(
+                  enabled: true,
+                  blurSigma: kDefaultGlassBlurSigma,
+                  child: Consumer(
+                    builder: (context, ref, _) =>
+                        ref.watch(assistantScriptActiveProvider)
+                        ? const AssistantOnboardingView(
+                            displayName: 'AIcove酱',
+                            avatarUrl:
+                                'assets/characters/images/aicove_assistant.png',
+                          )
+                        : const Center(child: Text('chat list')),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
+    if (capture != null) {
+      await tester.runAsync(() async {
+        for (final element in find.byType(Image).evaluate()) {
+          await precacheImage((element.widget as Image).image, element);
+        }
+      });
+      await tester.pumpAndSettle();
+    }
     return settings;
   }
 
@@ -87,11 +115,14 @@ void main() {
       tester,
       testError: Exception('模型测试失败: Exception: HTTP 401: invalid'),
     );
-    expect(find.text('你之前配置过 API、用过 AI Agent 吗？'), findsOneWidget);
+    expect(
+      find.textContaining('你之前配置过 API、用过 AI Agent 吗？', findRichText: true),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('配过 API，直接填 Key'));
     await tester.pumpAndSettle();
-    expect(find.text('用哪家模型服务？'), findsOneWidget);
+    expect(find.textContaining('用哪家模型服务？', findRichText: true), findsOneWidget);
     expect(find.text('API 是什么？'), findsNothing);
 
     await tester.tap(find.text('DeepSeek（推荐）'));
@@ -144,8 +175,11 @@ void main() {
       ('chooseProvider', false, 'API 是什么？'),
       ('getKey', false, null),
       ('pasteKey', false, 'fail'),
+      ('chooseProvider', false, 'wide'),
     ]) {
-      final name = '${step.$1}-${dark ? 'dark' : 'light'}';
+      final wide = step.$3 == 'wide';
+      final name =
+          '${step.$1}-${dark ? 'dark' : 'light'}${wide ? '-wide' : ''}';
       testWidgets('preview $name', (tester) async {
         if (!_writePreview) return;
         final capture = GlobalKey();
@@ -153,6 +187,7 @@ void main() {
           tester,
           dark: dark,
           capture: capture,
+          size: wide ? const Size(760, 844) : const Size(390, 844),
           testError: Exception(
             '模型测试失败: Exception: HTTP 402: Insufficient Balance',
           ),
@@ -168,7 +203,7 @@ void main() {
           );
           await tester.tap(find.text('保存并测试'));
           await tester.pumpAndSettle();
-        } else if (step.$3 != null) {
+        } else if (step.$3 != null && !wide) {
           await tester.tap(find.text(step.$3!));
           await tester.pumpAndSettle();
         }
@@ -179,7 +214,7 @@ void main() {
           final image = await boundary.toImage(pixelRatio: 2);
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
           final file = File(
-            '../../scratch/assistant-onboarding-20261017/$name.png',
+            '../../scratch/assistant-onboarding-20261021/$name.png',
           );
           await file.parent.create(recursive: true);
           await file.writeAsBytes(bytes!.buffer.asUint8List());

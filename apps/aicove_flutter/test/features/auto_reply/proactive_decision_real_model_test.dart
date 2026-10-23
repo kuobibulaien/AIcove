@@ -1,6 +1,9 @@
 // Real-model check for plan 12 (opt-in): the chat-model fallback prompt,
 // sent to DeepSeek Flash, must come back as parseable answers. Skipped unless
 // DEEPSEEK_API_KEY is set; the key is read from the environment only.
+@Tags(['real_model'])
+library;
+
 import 'dart:convert';
 import 'dart:io';
 

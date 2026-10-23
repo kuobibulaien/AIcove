@@ -30,7 +30,8 @@ import '../../theme/tokens.dart';
 import '../effects/smooth_clip.dart';
 import 'moe_toast.dart';
 
-/// 代码块组件（MoeCodeBlock）：语言名 + 复制按钮 + 语法高亮，超宽横向滚动。
+/// 代码块组件（MoeCodeBlock）：语言名 + 复制按钮 + 语法高亮，超宽横向滚动；
+/// [wrap] 为真时改为按容器宽度折行。
 ///
 /// 底色取前景色的淡叠加，放进任何气泡或页面背景都能分层；高亮只注册常用语言，
 /// 未知或未标注语言按纯文本显示。只负责展示，不解析 Markdown，代码由调用方传入。
@@ -41,6 +42,7 @@ class MoeCodeBlock extends StatefulWidget {
     this.language = '',
     this.foregroundColor,
     this.fontSize = 13,
+    this.wrap = false,
   });
 
   final String code;
@@ -51,6 +53,9 @@ class MoeCodeBlock extends StatefulWidget {
   /// 未高亮文字与标题栏颜色；为空时取主题正文色。
   final Color? foregroundColor;
   final double fontSize;
+
+  /// 按容器宽度折行而不是横向滚动，适合给人读的原文（如组件回退时的 JSON）。
+  final bool wrap;
 
   @override
   State<MoeCodeBlock> createState() => _MoeCodeBlockState();
@@ -103,6 +108,11 @@ class _MoeCodeBlockState extends State<MoeCodeBlock> {
       height: 1.45,
     );
     final language = widget.language.trim();
+    const bodyPadding = EdgeInsets.fromLTRB(12, 0, 12, 12);
+    final body = Text.rich(
+      _highlighted(codeStyle, brightness),
+      softWrap: widget.wrap,
+    );
 
     return Container(
       width: double.infinity,
@@ -144,14 +154,14 @@ class _MoeCodeBlockState extends State<MoeCodeBlock> {
               ],
             ),
           ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-            child: Text.rich(
-              _highlighted(codeStyle, brightness),
-              softWrap: false,
+          if (widget.wrap)
+            Padding(padding: bodyPadding, child: body)
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: bodyPadding,
+              child: body,
             ),
-          ),
         ],
       ),
     );

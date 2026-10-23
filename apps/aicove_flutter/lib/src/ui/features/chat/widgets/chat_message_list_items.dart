@@ -1,5 +1,6 @@
 import '../../../../features/conversation_state/domain/mvu_content.dart';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -13,6 +14,9 @@ import '../../../../features/chat/domain/message.dart';
 import '../../../../features/content_tags/domain/tag_presentation.dart';
 import '../../../../features/dialogue_options/domain/dialogue_options.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
+import '../../../../features/chat/services/chat_message_processor.dart';
+import '../../../../features/chat/services/chat_request_message_builder.dart';
+import '../../../../features/task_agent/application/delegate_task_plugin.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 
 abstract class ChatMessageListItem {
@@ -51,6 +55,72 @@ class ChatChunkedMessageItem extends ChatMessageListItem {
 
   /// 非空时这一段是折叠气泡（预设语义标签投影，ADR0046）。
   final TagFoldPart? fold;
+}
+
+/// The quiet waiting line for a `delegate_task` errand. It renders outside
+/// any bubble and collapses once the task settles; the persona's own reply
+/// is what tells the user the result.
+class ChatTaskRunningItem extends ChatMessageListItem {
+  const ChatTaskRunningItem(this.taskId, {required this.associatedMessageId});
+
+  final String taskId;
+  final String associatedMessageId;
+}
+
+/// How a reply ended when it did not finish normally. Written by the send
+/// pipeline into the turn's last assistant message as
+/// `rawPayload['runStatus']`; a completed reply carries no key.
+enum ChatRunStatus {
+  truncated('回复达到长度上限，被截断了'),
+  waitingForUser('在等你回答，回复后接着做'),
+  cancelled('已停止'),
+  failed('出错了，没有做完');
+
+  const ChatRunStatus(this.label);
+
+  final String label;
+
+  static ChatRunStatus? of(Message message) {
+    if (message.role != 'assistant' || message.status == 'sending') {
+      return null;
+    }
+    final raw = message.rawPayload?['runStatus'];
+    for (final status in values) {
+      if (status.name == raw) return status;
+    }
+    return null;
+  }
+}
+
+/// The quiet line under a reply that did not finish normally, so a cut-off
+/// or stopped run never reads as a finished answer.
+class ChatRunStatusItem extends ChatMessageListItem {
+  const ChatRunStatusItem(this.status, {required this.associatedMessageId});
+
+  final ChatRunStatus status;
+  final String associatedMessageId;
+}
+
+/// The quiet action row under a finished assistant reply in document mode:
+/// copy, quote, retry and when it was sent. One reply turn may span several
+/// messages (tool rounds, split replies); [message] is the last of them.
+/// A reply still generating keeps the row's space but hides it, so the
+/// list does not grow under the reader the moment the reply finishes.
+class ChatReplyActionsItem extends ChatMessageListItem {
+  const ChatReplyActionsItem(
+    this.message, {
+    required this.messageIds,
+    required this.copyText,
+    required this.finished,
+  });
+
+  final Message message;
+  final bool finished;
+
+  /// Every message of the turn, so hovering any of them reveals this row.
+  final List<String> messageIds;
+
+  final String copyText;
 }
 
 class ChatTimeDividerItem extends ChatMessageListItem {
@@ -108,53 +178,78 @@ List<ChatMessageListItem> buildChatMessageListItems({
   required List<Message> messages,
   MessageFormatConfig? config,
   TagPresentationMap tagPresentation = const {},
+  bool showTimeDividers = true,
+  bool showThinkingFolds = true,
+  bool showToolCallFolds = false,
+  bool showReplyActions = false,
 }) {
   final items = <ChatMessageListItem>[];
   final enableChunking = config?.enableChunking ?? true;
 
+  Message? previousShown;
   for (var index = 0; index < messages.length; index++) {
+    // 后台任务回执只给人设转告用，聊天里不显示（ADR0088 §4）。
+    if (_isTaskReceipt(messages[index])) continue;
+    final start = index;
+    var source = messages[index];
+    // 连着几轮只调工具不说话时，相邻的工具调用收拢成一个过程折叠段。
+    if (showToolCallFolds && _isToolOnly(source)) {
+      final blocks = [...source.blocks!];
+      while (index + 1 < messages.length && _isToolOnly(messages[index + 1])) {
+        index++;
+        blocks.addAll(messages[index].blocks!);
+      }
+      if (index > start) {
+        source = source.copyWith(
+          blocks: blocks,
+          rawPayload: messages[index].rawPayload,
+        );
+      }
+    }
     final currentMessage = stripDialogueOptionsForDisplay(
-      stripMvuUpdatesForDisplay(messages[index]),
+      stripMvuUpdatesForDisplay(source),
     );
+    final runStatus = ChatRunStatus.of(currentMessage);
+    final runningItems = [
+      for (final taskId in _delegateTaskIds(currentMessage))
+        ChatTaskRunningItem(taskId, associatedMessageId: currentMessage.id),
+      if (runStatus != null)
+        ChatRunStatusItem(runStatus, associatedMessageId: currentMessage.id),
+    ];
+    // 只有派活调用或运行状态的那一轮不画空气泡，只留等待条／状态行。
+    if (runningItems.isNotEmpty &&
+        currentMessage.status != 'sending' &&
+        _resolveChunkSourceText(currentMessage).trim().isEmpty &&
+        !_hasNonTextBlocks(currentMessage)) {
+      items.addAll(runningItems);
+      continue;
+    }
     // 只有选项的回复段交给对话选项气泡展示，不留空气泡。
-    if (!identical(currentMessage, messages[index]) &&
+    if (!identical(currentMessage, source) &&
         currentMessage.status != 'sending' &&
         _resolveChunkSourceText(currentMessage).trim().isEmpty &&
         !_hasNonTextBlocks(currentMessage)) {
       continue;
     }
-    var hasTimeDivider = false;
-
-    if (index == 0) {
+    // 时间小气泡属于时间感知插件：插件关掉时不显示，但隔了很久的消息照样重新露头像。
+    final hasTimeDivider = start == 0 ||
+        currentMessage.createdAt
+                .difference(messages[start - 1].createdAt)
+                .inMinutes >=
+            20;
+    if (hasTimeDivider && showTimeDividers) {
       items.add(
         ChatTimeDividerItem(
           currentMessage.createdAt,
           associatedMessageId: currentMessage.id,
         ),
       );
-      hasTimeDivider = true;
-    } else {
-      final previousMessage = messages[index - 1];
-      final timeDiff =
-          currentMessage.createdAt.difference(previousMessage.createdAt);
-      if (timeDiff.inMinutes >= 20) {
-        items.add(
-          ChatTimeDividerItem(
-            currentMessage.createdAt,
-            associatedMessageId: currentMessage.id,
-          ),
-        );
-        hasTimeDivider = true;
-      }
     }
 
-    var showAvatar = true;
-    if (!hasTimeDivider && index > 0) {
-      final previousMessage = messages[index - 1];
-      if (previousMessage.role == currentMessage.role) {
-        showAvatar = false;
-      }
-    }
+    final showAvatar = hasTimeDivider ||
+        previousShown == null ||
+        previousShown.role != currentMessage.role;
+    previousShown = currentMessage;
 
     final chunkSourceText = _resolveChunkSourceText(currentMessage);
     final shouldChunk = enableChunking &&
@@ -164,8 +259,9 @@ List<ChatMessageListItem> buildChatMessageListItems({
         chunkSourceText.trim().isNotEmpty;
 
     // 预设语义标签：折叠标签单独成折叠气泡，正文标签去壳，其余照常分段。
-    final tagParts = currentMessage.role == 'assistant' &&
-            !_hasNonTextBlocks(currentMessage)
+    final projectable = currentMessage.role == 'assistant' &&
+        !_hasNonTextBlocks(currentMessage);
+    var tagParts = projectable
         ? _projectTagParts(
             chunkSourceText,
             tagPresentation,
@@ -173,6 +269,29 @@ List<ChatMessageListItem> buildChatMessageListItems({
             allowUnwrap: currentMessage.status != 'sending',
           )
         : null;
+    // 过程排在正文前：模型原生思考 → 工具调用 → 正文里的标签思维链。
+    final processFolds = projectable
+        ? [
+            ..._modelThinkingFolds(currentMessage),
+            if (showToolCallFolds) ..._toolCallFolds(currentMessage),
+          ]
+        : const <TagFoldPart>[];
+    if (processFolds.isNotEmpty) {
+      tagParts = [
+        ...processFolds,
+        ...tagParts ??
+            [
+              if (chunkSourceText.trim().isNotEmpty)
+                TagBodyPart(chunkSourceText),
+            ],
+      ];
+    }
+    if (tagParts != null && !showThinkingFolds) {
+      tagParts = [
+        for (final part in tagParts)
+          if (part is! TagFoldPart || !_isThinkingFoldTitle(part.title)) part,
+      ];
+    }
     if (tagParts != null) {
       final pieces = <(String, TagFoldPart?)>[
         for (final part in tagParts)
@@ -204,6 +323,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
           ),
         );
       }
+      items.addAll(runningItems);
       continue;
     }
 
@@ -227,6 +347,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
             ),
           );
         }
+        items.addAll(runningItems);
         continue;
       }
     }
@@ -241,9 +362,72 @@ List<ChatMessageListItem> buildChatMessageListItems({
         showAvatar: showAvatar,
       ),
     );
+    items.addAll(runningItems);
   }
 
-  return items;
+  return showReplyActions ? _withReplyActions(items) : items;
+}
+
+Message? _itemMessage(ChatMessageListItem item) => switch (item) {
+      ChatMessageItem(:final message) => message,
+      ChatChunkedMessageItem(:final originalMessage) => originalMessage,
+      _ => null,
+    };
+
+/// Appends a [ChatReplyActionsItem] after the last item of every assistant
+/// turn, i.e. right before the next user message or the end.
+List<ChatMessageListItem> _withReplyActions(List<ChatMessageListItem> items) {
+  final result = <ChatMessageListItem>[];
+  final turn = <Message>[];
+  var insertAt = 0;
+  void flush() {
+    if (turn.isNotEmpty) {
+      result.insert(
+        insertAt,
+        ChatReplyActionsItem(
+          turn.last,
+          messageIds: [for (final m in turn) m.id],
+          copyText: [
+            for (final m in turn)
+              if (_resolveChunkSourceText(m).trim() case final text
+                  when text.isNotEmpty)
+                text,
+          ].join('\n\n'),
+          finished: turn.every((m) => m.status != 'sending'),
+        ),
+      );
+    }
+    turn.clear();
+  }
+
+  for (final item in items) {
+    final message = _itemMessage(item);
+    if (message != null && message.role == 'user') flush();
+    result.add(item);
+    final assistantItem = message != null
+        ? message.role == 'assistant'
+        : item is ChatTaskRunningItem || item is ChatRunStatusItem;
+    if (!assistantItem) continue;
+    if (message != null && (turn.isEmpty || turn.last.id != message.id)) {
+      turn.add(message);
+    }
+    insertAt = result.length;
+  }
+  flush();
+  return result;
+}
+
+bool _isTaskReceipt(Message message) =>
+    message.blocks?.any((block) => block is TaskReceiptBlock) ?? false;
+
+Iterable<String> _delegateTaskIds(Message message) sync* {
+  if (message.role != 'assistant') return;
+  for (final block in message.blocks ?? const <MessageBlock>[]) {
+    if (block is ToolBlock) {
+      final taskId = delegateTaskIdOf(block);
+      if (taskId != null) yield taskId;
+    }
+  }
 }
 
 List<ImagePreviewItem> collectChatMessageListImages(List<Message> messages) {
@@ -336,12 +520,221 @@ List<TagDisplayPart>? _projectTagParts(
   return unchanged ? null : parts;
 }
 
+/// 思维链折叠段：预设思考类标签统一标题「思考」，模型原生思考为「模型思考」，
+/// 没有标题时显示「思考过程」。
+bool _isThinkingFoldTitle(String title) {
+  final trimmed = title.trim();
+  return trimmed.isEmpty ||
+      trimmed == '思考' ||
+      trimmed == '思考过程' ||
+      trimmed == ChatMessageProcessor.modelThinkingTitle;
+}
+
+/// 消息里存着的思考块（模型原生思考）投影成折叠段。
+List<TagFoldPart> _modelThinkingFolds(Message message) {
+  final blocks = message.blocks;
+  if (blocks == null) return const <TagFoldPart>[];
+  return [
+    for (final block in blocks)
+      if (block is ThinkingBlock && block.content.trim().isNotEmpty)
+        TagFoldPart(
+          title: block.title?.trim().isNotEmpty == true
+              ? block.title!
+              : ChatMessageProcessor.modelThinkingTitle,
+          content: block.content,
+          closed: block.status != BlockStatus.streaming,
+        ),
+  ];
+}
+
+const int _kToolFoldResultMaxChars = 2000;
+
+const _kCodemodeCallStatusLabels = {
+  'running': '进行中',
+  'ok': '完成',
+  'error': '失败',
+  'cancelled': '已取消',
+};
+
+/// The calls a codemode script made, one line each, as the backend records
+/// them in `result['codemodeCalls']`.
+void _writeCodemodeCalls(StringBuffer buffer, Object? calls) {
+  if (calls is! List || calls.isEmpty) return;
+  buffer.writeln('脚本里调用了 ${calls.length} 个工具');
+  for (final call in calls.whereType<Map>()) {
+    final status = _kCodemodeCallStatusLabels[call['status']] ?? '${call['status']}';
+    final duration = call['durationMs'];
+    final error = call['error'];
+    final seconds = duration is! num
+        ? ''
+        : duration < 1000
+        ? ' · ${duration.round()} 毫秒'
+        : ' · ${(duration / 1000).toStringAsFixed(1)} 秒';
+    final reason = error is String && error.isNotEmpty ? '：$error' : '';
+    final hint = _toolHint(_decodeCodemodeArgs(call['args']));
+    final what = hint == null ? '' : ' ${hint.replaceAll('`', "'")}';
+    buffer.writeln('- `${call['name']}$what` $status$seconds$reason');
+  }
+}
+
+bool _isToolOnly(Message message) {
+  final blocks = message.blocks;
+  return blocks != null &&
+      blocks.isNotEmpty &&
+      blocks.every((block) => block is ToolBlock);
+}
+
+/// 一条消息里的工具调用块投影成一个折叠段，多次调用逐个列在里面；
+/// 应用自己补的内部上下文块不算工具调用。
+List<TagFoldPart> _toolCallFolds(Message message) {
+  final calls = [
+    for (final block in message.blocks ?? const <MessageBlock>[])
+      if (block is ToolBlock &&
+          block.toolName !=
+              ChatRequestMessageBuilder.internalImageContextToolName)
+        block,
+  ];
+  if (calls.isEmpty) return const <TagFoldPart>[];
+  if (calls.length == 1) {
+    return [
+      TagFoldPart(
+        title: _toolFoldTitle(calls),
+        content: _formatToolFoldContent(calls.single),
+        closed: true,
+      ),
+    ];
+  }
+  return [
+    TagFoldPart(
+      title: _toolFoldTitle(calls),
+      content: [
+        for (final (index, call) in calls.indexed)
+          '**${index + 1}. ${call.toolName == 'codemode' ? '脚本' : _toolUseLabel(_toolUses(call).single)}**\n\n${_formatToolFoldContent(call)}',
+      ].join('\n\n---\n\n'),
+      closed: true,
+    ),
+  ];
+}
+
+typedef _ToolUse = ({String name, Map<String, dynamic>? arguments, bool failed});
+
+const int _kToolHintMaxChars = 40;
+
+/// Argument keys worth showing next to a tool name, most telling first.
+const _kToolHintKeys = [
+  'command',
+  'path',
+  'url',
+  'query',
+  'pattern',
+  'name',
+  'prompt',
+];
+
+/// The tools a call actually used: a codemode script stands for the tools it
+/// called, any other call for itself.
+List<_ToolUse> _toolUses(ToolBlock block) {
+  if (block.toolName != 'codemode') {
+    return [(name: block.toolName, arguments: block.arguments, failed: false)];
+  }
+  final nested = block.result?['codemodeCalls'];
+  if (nested is! List) return const [];
+  return [
+    for (final call in nested.whereType<Map>())
+      (
+        name: '${call['name']}',
+        arguments: _decodeCodemodeArgs(call['args']),
+        failed: call['status'] == 'error',
+      ),
+  ];
+}
+
+Map<String, dynamic>? _decodeCodemodeArgs(Object? args) {
+  if (args is! String) return null;
+  try {
+    final decoded = jsonDecode(args);
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+  } on FormatException {
+    // The backend cuts args at 200 chars; pull the leading string fields out.
+    final fields = RegExp(r'"(\w+)":"((?:[^"\\]|\\.)*)').allMatches(args);
+    return {for (final m in fields) m[1]!: m[2]!};
+  }
+}
+
+/// The first line of the most telling argument, cut to a title-friendly length.
+String? _toolHint(Map<String, dynamic>? arguments) {
+  for (final key in _kToolHintKeys) {
+    final value = arguments?[key];
+    if (value is! String || value.trim().isEmpty) continue;
+    final chars = value.trim().split('\n').first.characters;
+    return chars.length > _kToolHintMaxChars
+        ? '${chars.take(_kToolHintMaxChars)}…'
+        : chars.toString();
+  }
+  return null;
+}
+
+String _toolUseLabel(_ToolUse use) {
+  final hint = _toolHint(use.arguments);
+  return hint == null ? use.name : '${use.name} · $hint';
+}
+
+/// One call shows its tool and key argument; several list the distinct tools
+/// and how many calls ran. Failed nested calls are counted at the end.
+String _toolFoldTitle(List<ToolBlock> calls) {
+  final uses = [for (final call in calls) ..._toolUses(call)];
+  if (uses.isEmpty) return '运行脚本';
+  final failed = uses.where((use) => use.failed).length;
+  final suffix = failed == 0 ? '' : ' · $failed 个失败';
+  if (uses.length == 1) return '${_toolUseLabel(uses.single)}$suffix';
+  final names = {for (final use in uses) use.name}.join('、');
+  return '$names · ${uses.length} 次$suffix';
+}
+
+String _formatToolFoldContent(ToolBlock block) {
+  final buffer = StringBuffer();
+  final arguments = block.arguments;
+  final script = block.toolName == 'codemode' ? (arguments?['code']) : null;
+  if (script is String) {
+    buffer
+      ..writeln('脚本')
+      ..writeln('```js')
+      ..writeln(script.trimRight())
+      ..writeln('```');
+    _writeCodemodeCalls(buffer, block.result?['codemodeCalls']);
+  } else if (arguments != null && arguments.isNotEmpty) {
+    buffer
+      ..writeln('参数')
+      ..writeln('```json')
+      ..writeln(const JsonEncoder.withIndent('  ').convert(arguments))
+      ..writeln('```');
+  }
+  final rawResult = block.result?['content'] ?? block.result;
+  if (rawResult != null) {
+    var text = rawResult is String
+        ? rawResult
+        : const JsonEncoder.withIndent('  ').convert(rawResult);
+    if (text.length > _kToolFoldResultMaxChars) {
+      text = '${text.substring(0, _kToolFoldResultMaxChars)}\n…';
+    }
+    buffer
+      ..writeln('结果')
+      ..writeln('```')
+      ..writeln(text)
+      ..writeln('```');
+  }
+  return buffer.toString().trimRight();
+}
+
 /// 消息里有文字以外的可见块（语音、图片、文件等）时整条显示，不分段也不投影。
-/// 工具块不显示（如生图完成后补在锚点文字消息上的图片上下文），不能让它
-/// 挡住标签投影，否则预设正文标签会原样露出。
+/// 工具块不显示（如生图完成后补在锚点文字消息上的图片上下文），思考块投影成
+/// 折叠段，都不能挡住标签投影，否则预设正文标签会原样露出。
 bool _hasNonTextBlocks(Message message) {
   final blocks = message.blocks;
-  return blocks?.any((block) => block is! TextBlock && block is! ToolBlock) ??
+  return blocks?.any(
+        (block) =>
+            block is! TextBlock && block is! ToolBlock && block is! ThinkingBlock,
+      ) ??
       false;
 }
 

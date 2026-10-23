@@ -226,7 +226,6 @@ void main() {
       ],
       activeChunkPunctuationSetId: 'custom',
       filterPunctuations: <String>['，'],
-      stickerProbability: 0.5,
       minSegmentLength: 2,
       protectQuotes: false,
     );

@@ -60,8 +60,12 @@ void main() {
   test('an undo cannot pick up a guarded change before its write decides',
       () async {
     final writing = Completer<bool>();
-    final commit = journal().commitIf('write', _change('a'), () => writing.future);
-    await pumpEventQueue();
+    final enteredWrite = Completer<void>();
+    final commit = journal().commitIf('write', _change('a'), () {
+      enteredWrite.complete();
+      return writing.future;
+    });
+    await enteredWrite.future;
     // The undo list may already show the record; undoing it has to wait.
     final pending = (await journal().recent()).single;
     final undo = journal().undo(pending.id);

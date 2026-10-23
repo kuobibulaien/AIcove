@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/database/database_provider.dart';
+import '../../assistant/domain/assistant_onboarding.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../chat/chat_providers.dart';
 import '../../chat/conversation_providers.dart';
+import '../../chat/domain/role_agent_mode.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../memory/providers/memory_providers.dart';
 import '../../settings/app_settings.dart';
@@ -58,9 +60,11 @@ final contextSummaryStoreProvider = Provider<ContextSummaryStorePort>(
   ),
 );
 
-final contextSummarizerProvider = FutureProvider<ContextSummarizerPort>((
-  ref,
-) async {
+Future<BackgroundContextSummarizer> _summarizer(
+  Ref ref, {
+  Future<bool> Function(String ownerId) isCompanion =
+      BackgroundContextSummarizer.neverCompanion,
+}) async {
   final settings = await ref.watch(appSettingsProvider.future);
   final model = await resolveCompactionModel(settings);
   return BackgroundContextSummarizer(
@@ -70,8 +74,26 @@ final contextSummarizerProvider = FutureProvider<ContextSummarizerPort>((
     requestTimeout: Duration(
       seconds: settings.callFlowSettings.modelTimeoutSeconds,
     ),
+    isCompanion: isCompanion,
   );
-});
+}
+
+/// 对话摘要：聊天模式的角色按陪伴整理；AIcove酱与工具模式按任务进度整理（ADR0097）。
+final contextSummarizerProvider = FutureProvider<ContextSummarizerPort>(
+  (ref) => _summarizer(
+    ref,
+    isCompanion: (owner) async {
+      if (owner == kAicoveAssistantId) return false;
+      final row = await ref.read(conversationRepositoryProvider).getById(owner);
+      return RoleAgentMode.fromValue(row?.agentMode) != RoleAgentMode.tool;
+    },
+  ),
+);
+
+/// 工具循环中的运行时压缩：整理的是工具步骤，始终按任务进度整理。
+final runtimeContextSummarizerProvider = FutureProvider<ContextSummarizerPort>(
+  _summarizer,
+);
 
 final contextManagerProvider = Provider<ContextManager>((ref) {
   Future<void> publish(String owner) async {

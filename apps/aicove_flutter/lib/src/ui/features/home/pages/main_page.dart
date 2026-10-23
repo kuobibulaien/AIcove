@@ -46,11 +46,10 @@ class _MainPageState extends ConsumerState<MainPage> {
     if (mounted) await _checkForUpdate();
   }
 
-  /// Release builds look for a newer GitHub release once per launch.
+  /// Every build, development ones included, looks for a newer GitHub release
+  /// once per launch, at the latest.
   Future<void> _checkForUpdate() async {
-    final service = AppUpdateService();
-    if (!service.canCheck) return;
-    final release = await service.checkForUpdate();
+    final release = await AppUpdateService.checkInstalled();
     if (release == null || !mounted) return;
     await showAppUpdateDialog(context, release);
   }

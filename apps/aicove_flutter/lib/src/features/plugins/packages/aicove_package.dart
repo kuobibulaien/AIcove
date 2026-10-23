@@ -1,11 +1,14 @@
 import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:yaml/yaml.dart';
+import 'package:unorm_dart/unorm_dart.dart' as unorm;
 
 import '../../content_tags/domain/content_tag_registry.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
 
-/// A declarative package (batch 2 plan §3.6): prompt fragments, semantic tag
-/// declarations and Markdown skills. It never contains anything executable;
-/// unknown fields reject the whole package.
+/// A local extension package: prompts, tags, skill resources and QuickJS.
+/// Unknown manifest fields reject the whole package (ADR0103).
 class AicovePackage {
   const AicovePackage({
     required this.id,
@@ -15,6 +18,9 @@ class AicovePackage {
     this.prompts = const [],
     this.tags = const [],
     this.skills = const [],
+    this.scriptMain,
+    this.files = const {},
+    this.directory,
   });
 
   static const manifestName = 'aicove-package.json';
@@ -26,6 +32,79 @@ class AicovePackage {
   final List<String> prompts;
   final List<PackageTag> tags;
   final List<PackageSkill> skills;
+  final String? scriptMain;
+  final Map<String, List<int>> files;
+  final String? directory;
+
+  AicovePackage installedAt(String path) => AicovePackage(
+    id: id,
+    name: name,
+    version: version,
+    description: description,
+    prompts: prompts,
+    tags: tags,
+    skills: skills,
+    scriptMain: scriptMain,
+    files: files,
+    directory: path,
+  );
+
+  static bool isSafePath(String path) =>
+      path.isNotEmpty &&
+      !path.contains(RegExp(r'[\\:\x00-\x1f]')) &&
+      !path
+          .split('/')
+          .any(
+            (s) =>
+                s.isEmpty ||
+                s == '.' ||
+                s == '..' ||
+                s.endsWith(' ') ||
+                s.endsWith('.'),
+          );
+
+  static Map<String, List<int>> _snapshot(Map<String, List<int>> files) =>
+      Map.unmodifiable({
+        for (final e in files.entries)
+          e.key: Uint8List.fromList(e.value).asUnmodifiableView(),
+      });
+
+  static String pathKey(String path) => unorm.nfc(path).toLowerCase();
+
+  /// Standard Skills names become stable local package IDs.
+  static String normalizeName(String name) {
+    final id = name
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^[-_]+|[-_]+$'), '');
+    if (id.isEmpty || id.length > 40) {
+      throw const PackageFormatException('技能 name 规范化后必须为 1～40 个字母或数字及 -、_');
+    }
+    return id;
+  }
+
+  static (String, String, String) _skillDocument(List<int> bytes) {
+    final source = utf8.decode(bytes).replaceFirst(RegExp(r'^\uFEFF'), '');
+    final match = RegExp(
+      r'^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)',
+    ).firstMatch(source);
+    if (match == null) {
+      throw const PackageFormatException('SKILL.md 缺少 YAML frontmatter');
+    }
+    try {
+      final metadata = loadYaml(match[1]!);
+      if (metadata is! Map) throw const FormatException();
+      return (
+        _string(metadata['name'], 'skill.name'),
+        _string(metadata['description'], 'skill.description'),
+        source.substring(match.end),
+      );
+    } on YamlException {
+      throw const PackageFormatException('SKILL.md 的 YAML 不合法');
+    } on FormatException {
+      throw const PackageFormatException('SKILL.md 的 YAML 必须是对象');
+    }
+  }
 
   /// Plugin id the package is installed under.
   String get pluginId => pluginIdOf(id);
@@ -39,9 +118,37 @@ class AicovePackage {
   /// Parses a package from its files (paths relative to the package root,
   /// `/`-separated). Throws [PackageFormatException] on anything not allowed.
   static AicovePackage parse(Map<String, List<int>> files) {
+    final keys = <String>{};
+    for (final path in files.keys) {
+      if (!isSafePath(path)) throw PackageFormatException('包内路径不合法：$path');
+      if (!keys.add(pathKey(path))) {
+        throw PackageFormatException('包里有重名文件：$path');
+      }
+    }
     final manifestBytes = files[manifestName];
     if (manifestBytes == null) {
-      throw const PackageFormatException('缺少 $manifestName');
+      final skillBytes = files['SKILL.md'];
+      if (skillBytes == null) {
+        throw const PackageFormatException('缺少 $manifestName 或 SKILL.md');
+      }
+      final (name, description, body) = _skillDocument(skillBytes);
+      final id = normalizeName(name);
+      return AicovePackage(
+        id: id,
+        name: name,
+        version: '1.0.0',
+        description: description,
+        files: _snapshot(files),
+        skills: [
+          PackageSkill(
+            name: id,
+            title: description,
+            file: 'SKILL.md',
+            content: body,
+            dir: '',
+          ),
+        ],
+      );
     }
     final Object? decoded;
     try {
@@ -69,6 +176,7 @@ class AicovePackage {
     final tags = <PackageTag>[];
     final skills = <PackageSkill>[];
     final referenced = <String>{manifestName};
+    String? scriptMain;
     final contents = manifest['contents'];
     if (contents is! List || contents.isEmpty) {
       throw const PackageFormatException('contents 必须是非空列表');
@@ -89,33 +197,82 @@ class AicovePackage {
             tags.add(PackageTag._parse(_object(rawTag, '标签')));
           }
         case 'skill':
-          _onlyKeys(item, const {'type', 'name', 'title', 'file'}, 'skill');
-          final skillName = _string(item['name'], 'skill.name');
+          _onlyKeys(item, const {
+            'type',
+            'name',
+            'title',
+            'file',
+            'dir',
+          }, 'skill');
+          final dirValue = item['dir'];
+          if (dirValue != null && item['file'] != null) {
+            throw const PackageFormatException('skill.file 与 skill.dir 不能同时填写');
+          }
+          String? dir;
+          late String file, content, skillName, title;
+          if (dirValue != null) {
+            dir = dirValue == '.' ? '' : _string(dirValue, 'skill.dir');
+            if (dir.isNotEmpty && !isSafePath(dir)) {
+              throw PackageFormatException('技能目录不合法：$dir');
+            }
+            file = dir.isEmpty ? 'SKILL.md' : '$dir/SKILL.md';
+            final bytes = files[file];
+            if (bytes == null) throw PackageFormatException('缺少技能文件：$file');
+            final (documentName, description, body) = _skillDocument(bytes);
+            skillName = item['name'] == null
+                ? normalizeName(documentName)
+                : _string(item['name'], 'skill.name');
+            title = item['title'] == null
+                ? description
+                : _string(item['title'], 'skill.title');
+            content = body;
+            referenced.addAll(
+              files.keys.where((p) => dir!.isEmpty || p.startsWith('$dir/')),
+            );
+          } else {
+            skillName = _string(item['name'], 'skill.name');
+            file = _string(item['file'], 'skill.file');
+            if (!_isSafeMarkdownPath(file)) {
+              throw PackageFormatException('技能文件必须是包内的 .md 文件：$file');
+            }
+            final bytes = files[file];
+            if (bytes == null) throw PackageFormatException('缺少技能文件：$file');
+            referenced.add(file);
+            title = item['title'] == null
+                ? ''
+                : _string(item['title'], 'skill.title');
+            content = utf8.decode(bytes);
+          }
           if (!_idPattern.hasMatch(skillName)) {
             throw PackageFormatException('技能名不合法：$skillName');
           }
           if (skills.any((s) => s.name == skillName)) {
             throw PackageFormatException('技能名重复：$skillName');
           }
-          final file = _string(item['file'], 'skill.file');
-          if (!_isSafeMarkdownPath(file)) {
-            throw PackageFormatException('技能文件必须是包内的 .md 文件：$file');
-          }
-          final bytes = files[file];
-          if (bytes == null) throw PackageFormatException('缺少技能文件：$file');
-          referenced.add(file);
-          final title = item['title'];
-          if (title != null && title is! String) {
-            throw const PackageFormatException('skill.title 必须是文本');
-          }
           skills.add(
             PackageSkill(
               name: skillName,
-              title: (title as String?)?.trim() ?? '',
+              title: title,
               file: file,
-              content: utf8.decode(bytes),
+              content: content,
+              dir: dir,
             ),
           );
+        case 'script':
+          _onlyKeys(item, const {'type', 'main'}, 'script');
+          if (scriptMain != null) {
+            throw const PackageFormatException('每个包只能声明一个 script');
+          }
+          scriptMain = _string(item['main'], 'script.main');
+          if (!isSafePath(scriptMain) ||
+              !scriptMain.endsWith('.js') ||
+              !files.containsKey(scriptMain)) {
+            throw PackageFormatException(
+              'script.main 必须是包内存在的 .js 文件：$scriptMain',
+            );
+          }
+          utf8.decode(files[scriptMain]!);
+          referenced.add(scriptMain);
         default:
           throw PackageFormatException('不支持的内容类型：${item['type']}');
       }
@@ -136,6 +293,8 @@ class AicovePackage {
       prompts: prompts,
       tags: tags,
       skills: skills,
+      scriptMain: scriptMain,
+      files: _snapshot(files),
     );
   }
 
@@ -162,7 +321,7 @@ class AicovePackage {
 
   static bool _isSafeMarkdownPath(String path) =>
       path.toLowerCase().endsWith('.md') &&
-      !path.startsWith('/') &&
+      isSafePath(path) &&
       !path.contains('\\') &&
       !path
           .split('/')
@@ -242,12 +401,16 @@ class PackageSkill {
     required this.title,
     required this.file,
     required this.content,
+    this.dir,
   });
 
   final String name;
   final String title;
   final String file;
   final String content;
+
+  /// Null for legacy single-Markdown skills; empty for the package root.
+  final String? dir;
 }
 
 class PackageFormatException implements Exception {

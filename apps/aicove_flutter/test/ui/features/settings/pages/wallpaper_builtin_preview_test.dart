@@ -1,3 +1,6 @@
+@Tags(['preview'])
+library;
+
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -20,12 +23,14 @@ void main() {
     for (final entry in {
       'WallpaperPreview': '/System/Library/Fonts/STHeiti Medium.ttc',
       'MaterialIcons':
-          '${Platform.environment['HOME']}/dev-sdks/flutter-3.44.6/bin/cache/'
+          '${Platform.environment['FLUTTER_ROOT'] ?? '${Platform.environment['HOME']}/dev-sdks/flutter-3.44.6'}/bin/cache/'
           'artifacts/material_fonts/MaterialIcons-Regular.otf',
     }.entries) {
+      final file = File(entry.value);
+      if (!file.existsSync()) continue;
       final loader = FontLoader(entry.key);
       loader.addFont(
-        File(entry.value).readAsBytes().then(ByteData.sublistView),
+        file.readAsBytes().then(ByteData.sublistView),
       );
       await loader.load();
     }
@@ -244,7 +249,7 @@ void main() {
               key: fullKey,
               child: MoeWallpaperTheme(
                 wallpaper: shown,
-                child: MoePageScaffold(body: SizedBox.expand()),
+                child: const MoePageScaffold(body: SizedBox.expand()),
               ),
             ),
           ),
@@ -257,6 +262,32 @@ void main() {
           fullKey,
           outDir,
           'narrow-${dark ? 'dark' : 'light'}',
+        );
+
+        // 整屏高斯模糊效果预览（blur = 16，mask = 0），验证无清晰线条透出、无染色遮罩。
+        final blurKey = GlobalKey();
+        await tester.pumpWidget(
+          MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(brightness: brightness, extensions: [colors]),
+            home: RepaintBoundary(
+              key: blurKey,
+              child: MoeWallpaperTheme(
+                wallpaper: shown,
+                style: const WallpaperStyle(blur: 16),
+                child: const MoePageScaffold(body: SizedBox.expand()),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await precacheWallpapers(tester, blurKey.currentContext!);
+        await tester.pumpAndSettle();
+        await captureTo(
+          tester,
+          blurKey,
+          outDir,
+          'narrow-blur16-${dark ? 'dark' : 'light'}',
         );
       });
     }

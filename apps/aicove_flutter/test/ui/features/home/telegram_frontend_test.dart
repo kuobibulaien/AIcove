@@ -1,3 +1,6 @@
+@Tags(['slow'])
+library;
+
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/composer.dart';
@@ -281,7 +284,7 @@ void main() {
         expect(find.byType(ProfilePage), findsOneWidget);
         await navigator.currentState!.maybePop();
         await tester.pumpAndSettle();
-        expect(find.text('联系人上下文'), findsNothing);
+        expect(find.text('角色完整上下文'), findsNothing);
         expect(find.text('编辑头像和名字'), findsOneWidget);
         await tester.tap(find.text('模型'));
         await tester.pumpAndSettle();
@@ -310,8 +313,8 @@ void main() {
         await tester.tap(find.text('调试'));
         await tester.pumpAndSettle();
         expect(find.byType(DebugCenterPage), findsOneWidget);
-        await tester.ensureVisible(find.text('联系人上下文'));
-        await tester.tap(find.text('联系人上下文'));
+        await tester.ensureVisible(find.text('角色完整上下文'));
+        await tester.tap(find.text('角色完整上下文'));
         await tester.pump();
         // 联系人从真实存储异步读取，给测试的真实异步区留出完成机会。
         for (var attempt = 0; attempt < 50; attempt++) {

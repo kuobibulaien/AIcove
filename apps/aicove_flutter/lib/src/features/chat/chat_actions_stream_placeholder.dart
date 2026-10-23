@@ -167,6 +167,49 @@ class _StreamPlaceholderDelivery {
   late final bool _useActiveStreamChannel =
       _ref.read(streamProjectionPolicyProvider).useActiveStreamChannel;
 
+  bool _partialTextTaken = false;
+
+  /// Freeze once, before persistence yields, so queued reveals cannot advance.
+  String takePartialText() {
+    if (_partialTextTaken) return '';
+    _partialTextTaken = true;
+    // Read the applied timeline, not the receive buffer or a queued reveal.
+    final visibleMessages =
+        _ref
+            .read(conversationTimelineCacheProvider)
+            .peekWindow(
+              conversationId: convId,
+              limit: _currentTimelineMessages.length + 1,
+            )
+            ?.messages ??
+        const <Message>[];
+    final live = _useActiveStreamChannel
+        ? _ref.read(activeStreamProjectionsProvider)[convId]
+        : null;
+    final text = StringBuffer();
+    for (final message in visibleMessages) {
+      if (message.sourceMessageId != _pendingRawSourceId ||
+          _isGeneratingPlaceholderMessage(message)) {
+        continue;
+      }
+      final blocks = message.blocks?.whereType<TextBlock>();
+      if (blocks == null || blocks.isEmpty) continue;
+      if (live != null &&
+          live.generationSeq == generationSeq &&
+          live.writeEpoch == _writeEpoch &&
+          live.phase == ActiveStreamPhase.streamingTail &&
+          live.tailMessageId == message.id) {
+        text.write(live.tailText);
+      } else {
+        for (final block in blocks) {
+          text.write(block.content);
+        }
+      }
+    }
+    dispose();
+    return text.toString();
+  }
+
   final StringBuffer _rawStreamText = StringBuffer();
   final List<Message> _currentTimelineMessages = <Message>[];
   final Map<String, Message> _stablePendingAudioMessages = <String, Message>{};
@@ -984,7 +1027,10 @@ class _StreamPlaceholderDelivery {
 
   String _sanitizeVisibleTextFragment(String value) {
     if (value.isEmpty) return value;
-    var result = _stripHiddenImageTagsForDisplay(value);
+    var result = StickerTag.removeFrom(
+      firstPartyContentTagScanner,
+      _stripHiddenImageTagsForDisplay(value),
+    );
     result = result.replaceAll(
       RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false),
       '',
@@ -1001,11 +1047,12 @@ class _StreamPlaceholderDelivery {
       RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false),
       '',
     );
-    final lastLt = result.lastIndexOf('<');
-    final lastGt = result.lastIndexOf('>');
-    if (lastLt > lastGt) result = result.substring(0, lastLt);
-    return result;
+    return result.replaceFirst(_partialTagTail, '');
   }
+
+  /// A tag still being streamed at the very end (`<`, `</`, `<tts voice=`).
+  /// Only an ASCII name start counts, so kaomoji like `(ง>◡<ง)` and `<3` stay.
+  static final RegExp _partialTagTail = RegExp(r'<(?:/?[A-Za-z][^<>]*|/)?$');
 
   _TextSegmentDescriptors _describeTextSegment(
     String value, {
@@ -1098,6 +1145,7 @@ class _StreamPlaceholderDelivery {
         .map((m) => m.createdAt)
         .fold<DateTime?>(null, (a, b) => a == null || b.isAfter(a) ? b : a);
     var maxMaterializedCreatedAt = previousRealMaxCreatedAt;
+    DateTime? previousCreatedAt;
     for (var index = 0; index < descriptors.length; index++) {
       final descriptor = descriptors[index];
       Message? previousMessage;
@@ -1119,9 +1167,12 @@ class _StreamPlaceholderDelivery {
           usedPreviousIds: usedPreviousIds,
         );
       }
-      previousMessage ??= pendingAudioKey == null
-          ? null
-          : _stablePendingAudioMessages[pendingAudioKey];
+      if (previousMessage == null && pendingAudioKey != null) {
+        final stable = _stablePendingAudioMessages[pendingAudioKey];
+        if (stable != null && !usedPreviousIds.contains(stable.id)) {
+          previousMessage = stable;
+        }
+      }
       if (previousMessage != null) {
         usedPreviousIds.add(previousMessage.id);
         if (pendingAudioKey != null) {
@@ -1139,13 +1190,20 @@ class _StreamPlaceholderDelivery {
           !previousMessage.createdAt.isAfter(maxMaterializedCreatedAt)) {
         placeholderCreatedAtOverride = _allocateCreatedAt();
       }
-      final materialized = previousMessage == null
+      var materialized = previousMessage == null
           ? _createMessage(descriptor)
           : _rebuildMessage(
               previousMessage,
               descriptor,
               createdAt: placeholderCreatedAtOverride,
             );
+      // The timeline is sorted by createdAt when persisted/reloaded. Keep
+      // descriptor order even when final text inserts segments before speech.
+      if (previousCreatedAt != null &&
+          !materialized.createdAt.isAfter(previousCreatedAt)) {
+        materialized = materialized.copyWith(createdAt: _allocateCreatedAt());
+      }
+      previousCreatedAt = materialized.createdAt;
       if (pendingAudioKey != null) {
         nextStablePendingAudioMessages[pendingAudioKey] = materialized;
       }
@@ -1185,6 +1243,12 @@ class _StreamPlaceholderDelivery {
   }
 
   bool _matchesDescriptor(Message message, _StreamDescriptor descriptor) {
+    // A speech placeholder keeps its identity after falling back to text.
+    // Ordinary text inserted during finalization must not steal that ID.
+    if (descriptor.kind == _StreamDescriptorKind.text &&
+        _scheduledAudioMessageIds.contains(message.id)) {
+      return false;
+    }
     final blocks = message.blocks;
     if (blocks == null || blocks.length != 1) return false;
     return switch (descriptor.kind) {
@@ -1364,9 +1428,12 @@ class _StreamPlaceholderDelivery {
     _timelineBaseMs = baseTime.millisecondsSinceEpoch;
   }
 
-  Future<void> _enqueue(Future<void> Function() task) {
+  Future<void> _enqueue(
+    Future<void> Function() task, {
+    bool allowDisposed = false,
+  }) {
     _queue = _queue.catchError((_) {}).then((_) async {
-      if (_disposed) {
+      if (_disposed && !allowDisposed) {
         _recordDiagnostic(FrontendStage.projectionSkipped,
             phase: DiagnosticPhase.skip, reason: DiagnosticReason.disposed);
         return;
@@ -1409,7 +1476,7 @@ class _StreamPlaceholderDelivery {
           for (final message in messages) message.id,
         ],
       );
-    });
+    }, allowDisposed: true);
   }
 
   List<Message> _pendingAudioPlaceholderMessages({

@@ -1,5 +1,10 @@
 library;
 
+import 'dart:io';
+import '../../plugins/data/tool_result_store.dart';
+import '../../workspace/application/workspace_shell.dart';
+import '../../workspace/application/codemode_declarations.dart';
+
 import '../../agent_context/domain/agent_runtime_contracts.dart'
     show AgentToolAuthorization;
 import '../../agent_plugins/tool_policy.dart';
@@ -7,8 +12,10 @@ import '../../assistant/application/assistant_approvals.dart';
 import '../../assistant/application/assistant_plugin.dart';
 import '../../assistant/application/assistant_review.dart';
 import '../../assistant/application/assistant_settings_tools.dart';
+import '../../assistant/application/assistant_tool_group.dart';
 import '../../assistant/assistant_providers.dart';
-import '../../assistant/domain/assistant_onboarding.dart' show kAicoveAssistantId;
+import '../../assistant/domain/assistant_onboarding.dart'
+    show kAicoveAssistantId;
 import '../../agent_context/domain/preset_script_runtime.dart';
 import '../../agent_context/domain/preset_tag_mapping.dart';
 import 'dart:async';
@@ -28,6 +35,7 @@ import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import '../../agent_context/domain/silly_tavern_world_book.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../domain/conversation.dart';
+import '../domain/role_agent_mode.dart';
 import '../domain/chat_context_preview.dart';
 import '../../context/domain/context_summary.dart';
 import '../../context/providers/context_providers.dart';
@@ -39,11 +47,25 @@ import '../../plugins/image/image_config.dart';
 import '../../plugins/image/drawing_preset_provider.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/plugin_providers.dart';
+import '../../plugins/packages/package_plugin.dart';
+import '../../plugins/image/image_plugin.dart';
+import '../../plugins/prompts/plugin_prompt_resolution.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
+import '../../plugins/prompts/prompt_pack.dart';
+import '../../plugins/tts/voice_request.dart';
+import '../../plugins/prompts/prompt_pack_migration.dart';
+import '../../plugins/prompts/prompt_pack_store.dart';
 import '../../plugins/tts/voice_preset_application.dart';
 import '../../plugins/tavern_compat/tavern_compat_agent_plugin.dart';
 import '../../task_agent/application/delegate_task_plugin.dart';
 import '../../task_agent/domain/task_relay.dart';
+import '../../workspace/application/workspace_request_scope.dart';
+import '../../workspace/application/workspace_toolset.dart';
+import '../../workspace/domain/workspace_grants.dart';
+import '../../workspace/domain/workspace_models.dart';
+import '../../workspace/webapp/webapp_launcher.dart';
+import '../../workspace/workspace_providers.dart';
+import '../conversation_providers.dart';
 import '../../task_agent/task_agent_providers.dart';
 import '../../agent_plugins/plugin_request_context.dart';
 import '../../agent_plugins/plugin_request_scope.dart';
@@ -72,8 +94,6 @@ typedef ChatSupportsNonVisionImageFlow =
 
 typedef ChatPreviousUserMessageTimeResolver =
     DateTime? Function(List<Message> history);
-
-const _inlinePromptPresetName = '辅助提示词';
 
 /// Wall clock for request assembly (time-awareness reminders). Overridden in
 /// tests so request copies are reproducible.
@@ -114,8 +134,7 @@ class ChatSendBackendService {
        _shouldUseNonVisionImageFlow = shouldUseNonVisionImageFlow,
        _resolveTimeAwarenessPreviousUserMessageTime =
            resolveTimeAwarenessPreviousUserMessageTime,
-       _apiRunner =
-           apiRunner ?? createApiRunner(useKernel: kAgentKernelChat),
+       _apiRunner = apiRunner ?? createApiRunner(),
        _pluginContextBuilder = pluginContextBuilder,
        _requestConfigBuilder =
            requestConfigBuilder ?? ChatRequestConfigBuilder(),
@@ -202,10 +221,10 @@ class ChatSendBackendService {
       modelId: config.modelFullId,
       presetName: collector.presetName,
       messages: config.messages,
-      messageTokens: [
-        for (final message in config.messages)
-          renderedContextTokens([message], null),
-      ],
+      messageTokens: ChatContextUsage.measure(
+        config.messages,
+        tools,
+      ).messageTokens,
       tools: tools,
       sources: [
         for (final entry in collector.sources)
@@ -275,20 +294,21 @@ class ChatSendBackendService {
       presetReasoningEffort: boundPreset?.reasoningEffort,
     );
     final providerRequestOptions = effectiveThinking.applyTo(
-        ProviderChatRequestOptions(
-      useSystemPrompt: boundPreset?.useSystemPrompt ?? true,
-      temperature: boundPreset?.temperature,
-      topP: boundPreset?.topP,
-      topK: boundPreset?.topK,
-      minP: boundPreset?.minP,
-      topA: boundPreset?.topA,
-      repetitionPenalty: boundPreset?.repetitionPenalty,
-      frequencyPenalty: boundPreset?.frequencyPenalty,
-      presencePenalty: boundPreset?.presencePenalty,
-      seed: boundPreset?.seed,
-      maxOutputTokens: boundPreset?.maxOutputTokens,
-      reasoningEffort: boundPreset?.reasoningEffort,
-    ));
+      ProviderChatRequestOptions(
+        useSystemPrompt: boundPreset?.useSystemPrompt ?? true,
+        temperature: boundPreset?.temperature,
+        topP: boundPreset?.topP,
+        topK: boundPreset?.topK,
+        minP: boundPreset?.minP,
+        topA: boundPreset?.topA,
+        repetitionPenalty: boundPreset?.repetitionPenalty,
+        frequencyPenalty: boundPreset?.frequencyPenalty,
+        presencePenalty: boundPreset?.presencePenalty,
+        seed: boundPreset?.seed,
+        maxOutputTokens: boundPreset?.maxOutputTokens,
+        reasoningEffort: boundPreset?.reasoningEffort,
+      ),
+    );
 
     configTrace?.note(
       '配置',
@@ -366,24 +386,75 @@ class ChatSendBackendService {
     final imageEnabled =
         settings.imageGenerationEnabled &&
         (conv.enabledPlugins == null || conv.enabledPlugins!.contains('image'));
-    // 标签／工具说明全局一份，覆盖预设与插件配置里的旧副本。
+    // 表情包、时间感知的说明仍是全局一份（ADR0054）；语音、绘图改由预设绑定的提示词包提供（ADR0092）。
     final pluginPrompts = await _ref.read(pluginPromptsProvider.future);
-    final imageConfig =
-        (imageEnabled
-                ? (await _ref
-                          .read(drawingPresetCatalogProvider.notifier)
-                          .resolveForPersona(conv.personaPrompt))
-                      .config
-                : _ref.read(imagePluginConfigProvider))
-            .copyWith(
-              fastPromptPresets: [
-                DrawingPromptPreset(
-                  name: _inlinePromptPresetName,
-                  content: pluginPrompts.of(PluginPromptSlot.image),
-                ),
-              ],
-              selectedFastPromptPresetName: _inlinePromptPresetName,
-            );
+    // 旧数据先收进提示词包；角色卡的「绘图提示」在启动时并进绘图预设，
+    // 还没并的这里临时补上（见下方 unmovedDrawing）。
+    await _ref.read(promptPackMigratorProvider).ensurePacks();
+    final promptPacks = await _ref.read(promptPackProvider.notifier).library;
+    final drawingPersona = conv.personaPrompt;
+    final drawingPreset = imageEnabled
+        ? await _ref
+              .read(drawingPresetCatalogProvider.notifier)
+              .resolveForPersona(drawingPersona)
+        : null;
+    final ImageConfig imageConfig =
+        drawingPreset?.config ?? _ref.read(imagePluginConfigProvider);
+    final imageTarget = drawingPreset == null
+        ? null
+        : ImagePlugin(
+            imageConfig,
+            _ref,
+            requestSettings: settings,
+            isRequestSnapshot: true,
+          ).promptTarget(settings);
+    // Without a usable target a bound pack still applies; 「自动」 then
+    // falls back to the plugin's default pack.
+    ResolvedPromptPack? imagePrompts;
+    if (drawingPreset != null) {
+      final format = imageTarget?.format ?? 'openai';
+      final model = imageTarget?.model ?? '';
+      try {
+        imagePrompts = resolveDrawingPrompts(
+          promptPacks,
+          drawingPreset,
+          format: format,
+          model: model,
+        );
+      } on PromptPackMissingException {
+        // A binding to a pack that is gone never breaks the turn: this one
+        // matches automatically, and the preset editor shows the problem.
+        AppLogger.warning(
+          'PromptPacks',
+          '绘图预设绑定的提示词包已不存在，本次按模型自动匹配',
+          metadata: {'presetId': drawingPreset.id},
+        );
+        imagePrompts = resolveDrawingPrompts(
+          promptPacks,
+          drawingPreset.copyWith(prompts: drawingPreset.prompts.withPack(null)),
+          format: format,
+          model: model,
+        );
+      }
+    }
+    // A role not moved yet (unsaved, or the move failed) still gets its
+    // drawing requirement, the same way the moved one would.
+    final unmovedDrawing = PersonaPromptCodec.parse(
+      drawingPersona,
+    ).customDrawingPrompt.trim();
+    if (imagePrompts != null && unmovedDrawing.isNotEmpty) {
+      // By section id: a preset that already got the sections (the role
+      // write failed after the preset was saved) keeps its own copy, which
+      // the user may have edited since.
+      final binding = PresetPromptBinding(
+        ownSections: imagePrompts.ownSections,
+      ).addMissing(roleDrawingSections(unmovedDrawing));
+      imagePrompts = ResolvedPromptPack(
+        pack: imagePrompts.pack,
+        automatic: imagePrompts.automatic,
+        ownSections: binding.ownSections,
+      );
+    }
     // 旧选择已经在预设迁移中收成值，不能在执行时再覆盖快照。
     const String? boundImageToolPresetName = null;
     const String? boundImageArtistPresetName = null;
@@ -393,16 +464,29 @@ class ChatSendBackendService {
     final supportsToolCalling =
         boundPreset?.functionCalling != false && modelSupportsTools;
     final enabledPluginIds = conv.enabledPlugins?.toSet();
-    final voiceRequest = await _ref
+    var voiceRequest = await _ref
         .read(voicePresetApplicationProvider)
         .forRole(conv);
-    if (preview == null &&
-        voiceRequest.error != null &&
+    final ttsWanted =
         _ref.read(ttsPluginConfigProvider).enabled &&
-        (enabledPluginIds == null || enabledPluginIds.contains('tts'))) {
-      _ref
-          .read(ttsFallbackNotificationServiceProvider)
-          .notify(voiceRequest.error!);
+        (enabledPluginIds == null || enabledPluginIds.contains('tts'));
+    var voiceProblem = voiceRequest.error;
+    ResolvedPromptPack? voicePrompts;
+    final voiceService = voiceRequest.service;
+    if (voiceService != null) {
+      try {
+        voicePrompts = resolveVoicePrompts(promptPacks, voiceService);
+      } on PromptPackMissingException catch (e) {
+        voiceProblem = e.toString();
+        // Same as an unusable preset: no voice this turn, text goes on.
+        voiceRequest = VoiceRequest(
+          ownerId: voiceRequest.ownerId,
+          error: voiceProblem,
+        );
+      }
+    }
+    if (preview == null && voiceProblem != null && ttsWanted) {
+      _ref.read(ttsFallbackNotificationServiceProvider).notify(voiceProblem);
     }
     final previousUserMessageTime =
         _resolveTimeAwarenessPreviousUserMessageTime(history);
@@ -410,9 +494,11 @@ class ChatSendBackendService {
     final pluginRuntime = PluginRuntime.fromPlugins(
       _ref.read(pluginManagerProvider).getAllPlugins(),
     )..install(tavernCompatAgentPlugin());
-    // ADR0088: office plugins (web search, MCP) go to the errand agent; the
-    // chat model only gets delegate_task.
-    if (delegateTaskEnabled) {
+    // ADR0088/0097: 聊天模式下，联网搜索与 MCP 交给杂活 Agent，聊天模型只拿到
+    // delegate_task；工具模式是完整 Agent，直接使用全部插件，不派活。
+    final toolMode = conv.effectiveAgentMode == RoleAgentMode.tool;
+    final officeToErrandAgent = delegateTaskEnabled && !toolMode;
+    if (officeToErrandAgent) {
       pluginRuntime.install(
         delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider)),
       );
@@ -424,40 +510,47 @@ class ChatSendBackendService {
         assistantAgentPlugin(
           _ref.read(assistantToolsetProvider),
           // Writes need the review gate, which only the kernel runner has.
-          writes: kAgentKernelChat
-              ? _ref.read(assistantWriteToolsProvider)
-              : null,
-          settings: kAgentKernelChat
-              ? _ref.read(assistantSettingsToolsProvider)
-              : null,
+          writes: _ref.read(assistantWriteToolsProvider),
+          settings: _ref.read(assistantSettingsToolsProvider),
           cards: _ref.read(assistantCardToolsProvider),
           checkup: _ref.read(assistantCheckupProvider),
+          groups: _ref.read(assistantToolGroupsProvider),
         ),
       );
     }
     final selectedPluginIds = [
       for (final id in pluginRuntime.selectForRole(enabledPluginIds))
-        if (!delegateTaskEnabled || !isOfficePluginId(id)) id,
+        if (!officeToErrandAgent || !isOfficePluginId(id)) id,
     ];
-    final pluginScopes = pluginRuntime.requestScopes(
-      pluginRuntime.snapshot(),
-      selectedPluginIds,
-      PluginRequestInputs(
-        ref: _ref,
-        settings: settings,
-        imageConfig: imageConfig,
-        voiceRequest: voiceRequest,
-        pluginPrompts: pluginPrompts,
-        history: history,
-        previousUserMessageTime: previousUserMessageTime,
-        useFastImageRoute: shouldUseFastImageRoute,
-        useStableImageRoute: shouldUseStableImageRoute,
-        supportsToolCalling: supportsToolCalling,
-        customDrawingPrompt: personaParts.customDrawingPrompt,
-        reminders: _systemReminderService,
-        boundPreset: boundPreset,
+    final pluginScopes = [
+      ...pluginRuntime.requestScopes(
+        pluginRuntime.snapshot(),
+        selectedPluginIds,
+        PluginRequestInputs(
+          ref: _ref,
+          settings: settings,
+          imageConfig: imageConfig,
+          voiceRequest: voiceRequest,
+          pluginPrompts: pluginPrompts,
+          history: history,
+          previousUserMessageTime: previousUserMessageTime,
+          useFastImageRoute: shouldUseFastImageRoute,
+          useStableImageRoute: shouldUseStableImageRoute,
+          supportsToolCalling: supportsToolCalling,
+          reminders: _systemReminderService,
+          boundPreset: boundPreset,
+          voicePrompts: voicePrompts,
+          imagePrompts: imagePrompts,
+          rolePluginIds: enabledPluginIds,
+        ),
       ),
-    );
+      // 工具模式的工作区直接给角色用，不经杂活 Agent（ADR0097）。
+      if (toolMode)
+        WorkspaceRequestScope(
+          await _roleWorkspaceToolset(conv),
+          supportsTools: supportsToolCalling,
+        ),
+    ];
     final contextPolicy = ChatPluginContextPolicy.firstParty(
       activeProviderIds: {
         for (final scope in pluginScopes)
@@ -488,35 +581,7 @@ class ChatSendBackendService {
     if (handoffPrompt.isNotEmpty) {
       systemParts.add(contextPolicy.filterText(handoffPrompt));
     }
-    // Proactive replies are written ahead of time and pass their fire time,
-    // so time-aware plugins describe the moment the reply will be sent.
-    final effectiveRequestTime =
-        requestTime ?? _ref.read(requestClockProvider)();
-    final outputTags = {
-      for (final scope in pluginScopes) ...scope.outputTags,
-    };
-    final outputTagReminder = buildOutputTagReminder(
-      imageInline: outputTags.contains(OutputTagHint.imageInline),
-      imageTool: outputTags.contains(OutputTagHint.imageTool),
-      tts: outputTags.contains(OutputTagHint.tts),
-      presetTags: [
-        for (final scope in pluginScopes) ...scope.presetTagNames,
-      ],
-    );
-    String remindersAt(DateTime time) =>
-        _systemReminderService.mergeReminderContents([
-          ...collectPluginReminders(pluginScopes, time),
-          outputTagReminder,
-        ]);
-    final systemReminderContent = remindersAt(effectiveRequestTime);
-    // 延后的提醒只记进追踪，不进本次消息。
-    final injectedReminder = deferReminders ? '' : systemReminderContent;
-    if (boundPreset == null && injectedReminder.isNotEmpty) {
-      reqMessages = _systemReminderService.insertReminderBeforeLastUser(
-        messages: reqMessages,
-        reminderContent: injectedReminder,
-      );
-    }
+    // 插件提示词先于提醒构建：长期记忆在这里检索，本轮话题相关的往事随后进提醒。
     final pluginRequestContext = PluginRequestContext(
       userMessage: userText ?? '',
       supportsToolCalling: supportsToolCalling,
@@ -553,17 +618,58 @@ class ChatSendBackendService {
       if (!promptEntry.injected) continue;
       systemParts.add(contextPolicy.filterText(promptEntry.content));
     }
+    // Proactive replies are written ahead of time and pass their fire time,
+    // so time-aware plugins describe the moment the reply will be sent.
+    final effectiveRequestTime =
+        requestTime ?? _ref.read(requestClockProvider)();
+    final outputTags = {for (final scope in pluginScopes) ...scope.outputTags};
+    final outputTagReminder = buildOutputTagReminder(
+      imageInline: outputTags.contains(OutputTagHint.imageInline),
+      imageTool: outputTags.contains(OutputTagHint.imageTool),
+      tts: outputTags.contains(OutputTagHint.tts),
+      presetTags: [for (final scope in pluginScopes) ...scope.presetTagNames],
+    );
+    String remindersAt(DateTime time) =>
+        _systemReminderService.mergeReminderContents([
+          ...collectPluginReminders(
+            pluginScopes,
+            time,
+          ).map(contextPolicy.filterText),
+          outputTagReminder,
+        ]);
+    final systemReminderContent = remindersAt(effectiveRequestTime);
+    // 延后的提醒只记进追踪，不进本次消息。
+    final injectedReminder = deferReminders ? '' : systemReminderContent;
+    if (boundPreset == null && injectedReminder.isNotEmpty) {
+      reqMessages = _systemReminderService.insertReminderBeforeLastUser(
+        messages: reqMessages,
+        reminderContent: injectedReminder,
+      );
+    }
 
     List<Map<String, dynamic>>? tools;
     List<AITool> boundTools = const [];
     if (supportsToolCalling) {
       final aiTools = await _pluginContextBuilder.collectToolsWithRetry([
         for (final scope in pluginScopes)
-          PluginToolSource(pluginId: scope.pluginId, tools: scope.tools),
+          PluginToolSource(
+            pluginId: scope.pluginId,
+            tools: () => [
+              for (final tool in scope.tools())
+                if (!scope.pluginId.startsWith('pkg:') ||
+                    !PackagePlugin.isExecutionTool(tool.name) ||
+                    (toolMode))
+                  tool,
+            ],
+          ),
       ]);
-      boundTools = List.unmodifiable(aiTools);
+      if (toolMode) {
+        aiTools.add(ToolResultStore.shared.reader(resolvedConversationId));
+      }
+      final exposedTools = toolMode ? assembleCodemodeTools(aiTools) : aiTools;
+      boundTools = List.unmodifiable(exposedTools);
       if (aiTools.isNotEmpty) {
-        var schemas = aiTools.map((t) => t.toOpenAISchema()).toList();
+        var schemas = directToolSchemas(exposedTools);
         for (final scope in pluginScopes) {
           schemas = scope.rewriteToolSchemas(schemas);
         }
@@ -728,6 +834,16 @@ class ChatSendBackendService {
       messages: contextPolicy.filterMessages(truncatedMessages),
     );
 
+    if (!toolMode &&
+        ToolResultStore.wantsReader([
+          for (final s in tools ?? const <Map<String, dynamic>>[])
+            '${(s['function'] as Map?)?['name']}',
+        ])) {
+      tools = [
+        ...tools!,
+        ToolResultStore.shared.reader(resolvedConversationId).toOpenAISchema(),
+      ];
+    }
     final policy = ContextWindowPolicy(
       configured: settings.contextWindowTokens,
       modelWindow: maxContextTokens,
@@ -738,7 +854,8 @@ class ChatSendBackendService {
     final runtimeContext = RuntimeContextService(
       owner: resolvedConversationId,
       policy: policy,
-      summarizerFactory: () => _ref.read(contextSummarizerProvider.future),
+      summarizerFactory: () =>
+          _ref.read(runtimeContextSummarizerProvider.future),
       tools: tools,
     );
     if (preview != null) {
@@ -957,6 +1074,12 @@ class ChatSendBackendService {
         },
       ),
       runtimeContext: runtimeContext,
+      toolResultOwner: resolvedConversationId,
+      currentWorkspaceId: () => pluginScopes
+          .whereType<WorkspaceRequestScope>()
+          .firstOrNull
+          ?.toolset
+          .currentWorkspaceId,
       settings: settings,
       modelFullId: modelFull,
       providerApiBase: requestConfig.providerApiBase,
@@ -974,10 +1097,10 @@ class ChatSendBackendService {
           boundPreset?.temperature ?? requestConfig.modelTemperature,
       modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
       modelContextMessageLimit: requestConfig.modelContextMessageLimit,
-      // 办事交给杂活 Agent 后，聊天 run 一律去掉模型内置搜索（ADR0088）；
-      // 关闭派活时沿用旧规则：联网搜索插件接管才去掉。
+      // 聊天模式办事交给杂活 Agent，一律去掉模型内置搜索（ADR0088）；
+      // 其余情况沿用旧规则：联网搜索插件接管才去掉。
       providerRequestOptions:
-          delegateTaskEnabled ||
+          officeToErrandAgent ||
               supportsToolCalling &&
                   pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
           ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
@@ -986,8 +1109,9 @@ class ChatSendBackendService {
       // 保留原标签交给聊天列表投影为折叠／正文／选项（ADR0046）。
       presetRegexScripts: boundPreset == null
           ? const <SillyTavernRegexScript>[]
-          : inferPresetTagMapping(boundPreset)
-              .displayScripts(boundPreset.regexScripts),
+          : inferPresetTagMapping(
+              boundPreset,
+            ).displayScripts(boundPreset.regexScripts),
       presetRegexAuthorized: boundPreset?.regexAuthorized ?? false,
       presetStreamResponse: boundPreset?.streamResponse,
       traceContext: traceContext,
@@ -1004,14 +1128,15 @@ class ChatSendBackendService {
           voiceRequest: voiceRequest,
           drawingConfig: imageConfig,
           settings: settings,
+          rolePluginIds: enabledPluginIds,
         ),
       ),
     );
-    if (conv.id != kAicoveAssistantId || preview != null || !kAgentKernelChat) {
+    if (conv.id != kAicoveAssistantId || preview != null) {
       return config;
     }
     return config.copyWith(
-      toolPolicy: _assistantToolPolicy(
+      toolPolicy: await _assistantToolPolicy(
         alwaysAsk: await _ref.read(assistantAlwaysAskProvider.future),
         config: config,
         history: history,
@@ -1021,31 +1146,95 @@ class ChatSendBackendService {
     );
   }
 
-  /// The AIcove assistant's review gate (ADR0073, batch T3): rules rate each
-  /// call, the reviewer model judges the middle tier and the user decides
-  /// major changes.
-  AgentToolPolicy _assistantToolPolicy({
+  /// 工具模式的角色自己的工作区（ADR0097）：授权与杂活 Agent 看到的一样，
+  /// 本次新建的工作区记到角色名下。
+  Future<WorkspaceToolset> _roleWorkspaceToolset(Conversation conv) async {
+    final store = await _ref.read(workspaceStoreProvider.future);
+    final localIds = [for (final workspace in await store.list()) workspace.id];
+    return WorkspaceToolset(
+      store: store,
+      enableScripts: true,
+      enableShell: WorkspaceShell.available(platform: Platform.operatingSystem),
+      workspaceIds: WorkspaceGrants.effective(
+        roleGrants: WorkspaceGrants.forRole(conv.id, conv.enabledPlugins),
+        presetAllows: null,
+        pluginEnabled: true,
+        localIds: localIds,
+      ),
+      runId: 'chat_${conv.id}_${DateTime.now().microsecondsSinceEpoch}',
+      isCancelled: () => ToolCallContext.current?.isCancelled?.call() ?? false,
+      onCreated: (workspace) => _grantWorkspaceToRole(conv.id, workspace),
+      runWebApp: (ws, path) async => (await _ref.read(
+        webAppLauncherProvider.future,
+      )).openForAgent(ws, path),
+      // Only AIcove酱 gets channel keys in its shell (ADR0109 补充二).
+      shellEnvironment: conv.id == kAicoveAssistantId
+          ? () {
+              final settings = _ref.read(appSettingsProvider).valueOrNull;
+              return settings == null
+                  ? const <String, String>{}
+                  : channelKeyEnvironment(settings);
+            }
+          : null,
+    );
+  }
+
+  /// 「全部插件」不含空间授权，先把它展开成具体列表再追加这一项。
+  Future<void> _grantWorkspaceToRole(
+    String conversationId,
+    WorkspaceInfo workspace,
+  ) async {
+    final latest = _ref
+        .read(conversationsProvider)
+        .valueOrNull
+        ?.where((c) => c.id == conversationId)
+        .firstOrNull;
+    if (latest == null) return;
+    final current =
+        latest.enabledPlugins ??
+        [
+          for (final plugin in _ref.read(pluginManagerProvider).getAllPlugins())
+            if (!isOfficePluginId(plugin.id) || plugin.id == 'web_search')
+              plugin.id,
+        ];
+    final grant = WorkspaceGrants.pluginIdOf(workspace.id);
+    if (current.contains(grant)) return;
+    await _ref
+        .read(conversationsProvider.notifier)
+        .applyContactEdit(conversationId, enabledPlugins: [...current, grant]);
+  }
+
+  /// Assistant calls run without approval by default (ADR0107). The local
+  /// opt-in switch restores per-call confirmation.
+  Future<AgentToolPolicy> _assistantToolPolicy({
     required ApiConfig config,
     required List<Message> history,
     required String? userText,
     required AppSettings settings,
     required bool alwaysAsk,
-  }) {
+  }) async {
+    final store = await _ref.read(workspaceStoreProvider.future);
+    final spaceNames = {
+      for (final space in await store.list()) space.id: space.name,
+    };
     bool alwaysAskNow() =>
         _ref.read(assistantAlwaysAskProvider).valueOrNull ?? alwaysAsk;
     final toolset = _ref.read(assistantToolsetProvider);
     final writes = _ref.read(assistantWriteToolsProvider);
     final settingsTools = _ref.read(assistantSettingsToolsProvider);
+    final groups = _ref.read(assistantToolGroupsProvider);
     final riskOf = AssistantRequestScope.riskOf(
       toolset,
       writes,
       settings: settingsTools,
+      groups: groups,
     );
     final descriptions = {
       for (final tool in [
         ...toolset.tools(),
         ...writes.tools(),
         ...settingsTools.tools(),
+        for (final group in groups) ...group.tools(),
       ])
         tool.name: tool.description,
     };
@@ -1064,19 +1253,28 @@ class ChatSendBackendService {
         config: _reviewConfig(config, messages),
         sessionId: '${kAicoveAssistantId}_review',
         userText: null,
-        maxRounds: 1,
       )).replyText,
     );
     return AgentToolPolicy(
-      authorization: AgentToolAuthorization.manual,
+      authorization: AgentToolAuthorization.allowAll,
       customGate: AssistantToolGate(riskOf, alwaysAsk: alwaysAskNow),
       redactor: redactorForCredentials(settings: settings),
       approvalTimeout: const Duration(minutes: 5),
       approvals: AssistantApprovalPort(
         riskOf: riskOf,
-        describe: (name, args) => name == AssistantSettingsTools.setTool
-            ? settingsTools.describe(args)
-            : writes.describe(name, args),
+        describe: (name, args) => name == 'bash'
+            ? ApprovalPrompt.workspaceShell(
+                '${spaceNames[config.currentWorkspaceId?.call()] ?? config.currentWorkspaceId?.call() ?? '未选择'}',
+                '${args['command']}',
+              )
+            : name == 'codemode'
+            ? ApprovalPrompt.workspaceScript(
+                '${spaceNames[config.currentWorkspaceId?.call()] ?? config.currentWorkspaceId?.call() ?? '未选择'}',
+              )
+            : groups.ownerOf(name)?.describe(name, args) ??
+                  (AssistantSettingsTools.describes(name)
+                      ? settingsTools.describe(name, args)
+                      : writes.describe(name, args)),
         toolDescription: (name) => descriptions[name] ?? name,
         userMessages: userMessages.length <= 6
             ? userMessages
@@ -1113,7 +1311,6 @@ class ChatSendBackendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1134,7 +1331,6 @@ class ChatSendBackendService {
         availableTools: config.boundTools,
         turnId: turnId,
         trace: trace,
-        maxRounds: maxRounds,
         onToolExecuting: onToolExecuting,
         enableStreaming: enableStreaming,
         onStreamTextDelta: onStreamTextDelta == null

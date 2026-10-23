@@ -1,0 +1,466 @@
+{
+  "requests": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "我查一下",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{\"q\":\"a\"}"
+              }
+            },
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "note",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-note"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    }
+  ],
+  "modes": [
+    "rich:开始",
+    "rich:"
+  ],
+  "executions": [
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:note:null",
+    "end:note:null"
+  ],
+  "executing": [
+    "lookup",
+    "note"
+  ],
+  "deltas": [],
+  "fallbacks": 0,
+  "observed": 1,
+  "contextCalls": null,
+  "error": null,
+  "trace": [
+    {
+      "round": 1,
+      "seq": 1,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 2,
+        "names": [
+          "lookup",
+          "note"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 2,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c1"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 3,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c1",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 4,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "note",
+        "toolCallId": "c2"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 5,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "note",
+        "toolCallId": "c2",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 14
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 6,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 2,
+        "toolResults": 2,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c1\",\"name\":\"lookup\",\"arguments\":{\"q\":\"a\"}},{\"id\":\"c2\",\"name\":\"note\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c1\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"},{\"toolCallId\":\"c2\",\"name\":\"note\",\"result\":\"result-of-note\"}]"
+        }
+      }
+    },
+    {
+      "round": 1,
+      "seq": 7,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 2,
+        "toolResults": 2,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 8,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 0,
+        "hasToolExecution": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 9,
+      "stage": "FINAL_REPLY_READY",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "status": "completed",
+        "stopReason": null,
+        "rawReplyLength": 8,
+        "finalReplyLength": 14
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 2,
+        "stage": "FINAL_REPLY_READY",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawAiResponse": "我查一下\n查好了",
+          "regexDisplayText": "我查一下\n查好了",
+          "regex": {
+            "declared": 0,
+            "authorized": false,
+            "warnings": [],
+            "trace": []
+          },
+          "finalReply": "我查一下[p]\n查好了[p]"
+        }
+      }
+    }
+  ],
+  "result": {
+    "raw": "我查一下\n查好了",
+    "reply": "我查一下\n查好了",
+    "processed": "我查一下[p]\n查好了[p]",
+    "hidden": [],
+    "toolCalls": [
+      [
+        "c1",
+        "lookup",
+        {
+          "q": "a"
+        },
+        null
+      ],
+      [
+        "c2",
+        "note",
+        {},
+        null
+      ]
+    ],
+    "rawToolResults": [
+      [
+        "c1",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c2",
+        "note",
+        "result-of-note"
+      ]
+    ],
+    "toolResults": [],
+    "events": [
+      [
+        "suffix",
+        "seen",
+        {
+          "n": 4
+        }
+      ],
+      [
+        "suffix",
+        "seen",
+        {
+          "n": 3
+        }
+      ]
+    ],
+    "contents": [
+      {
+        "text": "note:4"
+      },
+      {
+        "image": "/test/plugin.png",
+        "caption": "plugin",
+        "snapshot": null
+      },
+      {
+        "text": "note:3"
+      },
+      {
+        "image": "/test/plugin.png",
+        "caption": "plugin",
+        "snapshot": null
+      }
+    ],
+    "audio": []
+  }
+}

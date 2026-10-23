@@ -181,6 +181,8 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'frosted_blur_sigma': kDefaultGlassBlurSigma,
   'glass_tint_fill': kDefaultGlassTintFill,
   'frosted_tint_fill': kDefaultGlassTintFill,
+  // Fresh installs open on the built-in catnap wallpaper.
+  'global_wallpaper': 'catnap',
 };
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
@@ -666,6 +668,16 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         for (final model in models) {
           if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty) {
             modelTypes['$id:$model'] = ModelType.stt.value;
+          }
+        }
+      }
+      final isComfyUI = requestFormat == 'comfyui' ||
+          ((requestFormat == null || requestFormat.isEmpty) &&
+              id.toLowerCase() == 'comfyui');
+      if (isComfyUI) {
+        for (final model in models) {
+          if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty) {
+            modelTypes['$id:$model'] = ModelType.image.value;
           }
         }
       }

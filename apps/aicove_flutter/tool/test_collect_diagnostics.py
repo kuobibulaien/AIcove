@@ -103,6 +103,29 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(normalized['state'], {'pending': True, 'count': 3})
         self.assertEqual(normalized['sequence'], 1)
 
+    def test_operational_events_preserve_identity_without_payload(self):
+        for category in ('sync', 'backgroundDelivery'):
+            value = self.event()
+            value['metadata'] = {'category': category, 'event': 'lanEntity',
+                'entityId': 'bg_test', 'kind': 'messages', 'phase': 'receive',
+                'result': 'failed', 'elapsedMs': 12, 'content': 'SECRET'}
+            normalized = collector.normalize(value, {'file': 'app_2026-10-22.jsonl'}, timezone.utc)
+            self.assertEqual(normalized['kind'], category)
+            self.assertEqual(normalized['entityId'], 'bg_test')
+            self.assertEqual(normalized['entityKind'], 'messages')
+            self.assertEqual(normalized['elapsedMs'], 12)
+            self.assertNotIn('SECRET', json.dumps(normalized))
+
+    def test_lan_round_totals_survive_normalization(self):
+        value = self.event()
+        value['metadata'] = {'category': 'sync', 'event': 'lanRound',
+            'pushed': 10000, 'pulled': 12, 'failed': 1, 'complete': False,
+            'elapsedMs': 2000, 'content': 'SECRET'}
+        normalized = collector.normalize(value, {'file': 'app_2026-10-22.jsonl'}, timezone.utc)
+        for key in ('pushed', 'pulled', 'failed', 'complete', 'elapsedMs'):
+            self.assertEqual(normalized[key], value['metadata'][key])
+        self.assertNotIn('SECRET', json.dumps(normalized))
+
     def test_evidence_and_candidates_not_declared_root_causes(self):
         records = [collector.normalize(self.event(1, state={'animate': True, 'previouslyBuilt': True}),
                                       {'file': 'app_2026-09-05.jsonl'}, timezone.utc),

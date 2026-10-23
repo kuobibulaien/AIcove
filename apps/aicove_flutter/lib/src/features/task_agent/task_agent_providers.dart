@@ -16,6 +16,7 @@ import '../auto_reply/data/proactive_owner_device.dart';
 import '../auto_reply/data/proactive_reply_generator.dart';
 import '../background_agent/background_agent_service.dart';
 import '../chat/chat_providers.dart';
+import '../context/providers/context_providers.dart';
 import '../chat/conversation_providers.dart';
 import '../chat/domain/message.dart';
 import '../chat/services/chat_history_store.dart';
@@ -25,11 +26,15 @@ import '../chat/services/chat_types.dart';
 import '../plugins/domain/handlers/ai_tool.dart';
 import '../plugins/mcp/mcp_connector_plugin.dart';
 import '../plugins/plugin_providers.dart';
+import '../plugins/domain/plugin.dart';
+import '../plugins/packages/package_plugin.dart';
 import '../plugins/web_search/web_search_plugin.dart';
 import '../settings/app_settings.dart';
 import '../workspace/application/workspace_toolset.dart';
+import '../workspace/application/workspace_shell.dart';
 import '../workspace/domain/workspace_grants.dart';
 import '../workspace/domain/workspace_models.dart';
+import '../workspace/webapp/webapp_launcher.dart';
 import '../workspace/workspace_providers.dart';
 import 'application/delegate_task_plugin.dart';
 import 'application/task_agent_runner.dart';
@@ -57,13 +62,15 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
     store: store,
     process: TaskProcessRecord(directory),
     runner: TaskAgentRunner(
+      // Task steps are compacted as task progress, never as companion chat.
+      summarizerFactory: () =>
+          ref.read(runtimeContextSummarizerProvider.future),
       loadSettings: () => ref.read(appSettingsProvider.future),
       executor:
           ({
             required config,
             required tools,
             required sessionId,
-            required maxRounds,
             required cancellation,
           }) => apiRunner.executeApiCall(
             config: config,
@@ -71,7 +78,6 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
             userText: null,
             responseProcessors: const [],
             availableTools: tools,
-            maxRounds: maxRounds,
             cancellation: cancellation,
           ),
     ),
@@ -90,8 +96,7 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
       displayText: recorded.block.content,
     ),
     findReceipt: (receiptId) => _findReceipt(ref, receiptId),
-    relay: (conversationId, receipt) =>
-        _relay(ref, conversationId, receipt),
+    relay: (conversationId, receipt) => _relay(ref, conversationId, receipt),
     ownsConversation: (conversationId) async =>
         (await ProactiveOwnership.load()).owns(conversationId),
     deviceId: () => MediaStore.localDeviceId,
@@ -115,37 +120,78 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
       .read(proactiveReplyGeneratorProvider)
       .loadConversation(task.conversationId);
   if (conversation == null) return const TaskAgentCapabilities();
+  await ensurePluginConfigsLoaded(ref);
   final enabled = conversation.enabledPlugins?.toSet();
   final plugins = ref.read(pluginManagerProvider).getAllPlugins();
-  final runtime = PluginRuntime.fromPlugins(plugins);
-  final selected = runtime.selectForRole(enabled).toSet();
-  final tools = <AITool>[
-    for (final plugin in plugins)
-      if (selected.contains(plugin.id) && isOfficePluginId(plugin.id))
-        ...switch (plugin) {
-          WebSearchPlugin() => plugin.getTools(),
-          McpConnectorPlugin() => plugin.getTools(),
-          _ => const <AITool>[],
-        },
-  ];
+  final extension = await resolveTaskPluginCapabilities(
+    plugins,
+    enabled,
+    executable: true,
+  );
   final store = await ref.read(workspaceStoreProvider.future);
   final workspaceIds = WorkspaceGrants.effective(
-    roleGrants: WorkspaceGrants.of(conversation.enabledPlugins),
+    roleGrants: WorkspaceGrants.forRole(
+      conversation.id,
+      conversation.enabledPlugins,
+    ),
     presetAllows: null,
     // The workspace plugin has no global switch yet; grants decide.
     pluginEnabled: true,
     localIds: [for (final workspace in await store.list()) workspace.id],
   );
   return TaskAgentCapabilities(
-    tools: tools,
+    tools: extension.tools,
+    prompts: extension.prompts,
+    toolOwners: extension.toolOwners,
     workspaces: WorkspaceToolset(
       store: store,
+      enableScripts: true,
+      enableShell: WorkspaceShell.available(platform: Platform.operatingSystem),
       workspaceIds: workspaceIds,
       runId: runId,
       isCancelled: () => cancellation.isCancelled,
       onCreated: (workspace) =>
           _grantWorkspace(ref, task.conversationId, workspace),
+      runWebApp: (ws, path) async => (await ref.read(
+        webAppLauncherProvider.future,
+      )).openForAgent(ws, path),
     ),
+  );
+}
+
+/// Resolves role-selected, enabled, locally installed package/office plugins.
+/// The runner applies the preset's narrowing to both tools and prompt fragments.
+Future<TaskAgentCapabilities> resolveTaskPluginCapabilities(
+  Iterable<Plugin> plugins,
+  Set<String>? enabled, {
+  bool executable = true,
+}) async {
+  final runtime = PluginRuntime.fromPlugins(plugins);
+  final selected = runtime.selectForRole(enabled).toSet();
+  final tools = <AITool>[];
+  final prompts = <String, String>{};
+  final owners = <String, String>{};
+  for (final plugin in plugins) {
+    if (!selected.contains(plugin.id)) continue;
+    final contributed = switch (plugin) {
+      WebSearchPlugin() => plugin.getTools(),
+      McpConnectorPlugin() => plugin.getTools(),
+      PackagePlugin() => await (() async {
+        final prompt = await plugin.prompt();
+        if (prompt != null) prompts[plugin.id] = prompt;
+        return plugin.getTools(executable: executable);
+      })(),
+      _ => const <AITool>[],
+    };
+    for (final tool in contributed) {
+      tools.add(tool);
+      owners[tool.name] = plugin.id;
+    }
+  }
+  return TaskAgentCapabilities(
+    tools: tools,
+    prompts: prompts,
+    toolOwners: owners,
   );
 }
 
@@ -177,7 +223,10 @@ Future<void> _grantWorkspace(
 Future<TaskReceiptBlock?> _findReceipt(Ref ref, String receiptId) async {
   final message = await ref
       .read(chatHistoryStoreProvider)
-      .loadMessageById(taskReceiptMessageId(receiptId), preferProjection: false);
+      .loadMessageById(
+        taskReceiptMessageId(receiptId),
+        preferProjection: false,
+      );
   for (final block in message?.blocks ?? const <MessageBlock>[]) {
     if (block is TaskReceiptBlock && block.receiptId == receiptId) return block;
   }
@@ -227,7 +276,10 @@ Future<bool> _relay(
         userMsgId: '',
         buildResult: AssistantMessageBuildResult(
           rawMessage: raw?.copyWith(
-            rawPayload: {...?raw.rawPayload, taskRelayReceiptKey: receipt.receiptId},
+            rawPayload: {
+              ...?raw.rawPayload,
+              taskRelayReceiptKey: receipt.receiptId,
+            },
           ),
           messages: built.messages,
           lastMessageText: built.lastMessageText,
@@ -259,20 +311,39 @@ Future<bool> _alreadyRelayed(
   return rows.isNotEmpty;
 }
 
-String _relayReminder(TaskReceiptBlock receipt) => switch (receipt
-    .receiptStatus) {
-  TaskReceiptStatus.needsInput =>
-    '后台助手办事时有个问题要问用户（见上一条杂活回执）。用你的口吻自然地问用户，'
-        '不要提「回执」「后台助手」这些词。',
-  TaskReceiptStatus.done =>
-    '你之前交给后台去办的事有结果了（见上一条杂活回执）。用你的口吻把结果告诉用户，'
-        '只说回执里有的内容，不要编造，不要提「回执」这个词。',
-  _ =>
-    '你之前交给后台去办的事没办成（见上一条杂活回执）。用你的口吻如实告诉用户，'
-        '不要编造结果，不要提「回执」这个词。',
-};
+String _relayReminder(TaskReceiptBlock receipt) =>
+    switch (receipt.receiptStatus) {
+      TaskReceiptStatus.needsInput =>
+        '后台助手办事时有个问题要问用户（见上一条杂活回执）。用你的口吻自然地问用户，'
+            '不要提「回执」「后台助手」这些词。',
+      TaskReceiptStatus.done =>
+        '你之前交给后台去办的事有结果了（见上一条杂活回执）。用你的口吻把结果告诉用户，'
+            '只说回执里有的内容，不要编造，不要提「回执」这个词。',
+      _ =>
+        '你之前交给后台去办的事没办成（见上一条杂活回执）。用你的口吻如实告诉用户，'
+            '不要编造结果，不要提「回执」这个词。',
+    };
 
-class _DelegatePort implements DelegateTaskPort {
+class _DelegatePort implements DelegateTaskPort, TaskSteeringPort {
+  @override
+  Future<Map<String, Object?>> steer({
+    required String conversationId,
+    required String taskId,
+    required String instruction,
+  }) async {
+    final service = await _service;
+    final task = await service.store.get(taskId);
+    if (task == null || task.conversationId != conversationId)
+      return {'error': '没有这个任务'};
+    final outcome = await service.steer(
+      taskId: taskId,
+      instruction: instruction,
+    );
+    return outcome == TaskControlOutcome.applied
+        ? {'task_id': taskId, 'status': 'steering_accepted'}
+        : {'error': '这个任务已经结束'};
+  }
+
   _DelegatePort(this._ref);
 
   final Ref _ref;
@@ -283,10 +354,9 @@ class _DelegatePort implements DelegateTaskPort {
   Future<String?> _requestKey(String? callKey) async =>
       callKey == null ? null : '${await MediaStore.localDeviceId}|$callKey';
 
-  static String _controlId(String? requestKey) =>
-      requestKey == null
-          ? 'ctl_${DateTime.now().microsecondsSinceEpoch}'
-          : 'ctl_${requestKey.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}';
+  static String _controlId(String? requestKey) => requestKey == null
+      ? 'ctl_${DateTime.now().microsecondsSinceEpoch}'
+      : 'ctl_${requestKey.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}';
 
   @override
   Future<Map<String, Object?>> start({
@@ -363,7 +433,10 @@ class _DelegatePort implements DelegateTaskPort {
       return {'error': '没有这个任务'};
     }
     if (task != null) {
-      final outcome = await service.cancel(taskId: taskId, controlId: controlId);
+      final outcome = await service.cancel(
+        taskId: taskId,
+        controlId: controlId,
+      );
       return outcome == TaskControlOutcome.applied
           ? {'task_id': taskId, 'status': 'cancelled'}
           : {'error': '这个任务已经结束'};
@@ -455,6 +528,12 @@ final taskAgentSupervisorProvider = Provider<TaskAgentSupervisor>((ref) {
 final agentTaskListProvider = FutureProvider.autoDispose<List<AgentTask>>(
   (ref) => ref.watch(agentTaskStoreProvider).recent(),
 );
+
+/// One task by id, for the running bar under a `delegate_task` call.
+final agentTaskByIdProvider = FutureProvider.autoDispose
+    .family<AgentTask?, String>(
+      (ref, taskId) => ref.watch(agentTaskStoreProvider).get(taskId),
+    );
 
 /// The kill switch as stored (ADR0088 §8).
 final taskAgentEnabledProvider = FutureProvider.autoDispose<bool>(

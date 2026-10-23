@@ -220,6 +220,7 @@ class LanTransport {
     this.changed, {
     this.loopback = false,
     this.preferredPort = lanPreferredPort,
+    this.recentChanges = false,
   });
   final String deviceId;
   final LanPeerStore store;
@@ -227,6 +228,7 @@ class LanTransport {
   final void Function() changed;
   final bool loopback;
   final int preferredPort;
+  final bool recentChanges;
   HttpServer? _server;
   HttpClient? _client;
   LanInvitation? invitation;
@@ -734,7 +736,10 @@ class LanTransport {
               changed();
             }
           }
-          result = {'approved': peer.approved};
+          result = {
+            'approved': peer.approved,
+            if (recentChanges) 'recent_changes': 1,
+          };
         } else {
           if (!peer!.approved) throw const LanSyncFailure('请先在另一端确认配对');
           try {

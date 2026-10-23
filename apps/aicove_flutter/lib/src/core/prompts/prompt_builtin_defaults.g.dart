@@ -190,16 +190,17 @@ class PromptBuiltinDefaults {
   static const String ttsDisabledVoiceFrequency = r'''【重要】用户不希望你使用语音功能，请只用文字回复。''';
 
   static const String stickerSystemDefault = r'''你可以在回复中使用表情包来增加趣味性。
-使用方法：在合适的地方用 [标签] 标记。
+使用方法：在合适的地方写 <sticker tag="标签"/>，标签从下面的列表里选，必须是自闭合写法。
 
 可用的表情包标签：{tags}
 
 示例：
-- "晚安呀~ [晚安]"
-- "太感谢你了！[谢谢]"
-- "好累啊 [摸鱼]"
+- 晚安呀~ <sticker tag="晚安"/>
+- 太感谢你了！<sticker tag="谢谢"/>
+- 好累啊 <sticker tag="摸鱼"/>
 
 注意：
+- 不要用方括号，也不要写成成对标签（如 <sticker tag="晚安">晚安</sticker>）
 - 不要每句话都用表情包，克制使用，每轮回复最多使用一次或者不使用
 - 表情包放在句尾效果更自然
 - 同义词会自动匹配（如"睡觉"会匹配到"晚安"组的表情包）''';

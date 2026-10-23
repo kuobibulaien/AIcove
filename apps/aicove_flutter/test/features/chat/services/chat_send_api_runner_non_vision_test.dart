@@ -15,7 +15,7 @@ import 'api_runner_variants.dart';
 import 'test_plugin_support.dart';
 
 AppSettings _buildTestSettings({
-  CallFlowMode mode = CallFlowMode.auto,
+  CallFlowMode mode = CallFlowMode.call,
 }) {
   const modelRef = 'openai:gpt-3.5-turbo';
   return AppSettings(
@@ -593,7 +593,6 @@ void _runAll(RunnerFactory createRunner) {
       userText: '帮我画一只猫',
       responseProcessors: testProcessors(<TestPlugin>[drawPlugin]),
       availableTools: testTools(<TestPlugin>[drawPlugin]),
-      maxRounds: 3,
     );
 
     expect(fakeHttpClient.callCount, 1);
@@ -652,7 +651,6 @@ void _runAll(RunnerFactory createRunner) {
       userText: '今晚几点有空？',
       responseProcessors: testProcessors(<TestPlugin>[_FakeLookupPlugin()]),
       availableTools: testTools(<TestPlugin>[_FakeLookupPlugin()]),
-      maxRounds: 3,
     );
 
     expect(fakeHttpClient.callCount, 2);
@@ -697,7 +695,6 @@ void _runAll(RunnerFactory createRunner) {
       userText: '今晚几点有空？',
       responseProcessors: testProcessors(<TestPlugin>[_FakeLookupPlugin(), _FakeWeatherPlugin()]),
       availableTools: testTools(<TestPlugin>[_FakeLookupPlugin(), _FakeWeatherPlugin()]),
-      maxRounds: 5,
     );
 
     expect(fakeHttpClient.callCount, 3);
@@ -753,7 +750,6 @@ void _runAll(RunnerFactory createRunner) {
       userText: '帮我查下今晚安排，再画张图',
       responseProcessors: testProcessors(<TestPlugin>[drawPlugin, _FakeLookupPlugin()]),
       availableTools: testTools(<TestPlugin>[drawPlugin, _FakeLookupPlugin()]),
-      maxRounds: 5,
     );
 
     expect(fakeHttpClient.callCount, 2);
@@ -803,7 +799,6 @@ void _runAll(RunnerFactory createRunner) {
       userText: '今晚几点有空？',
       responseProcessors: testProcessors(<TestPlugin>[_FakeLookupPlugin()]),
       availableTools: testTools(<TestPlugin>[_FakeLookupPlugin()]),
-      maxRounds: 3,
     );
 
     expect(fakeHttpClient.callCount, 2);

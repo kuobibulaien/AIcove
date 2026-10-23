@@ -1,11 +1,47 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_frontend_message_projection_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
 
 void main() {
   const projectionService = ChatFrontendMessageProjectionService();
+
+  test('已有投影中的表情标签只从显示副本清除，不改原始消息或重复生成表情', () {
+    const text = '晚安<sticker tag="晚安"/>';
+    final cached = [
+      Message.text(id: 'text', role: 'assistant', content: text),
+      Message.fromBlocks(id: 'emoji', role: 'assistant', blocks: [
+        EmojiBlock(messageId: 'emoji', emojiId: 'night', path: '/tmp/night.png'),
+      ]),
+    ];
+    final raw = Message(
+      id: 'raw', role: 'assistant', content: text, createdAt: DateTime(2026, 10, 22),
+      rawPayload: {'projectedMessages': ChatMessageProjectionCodec.serializeMessages(cached)},
+    );
+    final result = projectionService.projectMessage(raw);
+    expect(result, hasLength(2));
+    expect(result.first.displayText, '晚安');
+    expect(result.last.blocks!.single, isA<EmojiBlock>());
+    expect(raw.content, text);
+    expect(cached.first.displayText, text);
+  });
+
+  test('旧缓存中只有表情标签的空文本不留气泡，用户原文不清理', () {
+    const tag = '<sticker tag="晚安"/>';
+    final raw = Message(
+      id: 'raw', role: 'assistant', content: tag, createdAt: DateTime(2026, 10, 22),
+      rawPayload: {'projectedMessages': ChatMessageProjectionCodec.serializeMessages([
+        Message.text(id: 'empty', role: 'assistant', content: tag),
+        Message.text(id: 'user', role: 'user', content: tag),
+      ])},
+    );
+    final result = projectionService.projectMessage(raw);
+    expect(result, hasLength(1));
+    expect(result.single.role, 'user');
+    expect(result.single.displayText, tag);
+  });
 
   test('raw assistant 从 payload 重建时应沿用原始消息时间', () {
     final rawCreatedAt = DateTime(2026, 4, 4, 23, 10, 0);

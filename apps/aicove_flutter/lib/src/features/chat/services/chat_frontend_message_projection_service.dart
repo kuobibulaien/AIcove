@@ -5,9 +5,12 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/models/message_block.dart';
+import '../../plugins/plugin_content_tags.dart';
+import '../../stickers/sticker_tag.dart';
 import '../domain/message.dart';
 import 'chat_message_processor.dart';
 import 'chat_message_projection_codec.dart';
+import 'chat_types.dart' show ReplyRound;
 
 class ChatFrontendMessageProjectionService {
   const ChatFrontendMessageProjectionService();
@@ -25,7 +28,10 @@ class ChatFrontendMessageProjectionService {
     final cachedProjected =
         ChatMessageProjectionCodec.projectedMessages(payload);
     if (cachedProjected.isNotEmpty) {
-      return _normalizeProjectionFromRawMessage(rawMessage, cachedProjected);
+      return _normalizeProjectionFromRawMessage(rawMessage, [
+        for (final message in cachedProjected)
+          if (_stripCachedStickerMarkup(message) case final visible?) visible,
+      ]);
     }
 
     if (rawMessage.role != 'assistant') {
@@ -51,6 +57,18 @@ class ChatFrontendMessageProjectionService {
           toolAudioResults: const [],
           toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
           rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
+          reasoning: ChatMessageProjectionCodec.reasoning(payload),
+          // 图片、语音由补插记录放回原位，轮次里不再带。
+          replyRounds: [
+            for (final round in ChatMessageProjectionCodec.replyRounds(payload))
+              ReplyRound(
+                replyText: round.replyText,
+                processedText: round.processedText,
+                pluginEvents: round.pluginEvents,
+                reasoning: round.reasoning,
+                toolCallIds: round.toolCallIds,
+              ),
+          ],
         );
         final rebuilt = _applyStoredSupplementInsertOps(
           rebuiltBase.messages,
@@ -70,6 +88,8 @@ class ChatFrontendMessageProjectionService {
         toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
         toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
         rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
+        reasoning: ChatMessageProjectionCodec.reasoning(payload),
+        replyRounds: ChatMessageProjectionCodec.replyRounds(payload),
       );
       if (rebuilt.messages.isNotEmpty) {
         return _normalizeProjectionFromRawMessage(
@@ -94,8 +114,39 @@ class ChatFrontendMessageProjectionService {
     return message.copyWith(
       // DB sourceMessageId 是导入来源；展示操作必须指向当前 raw 行。
       sourceMessageId: message.id,
-      rawPayload: null,
+      rawPayload: message.role == 'assistant' ? {
+        if (message.rawPayload?['runStatus'] != null) 'runStatus': message.rawPayload!['runStatus'],
+        if (message.rawPayload?['stopReason'] != null) 'stopReason': message.rawPayload!['stopReason'],
+      } : null,
     );
+  }
+
+  // 旧流式投影可能已经缓存了标签：只清显示副本，不回写 raw 或重放表情事件。
+  Message? _stripCachedStickerMarkup(Message message) {
+    if (message.role != 'assistant') return message;
+    String clean(String text) =>
+        StickerTag.removeFrom(firstPartyContentTagScanner, text);
+    final content = clean(message.content);
+    var changed = content != message.content;
+    final blocks = <MessageBlock>[];
+    for (final block in message.blocks ?? const <MessageBlock>[]) {
+      // 结构化记录也继承 TextBlock，不用普通文本副本替换它们。
+      if (block.runtimeType == TextBlock) {
+        final text = block as TextBlock;
+        final visible = clean(text.content);
+        if (visible != text.content) {
+          changed = true;
+          if (visible.trim().isNotEmpty) {
+            blocks.add(text.copyWith(content: visible));
+          }
+          continue;
+        }
+      }
+      blocks.add(block);
+    }
+    if (!changed) return message;
+    if (content.trim().isEmpty && blocks.isEmpty) return null;
+    return message.copyWith(content: content, blocks: blocks);
   }
 
   List<Message> _normalizeProjectionFromRawMessage(
@@ -110,7 +161,7 @@ class ChatFrontendMessageProjectionService {
           rawPayload: null,
         ),
     ];
-    return _dedupeProjectedMessages(normalized);
+    return ChatMessageProjectionCodec.applyRunStatus(_dedupeProjectedMessages(normalized), rawMessage.rawPayload);
   }
 
   List<Message> _dedupeProjectedMessages(List<Message> messages) {
@@ -294,6 +345,7 @@ class ChatFrontendMessageProjectionService {
                 text: op.text?.trim().isNotEmpty ?? false
                     ? op.text!.trim()
                     : null,
+                unread: op.unread,
               ),
             ],
             createdAt: DateTime.now(),

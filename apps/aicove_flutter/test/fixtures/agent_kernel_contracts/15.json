@@ -1,0 +1,495 @@
+{
+  "requests": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "draw_image",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "speak",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "画并说",
+          "tool_calls": [
+            {
+              "id": "d1",
+              "type": "function",
+              "function": {
+                "name": "draw_image",
+                "arguments": "{\"tag\":\"a\"}"
+              }
+            },
+            {
+              "id": "s1",
+              "type": "function",
+              "function": {
+                "name": "speak",
+                "arguments": "{\"tag\":\"b\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "d1",
+          "content": "{\"success\":true,\"image_count\":1,\"prompt\":\"a cat\",\"image_present\":true,\"delivered_to_chat\":true}"
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "s1",
+          "content": "{\"success\":true,\"audioUrl\":\"file:///test/meow.mp3\",\"text\":\"meow\"}"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "draw_image",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "speak",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    }
+  ],
+  "modes": [
+    "rich:开始",
+    "rich:"
+  ],
+  "executions": [
+    "start:draw_image:a",
+    "end:draw_image:a",
+    "start:speak:b",
+    "end:speak:b"
+  ],
+  "executing": [
+    "draw_image",
+    "speak"
+  ],
+  "deltas": [],
+  "fallbacks": 0,
+  "observed": 1,
+  "contextCalls": null,
+  "error": null,
+  "trace": [
+    {
+      "round": 1,
+      "seq": 1,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 2,
+        "names": [
+          "draw_image",
+          "speak"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 2,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "draw_image",
+        "toolCallId": "d1"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 3,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "draw_image",
+        "toolCallId": "d1",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 299,
+        "imageCount": 1,
+        "asyncAccepted": false,
+        "stableVisionReview": false,
+        "actualFlowMode": "stable"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 4,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "speak",
+        "toolCallId": "s1"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 5,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "speak",
+        "toolCallId": "s1",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 65,
+        "audioProduced": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 6,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 2,
+        "toolResults": 2,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"d1\",\"name\":\"draw_image\",\"arguments\":{\"tag\":\"a\"}},{\"id\":\"s1\",\"name\":\"speak\",\"arguments\":{\"tag\":\"b\"}}]",
+          "rawToolResults": "[{\"toolCallId\":\"d1\",\"name\":\"draw_image\",\"result\":\"{\\\"success\\\":true,\\\"image_count\\\":1,\\\"prompt\\\":\\\"a cat\\\",\\\"image_present\\\":true,\\\"delivered_to_chat\\\":true}\"},{\"toolCallId\":\"s1\",\"name\":\"speak\",\"result\":\"{\\\"success\\\":true,\\\"audioUrl\\\":\\\"file:///test/meow.mp3\\\",\\\"text\\\":\\\"meow\\\"}\"}]"
+        }
+      }
+    },
+    {
+      "round": 1,
+      "seq": 7,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 2,
+        "toolResults": 2,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 8,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 0,
+        "hasToolExecution": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 9,
+      "stage": "FINAL_REPLY_READY",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "status": "completed",
+        "stopReason": null,
+        "rawReplyLength": 7,
+        "finalReplyLength": 13
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 2,
+        "stage": "FINAL_REPLY_READY",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawAiResponse": "画并说\n画好了",
+          "regexDisplayText": "画并说\n画好了",
+          "regex": {
+            "declared": 0,
+            "authorized": false,
+            "warnings": [],
+            "trace": []
+          },
+          "finalReply": "画并说[p]\n画好了[p]"
+        }
+      }
+    }
+  ],
+  "result": {
+    "raw": "画并说\n画好了",
+    "reply": "画并说\n画好了",
+    "processed": "画并说[p]\n画好了[p]",
+    "hidden": [],
+    "toolCalls": [
+      [
+        "d1",
+        "draw_image",
+        {
+          "tag": "a"
+        },
+        null
+      ],
+      [
+        "s1",
+        "speak",
+        {
+          "tag": "b"
+        },
+        null
+      ]
+    ],
+    "rawToolResults": [
+      [
+        "d1",
+        "draw_image",
+        "{\"success\":true,\"image_count\":1,\"prompt\":\"a cat\",\"image_present\":true,\"delivered_to_chat\":true}"
+      ],
+      [
+        "s1",
+        "speak",
+        "{\"success\":true,\"audioUrl\":\"file:///test/meow.mp3\",\"text\":\"meow\"}"
+      ]
+    ],
+    "toolResults": [],
+    "events": [
+      [
+        "suffix",
+        "seen",
+        {
+          "n": 3
+        }
+      ],
+      [
+        "suffix",
+        "seen",
+        {
+          "n": 3
+        }
+      ]
+    ],
+    "contents": [
+      {
+        "image": "/test/cat.png",
+        "caption": "a cat",
+        "snapshot": {
+          "version": 1,
+          "providerId": "novelai",
+          "modelId": "nai-test",
+          "requestProvider": "novelai",
+          "prompt": "a cat",
+          "negativePrompt": null,
+          "width": 832,
+          "height": 1216,
+          "steps": 28,
+          "guidanceScale": 5.0,
+          "customParameters": {}
+        }
+      },
+      {
+        "text": "note:3"
+      },
+      {
+        "image": "/test/plugin.png",
+        "caption": "plugin",
+        "snapshot": null
+      },
+      {
+        "text": "note:3"
+      },
+      {
+        "image": "/test/plugin.png",
+        "caption": "plugin",
+        "snapshot": null
+      }
+    ],
+    "audio": [
+      {
+        "audioUrl": "file:///test/meow.mp3",
+        "text": "meow"
+      }
+    ]
+  }
+}

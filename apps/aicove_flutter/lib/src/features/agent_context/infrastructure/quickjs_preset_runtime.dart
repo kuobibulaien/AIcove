@@ -1,3 +1,4 @@
+import '../../../core/api/tool_media.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:aicove_quickjs/aicove_quickjs.dart';
@@ -92,7 +93,8 @@ class QuickJsPresetRuntime implements PresetScriptRuntime {
   Future<List<Map<String, dynamic>>> prepare(
     List<Map<String, dynamic>> messages,
   ) async {
-    final prepared = await _call('prepare', messages);
+    final references = PresetImageReferences();
+    final prepared = await _call('prepare', references.hide(messages));
     final result =
         jsonDecode(
               await _session.evaluate(
@@ -100,7 +102,9 @@ class QuickJsPresetRuntime implements PresetScriptRuntime {
               ),
             )
             as List;
-    return result.map((m) => Map<String, dynamic>.from(m as Map)).toList();
+    return (references.restore(result) as List)
+        .map((m) => Map<String, dynamic>.from(m as Map))
+        .toList();
   }
 
   @override

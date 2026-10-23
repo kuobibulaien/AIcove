@@ -9,16 +9,40 @@ import '../chat/chat_layer_providers.dart';
 import '../chat/conversation_providers.dart';
 import '../chat/domain/conversation.dart';
 import '../chat/domain/persona_prompt_codec.dart';
+import '../memory/providers/memory_providers.dart';
 import '../settings/app_settings.dart';
+import '../settings/provider_detail/provider_detail_actions.dart';
+import '../plugins/image/drawing_preset_provider.dart';
+import '../plugins/image/image_plugin.dart';
 import '../plugins/plugin_providers.dart';
+import '../plugins/prompts/plugin_prompt_resolution.dart';
+import '../plugins/prompts/plugin_prompts.dart';
+import '../plugins/prompts/prompt_pack.dart';
+import '../plugins/prompts/prompt_pack_store.dart';
+import '../plugins/tts/tts_config.dart';
+import '../plugins/tts/tts_provider_context.dart';
 import '../voice_call/providers/voice_call_providers.dart';
 import 'application/assistant_cards.dart';
+import 'application/assistant_package_tools.dart';
+import '../plugins/packages/package_providers.dart';
+import '../workspace/workspace_providers.dart';
+import '../workspace/domain/workspace_grants.dart';
 import 'application/assistant_checkup.dart';
+import 'application/assistant_plugin_option_tools.dart';
+import 'application/assistant_preset_tools.dart';
+import 'application/assistant_private_read_tools.dart';
+import 'application/assistant_prompt_pack_tools.dart';
+import 'application/assistant_provider_tools.dart';
+import 'application/assistant_sticker_tools.dart';
+import '../stickers/sticker_library_provider.dart';
+import 'application/assistant_role_tools.dart';
 import 'application/assistant_settings.dart';
 import 'application/assistant_settings_tools.dart';
+import 'application/assistant_tool_group.dart';
 import 'application/assistant_toolset.dart';
 import 'application/assistant_write_tools.dart';
 import 'domain/aicove_docs.dart';
+import 'domain/assistant_onboarding.dart';
 
 /// Every dependency is read when a tool runs, not when the toolset is built:
 /// the toolset is created inside request assembly, which the context preview
@@ -49,12 +73,139 @@ final assistantChangeJournalProvider = Provider<FileChangeJournal>(
         presets: ref.read(sillyTavernPresetStoreProvider),
       ),
       assistantSettingChangeKind: AssistantSettingApplier(
-        load: () => ref.read(appSettingsProvider.future),
         notifier: () => ref.read(appSettingsProvider.notifier),
       ),
+      assistantInterfaceResetChangeKind: AssistantInterfaceResetApplier(
+        notifier: () => ref.read(appSettingsProvider.notifier),
+      ),
+      assistantPluginOptionChangeKind: AssistantPluginOptionApplier(
+        () => ref.read(assistantPluginOptionsProvider),
+      ),
+      assistantStickerImportKind: AssistantStickerImportApplier(
+        () => StickerLibraryNotifier.open(),
+      ),
+      assistantStickerTagsKind: AssistantStickerTagsApplier(
+        () => StickerLibraryNotifier.open(),
+      ),
+      assistantProviderChangeKind: AssistantProviderApplier(
+        notifier: () => ref.read(appSettingsProvider.notifier),
+      ),
+      ..._promptPackAppliers(ref),
     },
   ),
 );
+
+Map<String, ChangeApplier> _promptPackAppliers(Ref ref) {
+  final packs = AssistantPromptPackApplier(
+    library: () => ref.read(promptPackProvider.notifier).library,
+    change: (edit) => ref.read(promptPackProvider.notifier).change(edit),
+    boundBy: (packId) async => [
+      for (final preset in await _promptPresets(ref))
+        if (preset.binding.packId == packId) (id: preset.id, name: preset.name),
+    ],
+  );
+  final presets = AssistantPresetPromptsApplier(
+    presets: () => _promptPresets(ref),
+    save: (pluginId, presetId, binding, {expected}) => _savePresetPrompts(
+      ref,
+      pluginId,
+      presetId,
+      binding,
+      expected: expected,
+    ),
+  );
+  return {
+    assistantPromptPackChangeKind: packs,
+    assistantPresetPromptsChangeKind: presets,
+    assistantPromptPackForkChangeKind: AssistantPromptPackForkApplier(
+      packs: packs,
+      presets: presets,
+    ),
+  };
+}
+
+/// Voice and drawing presets with what their 「自动」 prompt pack matches on,
+/// worked out the way their editors do (ADR0092).
+Future<List<AssistantPromptPreset>> _promptPresets(Ref ref) async {
+  final settings = await ref.read(appSettingsProvider.future);
+  final catalog = await ref.read(drawingPresetCatalogProvider.future);
+  return [
+    for (final preset in ref.read(ttsPluginConfigProvider).voicePresets)
+      if (preset.synthesis case final synthesis?)
+        AssistantPromptPreset(
+          pluginId: 'tts',
+          id: preset.id,
+          name: preset.name,
+          binding: synthesis.prompts,
+          format: ttsPromptFormat(
+            TtsProviderContext.resolveForSelection(
+              config: TtsConfig(),
+              settings: settings,
+              providerId: synthesis.providerId,
+              modelId: synthesis.modelId,
+            ).requestFormat,
+          ),
+          model: synthesis.modelId,
+          variables: {
+            'max_chars_per_chunk': synthesis.maxCharsPerChunk,
+            'voice_frequency': synthesis.voiceFrequency,
+          },
+        ),
+    for (final preset in catalog.presets)
+      () {
+        final target = ImagePlugin(
+          preset.config,
+          ref,
+          requestSettings: settings,
+          isRequestSnapshot: true,
+        ).promptTarget(settings);
+        return AssistantPromptPreset(
+          pluginId: 'image',
+          id: preset.id,
+          name: preset.name,
+          binding: preset.prompts,
+          format: target?.format ?? 'openai',
+          model: target?.model ?? '',
+          variables: imagePromptVariables(preset.config),
+        );
+      }(),
+  ];
+}
+
+/// Writes a preset's prompt binding in its store's write queue. With
+/// [expected], only while the stored binding still equals it; returns
+/// whether it wrote.
+Future<bool> _savePresetPrompts(
+  Ref ref,
+  String pluginId,
+  String presetId,
+  PresetPromptBinding binding, {
+  PresetPromptBinding? expected,
+}) async {
+  bool matches(PresetPromptBinding stored) =>
+      expected == null || samePromptState(stored.toJson(), expected.toJson());
+  var wrote = false;
+  if (pluginId == 'image') {
+    await ref.read(drawingPresetCatalogProvider.notifier).transact((catalog) {
+      final stored = catalog.presets.where((p) => p.id == presetId).firstOrNull;
+      if (stored == null) throw StateError('绘图预设已经不在了：$presetId');
+      if (!matches(stored.prompts)) return catalog;
+      wrote = true;
+      return catalog.upsert(stored.copyWith(prompts: binding));
+    });
+    return wrote;
+  }
+  await ref.read(ttsPluginConfigProvider.notifier).updatePreset(presetId, (
+    stored,
+  ) {
+    final synthesis = stored.synthesis;
+    if (synthesis == null) throw StateError('音色预设已经不在了：$presetId');
+    if (!matches(synthesis.prompts)) return null;
+    wrote = true;
+    return stored.copyWith(synthesis: synthesis.withPrompts(binding));
+  });
+  return wrote;
+}
 
 final assistantWriteToolsProvider = Provider<AssistantWriteTools>(
   (ref) => AssistantWriteTools(
@@ -73,6 +224,179 @@ final assistantSettingsToolsProvider = Provider<AssistantSettingsTools>(
     journal: ref.read(assistantChangeJournalProvider),
     onChanged: () => ref.invalidate(assistantRecentChangesProvider),
   ),
+);
+
+/// Tool groups beyond the original roles, presets and settings tools
+/// (ADR0073 full access); each rates and describes its own calls.
+final assistantToolGroupsProvider = Provider<List<AssistantToolGroup>>((ref) {
+  return [
+    AssistantPackageTools(
+      store: () => ref.read(workspaceStoreProvider.future),
+      packages: () => ref.read(aicovePackagesProvider.notifier),
+      workspaceIds: () async {
+        final roles = await ref.read(conversationsProvider.future);
+        final assistant = roles.where((r) => r.id == kAicoveAssistantId).firstOrNull;
+        if (assistant == null) return {};
+        final store = await ref.read(workspaceStoreProvider.future);
+        return WorkspaceGrants.effective(
+          roleGrants: WorkspaceGrants.forRole(assistant.id, assistant.enabledPlugins),
+          presetAllows: null, pluginEnabled: true,
+          localIds: [for (final w in await store.list()) w.id],
+        );
+      },
+    ),
+    AssistantProviderTools(
+      current: () => ref.read(appSettingsProvider).valueOrNull,
+      load: () => ref.read(appSettingsProvider.future),
+      notifier: () => ref.read(appSettingsProvider.notifier),
+      journal: ref.read(assistantChangeJournalProvider),
+      cards: () => ref.read(assistantCardsProvider.notifier),
+      primaryKey: (provider) => ref
+          .read(providerDetailActionsProvider)
+          .resolvePrimaryApiKey(provider),
+      testModel: (provider, model) => ref
+          .read(providerDetailActionsProvider)
+          .testModel(
+            provider: provider,
+            apiKey: ref
+                .read(providerDetailActionsProvider)
+                .resolvePrimaryApiKey(provider),
+            modelId: model,
+          ),
+      onChanged: () => ref.invalidate(assistantRecentChangesProvider),
+    ),
+    AssistantRoleTools(
+      writes: ref.read(assistantWriteToolsProvider),
+      rolesNow: ref.read(assistantRoleStoreProvider).snapshot,
+      roles: () async => [
+        for (final role in await ref.read(assistantRoleStoreProvider).load())
+          if (!role.isHidden) role,
+      ],
+      settings: () => ref.read(appSettingsProvider.future),
+      voices: () => ref.read(ttsPluginConfigProvider).voicePresets,
+      cards: () => ref.read(assistantCardsProvider.notifier),
+      deleteRole: ref.read(assistantRoleStoreProvider).delete,
+      clearChat: (id) =>
+          ref.read(conversationsProvider.notifier).clearMessages(id),
+      drawingPresets: () async => [
+        for (final preset
+            in (await ref.read(drawingPresetCatalogProvider.future)).presets)
+          (id: preset.id, name: preset.name),
+      ],
+      onChanged: () => ref.invalidate(assistantRecentChangesProvider),
+    ),
+    AssistantPresetTools(
+      presets: () => ref.read(sillyTavernPresetStoreProvider).list(),
+      importPreset: (source, name) => ref
+          .read(presetRecipeImportControllerProvider.notifier)
+          .importSource(source, sourceFileName: name),
+      change: (id, action) => ref
+          .read(presetRecipeImportControllerProvider.notifier)
+          .change(id, action),
+      deletePreset: (id) => ref
+          .read(presetRecipeImportControllerProvider.notifier)
+          .deletePreset(id),
+      cards: () => ref.read(assistantCardsProvider.notifier),
+    ),
+    AssistantPluginOptionTools(
+      options: ref.read(assistantPluginOptionsProvider),
+      journal: ref.read(assistantChangeJournalProvider),
+      onChanged: () => ref.invalidate(assistantRecentChangesProvider),
+    ),
+    AssistantStickerTools(
+      library: () => StickerLibraryNotifier.open(),
+      journal: ref.read(assistantChangeJournalProvider),
+      onChanged: () {
+        ref.invalidate(assistantRecentChangesProvider);
+        ref.invalidate(stickerLibraryProvider);
+      },
+    ),
+    AssistantPromptPackTools(
+      library: () => ref.read(promptPackProvider.notifier).library,
+      change: (edit) => ref.read(promptPackProvider.notifier).change(edit),
+      presets: () => _promptPresets(ref),
+      journal: ref.read(assistantChangeJournalProvider),
+      onChanged: () => ref.invalidate(assistantRecentChangesProvider),
+    ),
+    AssistantPrivateReadTools(
+      rolesNow: ref.read(assistantRoleStoreProvider).snapshot,
+      roles: () async => [
+        for (final role in await ref.read(assistantRoleStoreProvider).load())
+          if (!role.isHidden) role,
+      ],
+      grants: ref.read(assistantReadGrantsProvider),
+      messages: (roleId, {required limit, before, keyword}) async {
+        final repo = ref.read(messageRepositoryProvider);
+        final rows = keyword == null
+            ? await repo.getByConversationStable(
+                roleId,
+                limit: limit,
+                beforeTime: before?.millisecondsSinceEpoch,
+              )
+            : await repo.searchByConversation(
+                roleId,
+                keyword: keyword,
+                endTime: before?.millisecondsSinceEpoch,
+                limit: limit,
+              );
+        return [
+          for (final row in rows)
+            (
+              role: row.role,
+              content: row.content,
+              at: DateTime.fromMillisecondsSinceEpoch(row.createdAt),
+            ),
+        ];
+      },
+      memories: (roleId) async => [
+        for (final item in await ref.read(memoryStoreProvider).list(roleId))
+          (title: item.title, content: item.content, locked: item.locked),
+      ],
+    ),
+  ];
+});
+
+/// Global plugin options the assistant may change.
+final assistantPluginOptionsProvider = Provider<List<AssistantPluginOption>>((
+  ref,
+) {
+  // Starts loading the tool prompts now, so they have loaded long before a
+  // tool reads them synchronously.
+  ref.read(pluginPromptsProvider);
+  return assistantPluginOptions(
+    time: () {
+      final config = ref.read(timeAwarenessPluginConfigProvider);
+      return (
+        messageTimestamp: config.includeMessageTimestamp,
+        currentTime: config.includeCurrentTime,
+      );
+    },
+    setTime: ({messageTimestamp, currentTime}) async {
+      final notifier = ref.read(timeAwarenessPluginConfigProvider.notifier);
+      if (messageTimestamp != null) {
+        await notifier.setIncludeMessageTimestamp(messageTimestamp);
+      }
+      if (currentTime != null) {
+        await notifier.setIncludeCurrentTime(currentTime);
+      }
+    },
+    webSearch: () => ref.read(webSearchPluginConfigProvider),
+    setWebSearch: (config) =>
+        ref.read(webSearchPluginConfigProvider.notifier).updateConfig(config),
+    prompts: () =>
+        ref.read(pluginPromptsProvider).valueOrNull ?? const PluginPrompts(),
+    setPrompt: (slot, text) =>
+        ref.read(pluginPromptsProvider.notifier).setText(slot, text),
+    setPromptIf: (slot, expected, text) => ref
+        .read(pluginPromptsProvider.notifier)
+        .setTextIf(slot, expected, text),
+  );
+});
+
+/// Roles the user let the assistant read; loaded once at start so the first
+/// rating sees stored grants.
+final assistantReadGrantsProvider = Provider<AssistantReadGrants>(
+  (ref) => AssistantReadGrants()..load(),
 );
 
 final assistantCardToolsProvider = Provider<AssistantCardTools>(
@@ -222,8 +546,13 @@ class _ConversationsRoleStore implements AssistantRoleStore {
     bool has(String key) => fields.containsKey(key);
     String? text(String key) => fields[key] as String?;
     String? persona;
-    if (has(RoleField.personaPrompt) || has(RoleField.customDrawingPrompt)) {
+    if (has(RoleField.personaPrompt) ||
+        has(RoleField.customDrawingPrompt) ||
+        has(RoleField.drawingPreset)) {
       final parts = PersonaPromptCodec.parse(role.personaPrompt);
+      // A new binding replaces the legacy by-name ones as a whole.
+      final drawing = fields[RoleField.drawingPreset] as Map?;
+      final rebind = has(RoleField.drawingPreset);
       persona = PersonaPromptCodec.compose(
         userPrompt: has(RoleField.personaPrompt)
             ? text(RoleField.personaPrompt) ?? ''
@@ -231,12 +560,47 @@ class _ConversationsRoleStore implements AssistantRoleStore {
         customDrawingPrompt: has(RoleField.customDrawingPrompt)
             ? text(RoleField.customDrawingPrompt)
             : parts.customDrawingPrompt,
-        drawingToolPresetName: parts.drawingToolPresetName,
-        drawingArtistPresetName: parts.drawingArtistPresetName,
-        drawingPresetId: parts.drawingPresetId,
+        drawingToolPresetName: rebind
+            ? (drawing?['tool'] as String?)
+            : parts.drawingToolPresetName,
+        drawingArtistPresetName: rebind
+            ? (drawing?['artist'] as String?)
+            : parts.drawingArtistPresetName,
+        drawingPresetId: rebind
+            ? (drawing?['id'] as String?)
+            : parts.drawingPresetId,
       );
     }
     final plugins = fields[RoleField.enabledPlugins];
+    final background = fields[RoleField.chatBackground] as Map?;
+    if (has(RoleField.thinkingLevels)) {
+      final wanted = (fields[RoleField.thinkingLevels] as Map? ?? const {}).map(
+        (key, value) => MapEntry('$key', ThinkingLevel.values.byName('$value')),
+      );
+      for (final model in {...role.thinkingLevels.keys, ...wanted.keys}) {
+        if (role.thinkingLevels[model] == wanted[model]) continue;
+        await _notifier.setConversationThinkingLevel(
+          roleId,
+          modelRef: model,
+          level: wanted[model],
+        );
+      }
+    }
+    if (has(RoleField.displayStyle)) {
+      final style = text(RoleField.displayStyle);
+      await _notifier.setConversationChatDisplayStyle(
+        roleId,
+        style == null ? null : ChatDisplayStyle.values.byName(style),
+      );
+    }
+    double? number(String key) => (fields[key] as num?)?.toDouble();
+    if (has(RoleField.pinned) || has(RoleField.muted)) {
+      await _notifier.updateConversationSettings(
+        roleId,
+        isPinned: fields[RoleField.pinned] as bool?,
+        isMuted: fields[RoleField.muted] as bool?,
+      );
+    }
     await _notifier.applyContactEdit(
       roleId,
       displayName: text(RoleField.displayName),
@@ -257,6 +621,28 @@ class _ConversationsRoleStore implements AssistantRoleStore {
       recipeId: text(RoleField.recipeId),
       clearRecipeId:
           has(RoleField.recipeId) && text(RoleField.recipeId) == null,
+      avatarUrl: text(RoleField.avatarUrl),
+      clearAvatarUrl:
+          has(RoleField.avatarUrl) && text(RoleField.avatarUrl) == null,
+      characterImage: text(RoleField.characterImage),
+      clearCharacterImage:
+          has(RoleField.characterImage) &&
+          text(RoleField.characterImage) == null,
+      chatBackgroundImage: background?['image'] as String?,
+      clearChatBackgroundImage:
+          has(RoleField.chatBackground) && background == null,
+      chatBackgroundFraming: background?['framing'] as String?,
+      clearChatBackgroundFraming:
+          background != null && background['framing'] == null,
+      chatBackgroundMaskOpacity: number(RoleField.wallpaperMask),
+      clearChatBackgroundMaskOpacity:
+          has(RoleField.wallpaperMask) && fields[RoleField.wallpaperMask] == null,
+      chatBackgroundBlurSigma: number(RoleField.wallpaperBlur),
+      clearChatBackgroundBlurSigma:
+          has(RoleField.wallpaperBlur) && fields[RoleField.wallpaperBlur] == null,
+      voiceFile: text(RoleField.voiceFile),
+      clearVoiceFile:
+          has(RoleField.voiceFile) && text(RoleField.voiceFile) == null,
     );
   }
 }

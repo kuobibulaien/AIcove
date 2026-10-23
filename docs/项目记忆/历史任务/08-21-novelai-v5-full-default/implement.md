@@ -33,7 +33,7 @@
 - 全量 `flutter test --timeout 60s` 639 项通过。
 - 本次 5 个 Dart 文件定向 `flutter analyze` 为 0 问题；全仓 analyze 仍有 113 条
   既有 info/warning，均不指向本次文件。
-- `flutter run --no-resident -d <设备号>` 在 Android 16 真机完成构建、安装与启动；
+- `flutter run --no-resident -d 3a845d3f` 在 Android 16 真机完成构建、安装与启动；
   macOS 目标因本机 `xcrun` 找不到 `xcodebuild`（exit 72）无法启动。
 - 本次未改 UI 布局；全量 widget 测试包含设置页宽屏回归并通过。
 - 独立 Codex 代码复核的 4 个 findings 已全部修复，复核无新增阻断/高风险问题。

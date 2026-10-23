@@ -123,13 +123,15 @@ void main() async {
     overrides: [
       // Never connect: the copy must not sync with the account or LAN peers.
       cloudSyncProvider.overrideWith(CloudSyncController.new),
-      lanSyncPortProvider.overrideWith((ref) => Completer<LanSyncPort>().future),
+      lanSyncPortProvider.overrideWith(
+        (ref) => Completer<LanSyncPort>().future,
+      ),
     ],
   );
   runApp(UncontrolledProviderScope(container: container, child: const MyApp()));
   final report = <String, Object?>{
     'startedAt': DateTime.now().toIso8601String(),
-    'kernelChat': kAgentKernelChat,
+    'kernelChat': true,
     'scenarios': <Object?>[],
   };
   try {
@@ -160,7 +162,10 @@ Future<void> _run(ProviderContainer c, Map<String, Object?> report) async {
   final results = report['scenarios'] as List<Object?>;
   try {
     for (final s in scenarios) {
-      final entry = <String, Object?>{'id': s.id, 'conversationId': s.conversationId};
+      final entry = <String, Object?>{
+        'id': s.id,
+        'conversationId': s.conversationId,
+      };
       results.add(entry);
       if (s.mode != null) {
         await settingsNotifier.updateCallFlowSettings(
@@ -208,7 +213,8 @@ Future<void> _run(ProviderContainer c, Map<String, Object?> report) async {
 Future<void> _waitIdle(ProviderContainer c, String convId) async {
   final deadline = DateTime.now().add(_turnTimeout);
   while (c.read(conversationSendingProvider(convId))) {
-    if (DateTime.now().isAfter(deadline)) throw TimeoutException('still sending');
+    if (DateTime.now().isAfter(deadline))
+      throw TimeoutException('still sending');
     await Future<void>.delayed(const Duration(milliseconds: 500));
   }
 }

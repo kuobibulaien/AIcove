@@ -1,10 +1,8 @@
 import 'dart:math';
 
-import 'builtin_stickers.dart';
-
 /// 表情包注册表 - AI 发送表情包时的标签索引
 ///
-/// 1. AI 使用 [标签] 语法标记表情包
+/// 1. AI 用 `<sticker tag="标签"/>` 标记表情包（语义标签，见 sticker_tag.dart）
 /// 2. 同一标签可对应多个表情包（随机发送）
 /// 3. 同义词自动归一化（如 "睡觉" → "晚安" 组）
 ///
@@ -19,7 +17,7 @@ class Sticker {
   /// 所属套组 id
   final String packId;
 
-  /// 图片位置：`assets/` 开头是内置资源，否则是本机文件绝对路径
+  /// 图片位置：本机文件绝对路径
   final String path;
 
   /// 标签列表（AI匹配索引，每个标签都可触发此表情包）
@@ -35,8 +33,6 @@ class Sticker {
     required this.tags,
     this.description = '',
   });
-
-  bool get isAsset => path.startsWith('assets/');
 }
 
 /// 同义词组 - 同组内的标签视为等价
@@ -78,7 +74,7 @@ class StickerRegistry {
         _synonymMap[word.toLowerCase()] = canonical;
       }
     }
-    replaceStickers(builtinStickers);
+    replaceStickers(const []);
   }
   static final StickerRegistry instance = StickerRegistry._();
 
@@ -119,6 +115,17 @@ class StickerRegistry {
   /// 获取所有标签（归一化后，去重）
   Set<String> get allTags => _tagIndex.keys.toSet();
 
+  /// 当前有表情的套组 id（即已启用的套组）
+  Set<String> get packIds => {for (final s in _stickers) s.packId};
+
+  /// [packIds] 内表情的标签；null 表示全部套组
+  Set<String> tagsIn(Set<String>? packIds) => packIds == null
+      ? allTags
+      : {
+          for (final entry in _tagIndex.entries)
+            if (entry.value.any((s) => packIds.contains(s.packId))) entry.key,
+        };
+
   /// 根据ID获取表情包
   Sticker? getById(String id) {
     for (final sticker in _stickers) {
@@ -127,11 +134,14 @@ class StickerRegistry {
     return null;
   }
 
-  /// 根据标签获取表情包（随机选一个）
+  /// 根据标签获取表情包（随机选一个），只在 [packIds] 内挑；null 表示全部套组
   /// 支持同义词自动匹配
-  Sticker? getByTag(String tag) {
-    final candidates = _tagIndex[normalizeTag(tag)];
-    if (candidates == null || candidates.isEmpty) return null;
+  Sticker? getByTag(String tag, {Set<String>? packIds}) {
+    final candidates = [
+      for (final s in _tagIndex[normalizeTag(tag)] ?? const <Sticker>[])
+        if (packIds == null || packIds.contains(s.packId)) s,
+    ];
+    if (candidates.isEmpty) return null;
     return candidates[_random.nextInt(candidates.length)];
   }
 

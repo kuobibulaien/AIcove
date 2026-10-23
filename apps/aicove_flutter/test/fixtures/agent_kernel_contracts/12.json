@@ -1,0 +1,313 @@
+{
+  "requests": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "draw_image",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    }
+  ],
+  "modes": [
+    "rich:开始"
+  ],
+  "executions": [
+    "start:draw_image:a",
+    "end:draw_image:a",
+    "start:draw_image:b",
+    "end:draw_image:b"
+  ],
+  "executing": [
+    "draw_image",
+    "draw_image"
+  ],
+  "deltas": [],
+  "fallbacks": 0,
+  "observed": 1,
+  "contextCalls": null,
+  "error": null,
+  "trace": [
+    {
+      "round": 1,
+      "seq": 1,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 2,
+        "names": [
+          "draw_image",
+          "draw_image"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 2,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "draw_image",
+        "toolCallId": "d1"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 3,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "draw_image",
+        "toolCallId": "d1",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 20,
+        "imageCount": 0,
+        "asyncAccepted": false,
+        "stableVisionReview": false,
+        "actualFlowMode": "fast"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 4,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "draw_image",
+        "toolCallId": "d2"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 5,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "draw_image",
+        "toolCallId": "d2",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 20,
+        "imageCount": 0,
+        "asyncAccepted": false,
+        "stableVisionReview": false,
+        "actualFlowMode": "fast"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 6,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 2,
+        "toolResults": 2,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"d1\",\"name\":\"draw_image\",\"arguments\":{\"tag\":\"a\"}},{\"id\":\"d2\",\"name\":\"draw_image\",\"arguments\":{\"tag\":\"b\"}}]",
+          "rawToolResults": "[{\"toolCallId\":\"d1\",\"name\":\"draw_image\",\"result\":\"result-of-draw_image\"},{\"toolCallId\":\"d2\",\"name\":\"draw_image\",\"result\":\"result-of-draw_image\"}]"
+        }
+      }
+    },
+    {
+      "round": 1,
+      "seq": 7,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 2,
+        "toolResults": 2,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 8,
+      "stage": "FINAL_REPLY_READY",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "status": "completed",
+        "stopReason": "fast mode stop",
+        "rawReplyLength": 3,
+        "finalReplyLength": 3
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "FINAL_REPLY_READY",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawAiResponse": "画两张",
+          "regexDisplayText": "画两张",
+          "regex": {
+            "declared": 0,
+            "authorized": false,
+            "warnings": [],
+            "trace": []
+          },
+          "finalReply": "画两张"
+        }
+      }
+    }
+  ],
+  "result": {
+    "raw": "画两张",
+    "reply": "画两张",
+    "processed": "画两张",
+    "hidden": [],
+    "toolCalls": [
+      [
+        "d1",
+        "draw_image",
+        {
+          "tag": "a"
+        },
+        null
+      ],
+      [
+        "d2",
+        "draw_image",
+        {
+          "tag": "b"
+        },
+        null
+      ]
+    ],
+    "rawToolResults": [
+      [
+        "d1",
+        "draw_image",
+        "result-of-draw_image"
+      ],
+      [
+        "d2",
+        "draw_image",
+        "result-of-draw_image"
+      ]
+    ],
+    "toolResults": [],
+    "events": [],
+    "contents": [],
+    "audio": []
+  }
+}

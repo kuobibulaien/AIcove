@@ -4,7 +4,6 @@ import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_chat_wallpaper.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
-import 'package:aicove_flutter/src/ui/shared/widgets/moe_static_blur_layer.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -119,7 +118,7 @@ void main() {
       ],
       'global_wallpaper_styles': {
         'b': {'mask': 1.5, 'blur': 12},
-        'catnap': {'blur': 99},
+        'catnap': {'blur': 150},
       },
     });
     expect(settings.globalWallpaperCustoms.map((e) => e.id), ['a', 'b']);
@@ -293,7 +292,7 @@ void main() {
     expect(find.byType(Image), findsNothing);
   });
 
-  testWidgets('wallpaper blur adds the static blur layer under the mask', (
+  testWidgets('wallpaper blur applies ImageFiltered Gaussian blur under the mask', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -302,13 +301,12 @@ void main() {
         style: const WallpaperStyle(blur: 15),
       ),
     );
-    final layer = tester.widget<MoeStaticBlurLayer>(
-      find.byType(MoeStaticBlurLayer),
+    final filtered = tester.widget<ImageFiltered>(
+      find.byKey(const ValueKey('moe_wallpaper_blur')),
     );
-    expect(layer.source, 'assets/wallpapers/catnap_light.webp');
-    expect(layer.blur, 15);
+    expect(filtered.enabled, isTrue);
 
     await tester.pumpWidget(_host(const MoeChatWallpaper(child: SizedBox())));
-    expect(find.byType(MoeStaticBlurLayer), findsNothing);
+    expect(find.byKey(const ValueKey('moe_wallpaper_blur')), findsNothing);
   });
 }

@@ -24,6 +24,10 @@ class UiExpressionError implements Exception {
 const int kUiExpressionMaxLength = 512;
 const int kUiRangeMaxPoints = 1000;
 
+/// Longest text a formula may build; joining past it is an error, so short
+/// formulas that double a text cannot exhaust memory.
+const int kUiTextMaxLength = 10000;
+
 /// Steps shared by every formula of one block resolution.
 class UiBudget {
   UiBudget([this.remaining = 200000]);
@@ -56,8 +60,17 @@ class UiExpression {
     return UiExpression._(source, root, names);
   }
 
-  Object? evaluate(UiScope scope, [UiBudget? budget]) =>
-      _root.eval(scope, budget ?? UiBudget(100000));
+  Object? evaluate(UiScope scope, [UiBudget? budget]) {
+    try {
+      return _root.eval(scope, budget ?? UiBudget(100000));
+    } on UnsupportedError catch (error) {
+      // Integer conversions of non-finite numbers; the checks below should
+      // catch them first, this keeps a missed one from breaking the block.
+      throw UiExpressionError(error.message ?? 'unsupported number');
+    } on ArgumentError catch (error) {
+      throw UiExpressionError('${error.message}');
+    }
+  }
 }
 
 /// JS-like truthiness: null, false, 0, NaN and '' are false.
@@ -87,13 +100,56 @@ bool uiValuesEqual(Object? a, Object? b) {
   return a == b;
 }
 
+/// Longest text [uiStringify] prints for a list or object; past it the
+/// text ends in "…". Shared structure can make a small value print huge.
+const int kUiPrintMaxLength = 20000;
+
 /// Text form of a value: numbers with grouping and at most two decimals.
 String uiStringify(Object? value) {
   if (value == null) return '';
   if (value is String) return value;
   if (value is num) return uiFormatNumber(value);
   if (value is bool) return value.toString();
-  if (value is List) return value.map(uiStringify).join(', ');
+  if (value is UiExpressionError) return '—';
+  if (value is! List && value is! Map) return value.toString();
+  final out = StringBuffer();
+  _print(value, out);
+  if (out.length <= kUiPrintMaxLength) return out.toString();
+  return '${out.toString().substring(0, kUiPrintMaxLength)}…';
+}
+
+/// Appends [value]; stops once [out] passes [kUiPrintMaxLength].
+void _print(Object? value, StringBuffer out) {
+  if (out.length > kUiPrintMaxLength) return;
+  if (value is List) {
+    for (var i = 0; i < value.length && out.length <= kUiPrintMaxLength; i++) {
+      if (i > 0) out.write(', ');
+      _print(value[i], out);
+    }
+  } else if (value is Map) {
+    out.write('{');
+    var first = true;
+    for (final entry in value.entries) {
+      if (out.length > kUiPrintMaxLength) break;
+      if (!first) out.write(', ');
+      first = false;
+      out.write('${entry.key}: ');
+      _print(entry.value, out);
+    }
+    out.write('}');
+  } else {
+    final text = value is String ? value : uiStringify(value);
+    final room = kUiPrintMaxLength + 1 - out.length;
+    out.write(text.length > room ? text.substring(0, room) : text);
+  }
+}
+
+/// Text that parses back to exactly [value], for editing: no grouping and
+/// no rounding.
+String uiEditText(Object? value) {
+  if (value is! num) return uiStringify(value);
+  if (!value.isFinite) return '';
+  if (value == value.truncate() && value.abs() < 1e15) return value.truncate().toString();
   return value.toString();
 }
 
@@ -101,7 +157,8 @@ String uiStringify(Object? value) {
 String uiFormatNumber(num value, {int maxDecimals = 2, bool grouping = true}) {
   if (value.isNaN || value.isInfinite) return '—';
   final factor = math.pow(10, maxDecimals);
-  final rounded = (value * factor).round() / factor;
+  final scaled = value * factor;
+  final rounded = scaled.isFinite ? scaled.round() / factor : value;
   var text = rounded.toStringAsFixed(maxDecimals);
   if (text.contains('.')) {
     text = text.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
@@ -394,7 +451,13 @@ class _ArrayNode extends _Node {
   @override
   Object? eval(UiScope scope, UiBudget budget) {
     budget.spend(items.length + 1);
-    return [for (final item in items) item.eval(scope, budget)];
+    final values = [for (final item in items) item.eval(scope, budget)];
+    // Nesting a value twice doubles what printing it costs; charge the full
+    // size so `[a, a]` repeated cannot grow past the budget.
+    for (final value in values) {
+      _chargeSize(value, budget);
+    }
+    return values;
   }
 
   @override
@@ -447,7 +510,16 @@ class _BinaryNode extends _Node {
       case '!=':
         return !uiValuesEqual(a, b);
       case '+':
-        if (a is String || b is String) return uiStringify(a) + uiStringify(b);
+        if (a is String || b is String) {
+          _chargeSize(a, budget);
+          _chargeSize(b, budget);
+          final text = uiStringify(a) + uiStringify(b);
+          if (text.length > kUiTextMaxLength) {
+            throw const UiExpressionError('text longer than $kUiTextMaxLength characters');
+          }
+          budget.spend(text.length ~/ 64);
+          return text;
+        }
         return _number(a, '+') + _number(b, '+');
       case '-':
         return _number(a, '-') - _number(b, '-');
@@ -526,7 +598,7 @@ class _MemberNode extends _Node {
     if (target is List || target is String) {
       final length = target is List ? target.length : (target as String).length;
       if (key == 'length') return length;
-      if (key is num && key == key.truncate() && key >= 0 && key < length) {
+      if (key is num && key.isFinite && key == key.truncate() && key >= 0 && key < length) {
         final i = key.toInt();
         return target is List ? target[i] : (target as String)[i];
       }
@@ -574,6 +646,32 @@ class _CallNode extends _Node {
 num _number(Object? value, String context) {
   if (value is num) return value;
   throw UiExpressionError('$context expects numbers');
+}
+
+/// A count or digit argument: finite, truncated.
+int _whole(num value, String context) {
+  if (!value.isFinite) throw UiExpressionError('$context expects a finite number');
+  return value.truncate();
+}
+
+/// Walks a value, one step per list item and per 64 characters of text, so
+/// what printing it would cost is paid before it can be built; stops at the
+/// budget.
+void _chargeSize(Object? value, UiBudget budget) {
+  if (value is String) {
+    budget.spend(value.length ~/ 64);
+  } else if (value is List) {
+    budget.spend(value.length);
+    for (final item in value) {
+      _chargeSize(item, budget);
+    }
+  } else if (value is Map) {
+    budget.spend(value.length);
+    for (final entry in value.entries) {
+      _chargeSize(entry.key, budget);
+      _chargeSize(entry.value, budget);
+    }
+  }
 }
 
 List<num> _numbers(String name, List<Object?> args, int min, [int? max]) {
@@ -638,13 +736,16 @@ final Map<String, _Fn> _functions = {
   'max': _extreme('max', math.max),
   'round': (args, _) {
     final v = _numbers('round', args, 1, 2);
-    final factor = math.pow(10, v.length > 1 ? v[1].truncate() : 0);
-    return (v[0] * factor).round() / factor;
+    final digits = (v.length > 1 ? _whole(v[1], 'round') : 0).clamp(-15, 15);
+    if (!v[0].isFinite) return v[0];
+    final factor = math.pow(10, digits);
+    final scaled = v[0] * factor;
+    return scaled.isFinite ? scaled.round() / factor : v[0];
   },
   'fixed': (args, _) {
     final v = _numbers('fixed', args, 1, 2);
     if (v[0].isNaN || v[0].isInfinite) return '—';
-    final digits = (v.length > 1 ? v[1].truncate() : 0).clamp(0, 10);
+    final digits = (v.length > 1 ? _whole(v[1], 'fixed') : 0).clamp(0, 10);
     return v[0].toStringAsFixed(digits);
   },
   'clamp': (args, _) {
@@ -657,10 +758,14 @@ final Map<String, _Fn> _functions = {
     final start = v[0];
     final end = v[1];
     final step = v.length > 2 ? v[2] : (end >= start ? 1 : -1);
-    if (step == 0 || !step.isFinite || (end - start) / step < 0) {
+    if (!start.isFinite || !end.isFinite || step == 0 || !step.isFinite || (end - start) / step < 0) {
       throw const UiExpressionError('range needs a step that moves from start to end');
     }
-    final count = ((end - start) / step + 1e-9).floor() + 1;
+    final span = (end - start) / step + 1e-9;
+    if (!span.isFinite || span >= kUiRangeMaxPoints) {
+      throw const UiExpressionError('range is limited to $kUiRangeMaxPoints points');
+    }
+    final count = span.floor() + 1;
     if (count > kUiRangeMaxPoints) {
       throw const UiExpressionError('range is limited to $kUiRangeMaxPoints points');
     }

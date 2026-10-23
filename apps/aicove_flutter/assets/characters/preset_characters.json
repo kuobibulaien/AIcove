@@ -11,8 +11,8 @@
     },
     {
       "id": "aicove_assistant",
-      "displayName": "AIcove 助手",
-      "description": "带你上手 AIcove，有问题随时问我",
+      "displayName": "AIcove酱",
+      "description": "软件里的大部分事我都能帮你办，有问题直接找我～",
       "characterImage": "assets/characters/images/aicove_assistant.png",
       "avatarUrl": "assets/characters/images/aicove_assistant.png",
       "personaPromptFile": "assets/characters/prompts/aicove_assistant.md"

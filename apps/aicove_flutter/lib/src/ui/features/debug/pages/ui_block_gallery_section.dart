@@ -49,94 +49,118 @@ const List<_Sample> _samples = [
     label: 'checklist · 清单',
     closed: true,
     code: '''
-{"component": "checklist", "id": "voice-setup", "title": "语音通话准备",
- "items": [{"text": "选音色预设", "note": "决定角色用什么声音说话"}, "填语音渠道的 Key", "选识别来源"]}''',
+checklist voice-setup
+# 语音通话准备
+选音色预设 | 决定角色用什么声音说话
+填语音渠道的 Key
+选识别来源''',
   ),
   (
     label: 'steps · 步骤',
     closed: true,
     code: '''
-{"component": "steps", "id": "get-key", "title": "拿 DeepSeek Key",
- "items": [{"title": "打开 DeepSeek 开放平台", "text": "用手机号注册登录"},
-           {"title": "充值", "text": "按量计费，先充一点就够"},
-           {"title": "API Keys → 创建", "text": "Key 只显示一次，马上复制"},
-           {"title": "回到 AIcove 粘贴", "text": "助手会给你一张输入卡片，Key 不会进聊天记录"}]}''',
+steps get-key
+# 拿 DeepSeek Key
+打开 DeepSeek 开放平台 | 用手机号注册登录
+充值 | 按量计费，先充一点就够
+API Keys → 创建 | Key 只显示一次，马上复制
+回到 AIcove 粘贴 | AIcove酱会给你一张输入卡片，Key 不会进聊天记录''',
   ),
   (
     label: 'decision-tree · 决策树（每个问题自动带「其他」，点开可写自己的情况）',
     closed: true,
     code: '''
-{"component": "decision-tree", "id": "no-image", "title": "角色为什么不画画",
- "nodes": [
-   {"id": "plugin", "text": "角色的插件里开了「绘图」吗？", "detail": "角色编辑页 → 管理开启的插件",
-    "options": [{"label": "开了", "next": "preset"}, {"label": "没开", "next": "fix-plugin"}]},
-   {"id": "preset", "text": "绑定的预设关了函数调用吗？",
-    "options": [{"label": "关了", "next": "fix-preset"}, {"label": "没关", "next": "ask"}]},
-   {"id": "fix-plugin", "text": "到角色编辑页打开「绘图」插件就行"},
-   {"id": "fix-preset", "text": "预设关了函数调用时，绘图只能走内联标签"},
-   {"id": "ask", "text": "把联系人上下文页的截图发给我"}]}''',
+decision-tree no-image
+# 角色为什么不画画
+[plugin] 角色的插件里开了「绘图」吗？
+> 角色编辑页 → 管理插件
+- 开了 -> preset
+- 没开 -> fix-plugin
+[preset] 绑定的预设关了函数调用吗？
+- 关了 -> fix-preset
+- 没关 -> ask
+[fix-plugin] 到角色编辑页打开「绘图」插件就行
+[fix-preset] 预设关了函数调用时，绘图只能走内联标签
+[ask] 把角色完整上下文页的截图发给我''',
   ),
   (
     label: 'form · 向用户要信息（必填校验；单选多选自动带「其他」；提交后填进输入框；机密字段不给输入）',
     closed: true,
     code: '''
-{"component": "form", "id": "new-role", "title": "新角色的基本信息", "submit": "就按这些写",
- "fields": [
-   {"key": "name", "label": "名字", "placeholder": "比如：小雪", "required": true},
-   {"key": "gender", "label": "性别", "type": "select", "options": ["女", "男", "不设定"]},
-   {"key": "traits", "label": "性格（可多选）", "type": "multiselect", "options": ["温柔", "毒舌", "元气", "高冷", "话痨", "腹黑"]},
-   {"key": "age", "label": "年龄", "type": "number", "placeholder": "18"},
-   {"key": "story", "label": "背景故事", "type": "textarea", "placeholder": "几句话就行，没有就空着，我来补"},
-   {"key": "apiKey", "label": "DeepSeek API Key"}]}''',
+form new-role
+# 新角色的基本信息
+@submit: 就按这些写
+名字 | 文字 | 比如：小雪 | 必填
+性别 | 单选 | 女 / 男 / 不设定
+性格（可多选） | 多选 | 温柔 / 毒舌 / 元气 / 高冷 / 话痨 / 腹黑
+年龄 | 数字 | 18
+背景故事 | 长文字 | 几句话就行，没有就空着，我来补
+DeepSeek API Key''',
   ),
   (
     label: 'decision-tree · 长选项（自动改成整行，可换行）',
     closed: true,
     code: '''
-{"component": "decision-tree", "id": "draw-long", "title": "角色不画图 · 自查",
- "nodes": [
-   {"id": "q1", "text": "你让它画图的时候，它的反应更像哪一种？", "options": [
-     {"label": "完全像没听见，一点要画的意思都没有", "next": "c1"},
-     {"label": "嘴上说画好了、还描述了画面，但聊天里没有图", "next": "c2"},
-     {"label": "直接说自己不能画、没有这个能力", "next": "c1"}]},
-   {"id": "c1", "text": "多半是角色没勾「生图」插件，绘图工具没进上下文。", "detail": "角色编辑页 → 管理开启的插件 → 勾上「生图」。"},
-   {"id": "c2", "text": "插件关着时它会按旧习惯说「画好了」，先确认插件开着。"}]}''',
+decision-tree draw-long
+# 角色不画图 · 自查
+[q1] 你让它画图的时候，它的反应更像哪一种？
+- 完全像没听见，一点要画的意思都没有 -> c1
+- 嘴上说画好了、还描述了画面，但聊天里没有图 -> c2
+- 直接说自己不能画、没有这个能力 -> c1
+[c1] 多半是角色没勾「生图」插件，绘图工具没进上下文。
+> 角色编辑页 → 管理插件 → 勾上「生图」。
+[c2] 插件关着时它会按旧习惯说「画好了」，先确认插件开着。''',
   ),
   (
     label: 'quiz · 测验',
     closed: true,
     code: '''
-{"component": "quiz", "id": "ctx-quiz", "title": "小测一下",
- "questions": [
-   {"question": "上下文窗口满了会怎样？", "options": ["直接报错", "旧消息被压缩成摘要", "模型变聪明"], "answer": 1,
-    "explanation": "AIcove 会把旧消息整理成摘要，原文仍留在本机。"},
-   {"question": "API Key 应该发在哪里？", "options": ["直接发在聊天里", "填进助手给的输入卡片"], "answer": 1,
-    "explanation": "输入卡片直接写进渠道设置，Key 不会进模型上下文。"}]}''',
+quiz ctx-quiz
+# 小测一下
+? 上下文窗口满了会怎样？
+- 直接报错
+- 旧消息被压缩成摘要 ✓
+- 模型变聪明
+> AIcove 会把旧消息整理成摘要，原文仍留在本机。
+? API Key 应该发在哪里？
+- 直接发在聊天里
+- 填进 AIcove酱给的输入卡片 ✓
+> 输入卡片直接写进渠道设置，Key 不会进模型上下文。''',
   ),
   (
     label: 'stat-grid · 指标卡',
     closed: true,
     code: '''
-{"component": "stat-grid", "title": "小雪的上下文", "items": [
-  {"label": "系统提示词", "value": "3,120", "unit": "token"},
-  {"label": "聊天记录", "value": "18,400", "unit": "token", "delta": "-2,100", "trend": "down", "tone": "positive", "note": "压缩后"},
-  {"label": "工具", "value": "6", "unit": "个"},
-  {"label": "占窗口", "value": "33%", "delta": "+5%", "trend": "up", "tone": "negative"}]}''',
+stat-grid
+# 小雪的上下文
+系统提示词 | 3,120 | token
+聊天记录 | 18,400 | token | -2,100 | 压缩后 | trend=down | tone=positive
+工具 | 6 | 个
+占窗口 | 33% | | +5% | trend=up | tone=negative''',
   ),
   (
     label: 'data-table · 数据表（超过一页时出现搜索与翻页）',
     closed: true,
     code: '''
-{"component": "data-table", "title": "各角色的插件", "pageSize": 5,
- "columns": [{"key": "role", "label": "角色"}, {"key": "plugins", "label": "插件数", "type": "number"}, {"key": "preset", "label": "预设"}, {"key": "tokens", "label": "上下文", "type": "number"}],
- "rows": [
-   {"role": "小雪", "plugins": 4, "preset": "默认", "tokens": 21520},
-   {"role": "阿澈", "plugins": 2, "preset": "ARGO", "tokens": 8800},
-   {"role": "店长", "plugins": 6, "preset": "默认", "tokens": 30210},
-   {"role": "猫猫", "plugins": 1, "preset": "无", "tokens": 3400},
-   {"role": "旅行搭子", "plugins": 3, "preset": "双人成行", "tokens": 12000},
-   {"role": "学姐", "plugins": 5, "preset": "默认", "tokens": 17650},
-   {"role": "AIcove 助手", "plugins": 0, "preset": "无", "tokens": 9100}]}''',
+data-table
+# 各角色的插件
+@pageSize: 5
+角色 | 插件数 | 预设 | 上下文
+小雪 | 4 | 默认 | 21520
+阿澈 | 2 | ARGO | 8800
+店长 | 6 | 默认 | 30210
+猫猫 | 1 | 无 | 3400
+旅行搭子 | 3 | 双人成行 | 12000
+学姐 | 5 | 默认 | 17650
+AIcove酱 | 0 | 无 | 9100''',
+  ),
+  (
+    label: 'form · 旧 JSON 写法（历史消息兼容，结尾漏写括号也能显示）',
+    closed: true,
+    code: '''
+{"component": "form", "id": "rr-config", "title": "要我改哪些", "fields": [
+  {"key": "scope", "label": "改到什么程度", "type": "select", "options": ["除 Key 以外全配好", "先别改"]},
+  {"key": "model", "label": "模型", "type": "text", "placeholder": "deepseek-flash"}''',
   ),
   (
     label: 'panel · 联动计算（滑块、分段、提示条件显示、追问）',

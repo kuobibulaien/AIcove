@@ -1,7 +1,9 @@
+@Tags(['preview'])
+library;
+
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:aicove_flutter/src/features/stickers/builtin_stickers.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_library.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_library_provider.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_registry.dart';
@@ -26,7 +28,7 @@ void main() {
   late String importedPackId;
 
   setUpAll(() async {
-    // 用临时目录里的真实库：一个导入套组（含一张未标注）＋内置套组。
+    // 用临时目录里的真实库：一个导入套组（含一张未标注）。
     root = await Directory.systemTemp.createTemp('sticker_preview');
     library = StickerLibrary(root);
     await library.load();
@@ -37,7 +39,7 @@ void main() {
       StickerImportFile('得意 叉腰.png', asset('yay_cheer')),
       StickerImportFile('摸鱼-2.png', asset('slacking_fish')),
       StickerImportFile('IMG_0412.png', asset('bush_peek')),
-    ], packName: '小草神日常');
+    ], packName: '小草神日常', author: '示例作者');
     importedPackId = result.packIds.single;
     StickerLibraryNotifier.open = () async => library;
 
@@ -59,7 +61,7 @@ void main() {
   });
 
   tearDownAll(() async {
-    StickerRegistry.instance.replaceStickers(builtinStickers);
+    StickerRegistry.instance.replaceStickers(const []);
     await root.delete(recursive: true);
   });
 
@@ -120,8 +122,12 @@ void main() {
           dark: dark,
         );
         expect(find.text('小草神日常'), findsOneWidget);
-        expect(find.text('4 张 · 1 张未标注'), findsOneWidget);
-        expect(find.text(builtinStickerPackName), findsOneWidget);
+        expect(find.text('4 张 · 示例作者 · 1 张未标注'), findsOneWidget);
+        expect(find.text('纳西妲（内置）'), findsNothing);
+        expect(
+          find.text('所有表情包来源于微信公众号公开表情，已标注原作者，如有侵权请联系删除。'),
+          findsOneWidget,
+        );
         if (capture) {
           await _capture(
             tester,
@@ -148,8 +154,9 @@ void main() {
   ) async {
     addTearDown(tester.view.reset);
     final key = await pumpPage(tester, StickerPackPage(packId: importedPackId));
-    expect(find.text('未标注（AI 不会使用）'), findsOneWidget);
+    expect(find.text('未标注'), findsOneWidget);
     expect(find.text('让 AI 使用这个套组'), findsOneWidget);
+    expect(find.text('示例作者'), findsOneWidget);
     if (capture) {
       await _capture(
         tester,

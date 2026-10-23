@@ -3,7 +3,6 @@ import '../../agent_plugins/plugin_request_context.dart';
 import '../../agent_plugins/plugin_request_scope.dart';
 import '../../agent_plugins/plugin_response.dart';
 import '../domain/plugin.dart';
-import '../prompts/plugin_prompts.dart';
 import 'tts_plugin.dart';
 
 /// Speech on the v2 registrar. The registered instance only signals that the
@@ -19,8 +18,7 @@ AicovePlugin ttsAgentPlugin(TtsPlugin registered) => AicovePlugin(
           (inputs) => TtsRequestScope(
             TtsPlugin.forRequest(
               inputs.voiceRequest,
-              systemPromptTemplate:
-                  inputs.pluginPrompts.of(PluginPromptSlot.tts),
+              prompts: inputs.voicePrompts,
             ),
           ),
         );

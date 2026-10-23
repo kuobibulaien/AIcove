@@ -10,6 +10,7 @@ enum ChatViewportMode {
 /// 规则：
 /// - 用户手势或历史分页触发后，进入 `detached`
 /// - 进入 `detached` 后，列表保持当前位置，不再强制滚动
+/// - 「AI 发消息自动回底」关闭时，AI 出内容也进入 `detached`
 /// - 只有用户主动回到底部、点击“回到底部”或再次发送消息时，才恢复 `followLatest`
 class ChatViewportController extends ChangeNotifier {
   ChatViewportMode _mode = ChatViewportMode.followLatest;
@@ -34,6 +35,13 @@ class ChatViewportController extends ChangeNotifier {
   }
 
   void onUserGesture() {
+    _setState(
+      mode: ChatViewportMode.detached,
+      pinLatestTail: false,
+    );
+  }
+
+  void onAiOutputUnfollowed() {
     _setState(
       mode: ChatViewportMode.detached,
       pinLatestTail: false,

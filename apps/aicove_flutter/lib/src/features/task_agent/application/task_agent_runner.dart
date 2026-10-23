@@ -1,7 +1,13 @@
 import 'dart:convert';
+import '../../workspace/application/codemode_declarations.dart';
+import '../../context/application/runtime_context_service.dart';
+import '../../context/domain/context_window_policy.dart';
+import '../../context/domain/context_summary.dart';
+import '../../context/data/background_context_summarizer.dart';
+import '../../plugins/data/tool_result_store.dart';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
-    show KernelCancellation, KernelCancelledException, ToolEffect;
+    show KernelCancellation, ToolEffect, KernelStopReason;
 
 import '../../../core/api/providers/provider_adapter.dart'
     show ToolCall, ToolResult;
@@ -19,15 +25,21 @@ import '../../workspace/application/workspace_toolset.dart';
 class TaskAgentCapabilities {
   const TaskAgentCapabilities({
     this.tools = const [],
+    this.prompts = const {},
+    this.toolOwners = const {},
     this.workspaces,
   });
 
-  /// Office tools other than workspaces (web search, MCP).
+  /// Role-selected office and package tools, excluding workspaces.
   final List<AITool> tools;
+  final Map<String, String> prompts;
+  final Map<String, String> toolOwners;
   final WorkspaceToolset? workspaces;
 
   bool get isEmpty =>
-      tools.isEmpty && (workspaces == null || workspaces!.workspaceIds.isEmpty);
+      prompts.isEmpty &&
+      tools.isEmpty &&
+      (workspaces == null || workspaces!.workspaceIds.isEmpty);
 }
 
 /// The errand agent preset (ADR0088 §3). Presets only narrow: null lists
@@ -35,14 +47,12 @@ class TaskAgentCapabilities {
 class TaskAgentPreset {
   const TaskAgentPreset({
     this.modelRef,
-    this.maxRounds = 20,
     this.allowedPluginIds,
     this.allowedWorkspaceIds,
   });
 
   /// Null uses the default chat model.
   final String? modelRef;
-  final int maxRounds;
   final Set<String>? allowedPluginIds;
   final Set<String>? allowedWorkspaceIds;
 }
@@ -52,7 +62,6 @@ typedef TaskAgentExecutor =
       required ApiConfig config,
       required List<AITool> tools,
       required String sessionId,
-      required int maxRounds,
       required KernelCancellation cancellation,
     });
 
@@ -63,8 +72,14 @@ class TaskRunOutcome {
     required this.question,
     required this.artifacts,
     required this.processLog,
+    this.status = ApiRunStatus.completed,
+    this.stopReason,
+    this.runningMessages = const [],
   });
 
+  final List<Map<String, dynamic>> runningMessages;
+  final ApiRunStatus status;
+  final String? stopReason;
   final String summary;
 
   /// Set when the agent asked the user something; the task then waits.
@@ -82,6 +97,8 @@ class TaskAgentRunner {
     required this.loadSettings,
     required this.executor,
     ResolveBackgroundAgentRequestConfig? requestConfig,
+    this.summarizerFactory,
+    this.resultStore,
   }) : _requestConfig =
            requestConfig ?? BackgroundAgentService.resolveRequestConfig;
 
@@ -89,10 +106,10 @@ class TaskAgentRunner {
   final TaskAgentExecutor executor;
   final ResolveBackgroundAgentRequestConfig _requestConfig;
 
-  static const askToolName = 'ask_user';
+  final Future<ContextSummarizerPort> Function()? summarizerFactory;
+  final ToolResultStore? resultStore;
 
-  /// Per-result cut in the process record carried to the next run.
-  static const transcriptResultChars = 2000;
+  static const askToolName = 'ask_user';
 
   Future<TaskRunOutcome> run({
     required String taskId,
@@ -102,10 +119,16 @@ class TaskAgentRunner {
     required TaskAgentPreset preset,
     required KernelCancellation cancellation,
     AgentToolPolicy? toolPolicy,
+    List<Map<String, dynamic>>? contextMessages,
 
     /// Called before a tool with outside effects (HTTP, MCP) starts, so a
     /// later cancel can say the effect may already have happened.
     void Function()? onExternalStart,
+    Future<void> Function()? onBeforeExternal,
+    void Function(bool Function(String) steer)? onRunReady,
+    Future<void> Function(ToolCall call, ToolResult result)? onToolStep,
+    Future<void> Function(List<Map<String, dynamic>> messages)? onTranscript,
+    void Function(String toolName, String progress)? onToolProgress,
   }) async {
     cancellation.throwIfCancelled();
     String? question;
@@ -121,26 +144,66 @@ class TaskAgentRunner {
         'required': ['question'],
       },
       effect: ToolEffect.readDiagnostic,
+      terminationReason: KernelStopReason.waitingForUser,
       handler: (args) async {
         question = (args['question'] ?? '').toString().trim();
-        return '问题已记下。不要再调用工具，直接用一句话结束这一轮。';
+        return '问题已记下。';
       },
     );
-    final tools = [
+    final rawTools = [
       for (final tool in [
-        ...capabilities.tools,
+        for (final tool in capabilities.tools)
+          if (preset.allowedPluginIds == null ||
+              capabilities.toolOwners[tool.name] == null ||
+              preset.allowedPluginIds!.contains(
+                capabilities.toolOwners[tool.name],
+              ))
+            tool,
         ...?capabilities.workspaces?.tools(),
         askTool,
+        (resultStore ?? ToolResultStore.shared).reader(taskId),
       ])
-        _guarded(tool, cancellation, onExternalStart),
+        _guarded(tool, cancellation, onExternalStart, onBeforeExternal),
     ];
+    final tools = capabilities.workspaces?.enableScripts == true
+        ? assembleCodemodeTools(rawTools)
+        : rawTools;
     final settings = await loadSettings();
     final request = await _requestConfig(
       settings: settings,
       modelRef: preset.modelRef,
     );
     final workspacePrompt = await capabilities.workspaces?.prompt();
+    final schemas = directToolSchemas(tools);
     final config = ApiConfig(
+      toolResultStore: resultStore,
+      toolResultOwner: taskId,
+      currentWorkspaceId: () => capabilities.workspaces?.currentWorkspaceId,
+      onRunReady: onRunReady,
+      onToolStep: onToolStep,
+      onTranscript: onTranscript,
+      onToolProgress: onToolProgress,
+      runtimeContext: RuntimeContextService(
+        owner: taskId,
+        resultStore: resultStore,
+        policy: ContextWindowPolicy(
+          configured: settings.contextWindowTokens,
+          modelWindow: settings.getMaxContextTokens(request.modelFullId),
+        ),
+        tools: schemas,
+        summarizerFactory:
+            summarizerFactory ??
+            () async => BackgroundContextSummarizer(
+              BackgroundAgentService(
+                loadRecentMessages: (_, _) async => [],
+                loadSettings: loadSettings,
+              ),
+              modelRef: settings.compactionModel.trim().isNotEmpty
+                  ? settings.compactionModel
+                  : request.modelFullId,
+              contextTokens: settings.getMaxContextTokens(request.modelFullId),
+            ),
+      ),
       settings: settings,
       modelFullId: request.modelFullId,
       providerApiBase: request.providerApiBase,
@@ -149,11 +212,19 @@ class TaskAgentRunner {
       messages: [
         {
           'role': 'system',
-          'content': [_systemPrompt, ?workspacePrompt].join('\n\n'),
+          'content': [
+            _systemPrompt,
+            ?workspacePrompt,
+            for (final entry in capabilities.prompts.entries)
+              if (preset.allowedPluginIds == null ||
+                  preset.allowedPluginIds!.contains(entry.key))
+                entry.value,
+          ].join('\n\n'),
         },
-        {'role': 'user', 'content': transcript},
+        ...?contextMessages,
+        if (contextMessages == null) {'role': 'user', 'content': transcript},
       ],
-      tools: [for (final tool in tools) tool.toOpenAISchema()],
+      tools: schemas,
       modelTemperature: request.modelTemperature,
       modelTopP: request.modelTopP,
       modelContextMessageLimit: request.modelContextMessageLimit,
@@ -165,15 +236,18 @@ class TaskAgentRunner {
       config: config,
       tools: tools,
       sessionId: runId,
-      maxRounds: preset.maxRounds,
       cancellation: cancellation,
     );
     cancellation.throwIfCancelled();
-    final reply = (result.processedText.trim().isNotEmpty
-            ? result.processedText
-            : result.replyText)
-        .trim();
+    final reply =
+        (result.processedText.trim().isNotEmpty
+                ? result.processedText
+                : result.replyText)
+            .trim();
     return TaskRunOutcome(
+      status: result.status,
+      runningMessages: result.runningMessages,
+      stopReason: result.stopReason,
       summary: reply,
       question: question?.isEmpty ?? true ? null : question,
       artifacts: [
@@ -181,7 +255,18 @@ class TaskAgentRunner {
             in capabilities.workspaces?.changed ?? const <(String, String)>[])
           TaskArtifact(workspaceId: workspace, path: path),
       ],
-      processLog: processLog(result.toolCalls, result.rawToolResults, reply),
+      processLog: processLog(result.toolCalls, [
+        for (final output in result.rawToolResults)
+          ToolResult(
+            toolCallId: output.toolCallId,
+            name: output.name,
+            result: await (resultStore ?? ToolResultStore.shared).preserve(
+              taskId,
+              output.persistentText,
+            ),
+            isError: output.isError,
+          ),
+      ], reply),
     );
   }
 
@@ -190,20 +275,42 @@ class TaskAgentRunner {
     AITool tool,
     KernelCancellation cancellation,
     void Function()? onExternalStart,
+    Future<void> Function()? onBeforeExternal,
   ) => AITool(
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
     inputSchema: tool.inputSchema,
+    validationSchema: tool.validationSchema,
+    exposure: tool.exposure,
+    outputSchema: tool.outputSchema,
+    namespace: tool.namespace,
     effect: tool.effect,
-    handler: (args) {
-      if (cancellation.isCancelled) throw const KernelCancelledException();
-      if (tool.effect == ToolEffect.external) onExternalStart?.call();
+    terminationReason: tool.terminationReason,
+    executionTimeout: tool.executionTimeout,
+    managesDeadline: tool.managesDeadline,
+    requiresHumanApproval: tool.requiresHumanApproval,
+    richHandler: (args) async {
+      cancellation.throwIfCancelled();
+      if (tool.effect == ToolEffect.external) {
+        await onBeforeExternal?.call();
+        onExternalStart?.call();
+      }
+      cancellation.throwIfCancelled();
+      return tool.invoke(args);
+    },
+    handler: (args) async {
+      cancellation.throwIfCancelled();
+      if (tool.effect == ToolEffect.external) {
+        await onBeforeExternal?.call();
+        onExternalStart?.call();
+      }
+      cancellation.throwIfCancelled();
       return tool.handler(args);
     },
   );
 
-  /// Tool calls, cut results and the reply of one run.
+  /// Tool calls, preserved output references and the reply of one run.
   static String processLog(
     List<ToolCall> calls,
     List<ToolResult> results,
@@ -212,11 +319,10 @@ class TaskAgentRunner {
     final byId = {for (final result in results) result.toolCallId: result};
     final lines = <String>[];
     for (final call in calls) {
-      final result = byId[call.id]?.result ?? '';
-      final shown = result.length > transcriptResultChars
-          ? '${result.substring(0, transcriptResultChars)}…'
-          : result;
-      lines.add('- 调用 ${call.name} ${jsonEncode(call.arguments)}\n  结果：$shown');
+      final result = byId[call.id]?.persistentText ?? '';
+      lines.add(
+        '- 调用 ${call.name} ${jsonEncode(call.arguments)}\n  结果：$result',
+      );
     }
     if (reply.isNotEmpty) lines.add('- 你的回复：$reply');
     return lines.join('\n');

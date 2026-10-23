@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'ui_expression.dart';
 import 'ui_json.dart';
+import 'ui_lines.dart';
 import 'ui_template.dart';
 
 /// Interactive block model (ADR0073 交互组件): from the fenced text to a tree
@@ -9,7 +11,7 @@ import 'ui_template.dart';
 /// changes. Structure follows DEEIX-Chat `packages/core/src/ui-block/
 /// block.ts`.
 ///
-///     UiBlock.parse(raw)        lenient parse
+///     UiBlock.parse(raw)        lenient parse (JSON or line syntax)
 ///     UiProgram.compile(block)  compile formulas, order computed
 ///     program.resolve(state)    evaluate computed and templates
 ///
@@ -18,6 +20,10 @@ import 'ui_template.dart';
 
 /// Info string of the fence the model writes blocks in.
 const String kUiBlockFenceLanguage = 'aicove-ui';
+
+/// Whether a fence's info string names a block; case-insensitive, since
+/// models sometimes shout it. The renderer and <ui_state> both use this.
+bool uiIsBlockLanguage(String language) => language.trim().toLowerCase() == kUiBlockFenceLanguage;
 
 const int kUiBlockMaxNodes = 300;
 const int kUiBlockMaxDepth = 8;
@@ -31,6 +37,12 @@ const _structureKeys = {
 
 final _blockIdPattern = RegExp(r'^[A-Za-z0-9_-]{1,64}$');
 final _identifierPattern = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
+
+/// Names formulas already give a meaning; state and computed cannot reuse
+/// them, or a formula would read the constant or the value by accident.
+const _reservedNames = {'pi', 'e', 'true', 'false', 'null'};
+
+bool _isStateName(String name) => _identifierPattern.hasMatch(name) && !_reservedNames.contains(name);
 
 /// Controls: nodes that read and write a state variable through `bind`.
 const kUiControls = {'slider', 'select', 'segmented', 'switch', 'input'};
@@ -87,11 +99,12 @@ class UiBlock {
     return value is String ? value.trim() : '';
   }
 
-  /// Null with [error] set when the text is not a block.
+  /// Null with [error] set when the text is not a block. Text starting
+  /// with `{` is JSON; anything else is the line syntax of catalog blocks.
   static UiBlockParse parse(String raw) {
     final Object? value;
     try {
-      value = readLenientJson(raw);
+      value = raw.trimLeft().startsWith('{') ? readLenientJson(raw) : readUiLines(raw);
     } on FormatException catch (error) {
       return UiBlockParse._error(error.message);
     }
@@ -192,6 +205,12 @@ class _Static extends _Value {
   final Object? value;
 }
 
+/// A prop whose formula did not compile; shows as null, and a strict check
+/// sees the failure.
+class _Broken extends _Value {
+  const _Broken();
+}
+
 class _Templated extends _Value {
   const _Templated(this.template);
   final UiTemplate template;
@@ -237,11 +256,11 @@ class UiNode {
     return value == null ? null : uiStringify(value);
   }
 
+  /// Finite numbers only: sizes and counts are taken from it.
   num? number(String key) {
     final value = props[key];
-    if (value is num) return value;
-    if (value is String) return num.tryParse(value.trim());
-    return null;
+    final number = value is num ? value : value is String ? num.tryParse(value.trim()) : null;
+    return number != null && number.isFinite ? number : null;
   }
 
   bool flag(String key) => uiTruthy(props[key]);
@@ -278,6 +297,51 @@ class UiProgram {
   /// Evaluates computed values and templates against [state].
   UiNode resolve(Map<String, Object?> state) {
     final budget = UiBudget();
+    final scope = _scope(state, budget);
+    final root = _root;
+    if (root == null) {
+      return UiNode(component: block.component, props: const {}, children: const [], path: '');
+    }
+    return _resolveNode(root, scope, budget) ??
+        UiNode(component: block.component, props: const {}, children: const [], path: '');
+  }
+
+  /// Every node of [component], hidden ones included, with only [keys]
+  /// evaluated, each node on its own budget so nothing else in the block can
+  /// use it up. `failed` is true when one of those props did not evaluate:
+  /// a check built on them cannot trust what it sees.
+  List<({String? bind, Map<String, Object?> props, bool failed})> resolveEach(
+    String component,
+    Map<String, Object?> state,
+    Set<String> keys,
+  ) {
+    final scope = _scope(state, UiBudget());
+    final result = <({String? bind, Map<String, Object?> props, bool failed})>[];
+    void walk(_CompiledNode node) {
+      if (node.source.component == component) {
+        final budget = UiBudget();
+        var failed = false;
+        final props = <String, Object?>{};
+        for (final key in keys) {
+          final value = node.props[key];
+          if (value == null) continue;
+          try {
+            props[key] = _resolveStrict(value, scope, budget);
+          } on UiExpressionError {
+            failed = true;
+          }
+        }
+        result.add((bind: node.bind, props: props, failed: failed));
+      }
+      node.children.forEach(walk);
+    }
+
+    final root = _root;
+    if (root != null) walk(root);
+    return result;
+  }
+
+  UiScope _scope(Map<String, Object?> state, UiBudget budget) {
     final scope = <String, Object?>{...initialState, ...state};
     for (final (name, expression, constant) in _computed) {
       if (expression == null) {
@@ -290,12 +354,7 @@ class UiProgram {
         scope[name] = error;
       }
     }
-    final root = _root;
-    if (root == null) {
-      return UiNode(component: block.component, props: const {}, children: const [], path: '');
-    }
-    return _resolveNode(root, scope, budget) ??
-        UiNode(component: block.component, props: const {}, children: const [], path: '');
+    return scope;
   }
 
   UiNode? _resolveNode(_CompiledNode node, UiScope scope, UiBudget budget) {
@@ -310,7 +369,11 @@ class UiProgram {
       for (final entry in node.props.entries)
         entry.key: _resolveValue(entry.value, scope, budget),
     };
-    if (node.bind != null) props['value'] = scope[node.bind];
+    if (node.bind != null) {
+      // A bound computed that failed holds its error; controls get nothing.
+      final bound = scope[node.bind];
+      props['value'] = bound is UiExpressionError ? null : bound;
+    }
     return UiNode(
       component: node.source.component,
       props: props,
@@ -323,10 +386,24 @@ class UiProgram {
     );
   }
 
+  /// Like [_resolveValue], but any formula that did not compile or evaluate,
+  /// at any depth or inside mixed text, throws.
+  static Object? _resolveStrict(_Value value, UiScope scope, UiBudget budget) => switch (value) {
+        _Static(:final value) => value,
+        _Broken() => throw const UiExpressionError('formula did not compile'),
+        _Templated(:final template) => template.evaluate(scope, budget, strict: true),
+        _ListValue(:final items) => [for (final item in items) _resolveStrict(item, scope, budget)],
+        _ObjectValue(:final fields) => {
+            for (final entry in fields.entries) entry.key: _resolveStrict(entry.value, scope, budget),
+          },
+      };
+
   static Object? _resolveValue(_Value value, UiScope scope, UiBudget budget) {
     switch (value) {
       case _Static(:final value):
         return value;
+      case _Broken():
+        return null;
       case _Templated(:final template):
         try {
           return template.evaluate(scope, budget);
@@ -402,10 +479,10 @@ _Value _compileValue(Object? value, String path, List<UiBlockIssue> issues) {
   if (value is String) {
     try {
       final template = UiTemplate.compile(value);
-      return template == null ? _Static(value) : _Templated(template);
+      return template == null ? _Static(uiTemplateLiteral(value)) : _Templated(template);
     } on UiExpressionError catch (error) {
       issues.add(UiBlockIssue(path, error.message));
-      return const _Static(null);
+      return const _Broken();
     }
   }
   if (value is List) {
@@ -444,8 +521,8 @@ Map<String, Object?> _readInitialState(Map<String, Object?>? state, List<UiBlock
   final result = <String, Object?>{};
   if (state == null) return result;
   for (final entry in state.entries) {
-    if (!_identifierPattern.hasMatch(entry.key)) {
-      issues.add(UiBlockIssue('state.${entry.key}', 'state names are letters, digits and _'));
+    if (!_isStateName(entry.key)) {
+      issues.add(UiBlockIssue('state.${entry.key}', 'state names are letters, digits and _, not pi, e, true, false or null'));
       continue;
     }
     var invalid = false;
@@ -470,8 +547,8 @@ List<(String, UiExpression?, Object?)> _orderComputed(
   final compiled = <String, (UiExpression?, Object?)>{};
   for (final entry in computed.entries) {
     final name = entry.key;
-    if (!_identifierPattern.hasMatch(name)) {
-      issues.add(UiBlockIssue('computed.$name', 'computed names are letters, digits and _'));
+    if (!_isStateName(name)) {
+      issues.add(UiBlockIssue('computed.$name', 'computed names are letters, digits and _, not pi, e, true, false or null'));
       continue;
     }
     if (stateNames.contains(name)) {
@@ -488,7 +565,9 @@ List<(String, UiExpression?, Object?)> _orderComputed(
         compiled[name] = (UiExpression.parse(unwrapUiFormula(value)), null);
       } on UiExpressionError catch (error) {
         issues.add(UiBlockIssue('computed.$name', error.message));
-        compiled[name] = (UiExpression.parse("'—'"), null);
+        // An error value, not the text "—": formulas reading it fail too,
+        // so strict checks see the failure; display still shows "—".
+        compiled[name] = (null, error);
       }
     } else {
       // Non-string values are constants: lookup tables, lists, flags.
@@ -496,22 +575,64 @@ List<(String, UiExpression?, Object?)> _orderComputed(
     }
   }
 
+  // Every value in a cycle is an error ("—"), even when a short-circuit
+  // would let one evaluate: what it shows must not depend on order. Cycles
+  // are the strongly connected components (Tarjan), so crossed loops count.
+  final dependencies = {
+    for (final entry in compiled.entries)
+      entry.key: [
+        for (final name in entry.value.$1?.variables ?? const <String>{})
+          if (compiled.containsKey(name)) name,
+      ],
+  };
+  final cyclic = <String>{};
+  final index = <String, int>{};
+  final low = <String, int>{};
+  final stack = <String>[];
+  final onStack = <String>{};
+  void connect(String name) {
+    index[name] = low[name] = index.length;
+    stack.add(name);
+    onStack.add(name);
+    for (final next in dependencies[name]!) {
+      if (!index.containsKey(next)) {
+        connect(next);
+        low[name] = math.min(low[name]!, low[next]!);
+      } else if (onStack.contains(next)) {
+        low[name] = math.min(low[name]!, index[next]!);
+      }
+    }
+    if (low[name] != index[name]) return;
+    final component = <String>[];
+    String member;
+    do {
+      member = stack.removeLast();
+      onStack.remove(member);
+      component.add(member);
+    } while (member != name);
+    if (component.length > 1 || dependencies[name]!.contains(name)) cyclic.addAll(component);
+  }
+
+  for (final name in compiled.keys) {
+    if (!index.containsKey(name)) connect(name);
+  }
+  for (final name in cyclic) {
+    issues.add(UiBlockIssue('computed.$name', 'computed values read each other in a cycle'));
+  }
+
+  // Dependencies first; names in a cycle become errors.
+  const cycleError = UiExpressionError('computed values read each other in a cycle');
   final order = <(String, UiExpression?, Object?)>[];
   final done = <String>{};
-  final visiting = <String>{};
   void visit(String name) {
-    if (done.contains(name)) return;
-    if (visiting.contains(name)) {
-      issues.add(UiBlockIssue('computed.$name', 'computed values read each other in a cycle'));
-      return;
+    if (!done.add(name)) return;
+    if (!cyclic.contains(name)) {
+      for (final dependency in dependencies[name]!) {
+        visit(dependency);
+      }
     }
-    visiting.add(name);
     final (expression, constant) = compiled[name]!;
-    for (final dependency in expression?.variables ?? const <String>{}) {
-      if (compiled.containsKey(dependency)) visit(dependency);
-    }
-    visiting.remove(name);
-    if (done.add(name)) order.add((name, expression, constant));
+    order.add(cyclic.contains(name) ? (name, null, cycleError) : (name, expression, constant));
   }
 
   for (final name in compiled.keys) {
@@ -523,7 +644,7 @@ List<(String, UiExpression?, Object?)> _orderComputed(
 /// Controls bound to a name the block never declared start from a default.
 void _implicitState(_CompiledNode node, Map<String, Object?> state) {
   final bind = node.bind;
-  if (bind != null && !state.containsKey(bind) && _identifierPattern.hasMatch(bind)) {
+  if (bind != null && !state.containsKey(bind) && _isStateName(bind)) {
     state[bind] = _controlDefault(node.source);
   }
   for (final child in node.children) {
@@ -558,6 +679,15 @@ List<({String label, Object? value})> uiOptions(Object? raw) {
       else if (item != null)
         (label: uiStringify(item), value: item),
   ];
+}
+
+/// [value] with every non-finite number (from `1/0` and the like) turned
+/// into null, so it can be stored and reported as JSON.
+Object? uiJsonSafe(Object? value) {
+  if (value is num) return value.isFinite ? value : null;
+  if (value is List) return [for (final item in value) uiJsonSafe(item)];
+  if (value is Map) return {for (final e in value.entries) '${e.key}': uiJsonSafe(e.value)};
+  return value;
 }
 
 /// The keys of [current] that differ from [initial]: what is stored and

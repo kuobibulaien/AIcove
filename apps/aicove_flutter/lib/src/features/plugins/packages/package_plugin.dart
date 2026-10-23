@@ -1,4 +1,3 @@
-import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show ToolEffect;
 import 'package:flutter/material.dart';
 
 import '../../agent_plugins/aicove_plugin.dart';
@@ -6,6 +5,8 @@ import '../../agent_plugins/plugin_request_context.dart';
 import '../../agent_plugins/plugin_request_scope.dart';
 import '../domain/index.dart';
 import 'aicove_package.dart';
+import 'package_skill_tools.dart';
+import 'package_script.dart';
 
 /// An installed declarative package, registered as plugin `pkg:<id>`. Roles
 /// must turn it on explicitly; "all plugins" does not include it.
@@ -25,6 +26,18 @@ class PackagePlugin extends BasePlugin {
       );
 
   final AicovePackage package;
+  late final script = PackageScript(package);
+
+  Future<void> prepare() => script.load();
+
+  Future<String?> prompt() async {
+    await prepare();
+    final fragments = [...package.prompts, ...script.prompts];
+    return fragments.isEmpty ? null : fragments.join('\n\n');
+  }
+
+  static bool isExecutionTool(String name) =>
+      name.startsWith('pkg_') || name.startsWith('run_skill_js_');
 
   @override
   bool get enabled => true;
@@ -45,38 +58,10 @@ class PackagePlugin extends BasePlugin {
     ),
   );
 
-  List<AITool> getTools() {
-    final skills = package.skills;
-    if (skills.isEmpty) return const [];
-    return [
-      AITool(
-        name: readSkillTool,
-        description:
-            '读取「${package.name}」里的说明文档。可读的文档：'
-            '${skills.map((s) => s.title.isEmpty ? s.name : '${s.name}（${s.title}）').join('、')}',
-        parameters: const {},
-        inputSchema: {
-          'type': 'object',
-          'properties': {
-            'name': {
-              'type': 'string',
-              'enum': [for (final skill in skills) skill.name],
-              'description': '文档名',
-            },
-          },
-          'required': ['name'],
-        },
-        effect: ToolEffect.readDiagnostic,
-        handler: (args) async {
-          final name = args['name'];
-          for (final skill in skills) {
-            if (skill.name == name) return skill.content;
-          }
-          return '没有名为「$name」的文档';
-        },
-      ),
-    ];
-  }
+  List<AITool> getTools({bool executable = true}) => [
+    ...PackageSkillTools(package).tools(executable: executable),
+    if (executable) ...script.tools(),
+  ];
 }
 
 /// Prompts go to the end of the system prompt; skills through the
@@ -97,8 +82,7 @@ class PackageRequestScope extends PluginRequestScope {
 
   @override
   Future<String?> prompt(PluginRequestContext ctx) async {
-    final prompts = plugin.package.prompts;
-    return prompts.isEmpty ? null : prompts.join('\n\n');
+    return plugin.prompt();
   }
 
   @override

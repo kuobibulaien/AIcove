@@ -1,3 +1,20 @@
+import 'dart:typed_data';
+
+class ToolImage {
+  const ToolImage({
+    required this.mimeType,
+    required this.bytes,
+    required this.source,
+    this.width,
+    this.height,
+  });
+  final String mimeType;
+  final Uint8List bytes;
+  final String source;
+  final int? width;
+  final int? height;
+}
+
 /// Opaque provider message. The kernel never inspects provider-specific
 /// structure (OpenAI, Claude blocks, Gemini parts); stages own the format.
 typedef KernelMessage = Map<String, dynamic>;
@@ -28,12 +45,23 @@ class KernelToolResult {
     required this.content,
     this.isError = false,
     this.payload,
+    this.images = const [],
+    this.outputRewritten = false,
+    this.terminationReason,
   });
 
   final String callId;
   final String name;
   final String content;
   final bool isError;
+  final List<ToolImage> images;
+
+  /// A decorator replaced output fields. App-owned payloads may still carry
+  /// non-model delivery data, but must not restore images or structured output.
+  final bool outputRewritten;
+
+  /// Successful tools can stop this turn before the rest of a serial batch.
+  final KernelStopReason? terminationReason;
 
   /// Stage-owned extra data (e.g. collected media), passed through untouched.
   final Object? payload;
@@ -42,6 +70,17 @@ class KernelToolResult {
 /// One assistant response for a round, after unpacking.
 /// Why the model stopped, normalized across providers (batch 2 plan §3.8).
 enum FinishReason { stop, toolCalls, length, contentFilter, unknown }
+
+/// Stable machine reasons. Adapters serialize only at their public boundary.
+enum KernelStopReason {
+  length('length'),
+  waitingForUser('waitingForUser'),
+  fastModeStop('fast mode stop'),
+  policy('policy');
+
+  const KernelStopReason(this.wireValue);
+  final String wireValue;
+}
 
 class AssistantTurn {
   const AssistantTurn({
@@ -122,17 +161,17 @@ class TurnVerdict {
 
   const TurnVerdict.proceed() : this._(true, null);
 
-  const TurnVerdict.stop(String reason) : this._(false, reason);
+  const TurnVerdict.stop(KernelStopReason reason) : this._(false, reason);
 
   final bool shouldContinue;
-  final String? reason;
+  final KernelStopReason? reason;
 }
 
 enum LoopStatus {
   /// The model answered without tool calls.
   completed,
 
-  /// A post-tool decision or the round limit ended the run.
+  /// A post-tool business decision ended the run.
   stopped,
 
   cancelled,
@@ -155,7 +194,7 @@ class AgentLoopResult {
   final List<KernelToolCall> toolCalls;
   final List<KernelToolResult> toolResults;
   final AssistantTurn? lastTurn;
-  final String? stopReason;
+  final KernelStopReason? stopReason;
 }
 
 /// Thrown by a model port when the request exceeds the context window,

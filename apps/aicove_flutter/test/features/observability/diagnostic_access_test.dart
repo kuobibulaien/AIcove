@@ -39,6 +39,27 @@ void main() {
     expect(encoded, contains('release'));
   });
 
+  test('LAN round totals survive export without private content', () {
+    final item = sanitizeDiagnosticEntry({
+      'time': '2026-10-22T12:00:00Z',
+      'metadata': {
+        'category': 'sync',
+        'event': 'lanRound',
+        'pushed': 10000,
+        'pulled': 12,
+        'failed': 1,
+        'complete': false,
+        'elapsedMs': 2000,
+        'content': 'PRIVATE',
+      },
+    }, 'app_2026-10-22.jsonl')!;
+    expect((item['metadata'] as Map)['pushed'], 10000);
+    expect((item['metadata'] as Map)['pulled'], 12);
+    expect((item['metadata'] as Map)['failed'], 1);
+    expect((item['metadata'] as Map)['complete'], false);
+    expect(jsonEncode(item), isNot(contains('PRIVATE')));
+  });
+
   test('只导出允许文件，报告半行和坏行，不跟随符号链接', () async {
     final dir = await Directory.systemTemp.createTemp('diagnostic_export_test');
     addTearDown(() => dir.delete(recursive: true));
@@ -76,6 +97,93 @@ void main() {
     final missing = jsonDecode(
         utf8.decode(await createDiagnosticBundle('${dir.path}/missing')));
     expect(missing['coverage']['limits'], contains('log_directory_missing'));
+  });
+
+  test(
+    'history flood cannot evict later errors, background delivery or sync',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('diagnostic_priority_');
+      addTearDown(() => dir.delete(recursive: true));
+      final time = DateTime(2026, 10, 22);
+      Map<String, Object?> entry(
+        String category,
+        String event, {
+        String level = 'INFO',
+      }) => {
+        'time': time.toIso8601String(),
+        'level': level,
+        'message': 'PRIVATE_BODY',
+        'metadata': {
+          'category': category,
+          'event': event,
+          'entityId': 'bg_test',
+          'phase': 'apply',
+          'result': 'success',
+          'elapsedMs': 12,
+          'content': 'PRIVATE_BODY',
+        },
+      };
+      final records = [
+        ...List.generate(50, (_) => entry('frontend', 'historyReady')),
+        entry('frontend', 'historyFailed', level: 'ERROR'),
+        entry('backgroundDelivery', 'persisted'),
+        entry('sync', 'lanEntity'),
+      ].map(jsonEncode).join('\n');
+      await File(
+        '${dir.path}/app_2026-10-22.jsonl',
+      ).writeAsString('$records\n');
+      final text = utf8.decode(
+        await createDiagnosticBundle(dir.path, now: time, maxRecords: 6),
+      );
+      expect(text, contains('historyFailed'));
+      expect(text, contains('persisted'));
+      expect(text, contains('lanEntity'));
+      expect(text, contains('bg_test'));
+      expect(text, isNot(contains('PRIVATE_BODY')));
+      expect(jsonDecode(text)['coverage']['recordCount'], lessThanOrEqualTo(6));
+    },
+  );
+
+  test('byte budget also reserves later sync and delivery events', () async {
+    final dir = await Directory.systemTemp.createTemp('diagnostic_bytes_');
+    addTearDown(() => dir.delete(recursive: true));
+    final time = DateTime(2026, 10, 22);
+    final records = [
+      for (var i = 0; i < 100; i++)
+        {
+          'time': time.toIso8601String(),
+          'metadata': {
+            'category': 'frontend',
+            'event': 'historyReady',
+            'operationId': 'op_$i',
+          },
+        },
+      for (final category in ['sync', 'backgroundDelivery'])
+        {
+          'time': time.toIso8601String(),
+          'metadata': {
+            'category': category,
+            'event': 'criticalEvent',
+            'entityId': 'bg_test',
+            'phase': 'apply',
+            'result': 'success',
+            'elapsedMs': 1,
+          },
+        },
+    ];
+    await File(
+      '${dir.path}/app_2026-10-22.jsonl',
+    ).writeAsString('${records.map(jsonEncode).join('\n')}\n');
+    final bundle = jsonDecode(
+      utf8.decode(
+        await createDiagnosticBundle(dir.path, now: time, maxOutput: 2000),
+      ),
+    );
+    final output = (bundle['files'] as Map).values.join();
+    expect(output, contains('backgroundDelivery'));
+    expect(output, contains('sync'));
+    expect(bundle['coverage']['limits'], contains('bundle_budget_reached'));
+    expect(utf8.encode(jsonEncode(output)).length, lessThanOrEqualTo(2002));
   });
 
   test('本机服务验证凭证、路径、并发与资源释放', () async {

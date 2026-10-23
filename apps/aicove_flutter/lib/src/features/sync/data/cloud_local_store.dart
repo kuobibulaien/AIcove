@@ -10,6 +10,7 @@ import '../../../core/database/database.dart';
 import '../../../core/media/embedded_media_store.dart';
 import '../../../core/media/media_store.dart';
 import '../../../core/sync/cloud_tracking.dart';
+import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
 import 'cloud_document.dart';
 import 'device_names.dart';
@@ -664,46 +665,48 @@ class CloudLocalStore {
       return;
     }
     if (payload['storage'] == 'preference') {
-      final key = payload['key'] as String;
-      if (!syncPreference(key) || id != cloudObjectId('preference:$key')) {
-        throw const CloudSyncFailure('云端设置标识无效');
-      }
-      final value = keepLocalGeneralSettings(
-        key,
-        payload['json_value'],
-        preferences.get(key),
-      );
-      final bool saved;
-      if (deleted && key == cloudUiModelsKey) {
-        final local = preferences.getString(key);
-        final fields = local == null
-            ? <String, dynamic>{}
-            : Map<String, dynamic>.from(jsonDecode(local) as Map);
-        saved = await preferences.setString(
+      await cloudLocalWrite(() async {
+        final key = payload['key'] as String;
+        if (!syncPreference(key) || id != cloudObjectId('preference:$key')) {
+          throw const CloudSyncFailure('云端设置标识无效');
+        }
+        final value = keepLocalGeneralSettings(
           key,
-          jsonEncode({
-            for (final entry in fields.entries)
-              if (localGeneralSettings.contains(entry.key))
-                entry.key: entry.value,
-          }),
+          payload['json_value'],
+          preferences.get(key),
         );
-      } else if (deleted) {
-        saved = await preferences.remove(key);
-      } else if (value is String) {
-        saved = await preferences.setString(key, value);
-      } else if (value is bool) {
-        saved = await preferences.setBool(key, value);
-      } else if (value is int) {
-        saved = await preferences.setInt(key, value);
-      } else if (value is double) {
-        saved = await preferences.setDouble(key, value);
-      } else if (value is List) {
-        saved = await preferences.setStringList(key, value.cast<String>());
-      } else {
-        throw const CloudSyncFailure('云端设置类型无效');
-      }
-      if (!saved) throw const CloudSyncFailure('设置保存失败，稍后继续同步');
-      await rememberSettingTimes(kind, id, payload);
+        final bool saved;
+        if (deleted && key == cloudUiModelsKey) {
+          final local = preferences.getString(key);
+          final fields = local == null
+              ? <String, dynamic>{}
+              : Map<String, dynamic>.from(jsonDecode(local) as Map);
+          saved = await preferences.setString(
+            key,
+            jsonEncode({
+              for (final entry in fields.entries)
+                if (localGeneralSettings.contains(entry.key))
+                  entry.key: entry.value,
+            }),
+          );
+        } else if (deleted) {
+          saved = await preferences.remove(key);
+        } else if (value is String) {
+          saved = await preferences.setString(key, value);
+        } else if (value is bool) {
+          saved = await preferences.setBool(key, value);
+        } else if (value is int) {
+          saved = await preferences.setInt(key, value);
+        } else if (value is double) {
+          saved = await preferences.setDouble(key, value);
+        } else if (value is List) {
+          saved = await preferences.setStringList(key, value.cast<String>());
+        } else {
+          throw const CloudSyncFailure('云端设置类型无效');
+        }
+        if (!saved) throw const CloudSyncFailure('设置保存失败，稍后继续同步');
+        await rememberSettingTimes(kind, id, payload);
+      });
       return;
     }
     final rootName = payload['root'] as String;

@@ -32,7 +32,6 @@ import '../widgets/model_picker_sheet.dart';
 import '../widgets/model_test_sheet.dart';
 import 'multi_key_manager_page.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
-import '../widgets/comfyui_workflow_editor.dart';
 import '../../../../core/api/providers/provider_extra_body.dart';
 import '../widgets/provider_extra_body_editor.dart';
 import '../widgets/tts_request_template_editor.dart';
@@ -837,38 +836,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
               margin: const EdgeInsets.symmetric(horizontal: 16),
               title: 'ComfyUI',
               children: [
-                MoeSettingsRow(
-                  label: '工作流与参数绑定',
-                  detailText:
-                      provider.customConfig.containsKey(
-                        ComfyUIWorkflow.workflowKey,
-                      )
-                      ? '已配置'
-                      : '尚未导入',
-                  trailingType: MoeSettingsRowTrailing.chevron,
-                  onTap: () async {
-                    final workflow = await showComfyUIWorkflowEditor(
-                      context,
-                      provider.customConfig,
-                    );
-                    if (workflow != null && mounted) {
-                      try {
-                        await _actions.saveComfyUIWorkflow(provider, workflow);
-                      } catch (error) {
-                        if (context.mounted) {
-                          MoeToast.show(
-                            context,
-                            '保存失败：$error',
-                            type: ToastType.error,
-                          );
-                        }
-                      }
-                    }
-                  },
-                ),
                 const Padding(
                   padding: EdgeInsets.all(12),
-                  child: Text('API Key 可留空；模型由工作流指定。测试连接只检查服务，不执行生图。'),
+                  child: Text(
+                    'API Key 可留空。基础模型从服务端自动拉取；LoRA、采样器和自定义 JSON 工作流在绘图预设中配置。测试连接只检查服务，不执行生图。',
+                  ),
                 ),
               ],
             ),

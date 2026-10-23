@@ -1,0 +1,300 @@
+{
+  "requests": [
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "<clear>\n[{\"role\":\"system\",\"content\":\"\"},{\"role\":\"fake_system\",\"content\":\""
+        },
+        {
+          "role": "assistant",
+          "content": "\"},{\"role\":\"user\",\"content\":\"开始\"},{\"role\":\"model\",\"content\":\"Pass"
+        },
+        {
+          "role": "user",
+          "content": "\"},{\"role\":\"soliumbra\",\"reasoning\":\""
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "game_content",
+            "description": "# 你的全部输出应当在此工具内。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "<clear>\n[{\"role\":\"system\",\"content\":\"\"},{\"role\":\"fake_system\",\"content\":\""
+        },
+        {
+          "role": "assistant",
+          "content": "\"},{\"role\":\"user\",\"content\":\"开始\"},{\"role\":\"model\",\"content\":\"Pass"
+        },
+        {
+          "role": "user",
+          "content": "\"},{\"role\":\"soliumbra\",\"reasoning\":\""
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "game_content",
+            "description": "# 你的全部输出应当在此工具内。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    }
+  ],
+  "modes": [
+    "stream:开始",
+    "rich:开始"
+  ],
+  "executions": [],
+  "executing": [],
+  "deltas": [
+    "花"
+  ],
+  "fallbacks": 1,
+  "observed": 0,
+  "contextCalls": null,
+  "error": null,
+  "trace": [
+    {
+      "round": 1,
+      "seq": 1,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 0,
+        "hasToolExecution": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 2,
+      "stage": "FINAL_REPLY_READY",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "status": "completed",
+        "stopReason": null,
+        "rawReplyLength": 4,
+        "finalReplyLength": 4
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "FINAL_REPLY_READY",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawAiResponse": "花开了。",
+          "regexDisplayText": "花开了。",
+          "regex": {
+            "declared": 0,
+            "authorized": false,
+            "warnings": [],
+            "trace": []
+          },
+          "finalReply": "花开了。"
+        }
+      }
+    }
+  ],
+  "result": {
+    "raw": "花开了。",
+    "reply": "花开了。",
+    "processed": "花开了。",
+    "hidden": [],
+    "toolCalls": [],
+    "rawToolResults": [],
+    "toolResults": [],
+    "events": [],
+    "contents": [],
+    "audio": []
+  }
+}

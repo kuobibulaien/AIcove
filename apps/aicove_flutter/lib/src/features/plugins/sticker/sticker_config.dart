@@ -28,13 +28,19 @@ class StickerConfig {
     return {'enabled': enabled, 'systemPromptTemplate': systemPromptTemplate};
   }
 
+  /// 旧版出厂模板用方括号写标签，语音会把它念出来。保存的仍是旧出厂文案时换成新默认；
+  /// 用户自己改过的模板不动。
+  static const String _legacyBracketLine = '使用方法：在合适的地方用 [标签] 标记。';
+
   factory StickerConfig.fromJson(Map<String, dynamic> json) {
+    final template = json['systemPromptTemplate'] as String?;
     return StickerConfig(
       // 全局开关已移除，忽略旧存储值
       enabled: true,
       systemPromptTemplate:
-          json['systemPromptTemplate'] as String? ??
-          defaultSystemPromptTemplate,
+          template == null || template.contains(_legacyBracketLine)
+          ? defaultSystemPromptTemplate
+          : template,
     );
   }
 }

@@ -21,6 +21,9 @@ class _Settings extends AppSettingsNotifier {
   @override
   Future<AppSettings> build() async => initial;
 
+  @override
+  Future<AppSettings> readStored() async => state.requireValue;
+
   AppSettings get _now => state.value!;
 
   @override
@@ -35,6 +38,10 @@ class _Settings extends AppSettingsNotifier {
   @override
   Future<void> setUserName(String? name) async =>
       state = AsyncValue.data(_now.copyWith(userName: name ?? ''));
+
+  @override
+  Future<void> updateAutoReplySettings(AutoReplySettings settings) async =>
+      state = AsyncValue.data(_now.copyWith(autoReplySettings: settings));
 
   @override
   Future<void> setDefaultChatModels(List<String> models) async =>
@@ -84,7 +91,6 @@ void main() {
       file: () async => File('${dir.path}/journal.json'),
       appliers: {
         assistantSettingChangeKind: AssistantSettingApplier(
-          load: load,
           notifier: notifier,
         ),
       },
@@ -307,5 +313,26 @@ void main() {
     for (final setting in kAssistantSettings) {
       expect(doc, contains('`${setting.key}`'));
     }
+  });
+
+  test('nested settings change one field and undo it', () async {
+    final before = now().autoReplySettings;
+    final done = await run(AssistantSettingsTools.setTool, {
+      'key': 'auto_reply.daily_limit',
+      'value': 5,
+    });
+    expect(done['ok'], isTrue);
+    expect(now().autoReplySettings.dailyLimit, 5);
+    expect(now().autoReplySettings.quietHoursStart, before.quietHoursStart);
+
+    final bad = await run(AssistantSettingsTools.setTool, {
+      'key': 'auto_reply.quiet_start',
+      'value': '25:00',
+    });
+    expect(bad['ok'], isNot(isTrue));
+    expect(now().autoReplySettings.quietHoursStart, before.quietHoursStart);
+
+    await journal.undo((await journal.recent()).first.id);
+    expect(now().autoReplySettings.dailyLimit, before.dailyLimit);
   });
 }

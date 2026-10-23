@@ -101,7 +101,8 @@ class GeneratedChatMedia {
           messageId: original.messageId,
           url: location,
           text: original.text,
-          durationSeconds: durationSeconds),
+          durationSeconds: durationSeconds,
+          unread: original.unread),
       _ => throw StateError('不支持重新生成此类媒体'),
     };
   }

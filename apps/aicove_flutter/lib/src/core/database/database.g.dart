@@ -179,6 +179,12 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<String> chatDisplayStyle = GeneratedColumn<String>(
       'chat_display_style', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _agentModeMeta =
+      const VerificationMeta('agentMode');
+  @override
+  late final GeneratedColumn<String> agentMode = GeneratedColumn<String>(
+      'agent_mode', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _lastMessageMeta =
       const VerificationMeta('lastMessage');
   @override
@@ -274,6 +280,7 @@ class $ConversationsTable extends Conversations
         recipeId,
         thinkingLevels,
         chatDisplayStyle,
+        agentMode,
         lastMessage,
         lastMessageTime,
         unreadCount,
@@ -437,6 +444,10 @@ class $ConversationsTable extends Conversations
           chatDisplayStyle.isAcceptableOrUnknown(
               data['chat_display_style']!, _chatDisplayStyleMeta));
     }
+    if (data.containsKey('agent_mode')) {
+      context.handle(_agentModeMeta,
+          agentMode.isAcceptableOrUnknown(data['agent_mode']!, _agentModeMeta));
+    }
     if (data.containsKey('last_message')) {
       context.handle(
           _lastMessageMeta,
@@ -561,6 +572,8 @@ class $ConversationsTable extends Conversations
           .read(DriftSqlType.string, data['${effectivePrefix}thinking_levels']),
       chatDisplayStyle: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}chat_display_style']),
+      agentMode: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}agent_mode']),
       lastMessage: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}last_message']),
       lastMessageTime: attachedDatabase.typeMapping
@@ -620,6 +633,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String? recipeId;
   final String? thinkingLevels;
   final String? chatDisplayStyle;
+  final String? agentMode;
   final String? lastMessage;
   final int? lastMessageTime;
   final int unreadCount;
@@ -657,6 +671,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       this.recipeId,
       this.thinkingLevels,
       this.chatDisplayStyle,
+      this.agentMode,
       this.lastMessage,
       this.lastMessageTime,
       required this.unreadCount,
@@ -729,6 +744,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || chatDisplayStyle != null) {
       map['chat_display_style'] = Variable<String>(chatDisplayStyle);
+    }
+    if (!nullToAbsent || agentMode != null) {
+      map['agent_mode'] = Variable<String>(agentMode);
     }
     if (!nullToAbsent || lastMessage != null) {
       map['last_message'] = Variable<String>(lastMessage);
@@ -820,6 +838,9 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       chatDisplayStyle: chatDisplayStyle == null && nullToAbsent
           ? const Value.absent()
           : Value(chatDisplayStyle),
+      agentMode: agentMode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(agentMode),
       lastMessage: lastMessage == null && nullToAbsent
           ? const Value.absent()
           : Value(lastMessage),
@@ -884,6 +905,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       recipeId: serializer.fromJson<String?>(json['recipeId']),
       thinkingLevels: serializer.fromJson<String?>(json['thinkingLevels']),
       chatDisplayStyle: serializer.fromJson<String?>(json['chatDisplayStyle']),
+      agentMode: serializer.fromJson<String?>(json['agentMode']),
       lastMessage: serializer.fromJson<String?>(json['lastMessage']),
       lastMessageTime: serializer.fromJson<int?>(json['lastMessageTime']),
       unreadCount: serializer.fromJson<int>(json['unreadCount']),
@@ -932,6 +954,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'recipeId': serializer.toJson<String?>(recipeId),
       'thinkingLevels': serializer.toJson<String?>(thinkingLevels),
       'chatDisplayStyle': serializer.toJson<String?>(chatDisplayStyle),
+      'agentMode': serializer.toJson<String?>(agentMode),
       'lastMessage': serializer.toJson<String?>(lastMessage),
       'lastMessageTime': serializer.toJson<int?>(lastMessageTime),
       'unreadCount': serializer.toJson<int>(unreadCount),
@@ -973,6 +996,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           Value<String?> recipeId = const Value.absent(),
           Value<String?> thinkingLevels = const Value.absent(),
           Value<String?> chatDisplayStyle = const Value.absent(),
+          Value<String?> agentMode = const Value.absent(),
           Value<String?> lastMessage = const Value.absent(),
           Value<int?> lastMessageTime = const Value.absent(),
           int? unreadCount,
@@ -1029,6 +1053,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         chatDisplayStyle: chatDisplayStyle.present
             ? chatDisplayStyle.value
             : this.chatDisplayStyle,
+        agentMode: agentMode.present ? agentMode.value : this.agentMode,
         lastMessage: lastMessage.present ? lastMessage.value : this.lastMessage,
         lastMessageTime: lastMessageTime.present
             ? lastMessageTime.value
@@ -1106,6 +1131,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       chatDisplayStyle: data.chatDisplayStyle.present
           ? data.chatDisplayStyle.value
           : this.chatDisplayStyle,
+      agentMode: data.agentMode.present ? data.agentMode.value : this.agentMode,
       lastMessage:
           data.lastMessage.present ? data.lastMessage.value : this.lastMessage,
       lastMessageTime: data.lastMessageTime.present
@@ -1159,6 +1185,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('recipeId: $recipeId, ')
           ..write('thinkingLevels: $thinkingLevels, ')
           ..write('chatDisplayStyle: $chatDisplayStyle, ')
+          ..write('agentMode: $agentMode, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
           ..write('unreadCount: $unreadCount, ')
@@ -1201,6 +1228,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         recipeId,
         thinkingLevels,
         chatDisplayStyle,
+        agentMode,
         lastMessage,
         lastMessageTime,
         unreadCount,
@@ -1242,6 +1270,7 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.recipeId == this.recipeId &&
           other.thinkingLevels == this.thinkingLevels &&
           other.chatDisplayStyle == this.chatDisplayStyle &&
+          other.agentMode == this.agentMode &&
           other.lastMessage == this.lastMessage &&
           other.lastMessageTime == this.lastMessageTime &&
           other.unreadCount == this.unreadCount &&
@@ -1281,6 +1310,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String?> recipeId;
   final Value<String?> thinkingLevels;
   final Value<String?> chatDisplayStyle;
+  final Value<String?> agentMode;
   final Value<String?> lastMessage;
   final Value<int?> lastMessageTime;
   final Value<int> unreadCount;
@@ -1319,6 +1349,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.recipeId = const Value.absent(),
     this.thinkingLevels = const Value.absent(),
     this.chatDisplayStyle = const Value.absent(),
+    this.agentMode = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
     this.unreadCount = const Value.absent(),
@@ -1358,6 +1389,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.recipeId = const Value.absent(),
     this.thinkingLevels = const Value.absent(),
     this.chatDisplayStyle = const Value.absent(),
+    this.agentMode = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
     this.unreadCount = const Value.absent(),
@@ -1401,6 +1433,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? recipeId,
     Expression<String>? thinkingLevels,
     Expression<String>? chatDisplayStyle,
+    Expression<String>? agentMode,
     Expression<String>? lastMessage,
     Expression<int>? lastMessageTime,
     Expression<int>? unreadCount,
@@ -1444,6 +1477,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (recipeId != null) 'recipe_id': recipeId,
       if (thinkingLevels != null) 'thinking_levels': thinkingLevels,
       if (chatDisplayStyle != null) 'chat_display_style': chatDisplayStyle,
+      if (agentMode != null) 'agent_mode': agentMode,
       if (lastMessage != null) 'last_message': lastMessage,
       if (lastMessageTime != null) 'last_message_time': lastMessageTime,
       if (unreadCount != null) 'unread_count': unreadCount,
@@ -1487,6 +1521,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String?>? recipeId,
       Value<String?>? thinkingLevels,
       Value<String?>? chatDisplayStyle,
+      Value<String?>? agentMode,
       Value<String?>? lastMessage,
       Value<int?>? lastMessageTime,
       Value<int>? unreadCount,
@@ -1528,6 +1563,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       recipeId: recipeId ?? this.recipeId,
       thinkingLevels: thinkingLevels ?? this.thinkingLevels,
       chatDisplayStyle: chatDisplayStyle ?? this.chatDisplayStyle,
+      agentMode: agentMode ?? this.agentMode,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
       unreadCount: unreadCount ?? this.unreadCount,
@@ -1626,6 +1662,9 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (chatDisplayStyle.present) {
       map['chat_display_style'] = Variable<String>(chatDisplayStyle.value);
     }
+    if (agentMode.present) {
+      map['agent_mode'] = Variable<String>(agentMode.value);
+    }
     if (lastMessage.present) {
       map['last_message'] = Variable<String>(lastMessage.value);
     }
@@ -1695,6 +1734,7 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('recipeId: $recipeId, ')
           ..write('thinkingLevels: $thinkingLevels, ')
           ..write('chatDisplayStyle: $chatDisplayStyle, ')
+          ..write('agentMode: $agentMode, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
           ..write('unreadCount: $unreadCount, ')
@@ -5012,6 +5052,7 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<String?> recipeId,
   Value<String?> thinkingLevels,
   Value<String?> chatDisplayStyle,
+  Value<String?> agentMode,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
   Value<int> unreadCount,
@@ -5052,6 +5093,7 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String?> recipeId,
   Value<String?> thinkingLevels,
   Value<String?> chatDisplayStyle,
+  Value<String?> agentMode,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
   Value<int> unreadCount,
@@ -5108,6 +5150,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> recipeId = const Value.absent(),
             Value<String?> thinkingLevels = const Value.absent(),
             Value<String?> chatDisplayStyle = const Value.absent(),
+            Value<String?> agentMode = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
             Value<int> unreadCount = const Value.absent(),
@@ -5147,6 +5190,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             recipeId: recipeId,
             thinkingLevels: thinkingLevels,
             chatDisplayStyle: chatDisplayStyle,
+            agentMode: agentMode,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             unreadCount: unreadCount,
@@ -5186,6 +5230,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> recipeId = const Value.absent(),
             Value<String?> thinkingLevels = const Value.absent(),
             Value<String?> chatDisplayStyle = const Value.absent(),
+            Value<String?> agentMode = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
             Value<int> unreadCount = const Value.absent(),
@@ -5225,6 +5270,7 @@ class $$ConversationsTableTableManager extends RootTableManager<
             recipeId: recipeId,
             thinkingLevels: thinkingLevels,
             chatDisplayStyle: chatDisplayStyle,
+            agentMode: agentMode,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             unreadCount: unreadCount,
@@ -5367,6 +5413,11 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<String> get chatDisplayStyle => $state.composableBuilder(
       column: $state.table.chatDisplayStyle,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get agentMode => $state.composableBuilder(
+      column: $state.table.agentMode,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -5585,6 +5636,11 @@ class $$ConversationsTableOrderingComposer
 
   ColumnOrderings<String> get chatDisplayStyle => $state.composableBuilder(
       column: $state.table.chatDisplayStyle,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get agentMode => $state.composableBuilder(
+      column: $state.table.agentMode,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 

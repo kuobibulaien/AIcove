@@ -39,6 +39,7 @@ class PresetCharactersLoader {
           avatarUrl: json['avatarUrl'] as String?,
           voiceFile: json['voiceFile'] as String?,
           personaPrompt: personaPrompt,
+          enabledPlugins: kDefaultRolePluginIds,
           createdAt: now,
           updatedAt: now,
           isFavorite: false,

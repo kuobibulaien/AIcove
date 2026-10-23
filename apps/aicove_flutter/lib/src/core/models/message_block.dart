@@ -312,16 +312,30 @@ class AudioBlock extends MessageBlock {
   /// 音频时长（秒）
   final double? durationSeconds;
 
+  /// 新生成、还没播放过。缺省为已读，旧数据不会变成未读。
+  final bool unread;
+
   AudioBlock({
     super.id,
     required super.messageId,
     required this.url,
     this.text,
     this.durationSeconds,
+    this.unread = false,
     super.status,
   }) : super(
           type: BlockType.audio,
         );
+
+  AudioBlock withUnread(bool value) => AudioBlock(
+        id: id,
+        messageId: messageId,
+        url: url,
+        text: text,
+        durationSeconds: durationSeconds,
+        unread: value,
+        status: status,
+      );
 
   factory AudioBlock.fromJson(Map<String, dynamic> json) {
     return AudioBlock(
@@ -330,6 +344,7 @@ class AudioBlock extends MessageBlock {
       url: json['url'] as String,
       text: json['text'] as String?,
       durationSeconds: json['durationSeconds'] as double?,
+      unread: json['unread'] == true,
       status: BlockStatus.values.firstWhere(
         (e) => e.name == json['status'],
         orElse: () => BlockStatus.success,
@@ -346,6 +361,7 @@ class AudioBlock extends MessageBlock {
         'url': url,
         'text': text,
         'durationSeconds': durationSeconds,
+        if (unread) 'unread': true,
         'createdAt': createdAt.toIso8601String(),
       };
 }

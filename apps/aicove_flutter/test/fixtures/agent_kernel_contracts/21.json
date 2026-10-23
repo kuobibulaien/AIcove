@@ -1,0 +1,15 @@
+{
+  "requests": [],
+  "modes": [],
+  "executions": [],
+  "executing": [],
+  "deltas": [],
+  "fallbacks": 1,
+  "observed": 0,
+  "contextCalls": [
+    false,
+    true
+  ],
+  "error": "StateError:Bad state: 上下文超限：预设处理后的消息与工具定义超过本轮预算",
+  "trace": []
+}

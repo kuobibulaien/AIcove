@@ -14,6 +14,7 @@ import '../../chat/services/conversation_short_window_store.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../settings/app_settings.dart';
 import '../../plugins/image/drawing_preset_provider.dart';
+import '../../plugins/prompts/prompt_pack_store.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../data/cloud_api.dart';
 import '../data/cloud_document.dart';
@@ -123,18 +124,18 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     }();
   }
 
-  void handleApplied(Set<String> kinds) {
+  void handleApplied(Set<String> kinds, {Set<String>? conversationIds}) {
     if (kinds.any(
       const {
         'messages',
         'message_blocks',
         'message_projection_mappings',
-        'conversations',
         'media_assets',
       }.contains,
     )) {
       _pendingTimelineIds.addAll(
-        ref.read(conversationTimelineCacheProvider).loadedConversationIds,
+        conversationIds ??
+            ref.read(conversationTimelineCacheProvider).loadedConversationIds,
       );
       _scheduleTimelineRefresh();
     }
@@ -157,6 +158,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
       ref.invalidate(imagePluginConfigProvider);
       ref.invalidate(drawingPresetCatalogProvider);
       ref.invalidate(timeAwarenessPluginConfigProvider);
+      ref.invalidate(promptPackProvider);
     }
   }
 

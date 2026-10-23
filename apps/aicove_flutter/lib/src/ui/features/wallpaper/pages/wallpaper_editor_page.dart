@@ -30,6 +30,7 @@ class WallpaperEditorPage extends ConsumerStatefulWidget {
     this.fallbackAlignment = Alignment.center,
     this.conversation,
     this.canChangeImage = false,
+    this.followStyle,
     this.onDelete,
   });
 
@@ -37,12 +38,13 @@ class WallpaperEditorPage extends ConsumerStatefulWidget {
   final String? source;
   final WallpaperStyle style;
 
-  /// 「恢复默认」回到的调节。
+  /// 有图时「恢复默认」回到的调节。
   final WallpaperStyle defaultStyle;
   final WallpaperPreviewKind kind;
 
-  /// 保存当前图片来源（[canChangeImage] 时可能已更换或清除）与调节。
-  final Future<void> Function(String? source, WallpaperStyle style) onSave;
+  /// 保存当前图片来源（[canChangeImage] 时可能已更换或清除）与调节；
+  /// 调节为 null 表示没有自己的图且沿用全局壁纸的调节（[followStyle]）。
+  final Future<void> Function(String? source, WallpaperStyle? style) onSave;
   final Alignment fallbackAlignment;
 
   /// 角色壁纸的会话，用于示例里的头像、名字与聊天样式。
@@ -50,6 +52,10 @@ class WallpaperEditorPage extends ConsumerStatefulWidget {
 
   /// 是否可以在这里更换或清除图片（角色壁纸）。
   final bool canChangeImage;
+
+  /// 角色壁纸没有自己的图、跟随全局壁纸时，全局壁纸的调节：
+  /// 此时「恢复默认」回到它，保存时与它相同视为沿用。
+  final WallpaperStyle? followStyle;
 
   /// 删除这张壁纸；返回 true 表示已删除，页面不再保存并退出。
   final Future<bool> Function()? onDelete;
@@ -72,11 +78,30 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
 
   bool get _hasImage => _source?.trim().isNotEmpty ?? false;
 
+  /// 预览里实际铺的图：自己的图，或角色壁纸跟随的全局壁纸。
+  String? get _shownSource {
+    if (_hasImage) return _source!.trim();
+    if (widget.kind != WallpaperPreviewKind.chat) return null;
+    final settings = ref.read(appSettingsProvider).valueOrNull;
+    return chatFallbackWallpaperSource(
+      context,
+      resolveChatBackgroundColor(context, settings?.lightChatBackground),
+    );
+  }
+
+  bool get _adjustable => _shownSource != null;
+
+  WallpaperStyle get _resetStyle =>
+      _hasImage ? widget.defaultStyle : widget.followStyle ?? widget.defaultStyle;
+
+  bool get _follows => !_hasImage && _style == widget.followStyle;
+
   @override
   void initState() {
     super.initState();
     autoSave.configure(
-      save: () => widget.onSave(_hasImage ? _source : null, _style),
+      save: () =>
+          widget.onSave(_hasImage ? _source : null, _follows ? null : _style),
       snapshot: () => moeAutoSaveSignature([_source, _style.toJson()]),
     );
   }
@@ -89,7 +114,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
   }
 
   void _resolveImageSize() {
-    final source = _hasImage ? _source!.trim() : null;
+    final source = _shownSource;
     if (source == _sizedSource) return;
     _sizedSource = source;
     _imageSize = null;
@@ -107,8 +132,14 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
     );
   }
 
+  /// 没调过截取时的焦点；跟随全局壁纸时用那张图的默认焦点。
+  Alignment get _fallbackAlignment => _hasImage
+      ? widget.fallbackAlignment
+      : MoeWallpaperTheme.maybeOf(context)?.wallpaper.alignment ??
+            widget.fallbackAlignment;
+
   WallpaperFraming _framing(WallpaperLayout layout) =>
-      _style.framingFor(layout, fallback: widget.fallbackAlignment);
+      _style.framingFor(layout, fallback: _fallbackAlignment);
 
   void _setFraming(WallpaperLayout layout, WallpaperFraming? framing) {
     setState(() {
@@ -130,7 +161,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
   }) {
     final start = _gestureStart;
     final image = _imageSize;
-    if (start == null || !_hasImage) return;
+    if (start == null || !_adjustable) return;
     var next = _framing(layout);
     if (details.pointerCount > 1 || details.scale != 1) {
       next = next.copyWith(scale: start.scale * details.scale);
@@ -146,7 +177,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
   }
 
   void _onPointerSignal(WallpaperLayout layout, PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_hasImage) return;
+    if (event is! PointerScrollEvent || !_adjustable) return;
     GestureBinding.instance.pointerSignalResolver.register(event, (_) {
       final current = _framing(layout);
       _setFraming(
@@ -168,9 +199,10 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
     final bytes = file.bytes;
     if (bytes == null || bytes.isEmpty) return;
     setState(() {
+      // 新图沿用调过的遮罩与模糊，截取从头开始；原先沿用全局的改用默认值。
+      final base = _follows ? widget.defaultStyle : _style;
       _source = buildDataImage(bytes, fileName: file.name);
-      // 新图沿用遮罩与模糊，截取从头开始。
-      _style = _style
+      _style = base
           .withFraming(WallpaperLayout.narrow, null)
           .withFraming(WallpaperLayout.wide, null);
     });
@@ -180,7 +212,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
   void _clearImage() {
     setState(() {
       _source = null;
-      _style = widget.defaultStyle;
+      _style = widget.followStyle ?? widget.defaultStyle;
     });
     _resolveImageSize();
   }
@@ -362,7 +394,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
     final settings = ref.watch(appSettingsProvider).valueOrNull;
     final conversation = widget.conversation;
     final documentStyle =
-        (conversation?.chatDisplayStyle ??
+        (conversation?.effectiveDisplayStyle ??
             settings?.chatDisplayStyle ??
             ChatDisplayStyle.bubble) ==
         ChatDisplayStyle.document;
@@ -414,7 +446,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
     final colors = context.moeColors;
     final target = _target ?? WallpaperLayout.of(context);
     final framing = _framing(target);
-    final enabled = _hasImage;
+    final enabled = _adjustable;
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -464,7 +496,11 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(
-                  enabled ? '拖动${target.label}预览调整位置，双指或滚轮缩放' : '还没有选择图片',
+                  !enabled
+                      ? '还没有选择图片'
+                      : _hasImage
+                      ? '拖动${target.label}预览调整位置，双指或滚轮缩放'
+                      : '跟随全局壁纸，调节只对这个角色生效',
                   style: TextStyle(fontSize: 12, color: colors.muted),
                 ),
               ),
@@ -490,7 +526,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
                       label: '恢复默认',
                       size: MoeSecondaryButtonSize.sm,
                       onPressed: enabled
-                          ? () => setState(() => _style = widget.defaultStyle)
+                          ? () => setState(() => _style = _resetStyle)
                           : null,
                     ),
                     if (widget.onDelete != null)

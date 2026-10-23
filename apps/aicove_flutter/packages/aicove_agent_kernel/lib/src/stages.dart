@@ -6,19 +6,15 @@ import 'types.dart';
 class TurnContext {
   TurnContext({
     required this.round,
-    required this.maxRounds,
     required this.cancellation,
     required Future<void> Function(KernelEvent event) emit,
   }) : _emit = emit;
 
   final int round;
-  final int maxRounds;
   final KernelCancellation cancellation;
   final Future<void> Function(KernelEvent event) _emit;
 
   Future<void> emit(KernelEvent event) => _emit(event);
-
-  bool get isLastRound => round >= maxRounds;
 }
 
 /// ① Turns running messages into request messages.
@@ -68,7 +64,7 @@ abstract interface class ToolBatchExecutor {
   Future<KernelToolResult> executeOne(KernelToolCall call, TurnContext ctx);
 }
 
-/// ⑧ All stop decisions after tool execution. A stop skips ⑨.
+/// ⑧ Stop decisions after tool execution and transcript recording.
 abstract interface class PostToolDecision {
   Future<TurnVerdict> afterTools(
     AssistantTurn turn,
@@ -78,8 +74,8 @@ abstract interface class PostToolDecision {
   );
 }
 
-/// ⑨ Builds continuation messages appended to running messages. Only called
-/// when the run continues.
+/// ⑨ Pure transcript codec: records assistant and tool messages before the
+/// stop decision, including terminal/cancelled rounds. Must not start I/O.
 abstract interface class ContinuationEncoder {
   Future<List<KernelMessage>> encode(
     AssistantTurn turn,

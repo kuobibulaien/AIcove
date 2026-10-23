@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/models/message_block.dart';
 import '../../../../features/chat/presentation/widgets/audio_player_widget.dart';
+import '../../../../features/plugins/prompts/plugin_prompt_resolution.dart';
+import '../../../../features/plugins/prompts/prompt_pack.dart';
 import '../../../../features/plugins/tts/tts_available_models.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/plugins/tts/tts_provider_context.dart';
@@ -13,6 +15,7 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../../settings/pages/model_list_page.dart';
+import '../widgets/preset_prompt_group.dart';
 
 class VoicePresetEditorPage extends ConsumerStatefulWidget {
   const VoicePresetEditorPage({super.key, this.preset});
@@ -39,6 +42,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
   double _speed = 1;
   int _frequency = 60;
   bool _busy = false, _useEmotion = false;
+  PresetPromptBinding _prompts = const PresetPromptBinding();
 
   @override
   void initState() {
@@ -59,6 +63,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
     _speed = (synthesis?.speed ?? 1).clamp(0.5, 2);
     _frequency = (synthesis?.voiceFrequency ?? 60).clamp(0, 100);
     _bindings = _original.bindings;
+    _prompts = synthesis?.prompts ?? const PresetPromptBinding();
     _useEmotion = _original.useEmoText;
     _source = synthesis?.voiceId?.isNotEmpty == true
         ? VoiceSourceType.preset
@@ -110,6 +115,7 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
             // 旧字段原样保留，运行时改用全局 <tts> 标签说明。
             systemPromptTemplate: _original.synthesis?.systemPromptTemplate,
             maxCharsPerChunk: int.tryParse(_chunk.text) ?? 0,
+            prompts: _prompts,
           ),
     promptAudioUrl: _source == VoiceSourceType.url ? _url.text.trim() : null,
     localAudioPath: _source == VoiceSourceType.local ? _localPath : null,
@@ -744,6 +750,25 @@ class _VoicePresetEditorPageState extends ConsumerState<VoicePresetEditorPage>
                               ),
                             ],
                           ),
+                          if (_provider != null && _model != null) ...[
+                            const SizedBox(
+                              height: MoeSettingsLayout.sectionGap,
+                            ),
+                            PresetPromptGroup(
+                              pluginId: 'tts',
+                              binding: _prompts,
+                              onChanged: (next) =>
+                                  setState(() => _prompts = next),
+                              format: ttsPromptFormat(format ?? ''),
+                              model: _model,
+                              presetName: _name.text,
+                              variables: {
+                                'max_chars_per_chunk':
+                                    int.tryParse(_chunk.text) ?? 0,
+                                'voice_frequency': _frequency,
+                              },
+                            ),
+                          ],
                           const SizedBox(height: MoeSettingsLayout.sectionGap),
                           MoeSettingsGroup(
                             title: '试听',

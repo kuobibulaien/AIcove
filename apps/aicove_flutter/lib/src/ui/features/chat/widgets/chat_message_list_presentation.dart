@@ -1,5 +1,10 @@
 part of 'chat_message_list.dart';
 
+/// A receipt is stored as a user-role message (so the model's request keeps
+/// it), but it is the background helper's report: show it on the model's side.
+bool _isTaskReceiptMessage(Message message) =>
+    message.blocks?.any((block) => block is TaskReceiptBlock) ?? false;
+
 extension _ChatMessageListPresentationX on _ChatMessageListState {
   void _hydrateInitialListItems([MessageFormatConfig? config]) {
     final effectiveConfig =
@@ -29,6 +34,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     MessageFormatConfig config,
   ) {
     _cachedFormatConfig = config;
+    _cachedShowTimeDividers = widget.showTimeDividers;
+    _cachedFoldVisibility = _foldVisibility;
     _cachedListItems = cached.listItems.cast<ChatMessageListItem>();
     _cachedChatImages = List<ImagePreviewItem>.from(cached.chatImages);
     _hasHydratedInitialListItems = true;
@@ -63,10 +70,16 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     }
 
     _cachedFormatConfig = effectiveConfig;
+    _cachedShowTimeDividers = widget.showTimeDividers;
+    _cachedFoldVisibility = _foldVisibility;
     _cachedListItems = buildChatMessageListItems(
       messages: timelineMessages,
       config: effectiveConfig,
       tagPresentation: _tagPresentation,
+      showTimeDividers: widget.showTimeDividers,
+      showThinkingFolds: _foldVisibility.thinking,
+      showToolCallFolds: _foldVisibility.tools,
+      showReplyActions: _foldVisibility.replyActions,
     );
     _cachedChatImages = collectChatMessageListImages(timelineMessages);
     _hasHydratedInitialListItems = true;
@@ -97,6 +110,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         ..write(message.status ?? 'sent')
         ..write('#')
         ..write(message.role)
+        ..write('#')
+        ..write(message.rawPayload?['runStatus'] ?? '')
         ..write('#')
         ..write(message.content.hashCode)
         ..write('#')
@@ -144,7 +159,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
 
   String _buildFormatSignature(MessageFormatConfig config) {
     return '${buildMessageFormatProjectionSignature(config)}'
-        '|tags:$_tagPresentationSignature';
+        '|tags:$_tagPresentationSignature'
+        '|time:${widget.showTimeDividers}'
+        '|fold:${_foldVisibility.thinking}${_foldVisibility.tools}'
+        '${_foldVisibility.replyActions}';
   }
 
   SliverChildBuilderDelegate _buildSectionDelegate(
@@ -158,7 +176,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         final item = reverseForViewport
             ? items[items.length - 1 - index]
             : items[index];
-        return _buildListItemWidget(context, item, actions);
+        return _withReplyHover(
+          item,
+          _buildListItemWidget(context, item, actions),
+        );
       },
       childCount: items.length,
       addAutomaticKeepAlives: false,
@@ -167,6 +188,81 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         key,
         items,
         reverseForViewport: reverseForViewport,
+      ),
+    );
+  }
+
+  void _syncReplyTurns() {
+    final items = _cachedListItems;
+    if (identical(items, _replyTurnSource)) return;
+    _replyTurnSource = items;
+    final turns = <String, String>{};
+    String? latest;
+    for (final item in items) {
+      if (item is! ChatReplyActionsItem) continue;
+      latest = item.message.id;
+      for (final id in item.messageIds) {
+        turns[id] = latest;
+      }
+    }
+    _replyTurnOf = turns;
+    _latestReplyId = latest;
+  }
+
+  /// Hovering any part of a reply turn reveals that turn's action row.
+  Widget _withReplyHover(ChatMessageListItem item, Widget child) {
+    if (!_foldVisibility.replyActions || item is ChatReplyActionsItem) {
+      return child;
+    }
+    _syncReplyTurns();
+    final messageId = _messageIdForListItem(item);
+    final turnId = messageId == null ? null : _replyTurnOf[messageId];
+    if (turnId == null) return child;
+    return KeyedSubtree(
+      key: child.key,
+      child: MouseRegion(
+        onEnter: (_) => _hoveredReplyId.value = turnId,
+        onExit: (_) {
+          if (_hoveredReplyId.value == turnId) _hoveredReplyId.value = null;
+        },
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildReplyActions(BuildContext context, ChatReplyActionsItem item) {
+    _syncReplyTurns();
+    final message = item.message;
+    return Padding(
+      padding: const EdgeInsets.only(left: 10, right: 16, bottom: 4),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ValueListenableBuilder<String?>(
+          valueListenable: _hoveredReplyId,
+          builder: (context, hovered, _) => ChatReplyActionBar(
+            timeLabel: chatReplyTimeLabel(
+              message.createdAt,
+              DateTime.now(),
+              _formatChatTime,
+            ),
+            color: context.moeColors.muted,
+            enabled: item.finished,
+            visible: hovered == message.id || _latestReplyId == message.id,
+            onCopy: () async {
+              await Clipboard.setData(ClipboardData(text: item.copyText));
+              if (context.mounted) MoeToast.show(context, '已复制到剪贴板');
+            },
+            onQuote: () =>
+                ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
+                  id: message.id,
+                  content: item.copyText,
+                  isUser: false,
+                ),
+            onRetry: ChatPageConversationActions.isCharacterGreeting(message)
+                ? null
+                : () => widget.onRegenerateMessage?.call(message, null),
+          ),
+        ),
       ),
     );
   }
@@ -230,9 +326,51 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     if (item is ChatNewTopicDividerItem) {
       return KeyedSubtree(key: itemKey, child: _buildNewTopicDivider(context));
     }
+    if (item is ChatTaskRunningItem) {
+      return KeyedSubtree(
+        key: itemKey,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: _documentStyle ? 16 : MessageBubble.contactContentInset,
+            right: 16,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TaskRunningBar(
+              taskId: item.taskId,
+              textColor: context.moeColors.muted,
+            ),
+          ),
+        ),
+      );
+    }
+    if (item is ChatReplyActionsItem) {
+      return KeyedSubtree(
+        key: itemKey,
+        child: _buildReplyActions(context, item),
+      );
+    }
+    if (item is ChatRunStatusItem) {
+      return KeyedSubtree(
+        key: itemKey,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: _documentStyle ? 16 : MessageBubble.contactContentInset,
+            right: 16,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: ChatRunStatusLine(
+              status: item.status,
+              textColor: context.moeColors.muted,
+            ),
+          ),
+        ),
+      );
+    }
     if (item is ChatChunkedMessageItem) {
       final message = item.originalMessage;
-      final isMe = message.role == 'user';
+      final isMe = message.role == 'user' && !_isTaskReceiptMessage(message);
       final chunkMessage = chatChunkDisplayMessage(item);
       final bubbleWidget = Padding(
         padding: const EdgeInsets.symmetric(
@@ -255,14 +393,16 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             chatImages: _cachedChatImages,
             documentStyle: _documentStyle,
             onRetry: null,
-            onLongPress: (bubbleBox, position) => _handleMessageLongPress(
-              context,
-              message,
-              isMe,
-              bubbleBox,
-              position,
-              selectionId: chunkMessage.id,
-            ),
+            onLongPress: (bubbleBox, position, selectedText) =>
+                _handleMessageLongPress(
+                  context,
+                  message,
+                  isMe,
+                  bubbleBox,
+                  position,
+                  selectionId: chunkMessage.id,
+                  selectedText: selectedText,
+                ),
             onMediaLongPress: (mediaBox, block, position) =>
                 _handleMediaLongPress(
                   context,
@@ -317,13 +457,15 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         onRetry: (isMe && message.status == 'failed')
             ? () => actions.recallFailedMessage(message.id)
             : null,
-        onLongPress: (bubbleBox, position) => _handleMessageLongPress(
-          context,
-          message,
-          isMe,
-          bubbleBox,
-          position,
-        ),
+        onLongPress: (bubbleBox, position, selectedText) =>
+            _handleMessageLongPress(
+              context,
+              message,
+              isMe,
+              bubbleBox,
+              position,
+              selectedText: selectedText,
+            ),
         onMediaLongPress: (mediaBox, block, position) => _handleMediaLongPress(
           context,
           message,
@@ -348,7 +490,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
 
     if (item is ChatMessageItem) {
       final message = item.message;
-      final isMe = message.role == 'user';
+      final isMe = message.role == 'user' && !_isTaskReceiptMessage(message);
       final bubbleWidget = Padding(
         padding: const EdgeInsets.symmetric(
           vertical: _kMessageItemVerticalPadding,
@@ -424,8 +566,9 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   }
 
   bool _shouldAnimatePendingMessage(Message message) {
-    if (widget.viewportController.shouldPinLatestTail &&
-        message.role == 'assistant') {
+    // 跟随中的 AI 消息直接贴底出现（同帧稳底），不再叠入场动画。
+    if (message.role == 'assistant' &&
+        (widget.viewportController.shouldPinLatestTail || _followAiOutput)) {
       return false;
     }
     return true;
@@ -543,6 +686,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     RenderBox bubbleBox,
     Offset globalPosition, {
     String? selectionId,
+    String? selectedText,
   }) async {
     // 通话中的临时气泡不在聊天历史里：只能复制和删除（只从显示里移除）。
     final liveCall = _isLiveCallMessage(message);
@@ -550,11 +694,11 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     final enableEnhancedRegenerate =
         kEnhancedRegenerateAvailable &&
         ref
-            .read(appSettingsProvider)
-            .valueOrNull
-            ?.enhancedDialogueSettings
-            .enabled ==
-        true;
+                .read(appSettingsProvider)
+                .valueOrNull
+                ?.enhancedDialogueSettings
+                .enabled ==
+            true;
 
     final audioBlock = message.blocks?.whereType<AudioBlock>().firstOrNull;
     final audioText = audioBlock?.text?.trim();
@@ -578,11 +722,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       globalPosition: globalPosition,
       isUserMessage: isMe,
       allowSelect:
-          !liveCall &&
-          widget.selection != null &&
-          message.status != 'sending',
+          !liveCall && widget.selection != null && message.status != 'sending',
       editable: !liveCall,
       messageText: effectiveMessageText,
+      selectedText: selectedText,
       showEnhanceRegenerate: enableEnhancedRegenerate && !canRegenerateAudio,
       regenerateAudio: canRegenerateAudio,
       showTranscribe: hasAudioText,

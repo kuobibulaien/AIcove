@@ -145,7 +145,7 @@ void main() {
           roleDrawingPresetProvider(persona).overrideWith(
             (ref) async => const DrawingPreset(
               id: 'legacy',
-              name: '旧配置 · 旧画师',
+              name: '旧画师',
               config: ImageConfig(),
             ),
           ),
@@ -153,7 +153,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('旧配置 · 旧画师'), findsOneWidget);
+    // 单独绑定的显示预设名，不再标「未配置」。
+    expect(find.text('旧画师'), findsOneWidget);
+    expect(find.textContaining('未配置'), findsNothing);
     expect(find.textContaining('跟随默认绘图'), findsNothing);
   });
 }

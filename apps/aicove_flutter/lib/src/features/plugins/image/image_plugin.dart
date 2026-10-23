@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../core/api/agent_api.dart';
 import '../../../core/api/image_providers/image_provider_adapter_factory.dart';
+import '../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/models/message_block.dart';
 import '../../chat/domain/message.dart';
@@ -25,6 +26,9 @@ import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
 import '../plugin_content_tags.dart';
 import 'image_agent_plugin.dart';
+import '../prompts/builtin_prompt_packs.dart';
+import '../prompts/plugin_prompt_resolution.dart';
+import '../prompts/prompt_pack.dart';
 import 'image_config.dart';
 import 'drawing_parameters.dart';
 import '../../../core/storage/app_data_directory.dart';
@@ -121,12 +125,46 @@ class ImagePlugin extends BasePlugin {
   final AppSettings? requestSettings;
   final bool isRequestSnapshot;
 
+  /// Prompt pack of this request's drawing preset (ADR0092). Without one the
+  /// factory pack matched to the current target is used.
+  final ResolvedPromptPack? prompts;
+
   ImagePlugin(
     this._config,
     this._ref, {
     this.requestSettings,
     this.isRequestSnapshot = false,
+    this.prompts,
   }) : super(metadata: _metadata);
+
+  ResolvedPromptPack get _prompts {
+    final pack = prompts;
+    if (pack != null) return pack;
+    final settings = _settings;
+    final target = settings == null ? null : _resolveTarget(settings);
+    return ResolvedPromptPack(
+      pack: PromptPackLibrary(builtins: kBuiltinPromptPacks).autoMatch(
+        'image',
+        target == null ? 'openai' : _resolveRequestProvider(target.provider),
+        target?.modelId ?? '',
+      ),
+      automatic: true,
+    );
+  }
+
+  String _render(String scope) =>
+      _prompts.render(scope, imagePromptVariables(_config));
+
+  /// The request format and model the pack is matched against, or null
+  /// when no target is configured.
+  ({String format, String model})? promptTarget(AppSettings settings) {
+    final target = _resolveTarget(settings);
+    if (target == null) return null;
+    return (
+      format: _resolveRequestProvider(target.provider),
+      model: target.modelId,
+    );
+  }
 
   AppSettings? get _settings =>
       requestSettings ?? _ref.read(appSettingsProvider).valueOrNull;
@@ -137,6 +175,21 @@ class ImagePlugin extends BasePlugin {
   bool get enabled {
     return _settings?.imageGenerationEnabled ?? false;
   }
+
+  /// Enabled and drawable: a usable channel resolves, or the config names
+  /// one explicitly. A broken explicit binding stays usable so the draw
+  /// fails loudly instead of being dropped; with nothing configured (a
+  /// fresh install) the model gets no drawing tool or prompt.
+  bool get isUsable {
+    if (!enabled) return false;
+    final settings = _settings;
+    if (settings == null) return false;
+    return _hasExplicitTarget || _resolveTarget(settings) != null;
+  }
+
+  bool get _hasExplicitTarget =>
+      (_config.selectedModelId?.trim().isNotEmpty ?? false) ||
+      (_config.selectedProviderId?.trim().isNotEmpty ?? false);
 
   @override
   AicovePlugin get agentPlugin => imageAgentPlugin(this);
@@ -155,14 +208,12 @@ class ImagePlugin extends BasePlugin {
   /// All drawing tag instructions belong to the enabled drawing plugin.
   String? buildRequestSystemPrompt({
     required bool useFastRoute,
-    String? customDrawingPrompt,
     bool hasInternalImageContext = false,
     bool hasFailureReminder = false,
   }) {
-    if (!enabled) return null;
+    if (!isUsable) return null;
     final parts = <String>[
-      if (useFastRoute)
-        buildInlineImageSystemPrompt(customDrawingPrompt: customDrawingPrompt),
+      if (useFastRoute) buildInlineImageSystemPrompt(),
       if (hasInternalImageContext) internalImageContextRule,
       if (hasFailureReminder)
         const SystemReminderService().buildReminderSemanticsPrompt(),
@@ -221,7 +272,7 @@ class ImagePlugin extends BasePlugin {
   }
 
   List<AITool> getTools() {
-    if (!enabled) return [];
+    if (!isUsable) return [];
     final settings = _settings;
     if (settings == null ||
         settings.callFlowSettings.mode == CallFlowMode.fast ||
@@ -245,7 +296,8 @@ class ImagePlugin extends BasePlugin {
     final events = <PluginEvent>[];
     final remainingText = StringBuffer();
     for (final segment in firstPartyContentTagScanner.scan(text)) {
-      final prompt = segment is ContentTagElement &&
+      final prompt =
+          segment is ContentTagElement &&
               segment.closed &&
               isInlineImageElement(segment)
           ? segment.inner.trim()
@@ -292,35 +344,11 @@ class ImagePlugin extends BasePlugin {
     );
   }
 
-  String buildInlineImageSystemPrompt({String? customDrawingPrompt}) {
-    var template = _config.effectiveInlinePromptTemplate.trim();
-    final novelAi = _settings == null ? false : _isNovelAi(_settings!);
-    if (isRequestSnapshot) {
-      template = template.replaceAll(
-        '<image> 内只能写英文正向提示词，不要写中文、解释、JSON、代码块、负面提示词或参数说明',
-        '<image> 内可写英文正向提示词，或使用下文定义的参数 JSON；不要写解释或代码块',
-      );
-    }
-    final sampling =
-        _settings != null && _supportsSamplingParameters(_settings!);
-    final baseTemplate = isRequestSnapshot
-        ? '$template\n\n【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：'
-              '{"prompt":"English prompt","width":${_config.defaultWidth},"height":${_config.defaultHeight},"count":${_config.defaultCount}'
-              '${sampling ? ',"steps":${_config.defaultSteps},"guidance_scale":${_config.defaultGuidanceScale}' : ''}}。'
-              '以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设；negative_prompt 可选。'
-              '宽高范围 256–2048，张数 count 范围 1–4。'
-              '${novelAi ? '宽高必须是64的倍数。' : ''}'
-              '${sampling ? 'steps为1–100整数，guidance_scale范围0–10；ComfyUI仅对已绑定输入生效。' : '当前渠道不支持 steps、guidance_scale。'}'
-              '本次格式以此契约为准，禁止传入渠道或模型选择参数。'
-        : template;
-    final extraRule = customDrawingPrompt?.trim() ?? '';
-    if (extraRule.isEmpty) {
-      return baseTemplate;
-    }
-    return '$baseTemplate\n\n角色专属生图要求：\n$extraRule';
-  }
+  /// The `<image>` instructions, all from the prompt pack: rules, model
+  /// syntax, parameter contract and the preset's own requirements.
+  String buildInlineImageSystemPrompt() => _render(PromptScopes.imageInline);
 
-  String? buildTagSemanticsPrompt({String? customDrawingPrompt}) {
+  String? buildTagSemanticsPrompt() {
     if (!enabled) {
       return null;
     }
@@ -330,9 +358,7 @@ class ImagePlugin extends BasePlugin {
         (!isRequestSnapshot && _resolveTarget(settings) == null)) {
       return null;
     }
-    return buildInlineImageSystemPrompt(
-      customDrawingPrompt: customDrawingPrompt,
-    );
+    return buildInlineImageSystemPrompt();
   }
 
   Future<InlineImageGenerationResult> regenerateImage(
@@ -393,11 +419,29 @@ class ImagePlugin extends BasePlugin {
         ...target.provider.customConfig,
         'image_parameters': parameters,
         if (snapshot.requestProvider == 'comfyui') ...{
-          'comfyWorkflow': parameters['comfyWorkflow'],
-          'comfyBindings': parameters['comfyBindings'] ?? <String, dynamic>{},
-          'comfyOutputNode': parameters['comfyOutputNode'] ?? '',
+          ComfyUIWorkflow.modeKey: ComfyUIWorkflow.hasCustomWorkflow(parameters)
+              ? ComfyUIWorkflow.customMode
+              : ComfyUIWorkflow.standardMode,
+          'comfyLoraName': null,
+          'comfyLoraStrength': null,
+          // Replay the original sampler; absent means the default/workflow value.
+          ComfyUIWorkflow.samplerKey: parameters[ComfyUIWorkflow.samplerKey],
+          ComfyUIWorkflow.schedulerKey:
+              parameters[ComfyUIWorkflow.schedulerKey],
+          if (parameters.containsKey('comfyWorkflow')) ...{
+            'comfyWorkflow': parameters['comfyWorkflow'],
+            'comfyBindings': parameters['comfyBindings'] ?? <String, dynamic>{},
+            'comfyOutputNode': parameters['comfyOutputNode'] ?? '',
+          } else ...{
+            'comfyWorkflow': null,
+            'comfyBindings': null,
+            'comfyOutputNode': null,
+            'comfyLoraName': parameters['comfyLoraName'],
+            'comfyLoraStrength': parameters['comfyLoraStrength'] ?? 1.0,
+          },
         },
       },
+      overrideCustomConfig: true,
       requestSource: 'regenerate_image',
     );
     return InlineImageGenerationResult.success(
@@ -574,45 +618,47 @@ class ImagePlugin extends BasePlugin {
     });
   }
 
+  /// The tool's own text and the parameter guidance together; each field
+  /// only points back to it.
   AITool get _drawImageTool => AITool(
     name: 'draw_image',
-    description: _config.effectiveToolDescriptionBlocks.toolDescription,
+    description: [
+      _render(PromptScopes.imageToolDescription),
+      _render(PromptScopes.imageToolParams),
+    ].where((text) => text.isNotEmpty).join('\n\n'),
     parameters: {
       'prompt': ToolParameter(
         type: 'string',
-        description: _config.effectiveToolDescriptionBlocks.promptDescription,
+        description: _render(PromptScopes.imageToolPrompt),
         required: true,
       ),
-      'negative_prompt': ToolParameter(
+      'negative_prompt': const ToolParameter(
         type: 'string',
-        description:
-            _config.effectiveToolDescriptionBlocks.negativePromptDescription,
+        description: '负面提示词，可省略；写法见 prompt 的说明。',
         required: false,
       ),
-      'width': ToolParameter(
+      'width': const ToolParameter(
         type: 'integer',
-        description:
-            '${_config.effectiveToolDescriptionBlocks.widthDescription} 参考值 ${_config.defaultWidth}，可省略。',
+        description: '图片宽度（像素），取值见工具说明的参数部分。',
         required: false,
       ),
-      'height': ToolParameter(
+      'height': const ToolParameter(
         type: 'integer',
-        description:
-            '${_config.effectiveToolDescriptionBlocks.heightDescription} 参考值 ${_config.defaultHeight}，可省略。',
+        description: '图片高度（像素），取值见工具说明的参数部分。',
         required: false,
       ),
-      'count': ToolParameter(
+      'count': const ToolParameter(
         type: 'integer',
-        description: '生成张数 1–4，参考 ${_config.defaultCount}，可省略。',
+        description: '生成张数，取值见工具说明的参数部分。',
       ),
       if (_settings != null && _supportsSamplingParameters(_settings!)) ...{
-        'steps': ToolParameter(
+        'steps': const ToolParameter(
           type: 'integer',
-          description: '采样步数 1–100，参考 ${_config.defaultSteps}，可合理调整。',
+          description: '采样步数，取值见工具说明的参数部分。',
         ),
-        'guidance_scale': ToolParameter(
+        'guidance_scale': const ToolParameter(
           type: 'number',
-          description: '提示词强度 0–10，参考 ${_config.defaultGuidanceScale}，可合理调整。',
+          description: '提示词强度，取值见工具说明的参数部分。',
         ),
       },
     },
@@ -820,6 +866,21 @@ class ImagePlugin extends BasePlugin {
     }
   }
 
+  Map<String, dynamic> _effectiveCustomConfig(
+    String requestProvider,
+    Map<String, dynamic> providerCustomConfig, {
+    required bool overrideCustomConfig,
+    required String modelId,
+  }) {
+    if (requestProvider != 'comfyui' || overrideCustomConfig) {
+      return providerCustomConfig;
+    }
+    return _config.buildComfyCustomConfig(
+      modelId: modelId,
+      providerCustomConfig: providerCustomConfig,
+    );
+  }
+
   Future<_SavedImages> _generateAndSaveImages({
     required String requestProvider,
     required String providerId,
@@ -837,8 +898,15 @@ class ImagePlugin extends BasePlugin {
     required String basePrompt,
     required String? baseNegativePrompt,
     required String requestSource,
+    bool overrideCustomConfig = false,
     String? flowMode,
   }) async {
+    final effectiveConfig = _effectiveCustomConfig(
+      requestProvider,
+      customConfig,
+      modelId: modelId,
+      overrideCustomConfig: overrideCustomConfig,
+    );
     final requestId = _nextImageRequestId();
     final metadata = <String, dynamic>{
       'requestId': requestId,
@@ -876,10 +944,14 @@ class ImagePlugin extends BasePlugin {
                 'comfyWorkflow',
                 'comfyBindings',
                 'comfyOutputNode',
+                'comfyLoraName',
+                'comfyLoraStrength',
+                ComfyUIWorkflow.samplerKey,
+                ComfyUIWorkflow.schedulerKey,
               ])
-                if (customConfig.containsKey(key)) key: customConfig[key],
+                if (effectiveConfig[key] != null) key: effectiveConfig[key],
             }
-          : customConfig['image_parameters'] ?? <String, dynamic>{},
+          : effectiveConfig['image_parameters'] ?? <String, dynamic>{},
     });
     AppLogger.info('ImagePlugin', '图片生成请求开始', metadata: metadata);
     final client = AgentApiClient(
@@ -899,7 +971,7 @@ class ImagePlugin extends BasePlugin {
         guidanceScale: guidanceScale,
         providerApiBase: providerApiBase,
         providerApiKey: providerApiKey,
-        customConfig: customConfig,
+        customConfig: effectiveConfig,
         requestId: requestId,
         requestSource: requestSource,
         flowMode: flowMode,

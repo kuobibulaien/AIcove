@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/utils/data_image.dart';
 import '../../theme/moe_wallpaper.dart';
-import 'moe_static_blur_layer.dart';
 
 /// 壁纸图片来源转图片源：data URI、网络、资源或本机文件；空串为 null。
 ImageProvider? moeWallpaperImageProvider(String source) {
@@ -25,8 +25,7 @@ ImageProvider? moeWallpaperImageProvider(String source) {
   return FileImage(File(trimmed));
 }
 
-/// 全局壁纸与角色壁纸共用的绘制：底色、按截取铺满的原图、静态模糊叠层与平铺遮罩。
-/// 原图和模糊叠层共用同一截取，调节模糊不会错位。
+/// 全局壁纸与角色壁纸共用的绘制：底色、按截取铺满的原图、高斯模糊滤镜与平铺遮罩。
 class MoeWallpaperView extends StatefulWidget {
   const MoeWallpaperView({
     super.key,
@@ -77,25 +76,16 @@ class _MoeWallpaperViewState extends State<MoeWallpaperView> {
       fallback: widget.fallbackAlignment,
     );
     final alignment = framing.alignment;
-    Widget picture = Stack(
-      fit: StackFit.expand,
-      children: [
-        Image(
-          image: provider,
-          fit: BoxFit.cover,
-          alignment: alignment,
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.medium,
-          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-        ),
-        if (MoeStaticBlurLayer.opacityFor(style.blur) > 0)
-          MoeStaticBlurLayer(
-            key: const ValueKey('moe_wallpaper_blur'),
-            source: widget.source,
-            blur: style.blur,
-            alignment: alignment,
-          ),
-      ],
+    final sigma = style.blur.clamp(0.0, kMaxWallpaperBlur).toDouble();
+    Widget picture = SizedBox.expand(
+      child: Image(
+        image: provider,
+        fit: BoxFit.cover,
+        alignment: alignment,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      ),
     );
     if (framing.scale > 1) {
       picture = ClipRect(
@@ -106,18 +96,33 @@ class _MoeWallpaperViewState extends State<MoeWallpaperView> {
         ),
       );
     }
+    if (sigma > 0.1) {
+      picture = ClipRect(
+        child: ImageFiltered(
+          key: const ValueKey('moe_wallpaper_blur'),
+          imageFilter: ui.ImageFilter.blur(
+            sigmaX: sigma,
+            sigmaY: sigma,
+            tileMode: TileMode.clamp,
+          ),
+          child: picture,
+        ),
+      );
+    }
     final mask = style.mask.clamp(0.0, 1.0);
-    return ColoredBox(
-      color: widget.color,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          picture,
-          if (mask > 0)
-            IgnorePointer(
-              child: ColoredBox(color: widget.color.withValues(alpha: mask)),
-            ),
-        ],
+    return RepaintBoundary(
+      child: ColoredBox(
+        color: widget.color,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            picture,
+            if (mask > 0)
+              IgnorePointer(
+                child: ColoredBox(color: widget.color.withValues(alpha: mask)),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -8,6 +8,7 @@ import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
+import 'package:aicove_flutter/src/features/memory/application/memory_retrieval.dart';
 import 'package:aicove_flutter/src/features/plugins/memory/memory_plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/plugin_prompts.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/voice_request.dart';
@@ -65,13 +66,13 @@ class _SpyMemoryPlugin extends MemoryPlugin {
   bool get enabled => true;
 
   @override
-  Future<String?> buildMemoryPrompt({
+  Future<InjectedMemory?> buildMemory({
     String? userMessage,
     String? conversationId,
     bool resumeBackgroundWork = true,
   }) async {
     lastConversationId = conversationId;
-    return 'memory_prompt';
+    return const InjectedMemory(core: 'core_memory', archive: 'topic_memory');
   }
 }
 
@@ -129,7 +130,6 @@ PluginRequestInputs _inputs(Ref ref) => PluginRequestInputs(
       useFastImageRoute: false,
       useStableImageRoute: true,
       supportsToolCalling: true,
-      customDrawingPrompt: '',
       reminders: const SystemReminderService(),
     );
 
@@ -157,8 +157,18 @@ void main() {
     final memory = _SpyMemoryPlugin(container.read(_refProvider));
     final scope = scopesOf(PluginRuntime.fromPlugins([memory])).single;
 
-    expect(await scope.prompt(_ctx), 'memory_prompt');
+    expect(await scope.prompt(_ctx), 'core_memory');
     expect(memory.lastConversationId, 'conv_target');
+  });
+
+  test('memory scope keeps topic memories out of the system prompt and '
+      'hands them to the reminder', () async {
+    final memory = _SpyMemoryPlugin(container.read(_refProvider));
+    final scope = scopesOf(PluginRuntime.fromPlugins([memory])).single;
+
+    expect(collectPluginReminders([scope], DateTime(2026)), isEmpty);
+    expect(await scope.prompt(_ctx), isNot(contains('topic_memory')));
+    expect(collectPluginReminders([scope], DateTime(2026)), ['topic_memory']);
   });
 
   test('role selection: built-ins follow "all plugins", explicit-only '
@@ -222,7 +232,20 @@ void main() {
       ..install(ImagePlugin(const ImageConfig(), ref).agentPlugin);
     final broken = PluginRequestInputs(
       ref: ref,
-      settings: inputs.settings.copyWith(imageGenerationEnabled: true),
+      settings: inputs.settings.copyWith(
+        imageGenerationEnabled: true,
+        // A usable channel; the image scope is inactive without one.
+        providers: const [
+          ProviderAuth(
+            id: 'image',
+            apiKeys: ['test-key'],
+            apiBaseUrl: 'https://image.invalid/v1',
+            models: ['image-model'],
+            visibleModels: ['image-model'],
+          ),
+        ],
+        modelTypes: const {'image-model': 'image'},
+      ),
       imageConfig: inputs.imageConfig,
       voiceRequest: inputs.voiceRequest,
       pluginPrompts: inputs.pluginPrompts,
@@ -231,7 +254,6 @@ void main() {
       useFastImageRoute: false,
       useStableImageRoute: true,
       supportsToolCalling: true,
-      customDrawingPrompt: '',
       reminders: inputs.reminders,
     );
 

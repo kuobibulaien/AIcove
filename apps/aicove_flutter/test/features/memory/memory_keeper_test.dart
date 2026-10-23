@@ -5,13 +5,16 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
+import 'package:aicove_flutter/src/features/background_agent/background_agent_service.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/memory/application/memory_keeper_service.dart';
 import 'package:aicove_flutter/src/features/memory/application/memory_retrieval.dart';
 import 'package:aicove_flutter/src/features/memory/data/background_memory_agent_adapter.dart';
 import 'package:aicove_flutter/src/features/memory/data/sqlite_memory_store.dart';
 import 'package:aicove_flutter/src/features/memory/domain/memory_item.dart';
 import 'package:aicove_flutter/src/features/memory/domain/memory_ports.dart';
+import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
 class _Agent implements MemoryAgentPort {
   _Agent(this.respond);
@@ -254,19 +257,73 @@ void main() {
       store: store,
       retriever: KeywordMemoryRetriever(store),
     );
-    final prompt = (await injector.build(
+    final memory = (await injector.build(
       ownerId: 'a',
       roleLabel: '阿绫',
       query: buildMemoryQuery([_m('x', 1, text: '还记得海边吗')], '日落好看吗'),
     ))!;
-    expect(prompt, contains('用户叫小林'));
-    expect(prompt, contains('海边看日落'));
+    // 常驻进系统提示，检索到的往事单独一块（放到队尾提醒），互不混入。
+    expect(memory.core, contains('用户叫小林'));
+    expect(memory.core, isNot(contains('海边看日落')));
+    expect(memory.archive, contains('海边看日落'));
+    expect(memory.archive, isNot(contains('用户叫小林')));
+    final prompt = '${memory.core}\n${memory.archive}';
     expect(prompt, isNot(contains('团子')));
     expect(prompt, isNot(contains('B 的海边')));
     expect(
       await injector.build(ownerId: 'b', roleLabel: 'B', query: '猫'),
       isNull,
     );
+  });
+
+  test('记忆整理给足输出额度，服务商嫌大时逐次减半重试', () async {
+    final maxes = <int?>[];
+    final adapter = BackgroundMemoryAgentAdapter(
+      BackgroundAgentService(
+        loadRecentMessages: (_, __) async => throw StateError('不得回退缓存'),
+        loadSettings: () async => mapUiModelsToAppSettings({}),
+        requestConfigResolver: ({required settings, required modelRef}) async =>
+            const BackgroundAgentRequestConfig(
+              modelFullId: 'openai:fake',
+              providerApiBase: 'https://invalid.test',
+              providerApiKey: 'fake',
+              customConfig: {},
+              modelTemperature: .2,
+              modelTopP: 1,
+              modelContextMessageLimit: 30,
+            ),
+        executor:
+            ({
+              required config,
+              required availableTools,
+              required sessionId,
+            }) async {
+              maxes.add(config.providerRequestOptions?.maxOutputTokens);
+              if (maxes.length == 1) {
+                throw StateError('HTTP 400: max_tokens is too large');
+              }
+              return const ApiCallResult(
+                replyText: '{"ops":[]}',
+                processedText: '',
+                pluginEvents: [],
+                toolResults: [],
+              );
+            },
+      ),
+      store: store,
+      modelRef: 'fake',
+      contextTokens: 128000,
+    );
+    expect(
+      await adapter.propose(
+        ownerId: 'a',
+        core: const [],
+        related: const [],
+        messages: [_m('x', 1)],
+      ),
+      isEmpty,
+    );
+    expect(maxes, [32000, 16000]);
   });
 
   test('解析记忆模型输出：丢弃越界 id、锁定目标和无来源的新增', () {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_glass_theme.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -863,6 +865,15 @@ void main() {
     expect(settings.getMaxContextTokens('openai:gpt-4o'), 65536);
   });
 
+  test('model window follows the global context setting when not configured',
+      () {
+    final settings = mapUiModelsToAppSettings({'context_window_tokens': 1000000});
+
+    // No hardcoded per-model table caps the user's setting.
+    expect(settings.getMaxContextTokens('openai:gpt-4o'), 1000000);
+    expect(settings.getMaxContextTokens('openai:deepseek-flash'), 1000000);
+  });
+
   test('updateProviderParams should persist provider max_context_tokens',
       () async {
     final store = <String, dynamic>{
@@ -1098,12 +1109,12 @@ void main() {
     expect(settings.callFlowSettings.toolTimeoutSeconds, 20);
   });
 
-  test('call flow settings should migrate legacy stable mode to auto', () {
+  test('call flow settings should migrate legacy stable mode to call', () {
     final settings = CallFlowSettings.fromJson(<String, dynamic>{
       'mode': 'stable',
     });
 
-    expect(settings.mode, CallFlowMode.auto);
+    expect(settings.mode, CallFlowMode.call);
   });
 
   test('fresh NovelAI provider should default to V5 Full and survive reload',
@@ -1474,6 +1485,57 @@ void main() {
     expect(
       container.read(appSettingsProvider).requireValue.expandAudioText,
       isTrue,
+    );
+  });
+
+  test('writes started together all land', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    // Each write reads, merges and saves the whole store; unordered, the
+    // later save would put back what the earlier one changed.
+    await Future.wait([
+      notifier.setUserName('小雪'),
+      notifier.setHideUserAvatar(true),
+      notifier.setExpandAudioText(true),
+      notifier.setCompactionModel('deepseek:deepseek-flash'),
+    ]);
+
+    final reloaded = ProviderContainer();
+    addTearDown(reloaded.dispose);
+    final settings = await reloaded.read(appSettingsProvider.future);
+    expect(settings.userName, '小雪');
+    expect(settings.hideUserAvatar, isTrue);
+    expect(settings.expandAudioText, isTrue);
+    expect(settings.compactionModel, 'deepseek:deepseek-flash');
+  });
+
+  test('a material change inside a held write does not deadlock', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    // An undo holds the lock while a manual change queues behind it, then
+    // writes the material itself.
+    final held = Completer<void>();
+    final queued = Completer<void>();
+    final undo = notifier.transaction(() async {
+      held.complete();
+      await queued.future;
+      await notifier.setSurfaceMaterial(MoeSurfaceMaterial.frosted);
+    });
+    await held.future;
+    final manual = notifier.setSurfaceMaterial(MoeSurfaceMaterial.solid);
+    queued.complete();
+    await Future.wait([undo, manual]).timeout(const Duration(seconds: 5));
+    expect(
+      container.read(appSettingsProvider).value!.glassEffectEnabled,
+      isFalse,
     );
   });
 }

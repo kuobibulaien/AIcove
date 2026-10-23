@@ -142,7 +142,7 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
   final ApiConfig base;
   final String sessionId;
 
-  /// 合成服务支持的语气控制说明（如 [kFishAudioCallSpeechGuide]）；为空时禁止标签。
+  /// 音色预设提示词包里的通话语气说明（ADR0092）；为空时禁止标签。
   final String? speechGuide;
 
   /// 每轮插件提醒（当前时间等）按它取时刻。
@@ -177,7 +177,6 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
             userText: null,
             responseProcessors: const [],
             availableTools: const [],
-            maxRounds: 1,
             enableStreaming: true,
             onStreamTextDelta: (delta) {
               emitted.write(delta);

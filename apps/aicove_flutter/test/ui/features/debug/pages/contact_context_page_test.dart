@@ -49,7 +49,10 @@ class _Port implements ChatContextPreviewPort {
           'content': '',
           'tool_calls': [
             {
-              'function': {'name': 'draw_image', 'arguments': '{"prompt":"sea"}'},
+              'function': {
+                'name': 'draw_image',
+                'arguments': '{"prompt":"sea"}',
+              },
             },
           ],
         },
@@ -146,19 +149,107 @@ void main() {
 
     await tester.tap(find.text('工具 1'));
     await tester.pumpAndSettle();
-    expect(find.text('draw_image', findRichText: true), findsOneWidget);
+    expect(
+      find.textContaining('draw_image  ', findRichText: true),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('点开消息看全文，刷新会重新装配', (tester) async {
-    final port = await mount(tester, ContactContextPage(conversation: _contact));
-    expect(find.byType(SelectableText), findsNothing);
+    final port = await mount(
+      tester,
+      ContactContextPage(conversation: _contact),
+    );
+    expect(find.byType(TextField), findsNothing);
     await tester.tap(find.text('今天有点累'));
     await tester.pumpAndSettle();
-    expect(find.byType(SelectableText), findsOneWidget);
+    expect(find.widgetWithText(TextField, '今天有点累'), findsOneWidget);
     await tester.tap(find.byIcon(Icons.refresh_rounded));
     await tester.pumpAndSettle();
     expect(port.requested, ['a', 'a']);
+  });
+
+  testWidgets('概览显示用量组成', (tester) async {
+    await mount(tester, ContactContextPage(conversation: _contact));
+    final usage = ChatContextUsage.measure(
+      (await _Port().preview(_contact)).messages,
+      (await _Port().preview(_contact)).tools,
+    );
+    expect(usage.byKind[ChatContextUsageKind.toolCalls], greaterThan(0));
+    expect(
+      find.textContaining('约 ${usage.total} tokens', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.textContaining('系统提示词 '), findsOneWidget);
+    expect(find.textContaining('对话历史 '), findsOneWidget);
+    expect(find.textContaining('工具调用与结果 '), findsOneWidget);
+    expect(find.textContaining('工具定义 '), findsOneWidget);
+  });
+
+  testWidgets('可自由编辑、删除、追加消息，用量重算并可撤销', (tester) async {
+    await mount(tester, ContactContextPage(conversation: _contact));
+    String totalText() => tester
+        .widgetList<RichText>(find.byType(RichText))
+        .map((w) => w.text.toPlainText())
+        .firstWhere((text) => text.startsWith('约 '));
+    final before = totalText();
+
+    await tester.tap(find.text('今天有点累'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, '今天有点累'),
+      '今天有点累' * 20,
+    );
+    await tester.pumpAndSettle();
+    expect(totalText(), isNot(before));
+    expect(find.textContaining('已手动修改'), findsOneWidget);
+
+    // 复制带上修改后的内容。
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    await tester.tap(find.byIcon(Icons.copy_all_outlined));
+    await tester.pump();
+    expect(copied, contains('今天有点累今天有点累'));
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+
+    // 切到 JSON 改角色，非法 JSON 给提示且不改用量。
+    await tester.tap(find.byIcon(Icons.data_object_rounded));
+    await tester.pumpAndSettle();
+    final field = find.byType(TextField);
+    await tester.enterText(field, '{"role": "system", "content": "改成系统"}');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('系统  #2', findRichText: true), findsOneWidget);
+    await tester.enterText(field, '{oops');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('JSON 无效'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.delete_outline_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('消息 3'), findsOneWidget);
+
+    await tester.tap(find.text('添加消息'));
+    await tester.pumpAndSettle();
+    expect(find.text('消息 4'), findsOneWidget);
+    expect(find.textContaining('用户  #4', findRichText: true), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.undo_rounded));
+    await tester.pumpAndSettle();
+    expect(totalText(), before);
+    expect(find.text('消息 4'), findsOneWidget);
+    expect(find.text('今天有点累'), findsOneWidget);
+    expect(find.textContaining('已手动修改'), findsNothing);
+    expect(find.byIcon(Icons.undo_rounded), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   for (final width in [400.0, 1000.0]) {

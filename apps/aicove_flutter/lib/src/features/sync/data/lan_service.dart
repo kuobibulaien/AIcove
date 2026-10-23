@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
+import '../../../core/app_logger.dart';
 import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart';
 import '../domain/lan_contract.dart';
@@ -21,9 +22,16 @@ class LanService implements LanSyncPort {
     bool loopback = false,
     this.automatic = true,
   }) {
-    transport = LanTransport(repository.deviceId, peers, _rpc, () {
-      unawaited(_publish());
-    }, loopback: loopback);
+    transport = LanTransport(
+      repository.deviceId,
+      peers,
+      _rpc,
+      () {
+        unawaited(_publish());
+      },
+      loopback: loopback,
+      recentChanges: true,
+    );
     media = LanMedia(repository.local, repository.codec.media, transport.rpc);
   }
   final LanRepository repository;
@@ -46,6 +54,10 @@ class LanService implements LanSyncPort {
   String? _error;
   Future<void> _lifecycle = Future.value();
   final _nearby = <String, List<LanEndpoint>>{};
+  final _pushedRecent = <String, String>{};
+  final _pulledRecent = <String, String>{};
+  int _roundPushed = 0, _roundPulled = 0, _roundFailed = 0;
+  bool _roundComplete = true;
   bool get _active =>
       _enabled && _foreground && !_closed && transport.listening;
 
@@ -236,6 +248,8 @@ class LanService implements LanSyncPort {
   @override
   Future<void> forget(String id) => _action(() async {
     peers.peers.remove(id);
+    _pushedRecent.remove(id);
+    _pulledRecent.remove(id);
     await peers.save();
     await repository.local.execute(
       'DELETE FROM lan_media_queue WHERE peer_id=?',
@@ -305,6 +319,8 @@ class LanService implements LanSyncPort {
     Map<String, dynamic> body,
   ) async {
     switch (body['method']) {
+      case 'recent':
+        return repository.recentChanges();
       case 'manifest':
         final after = body['after'] as String? ?? '';
         // Later pages still drain committed DB edits, but need not fingerprint
@@ -383,12 +399,167 @@ class LanService implements LanSyncPort {
     }
   }
 
-  Future<void> _sync() async {
-    await _publish();
+  void _recordEntity(
+    String entityId,
+    String kind,
+    String phase,
+    Stopwatch clock,
+    Object? error,
+  ) {
+    if (error != null) {
+      _roundFailed++;
+    } else if (phase == 'send') {
+      _roundPushed++;
+    } else {
+      _roundPulled++;
+    }
+    if (error == null && clock.elapsed < const Duration(seconds: 2)) return;
+    final metadata = <String, dynamic>{
+      'category': 'sync',
+      'event': 'lanEntity',
+      'entityId': entityId,
+      'kind': kind,
+      'phase': phase,
+      'result': error == null ? 'success' : 'failed',
+      'elapsedMs': clock.elapsedMilliseconds,
+      if (error != null) 'errorType': error.runtimeType.toString(),
+    };
+    if (error == null) {
+      AppLogger.info(
+        'LanSync',
+        'Slow entity transfer completed',
+        metadata: metadata,
+      );
+    } else {
+      AppLogger.warning(
+        'LanSync',
+        'Entity transfer failed',
+        metadata: metadata,
+      );
+    }
+  }
+
+  Future<bool> _pullItem(LanPeer peer, Map item) async {
+    var ok = true;
+    for (final hash in await repository.missing(
+      (item['hashes'] as List).cast<String>(),
+    )) {
+      LanRevision? revision;
+      final clock = Stopwatch()..start();
+      try {
+        final reply = await transport.rpc(peer, {
+          'method': 'revision',
+          'hash': hash,
+        });
+        revision = LanRevision.fromJson(
+          Map<String, dynamic>.from(reply['revision'] as Map),
+        );
+        if (revision.hash != hash ||
+            revision.kind != item['kind'] ||
+            revision.id != item['entity_id']) {
+          throw const LanSyncFailure('同步内容与摘要不一致');
+        }
+        await _receive(peer, revision);
+        _recordEntity(revision.id, revision.kind, 'receive', clock, null);
+      } catch (e) {
+        ok = false;
+        _recordEntity(
+          item['entity_id'] as String,
+          item['kind'] as String,
+          'receive',
+          clock,
+          e,
+        );
+      }
+    }
+    return ok;
+  }
+
+  Future<bool> _pushRevision(LanPeer peer, String hash) async {
+    final revision = await repository.revision(hash);
+    final clock = Stopwatch()..start();
     try {
-      await repository.capture();
+      await transport.rpc(peer, {
+        'method': 'put',
+        'revision': revision.toJson(),
+      });
+      _recordEntity(revision.id, revision.kind, 'send', clock, null);
+      return true;
+    } catch (e) {
+      _recordEntity(revision.id, revision.kind, 'send', clock, e);
+      return false;
+    }
+  }
+
+  Future<bool> _pullRecent(LanPeer peer) async {
+    final page = await transport.rpc(peer, {'method': 'recent'});
+    final token = page['token'] as String?;
+    if (token != null && _pulledRecent[peer.id] == token) return true;
+    final items = page['items'] as List;
+    if (items.length > LanRepository.recentLimit * 2) {
+      throw const LanSyncFailure('同步摘要过大');
+    }
+    final hashes = <String>{};
+    for (final item in items) {
+      final itemHashes = (item['hashes'] as List).cast<String>();
+      if (itemHashes.length > 64) throw const LanSyncFailure('同时修改版本过多');
+      hashes.addAll(itemHashes);
+    }
+    final missing = (await repository.missing(hashes)).toSet();
+    var ok = true;
+    for (final item in items) {
+      final wanted = (item['hashes'] as List).where(missing.contains).toList();
+      if (wanted.isNotEmpty &&
+          !await _pullItem(peer, {...item as Map, 'hashes': wanted})) {
+        ok = false;
+      }
+    }
+    if (ok && token != null) _pulledRecent[peer.id] = token;
+    return ok;
+  }
+
+  Future<bool> _pushRecent(LanPeer peer, Map<String, dynamic> page) async {
+    final token = page['token'] as String?;
+    if (token != null && _pushedRecent[peer.id] == token) return true;
+    var ok = true;
+    final hashes = {
+      for (final item in page['items'] as List)
+        ...(item['hashes'] as List).cast<String>(),
+    }.toList();
+    final missing = <String>{};
+    for (var offset = 0; offset < hashes.length; offset += 200) {
+      final batch = hashes.skip(offset).take(200).toList();
+      final result = await transport.rpc(peer, {
+        'method': 'missing',
+        'hashes': batch,
+      });
+      for (final hash in (result['hashes'] as List).cast<String>()) {
+        if (!batch.contains(hash)) throw const LanSyncFailure('同步摘要应答无效');
+        missing.add(hash);
+      }
+    }
+    for (final hash in hashes.where(missing.contains)) {
+      try {
+        if (!await _pushRevision(peer, hash)) ok = false;
+      } catch (_) {
+        ok = false;
+      }
+    }
+    if (ok && token != null) _pushedRecent[peer.id] = token;
+    return ok;
+  }
+
+  Future<void> _sync() async {
+    final clock = Stopwatch()..start();
+    _roundPushed = _roundPulled = _roundFailed = 0;
+    _roundComplete = true;
+    try {
+      await _publish();
       for (final peer in peers.peers.values.toList()) {
-        if (!_active || peers.peers[peer.id] != peer) break;
+        if (!_active || peers.peers[peer.id] != peer) {
+          _roundComplete = false;
+          break;
+        }
         try {
           final status = await transport.rpc(peer, {
             'method': 'status',
@@ -404,6 +575,14 @@ class LanService implements LanSyncPort {
           }
           await _ensureBackup(peer);
           _startFiles();
+          var complete = await _pushRecent(
+            peer,
+            await repository.recentChanges(),
+          );
+          if (status['recent_changes'] == 1 && !await _pullRecent(peer)) {
+            complete = false;
+          }
+          await repository.capture();
           var after = '';
           do {
             final page = await transport.rpc(peer, {
@@ -415,21 +594,7 @@ class LanService implements LanSyncPort {
             for (final item in items) {
               final hashes = (item['hashes'] as List).cast<String>();
               if (hashes.length > 64) throw const LanSyncFailure('同时修改版本过多');
-              for (final hash in await repository.missing(hashes)) {
-                final reply = await transport.rpc(peer, {
-                  'method': 'revision',
-                  'hash': hash,
-                });
-                final revision = LanRevision.fromJson(
-                  Map<String, dynamic>.from(reply['revision'] as Map),
-                );
-                if (revision.hash != hash ||
-                    revision.kind != item['kind'] ||
-                    revision.id != item['entity_id']) {
-                  throw const LanSyncFailure('同步内容与摘要不一致');
-                }
-                await _receive(peer, revision);
-              }
+              if (!await _pullItem(peer, item as Map)) complete = false;
             }
             final next = page['after'] as String;
             if (page['has_more'] != true) break;
@@ -437,10 +602,19 @@ class LanService implements LanSyncPort {
               throw const LanSyncFailure('同步摘要分页无效');
             }
             after = next;
+            if (!await _pushRecent(peer, await repository.recentChanges())) {
+              complete = false;
+            }
+            if (status['recent_changes'] == 1 && !await _pullRecent(peer)) {
+              complete = false;
+            }
           } while (_active);
           await _drainDeletions(peer);
           await repository.capture();
+          final fullPushToken =
+              (await repository.recentChanges())['token'] as String?;
           after = '';
+
           do {
             final page = await repository.manifest(after: after);
             final hashes = {
@@ -467,18 +641,29 @@ class LanService implements LanSyncPort {
               }
             }
             for (final hash in hashes.where(missingHashes.contains)) {
-              await transport.rpc(peer, {
-                'method': 'put',
-                'revision': (await repository.revision(hash)).toJson(),
-              });
+              try {
+                if (!await _pushRevision(peer, hash)) complete = false;
+              } catch (_) {
+                complete = false;
+              }
             }
             after = page['after'] as String;
             if (page['has_more'] != true) break;
+            if (!await _pushRecent(peer, await repository.recentChanges())) {
+              complete = false;
+            }
           } while (_active);
-          peer.lastSync = DateTime.now();
+          complete = complete && _active;
+          _roundComplete = _roundComplete && complete;
+          if (complete) {
+            peer.lastSync = DateTime.now();
+            if (fullPushToken != null) _pushedRecent[peer.id] = fullPushToken;
+          }
           peer.online = true;
-          peer.error = null;
+          peer.error = complete ? null : '部分记录未同步，将在下一轮重试';
         } catch (e) {
+          _roundComplete = false;
+          _roundFailed++;
           peer.online = false;
           peer.error = _message(e);
         }
@@ -486,7 +671,25 @@ class LanService implements LanSyncPort {
       _error = null;
       _startFiles();
     } catch (e) {
+      _roundComplete = false;
+      _roundFailed++;
       _error = _message(e);
+    } finally {
+      AppLogger.info(
+        'LanSync',
+        'Entity synchronization round completed',
+        metadata: {
+          'category': 'sync',
+          'event': 'lanRound',
+          'phase': 'round',
+          'result': _roundComplete ? 'success' : 'partial',
+          'pushed': _roundPushed,
+          'pulled': _roundPulled,
+          'failed': _roundFailed,
+          'complete': _roundComplete,
+          'elapsedMs': clock.elapsedMilliseconds,
+        },
+      );
     }
   }
 

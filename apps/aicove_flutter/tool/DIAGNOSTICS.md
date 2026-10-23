@@ -56,7 +56,9 @@ python3 tool/collect_diagnostics.py --from-bundle /path/to/aicove_diagnostics_..
 
 离线时间窗口相对于手机**导出时刻**，隔天分析也不会错误过滤为空。手机包与电脑通道使用同一生成器；只读过去7天内可用的 app/api/trace索引，不读数据库、payload、图片或自由文本。手机在后台isolate做字段允许列表过滤，电脑再过滤一次。旧“完整对话导出”包含的内容范围更大，不与此受控诊断包混用。
 
-每文件最多读取尾部16MiB、总输入64MiB、单行512KiB、最多20,000条，内容编码预算12MiB；电脑接收上限16MiB。半行、坏行、超限、读取失败与缺失目录均有覆盖声明。不是原子快照，不强制冲刷各日志队列；离线证据行号指向导出内容，不冒充手机原始文件行号。上游限制在 `summary.json → coverage.sourceCoverage` 中保留。
+每文件最多读取尾部16MiB、总输入64MiB、单行512KiB、最多20,000条，内容编码预算12MiB；电脑接收上限16MiB。输出前先在有界输入内扫描：错误、后台交付、同步、普通事件各预留四分之一记录/字节配额，再共享剩余容量，避免 historyReady 先耗尽导出预算；各类别候选也有记录/字节上限，超出时保留较新的候选。输入尾读以前的旧记录仍无法恢复。半行、坏行、超限、读取失败与缺失目录均有覆盖声明。不是原子快照，不强制冲刷各日志队列；离线证据行号指向导出内容，不冒充手机原始文件行号。上游限制在 `summary.json → coverage.sourceCoverage` 中保留。
+
+`historyReady` 不再为每次刷新写 start；同会话同状态 30 秒内合并，投影数量或状态变化立即记录。LAN 只刷新受影响会话的已加载范围，旧历史导入不再反复重读所有会话。`operations.jsonl` 的 `kind=sync/backgroundDelivery` 保留 `entityId`、`entityKind`、`phase`、`result`、`elapsedMs`；快速成功实体不逐条记录；只记录失败及耗时至少 2 秒的实体。每轮一条 `event=lanRound` 汇总，包含 `pushed`/`pulled` 成功修订传输次数、`failed` 失败操作次数、`elapsedMs` 总耗时、`complete` 是否完整（合计本轮参与对端，同实体重试按操作计数）；这些字段同时保留在手机导出和采集结果中。失败实体事件进入候选列表，不含正文或自由错误。`--event` 仍只过滤终端输出，不改变手机导出预算。具体契约见 [ADR0104](../../../docs/项目记忆/决策记录/0104-后台消息同身份补处理与局域网优先增量.md)。
 
 实现入口：`DiagnosticAccessPort` → `DiagnosticAccessService` / `createDiagnosticBundle`；只绑定IPv4 loopback，以随机256位本机凭证鉴权，不开局域网/公网监听。凭证仅保存于FlutterSecureStorage，成功持久化后才开放通道；读取或绑定失败每5秒自动重试，不阻塞首屏。应用进程存活期间持续开放，不设置到期或提供关闭开关。并发导出返回忙碌，避免多次同时扫描。错误凭证、未知路径不能取日志。
 
@@ -67,7 +69,7 @@ python3 tool/collect_diagnostics.py --from-bundle /path/to/aicove_diagnostics_..
 ```bash
 python3 tool/collect_diagnostics.py --since 2h
 # 多台手机时不能猜设备；用已确认设备号：
-python3 tool/collect_diagnostics.py --device <设备号> --since 7d
+python3 tool/collect_diagnostics.py --device 3a845d3f --since 7d
 ```
 
 默认读取唯一在线且已授权的设备。工具不安装、不启动/停止应用、不操作 UI、不清数据、不上传、不提权。正式 release 的 run-as 拒绝访问时应停下，不能尝试绕过沙箱。
@@ -100,7 +102,7 @@ python3 tool/collect_diagnostics.py --device <设备号> --since 7d
 
 当前项目基线为 **Flutter 3.44.6 stable / Dart 3.12.2**，`pubspec.yaml` 设置最低版本，`pubspec.lock` 固定解析结果。保留旧 SDK，不修改机器全局 PATH。
 
-在 `apps/aicove_flutter/` 中以 `tool/flutterw` 代替本文及其它文档命令中的 `flutter`；脚本默认调用 `$HOME/dev-sdks/flutter-3.44.6`，其它安装位置用 `AICOVE_FLUTTER_SDK` 指定。它会同时设置子进程的 PATH 和 FLUTTER_ROOT，避免 Dart 与 Flutter 来自不同 SDK。
+在 `apps/aicove_flutter/` 中以 `tool/flutterw` 代替本文及其它文档命令中的 `flutter`；脚本在 `$HOME/dev-sdks/` 下的 `flutter`、`flutter-*` 里自动挑满足 `pubspec.yaml` 最低版本（`flutter: '>=…'`）的最新版，装新版只需放进该目录，不用改脚本或环境变量；其它安装位置用 `AICOVE_FLUTTER_SDK` 指定。沙箱里 SDK 缓存不可写时自动在 `/tmp/aicove-<SDK目录名>-shadow` 建可写影子副本，副本不完整会自动重建。`AICOVE_FLUTTERW_WHICH=1 tool/flutterw` 只打印选中的 SDK 路径。它会同时设置子进程的 PATH 和 FLUTTER_ROOT，避免 Dart 与 Flutter 来自不同 SDK。
 
 ```bash
 cd apps/aicove_flutter
@@ -116,6 +118,38 @@ tool/flutterw test
 需要直接运行同一套 SDK 的 Dart 时用 `tool/flutterw --dart <参数>`；此入口同时设置 `DART_SDK` 与 `FLUTTER_SDK`，避免 MCP 被其它工具遗留的环境变量指向旧 SDK。Dart MCP 复用此入口及既有 SDK／影子 SDK 选择逻辑。
 
 本次继续使用 CocoaPods，通过 `flutter.config.enable-swift-package-manager: false` 在项目内关闭 SDK 默认的 Swift Package Manager 自动迁移；不改全局 Flutter 配置。Lucide 的兼容补丁见 [`third_party/lucide_icons/README.md`](../third_party/lucide_icons/README.md)。
+
+## 离线测试两档（2026-10-22）
+
+`dart_test.yaml` 声明三个文件级标签，测试文件开头用 `@Tags([...])` + `library;` 标注：
+
+| 标签 | 含义 | 什么时候加 |
+|---|---|---|
+| `slow` | 单文件实测 ≥ 10 秒 | 新测试单文件跑超过 10 秒且难以改快时 |
+| `preview` | 主要用途是出源码渲染预览图（写 PNG），断言只是顺带 | 新写预览／出图测试时一律加；临时出图测试用完就删 |
+| `real_model` | 真实模型请求，需要 `DEEPSEEK_API_KEY` | 文件名含 `real_model` 的都加 |
+
+```bash
+cd apps/aicove_flutter
+# 快速档：日常改完跑。排除 slow／preview／real_model，被排除的文件不编译。
+python3 tool/run_tests.py --fast
+# 全量档：收工验收跑。real_model 无 Key 时自行跳过。
+python3 tool/run_tests.py
+# 只跑一部分，参数原样交给 flutter test
+python3 tool/run_tests.py -- test/features/chat
+# 内核子包（独立 pubspec，几秒）
+(cd packages/aicove_agent_kernel && ../../tool/flutterw test)
+```
+
+[run_tests.py](run_tests.py) 包装 `tool/flutterw test --reporter=json`，去掉 `DEEPSEEK_API_KEY`，边跑边打印失败用例的输出，结束时给出通过／失败／跳过、总耗时和最慢的 10 个文件。**单个测试（或单个文件的编译）跑满 5 分钟**会在运行中打印「超时警告」，并追加到仓库根目录 `scratch/test-reports/long_tests.jsonl`（时间、提交、文件、用例名、秒数、结果）；每次运行另存完整报告 `scratch/test-reports/run-<时间>.json`。阈值可用 `--long-seconds` 改。收工时看到超时警告要查原因，不要只把它标成 `slow`。直接用 `env -u DEEPSEEK_API_KEY tool/flutterw test -x 'slow || preview || real_model'` 也行，只是没有耗时记录。
+
+并发（2026-10-22 实测，快速档）：默认 `-j` 为 CPU 核数一半（本机 5），`-j 8` 231 秒、`-j 10` 215 秒、默认 226 秒，差别在噪声内，因为单个 `flutter test` 只有一个编译器，文件排队编译。`--total-shards` 会让每个分片都编译全部文件，更慢；同一 checkout 同时开多个 `flutter test` 会抢 `build/native_assets`（QuickJS 动态库）而崩。所以保持默认并发，不在同一目录并行跑多个测试进程。
+
+- 实测（2026-10-22，Mac 10 核，无其他测试并发）：全量 273 秒／3952 用例，快速档 226 秒／3568 用例，排除 32 个文件。精简前全量 1366 秒，其中一个卡死的出图测试独占约 20 分钟。
+- `-x` 只认最后一个，多个标签必须写成一个表达式 `'a || b'`，写成 `-x slow -x preview` 只会排除 `preview`。
+- 耗时主要花在逐文件编译上（每个文件 1～7 秒），合并文件内的同类用例几乎不省时间；省时间靠减少文件数和挡住卡死的测试。
+- 出图测试的截图（`toImage`／`Future.delayed`）必须放进 `tester.runAsync`，否则在假时钟里永远等不到，要等 widget 测试默认的 10 分钟超时才失败；`dart_test.yaml` 的 `timeout` 管不到这个上限。
+- 看单文件耗时：`run_tests.py` 的报告里 `load_s` 是编译（含排队），`run_s` 是运行。
 
 ## Mac 持续调试会话（日常 Dart 迭代，2026-09-12）
 
@@ -222,6 +256,17 @@ python3 apps/aicove_flutter/tool/dart_mcp_client.py --batch '[{"name":"dtd","arg
 - 本机验证证据见 `.codex-temp/dart-mcp/verification.md`（仓库根目录，本机产物，不提交）。
 
 配置格式依据：[Dart MCP](https://github.com/dart-lang/ai/blob/main/pkgs/dart_mcp_server/README.md)、[Codex](https://developers.openai.com/codex/mcp/)、[Claude Code](https://code.claude.com/docs/en/mcp)、[Pi adapter](https://github.com/nicobailon/pi-mcp-adapter)、[Gemini CLI](https://geminicli.com/docs/tools/mcp-server/)、[Cursor](https://cursor.com/docs/context/mcp)、[VS Code](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)、[Flutter AI 接入（含 Antigravity）](https://docs.flutter.dev/ai/get-started)、[OpenCode](https://opencode.ai/docs/mcp-servers/)。客户端升级后以实际配置加载结果和工具列表复核。
+
+## 无障碍语义更新检查（2026-10-22）
+
+macOS／Windows 引擎的无障碍桥拒收某些语义更新后会冻结甚至闪退（见经验教训「macOS 闪退在输入框取位置」）。`test/helpers/semantics_update_audit.dart` 按引擎规则校验测试中发出的每次更新；单个测试用 `SemanticsAuditBinding.ensureInitialized()` 后断言 `SemanticsUpdateAudit.instance.violations` 为空。全量扫描：
+
+```bash
+cd apps/aicove_flutter
+AICOVE_SEMANTICS_AUDIT=/tmp/semantics_audit.txt ./tool/flutterw test test/ui test/features
+```
+
+输出文件按违规列出节点号与所在测试行。真机侧看调试日志里的 `Failed to update ui::AXTree`。
 
 ## 采集与版本边界
 

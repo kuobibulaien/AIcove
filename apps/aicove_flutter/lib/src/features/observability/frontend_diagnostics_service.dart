@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
+import 'dart:convert';
 import 'dart:isolate';
 import 'diagnostic_error_summary.dart';
 
@@ -25,6 +26,7 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
   Map<String, Object?> _identity = const {'buildId': 'unknown'};
   int _eventSequence = 0;
   int _serial = 0;
+  final _historySamples = <String, (String, int)>{};
 
   void setRuntimeIdentity(Map<String, Object?> identity) {
     _identity = Map.unmodifiable(identity);
@@ -125,6 +127,25 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
     DiagnosticFacts? facts,
   }) {
     if (!enabled || context == null) return;
+    if (stage == FrontendStage.historyReady &&
+        error == null &&
+        facts?.phase != DiagnosticPhase.error) {
+      if (facts?.phase == DiagnosticPhase.start) return;
+      final conversation = context.conversationId ?? '';
+      final signature = jsonEncode([
+        facts?.phase.name,
+        itemCount,
+        facts?.state,
+      ]);
+      final now = _runtimeClock.elapsedMilliseconds;
+      final previous = _historySamples[conversation];
+      if (previous != null &&
+          previous.$1 == signature &&
+          now - previous.$2 < 30000) {
+        return;
+      }
+      _put(_historySamples, conversation, (signature, now), 128);
+    }
     final key = '${context.operationId}:${stage.name}:${messageId ?? ''}';
     if (once && !_once.add(key)) return;
     while (_once.length > 2048) {

@@ -134,7 +134,6 @@ class Harness {
     FakeTools? tools,
     FakePost? post,
     bool canRecover = true,
-    this.maxRounds = 5,
     this.unpacker = const PassThroughUnpacker(),
     this.onEvent,
     FutureOr<void> Function()? onEncode,
@@ -143,8 +142,6 @@ class Harness {
         tools = tools ?? FakeTools(),
         post = post ?? FakePost(),
         preparer = FakePreparer(canRecoverOverflow: canRecover);
-
-  final int maxRounds;
   final ScriptedModel model;
   final FakeTools tools;
   final FakePost post;
@@ -167,7 +164,6 @@ class Harness {
       postTool: post,
       encoder: encoder,
     ),
-    maxRounds: maxRounds,
     observers: [
       (event) async {
         events.add(event);

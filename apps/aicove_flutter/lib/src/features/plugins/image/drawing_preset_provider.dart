@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../chat/conversation_providers.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
+import '../../settings/app_settings.dart';
 import 'drawing_preset.dart';
 import 'image_config.dart';
 import 'image_plugin.dart';
@@ -101,6 +102,11 @@ class DrawingPresetCatalogNotifier extends AsyncNotifier<DrawingPresetCatalog> {
 
   Future<void> savePreset(DrawingPreset preset) =>
       _update((catalog) => catalog.upsert(preset));
+
+  /// Runs [change] on the catalog as it is now, in the write queue.
+  Future<void> transact(
+    FutureOr<DrawingPresetCatalog> Function(DrawingPresetCatalog) change,
+  ) => _update(change);
   Future<void> setDefault(String id) =>
       _update((catalog) => catalog.withDefault(id));
 
@@ -154,4 +160,20 @@ final roleDrawingPresetProvider = FutureProvider.autoDispose
       return ref
           .read(drawingPresetCatalogProvider.notifier)
           .resolveForPersona(persona);
+    });
+
+/// Whether a role's drawing has a channel to draw with ([ImagePlugin.isUsable]).
+/// Drawing switched off globally is not "unconfigured", so it counts as
+/// configured here.
+final roleDrawingConfiguredProvider = FutureProvider.autoDispose
+    .family<bool, String>((ref, persona) async {
+      final preset = await ref.watch(roleDrawingPresetProvider(persona).future);
+      final settings = await ref.watch(appSettingsProvider.future);
+      if (!settings.imageGenerationEnabled) return true;
+      return ImagePlugin(
+        preset.config,
+        ref,
+        requestSettings: settings,
+        isRequestSnapshot: true,
+      ).isUsable;
     });

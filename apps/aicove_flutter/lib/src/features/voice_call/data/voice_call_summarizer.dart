@@ -28,7 +28,6 @@ class VoiceCallSummarizer {
         objectivePrompt: kVoiceCallSummaryObjective,
         modelRef: modelRef,
         temperature: 0.2,
-        maxRounds: 1,
         allowedToolNames: const [],
         contextProfile: ContextProfile.background(
           const ConversationWindowSpec(lastMessages: 1, includeAssistant: false),

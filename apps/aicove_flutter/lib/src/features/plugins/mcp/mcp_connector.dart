@@ -1,6 +1,6 @@
 /// MCP 连接器配置：用户自己接入的远程 MCP 服务（Streamable HTTP）。
 ///
-/// 每个连接器在插件层表现为一个独立插件 `mcp:<id>`，由角色在「管理开启的插件」
+/// 每个连接器在插件层表现为一个独立插件 `mcp:<id>`，由角色在「管理插件」
 /// 里逐个开启；工具清单在测试连接／刷新时拉取并随配置保存，请求时不再联网列举。
 library;
 
@@ -11,12 +11,14 @@ class McpToolInfo {
     this.title = '',
     this.description = '',
     this.inputSchema = const <String, dynamic>{},
+    this.outputSchema,
   });
 
   final String name;
   final String title;
   final String description;
   final Map<String, dynamic> inputSchema;
+  final Map<String,dynamic>? outputSchema;
 
   String get displayName => title.trim().isEmpty ? name : title.trim();
 
@@ -24,6 +26,7 @@ class McpToolInfo {
     name: (json['name'] ?? '').toString(),
     title: (json['title'] ?? '').toString(),
     description: (json['description'] ?? '').toString(),
+    outputSchema: json['outputSchema'] is Map ? Map<String,dynamic>.from(json['outputSchema'] as Map) : null,
     inputSchema: json['inputSchema'] is Map
         ? Map<String, dynamic>.from(json['inputSchema'] as Map)
         : const <String, dynamic>{},
@@ -34,6 +37,7 @@ class McpToolInfo {
     if (title.isNotEmpty) 'title': title,
     if (description.isNotEmpty) 'description': description,
     'inputSchema': inputSchema,
+    if(outputSchema!=null) 'outputSchema':outputSchema,
   };
 }
 

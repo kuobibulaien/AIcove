@@ -16,10 +16,15 @@ class PluginResponseInputs {
     required this.voiceRequest,
     this.drawingConfig,
     this.settings,
+    this.rolePluginIds,
   });
 
   final Ref ref;
   final VoiceRequest? voiceRequest;
+
+  /// The reply owner's raw plugin list (null = all plugins), for plugins
+  /// that read per-role grants from it.
+  final Set<String>? rolePluginIds;
 
   /// Image configuration fixed at prepare; null for cached replies.
   final ImageConfig? drawingConfig;

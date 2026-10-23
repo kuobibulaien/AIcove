@@ -212,8 +212,95 @@ void main() {
   });
 
   test('appDataDirectory keeps Documents where it is sandboxed', () {
+    final previous = AppDataMigration.debugUsesSupportDirectory;
     AppDataMigration.debugUsesSupportDirectory = false;
-    addTearDown(() => AppDataMigration.debugUsesSupportDirectory = null);
+    addTearDown(() => AppDataMigration.debugUsesSupportDirectory = previous);
     expect(AppDataMigration.usesSupportDirectory, isFalse);
+  });
+
+  group('sandboxed macOS container (ADR0106)', () {
+    const home = '/path/to/home';
+    const bundle = 'com.example.aicoveFlutter';
+    final container = MacContainer(home, bundle);
+    const newSupport = '/path/to/home/Library/Application Support/$bundle';
+
+    test('locates the old documents and support directories', () {
+      expect(
+        container.documents.path,
+        '/path/to/home/Library/Containers/$bundle/Data/Documents',
+      );
+      expect(
+        container.support.path,
+        '/path/to/home/Library/Containers/$bundle/Data/Library/Application Support/$bundle',
+      );
+    });
+
+    test('rewrites paths below both old directories, in the database too', () async {
+      final rewrites = PathRewrites(
+        container.documents.path,
+        newSupport,
+        extra: [(container.support.path, newSupport)],
+      );
+      expect(
+        rewrites.apply('${container.documents.path}/wallpapers/w.png'),
+        '$newSupport/wallpapers/w.png',
+      );
+      expect(
+        rewrites.apply('${container.support.path}/cloud_media/m/1.jpg'),
+        '$newSupport/cloud_media/m/1.jpg',
+      );
+      expect(
+        jsonDecode(rewrites.apply(jsonEncode({
+          'p': '${container.support.path}/voice_call/a.wav',
+        })))['p'],
+        '$newSupport/voice_call/a.wav',
+      );
+      for (final untouched in [
+        '${container.documents.path}/notes.txt',
+        '/path/to/home/Documents/wallpapers/w.png',
+        container.support.path,
+      ]) {
+        expect(rewrites.apply(untouched), untouched);
+      }
+
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      await db.customSelect('SELECT 1').get();
+      await db.customStatement('CREATE TABLE t (v TEXT)');
+      await db.customStatement('INSERT INTO t VALUES (?)', [
+        '${container.support.path}/cloud_media/x.png',
+      ]);
+      await AppDataMigration.rewriteDatabase(db, rewrites);
+      final row = await db.customSelect('SELECT v FROM t').getSingle();
+      expect(row.data['v'], '$newSupport/cloud_media/x.png');
+    });
+
+    test('moveSupport moves every entry and removes the emptied folder', () async {
+      final root = await Directory.systemTemp.createTemp('mac_container');
+      addTearDown(() => root.delete(recursive: true));
+      final from = Directory(p.join(root.path, 'old'));
+      final to = Directory(p.join(root.path, 'new'));
+      for (final (path, content) in [
+        ('local_credentials/key', 'k'),
+        ('cloud_media/a/1.png', 'img'),
+        ('top.json', '{}'),
+      ]) {
+        final file = File(p.join(from.path, path));
+        await file.parent.create(recursive: true);
+        await file.writeAsString(content);
+      }
+      await File(p.join(to.path, 'top.json')).create(recursive: true);
+
+      await AppDataMigration.moveSupport(from, to);
+
+      expect(await File(p.join(to.path, 'local_credentials/key')).readAsString(), 'k');
+      expect(await File(p.join(to.path, 'cloud_media/a/1.png')).readAsString(), 'img');
+      expect(await File(p.join(to.path, 'top.json')).readAsString(), '',
+          reason: 'existing files in the new place win');
+      expect(await File(p.join(from.path, 'top.json')).readAsString(), '{}');
+      expect(await Directory(p.join(from.path, 'cloud_media')).exists(), isFalse);
+
+      await AppDataMigration.moveSupport(Directory(p.join(root.path, 'none')), to);
+    });
   });
 }

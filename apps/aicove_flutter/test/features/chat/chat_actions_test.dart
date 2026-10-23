@@ -1,3 +1,6 @@
+@Tags(['slow'])
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -22,6 +25,7 @@ import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
 import 'package:aicove_flutter/src/features/chat/chat_layer_providers.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_ports.dart';
+import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_timeline_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
@@ -576,7 +580,6 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -660,7 +663,6 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -713,6 +715,80 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
   }
 }
 
+class _ToolRoundStreamingSendService extends _MultiDeltaStreamingSendService {
+  _ToolRoundStreamingSendService(super.ref, super.settings);
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    onStreamTextDelta?.call('我先看看目录。');
+    onStreamToolCallObserved?.call();
+    await Future.delayed(const Duration(milliseconds: 30));
+    onStreamTextDelta?.call('\n看完了，一切正常。');
+    await Future.delayed(const Duration(milliseconds: 30));
+    return const ApiCallResult(
+      replyText: '我先看看目录。\n看完了，一切正常。',
+      processedText: '我先看看目录。\n看完了，一切正常。',
+      pluginEvents: [],
+      toolResults: <Map<String, dynamic>>[],
+    );
+  }
+
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({
+    required ApiCallResult apiResult,
+    required AppSettings settings,
+  }) {
+    final now = DateTime.now();
+    return _buildTestAssistantBuildResult(
+      messages: <Message>[
+        Message(
+          id: 'round_text_0',
+          role: 'assistant',
+          content: '我先看看目录。',
+          createdAt: now,
+          status: 'sent',
+        ),
+        Message.fromBlocks(
+          id: 'round_tool_0',
+          role: 'assistant',
+          blocks: [
+            ToolBlock(
+              messageId: 'round_tool_0',
+              toolCallId: 'call_ls',
+              toolName: 'bash',
+              arguments: const {'command': 'ls'},
+              result: const {'content': 'index.html'},
+            ),
+          ],
+          createdAt: now,
+          status: 'sent',
+        ),
+        Message(
+          id: 'round_text_1',
+          role: 'assistant',
+          content: '看完了，一切正常。',
+          createdAt: now,
+          status: 'sent',
+        ),
+      ],
+      lastMessageText: '看完了，一切正常。',
+      rawReplyText: apiResult.replyText,
+    );
+  }
+}
+
 class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
   _MultiDeltaStreamingSendService(super.ref, this._settings);
 
@@ -753,7 +829,6 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -836,7 +911,6 @@ class _SlowMultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -919,7 +993,6 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -999,7 +1072,6 @@ class _DelayedFirstSentenceSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1039,6 +1111,32 @@ class _DelayedFirstSentenceSendService extends _InMemoryHistorySendService {
   }
 }
 
+class _CancellablePendingSendService extends _DelayedFirstSentenceSendService {
+  _CancellablePendingSendService(Ref ref, AppSettings settings, {this.partial = false}) : statusRef = ref, super(ref, settings);
+  final Ref statusRef;
+  @override
+  AssistantMessageBuildResult buildAssistantMessages({required ApiCallResult apiResult, required AppSettings settings}) =>
+    ChatSendService(statusRef).buildAssistantMessages(apiResult: apiResult, settings: settings);
+  final bool partial;
+  final started = Completer<void>();
+  final pending = Completer<ApiCallResult>();
+  ApiConfig? receivedConfig;
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config, required String sessionId, required String? userText,
+    String? turnId, TraceLogger? trace,
+    void Function(String)? onToolExecuting, bool enableStreaming = false,
+    void Function(String)? onStreamTextDelta, void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved, void Function()? onStreamingFallback,
+  }) {
+    receivedConfig = config;
+    if (partial) onStreamTextDelta?.call('已经生成的部分回复');
+    started.complete();
+    return config.cancellation!.bind(pending.future);
+  }
+}
+
 class _ThrowAfterFirstSentenceSendService
     extends _DelayedFirstSentenceSendService {
   _ThrowAfterFirstSentenceSendService(super.ref, super._settings);
@@ -1050,7 +1148,6 @@ class _ThrowAfterFirstSentenceSendService
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1105,7 +1202,6 @@ class _DelayedMultiSentenceSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1189,7 +1285,6 @@ class _ChunkBoundarySentenceSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1274,7 +1369,6 @@ class _NoBoundarySlowDeltaSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1359,7 +1453,6 @@ class _StreamingTtsSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1454,7 +1547,6 @@ class _StreamingLeadingTtsSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1558,7 +1650,6 @@ class _SlowTailStreamingTtsSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1590,7 +1681,7 @@ class _SlowTailStreamingTtsSendService extends _InMemoryHistorySendService {
     await Future<void>.delayed(const Duration(milliseconds: 50));
     return ApiCallResult(
       replyText: includeStickerAfterTts
-          ? '第一句。<tts>流中语音</tts>[开心]$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。'
+          ? '第一句。<tts>流中语音</tts><sticker tag="开心"/>$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。'
           : '第一句。<tts>流中语音</tts>$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。',
       processedText: '第一句。$longTailText第二句很长很长的文本。第三句仍在流式生成的文本。',
       pluginEvents: <PluginEvent>[
@@ -1680,7 +1771,6 @@ class _StreamingInlineImageSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1775,7 +1865,6 @@ class _StreamingAttributeImageTagSendService
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1861,7 +1950,6 @@ class _StreamingMixedTtsImageTailSendService
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -1971,7 +2059,6 @@ class _StreamingOnlyTtsSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -2054,7 +2141,6 @@ class _StreamingOnlyTtsAndImageSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -2218,7 +2304,6 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -2359,7 +2444,7 @@ class _InlineImageTransport {
     final prompt = payload['prompt'] as String;
     final current = fixture;
     expect(current, isNotNull);
-    current!.prompts.add(prompt);
+    current!.requestedPrompts.add(prompt);
     await Future<void>.delayed(current.delaysByPrompt[prompt] ?? current.delay);
     final bytes =
         await File(current.localPathByPrompt[prompt] ?? current.localPath)
@@ -2392,7 +2477,7 @@ class _DelayedInlineImagePlugin extends ImagePlugin {
   final String localPath;
   final Map<String, Duration> delaysByPrompt;
   final Map<String, String> localPathByPrompt;
-  final List<String> prompts = <String>[];
+  final List<String> requestedPrompts = <String>[];
 
   @override
   bool get enabled => true;
@@ -2539,7 +2624,6 @@ class _RetryOnceProviderRefreshImageSendService
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -2596,7 +2680,6 @@ class _RetryOnceProviderRefreshStreamingSendService
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -2624,7 +2707,6 @@ class _RetryOnceProviderRefreshStreamingSendService
       userText: userText,
       turnId: turnId,
       trace: trace,
-      maxRounds: maxRounds,
       onToolExecuting: onToolExecuting,
       enableStreaming: enableStreaming,
       onStreamTextDelta: onStreamTextDelta,
@@ -2651,7 +2733,6 @@ class _FailFirstModelStreamingSendService extends _SpyStreamingSendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -2674,7 +2755,6 @@ class _FailFirstModelStreamingSendService extends _SpyStreamingSendService {
       userText: userText,
       turnId: turnId,
       trace: trace,
-      maxRounds: maxRounds,
       onToolExecuting: onToolExecuting,
       enableStreaming: enableStreaming,
       onStreamTextDelta: onStreamTextDelta,
@@ -4527,6 +4607,118 @@ void main() {
     );
   });
 
+  for (final phase in ['empty', 'buffered', 'visible']) {
+    test(
+      'interrupt persists partial reply only when displayed: $phase',
+      () async {
+        final now = DateTime.now();
+        final conv = Conversation(
+          id: 'pending_cancel',
+          title: 'cancel',
+          displayName: 'cancel',
+          createdAt: now,
+          updatedAt: now,
+          messages: const [],
+          lastMessage: '',
+          lastMessageTime: now,
+        );
+        final settings = _buildTestSettings().copyWith(
+          messageChunkingEnabled: false,
+          messageFormatConfig: const MessageFormatConfig(enableChunking: false),
+        );
+        final database = AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(database.close);
+        await _insertConversation(database, conv);
+        late _CancellablePendingSendService send;
+        final container = ProviderContainer(
+          overrides: [
+            databaseProvider.overrideWithValue(database),
+            appSettingsProvider.overrideWith(
+              () => _FakeAppSettingsNotifier(settings),
+            ),
+            chatSendServiceProvider.overrideWith(
+              (ref) => send = _CancellablePendingSendService(
+                ref,
+                settings,
+                partial: phase != 'empty',
+              ),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        container.read(activeConversationIdProvider.notifier).state = conv.id;
+        await container.read(conversationsProvider.future);
+        await container.read(appSettingsProvider.future);
+        final actions = container.read(chatActionsProvider);
+        final future = actions.send('cancel pending request');
+        container.read(chatSendServiceProvider);
+        await send.started.future;
+        expect(send.receivedConfig!.cancellation, isNotNull);
+        if (phase == 'visible') {
+          final deadline = DateTime.now().add(const Duration(seconds: 3));
+          while (container
+                      .read(activeStreamProjectionsProvider)[conv.id]
+                      ?.tailText !=
+                  '已经生成的部分回复' &&
+              DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          expect(
+            container.read(activeStreamProjectionsProvider)[conv.id]?.tailText,
+            '已经生成的部分回复',
+          );
+        } else {
+          expect(
+            container
+                    .read(activeStreamProjectionsProvider)[conv.id]
+                    ?.tailText ??
+                '',
+            isEmpty,
+            reason: '尚未 flush 的接收内容不算已显示文字',
+          );
+        }
+        expect(
+          await actions.interruptCurrentGeneration(convId: conv.id),
+          isTrue,
+        );
+        expect(
+          await actions.interruptCurrentGeneration(convId: conv.id),
+          isFalse,
+        );
+        await future.timeout(const Duration(seconds: 1));
+        expect(send.receivedConfig!.cancellation!.isCancelled, isTrue);
+        final history = container.read(chatHistoryStoreProvider);
+        final assistants = (await history.loadAllRawMessages(
+          conv.id,
+        )).where((m) => m.role == 'assistant').toList();
+        if (phase == 'visible') {
+          expect(assistants, hasLength(1));
+          expect(assistants.single.rawPayload?['runStatus'], 'cancelled');
+          expect(assistants.single.content, '已经生成的部分回复');
+          final projected = await history.loadProjectedMessagesFromRawStore(
+            conv.id,
+          );
+          expect(projected.last.rawPayload?['runStatus'], 'cancelled');
+        } else {
+          expect(assistants, isEmpty);
+        }
+        final timeline = await _loadFrontendTimelineMessages(
+          container,
+          conv.id,
+        );
+        expect(
+          timeline.where((m) => m.role == 'assistant'),
+          hasLength(assistants.length),
+        );
+        expect(
+          timeline.where((m) => m.role == 'assistant' && m.status == 'sending'),
+          isEmpty,
+        );
+        expect(container.read(activeStreamProjectionsProvider), isEmpty);
+      },
+    );
+  }
+
   test('send 在打断生成后，应恢复前端用户消息并清掉临时态消息', () async {
     final now = DateTime.now();
     final conv = Conversation(
@@ -5241,6 +5433,58 @@ void main() {
       finalAssistantMessages.map((m) => m.displayText).toList(),
       <String>['第一段。第二段。第三段。'],
     );
+  });
+
+  test('send 流式收尾后，调过工具的回复按轮保持话术与工具的先后顺序', () async {
+    final now = DateTime.now();
+    final conv = Conversation(
+      id: 'conv_stream_tool_rounds',
+      title: 'StreamToolRounds',
+      displayName: 'StreamToolRounds',
+      createdAt: now,
+      updatedAt: now,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) => _ToolRoundStreamingSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    final actions = container.read(chatActionsProvider);
+
+    await actions.send('看看目录');
+
+    final stored = await container
+        .read(chatHistoryStoreProvider)
+        .loadProjectedMessagesFromRawStore(conv.id);
+    final sequence = [
+      for (final message in stored)
+        if (message.role == 'assistant')
+          if (message.blocks?.any((b) => b is ToolBlock) ?? false)
+            'tool'
+          else if (message.displayText.trim().isNotEmpty)
+            message.displayText.trim(),
+    ];
+    expect(sequence, ['我先看看目录。', 'tool', '看完了，一切正常。']);
+    expect(container.read(errorProvider), isNull);
   });
 
   test('send 流式收尾后不应在数据库残留占位消息和旧文本块', () async {
@@ -6278,91 +6522,103 @@ void main() {
     expect(ttsService.startedTexts, <String>['流中语音']);
   });
 
-  test('流中 TTS 失败回退文本后，后续 delta 不应重建占位或再次转换', () async {
-    final now = DateTime.now();
-    final conv = Conversation(
-      id: 'conv_stream_tts_fallback_${now.microsecondsSinceEpoch}',
-      title: 'StreamTtsFallback',
-      displayName: 'StreamTtsFallback',
-      createdAt: now,
-      updatedAt: now,
-      messages: const [],
-      lastMessage: '',
-      lastMessageTime: now,
-    );
-    final settings = _buildTestSettings();
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    await _insertConversation(db, conv);
-
-    final ttsService = _TrackingDelayedTtsService(
-      delays: const <String, Duration>{
-        '流中语音': Duration(milliseconds: 30),
-      },
-      failingTexts: const <String>{'流中语音'},
-    );
-    final ttsManager = TtsPlayerManager(() => ttsService);
-    addTearDown(ttsManager.dispose);
-    final ttsTagClosed = Completer<void>();
-    final releaseTail = Completer<void>();
-    addTearDown(() {
-      if (!releaseTail.isCompleted) releaseTail.complete();
-    });
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(db),
-        appSettingsProvider.overrideWith(
-          () => _FakeAppSettingsNotifier(settings),
-        ),
-        conversationsProvider.overrideWith(
-          () => _FakeConversationsNotifier([conv]),
-        ),
-        activeConversationProvider.overrideWith((ref) => conv),
-        chatSendServiceProvider.overrideWith(
-          (ref) => _SlowTailStreamingTtsSendService(
-            ref,
-            settings,
-            ttsTagClosed: ttsTagClosed,
-            releaseTail: releaseTail,
-          ),
-        ),
-        ttsPlayerManagerProvider.overrideWithValue(ttsManager),
-        voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
-      ],
-    );
-    addTearDown(container.dispose);
-    await container.read(appSettingsProvider.future);
-
-    await db.customStatement('PRAGMA foreign_keys = ON');
-    final sendFuture = container.read(chatActionsProvider).send('测试流中 TTS 回退');
-    await ttsTagClosed.future.timeout(const Duration(seconds: 2));
-    var sawFallbackText = false;
-    for (var i = 0; i < 20 && !sawFallbackText; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      final messages = await _loadFrontendTimelineMessages(container, conv.id);
-      sawFallbackText = messages.any(
-        (message) =>
-            message.displayText == '流中语音' &&
-            _firstAudioBlock(message) == null,
+  for (final brokenNotice in [false, true]) {
+    test('流中 TTS 失败回退文本后，后续 delta 不应重建占位或再次转换 brokenNotice=$brokenNotice', () async {
+      final now = DateTime.now();
+      final conv = Conversation(
+        id: 'conv_stream_tts_fallback_${now.microsecondsSinceEpoch}',
+        title: 'StreamTtsFallback',
+        displayName: 'StreamTtsFallback',
+        createdAt: now,
+        updatedAt: now,
+        messages: const [],
+        lastMessage: '',
+        lastMessageTime: now,
       );
-    }
-    expect(sawFallbackText, isTrue);
+      final settings = _buildTestSettings();
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      await _insertConversation(db, conv);
 
-    releaseTail.complete();
-    await sendFuture;
-    final finalMessages =
-        await _loadFrontendTimelineMessages(container, conv.id);
-    expect(
-      finalMessages
-          .where((message) => (_firstAudioBlock(message)?.text ?? '') == '流中语音'),
-      isEmpty,
-    );
-    expect(
-      finalMessages.where((message) => message.displayText == '流中语音'),
-      hasLength(1),
-    );
-    expect(ttsService.startedTexts, <String>['流中语音']);
-  });
+      final ttsService = _TrackingDelayedTtsService(
+        delays: const <String, Duration>{
+          '流中语音': Duration(milliseconds: 30),
+        },
+        failingTexts: const <String>{'流中语音'},
+      );
+      final ttsManager = TtsPlayerManager(() => ttsService);
+      addTearDown(ttsManager.dispose);
+      final ttsTagClosed = Completer<void>();
+      final releaseTail = Completer<void>();
+      addTearDown(() {
+        if (!releaseTail.isCompleted) releaseTail.complete();
+      });
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          appSettingsProvider.overrideWith(
+            () => _FakeAppSettingsNotifier(settings),
+          ),
+          conversationsProvider.overrideWith(
+            () => _FakeConversationsNotifier([conv]),
+          ),
+          activeConversationProvider.overrideWith((ref) => conv),
+          chatSendServiceProvider.overrideWith(
+            (ref) => _SlowTailStreamingTtsSendService(
+              ref,
+              settings,
+              ttsTagClosed: ttsTagClosed,
+              releaseTail: releaseTail,
+            ),
+          ),
+          ttsPlayerManagerProvider.overrideWithValue(ttsManager),
+          voicePresetApplicationProvider.overrideWithValue(_TestVoiceApplication(ttsService)),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container.read(appSettingsProvider.future);
+
+      await db.customStatement('PRAGMA foreign_keys = ON');
+      var notificationCalls = 0;
+      if (brokenNotice) {
+        container.read(chatTtsHandlerProvider).onTtsFallback = (_) {
+          notificationCalls += 1;
+          throw StateError('fixture notification failure');
+        };
+      }
+      final sendFuture = container.read(chatActionsProvider).send('测试流中 TTS 回退');
+      await ttsTagClosed.future.timeout(const Duration(seconds: 2));
+      var sawFallbackText = false;
+      for (var i = 0; i < 20 && !sawFallbackText; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        final messages = await _loadFrontendTimelineMessages(container, conv.id);
+        sawFallbackText = messages.any(
+          (message) =>
+              message.displayText == '流中语音' &&
+              _firstAudioBlock(message) == null,
+        );
+      }
+      expect(sawFallbackText, isTrue);
+
+      releaseTail.complete();
+      await sendFuture;
+      final finalMessages =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      expect(
+        finalMessages
+            .where((message) => (_firstAudioBlock(message)?.text ?? '') == '流中语音'),
+        isEmpty,
+      );
+      expect(
+        finalMessages.where((message) => message.displayText == '流中语音'),
+        hasLength(1),
+      );
+      expect(ttsService.startedTexts, <String>['流中语音']);
+      expect(notificationCalls, brokenNotice ? 1 : 0);
+      expect(container.read(errorProvider), isNull);
+    });
+
+  }
 
   test('流中 TTS 失败后，表情应保持在回退文本与后续正文之间', () async {
     final now = DateTime.now();
@@ -6738,7 +6994,7 @@ void main() {
       storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
       isTrue,
     );
-    expect(imagePlugin.prompts, <String>['sunset beach']);
+    expect(imagePlugin.requestedPrompts, <String>['sunset beach']);
   });
 
   test('send 遇到快速生图标签时，不应把 <image> 提示词流式展示或落库给用户', () async {
@@ -7061,7 +7317,7 @@ void main() {
           .toList(growable: false);
       expect(finalImagePrompts,
           containsAll(<String>['slow landscape', 'fast portrait']));
-      expect(imagePlugin.prompts, <String>['slow landscape', 'fast portrait']);
+      expect(imagePlugin.requestedPrompts, <String>['slow landscape', 'fast portrait']);
       expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
     } finally {
       await handler.debugWaitForBackgroundTasks(labelPrefix: 'deferred_image_');
@@ -7205,7 +7461,7 @@ void main() {
         isEmpty,
         reason: '图片升级为最终态后，不应继续残留生成中占位',
       );
-      expect(imagePlugin.prompts, <String>['handoff portrait']);
+      expect(imagePlugin.requestedPrompts, <String>['handoff portrait']);
     } finally {
       await handler.debugWaitForBackgroundTasks(labelPrefix: 'deferred_image_');
     }
@@ -7369,7 +7625,7 @@ void main() {
             message.blocks?.any((block) => block is ImageBlock) ?? false,
       );
       expect(imageIndex, greaterThan(textCIndex));
-      expect(imagePlugin.prompts, <String>['slow landscape']);
+      expect(imagePlugin.requestedPrompts, <String>['slow landscape']);
       expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
     } finally {
       await handler.debugWaitForBackgroundTasks();
@@ -7654,7 +7910,7 @@ void main() {
             message.blocks?.any((block) => block is ImageBlock) ?? false,
       );
       expect(imageIndex, greaterThan(finalTextCIndex));
-      expect(imagePlugin.prompts, <String>['slow landscape']);
+      expect(imagePlugin.requestedPrompts, <String>['slow landscape']);
       expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
     } finally {
       await container
@@ -7868,7 +8124,7 @@ void main() {
         .toList(growable: false);
 
     expect(ttsService.startedTexts, <String>['语音段']);
-    expect(imagePlugin.prompts, <String>['sunset beach']);
+    expect(imagePlugin.requestedPrompts, <String>['sunset beach']);
     expect(
       assistantMessages.any(
         (message) =>

@@ -76,6 +76,87 @@ String _normalizeRoundNarrativeText(String text) {
   return _stripStandaloneImagePlaceholders(sanitized);
 }
 
+String _joinRoundTexts(List<String> texts) => texts
+    .map((text) => text.trim())
+    .where((text) => text.isNotEmpty)
+    .join('\n');
+
+/// 调过工具的回复按轮拆开的文字：每轮工具前的话术与最后一轮正文，去重后
+/// 重复或空的轮留空串占位；全部为空时把合并后的兜底文字（工具完成摘要）
+/// 放进最后一轮。
+List<String> _replyRoundTexts({
+  required Iterable<String> narratives,
+  required String normalizedFinalText,
+  required String mergedText,
+}) {
+  final seen = <String>{};
+  String keep(String text) {
+    final trimmed = text.trim();
+    return trimmed.isNotEmpty && seen.add(trimmed) ? trimmed : '';
+  }
+
+  final texts = [
+    for (final narrative in narratives) keep(narrative),
+    keep(
+      _looksLikeToolInstructionText(normalizedFinalText)
+          ? ''
+          : normalizedFinalText,
+    ),
+  ];
+  if (texts.every((text) => text.isEmpty)) texts.last = mergedText;
+  return texts;
+}
+
+/// 每轮文字单独过预设正则；只有一轮时就是原来的整段处理。
+Future<List<SillyTavernRegexApplyResult>> _applyRoundRegex(
+  List<String> texts,
+  ApiConfig config,
+) async => [
+  for (final text in texts)
+    await ChatSendApiRunner._presetRegexProcessor.applyToDisplayText(
+      text: text,
+      scripts: config.presetRegexScripts,
+      authorized: config.presetRegexAuthorized,
+    ),
+];
+
+SillyTavernRegexApplyResult _joinRegexResults(
+  List<SillyTavernRegexApplyResult> rounds,
+) => rounds.length == 1
+    ? rounds.single
+    : SillyTavernRegexApplyResult(
+        text: _joinRoundTexts([for (final r in rounds) r.text]),
+        warnings: [for (final r in rounds) ...r.warnings],
+        traces: [for (final r in rounds) ...r.traces],
+      );
+
+/// 每轮文字单独过插件（插件只处理各自的标签，标签落在哪轮就在哪轮处理）；
+/// 多轮时空轮不跑。
+Future<List<PluginProcessResult>> _runRoundProcessors(
+  List<SillyTavernRegexApplyResult> rounds,
+  List<PluginResponseProcessor> processors,
+) async => [
+  for (final round in rounds)
+    rounds.length > 1 && round.text.trim().isEmpty
+        ? PluginProcessResult(processedText: '', events: const [])
+        : await runResponseProcessors(
+            processors,
+            round.text,
+            logTag: ChatSendApiRunner._logTag,
+          ),
+];
+
+PluginProcessResult _joinPluginResults(List<PluginProcessResult> rounds) =>
+    rounds.length == 1
+    ? rounds.single
+    : PluginProcessResult(
+        processedText: _joinRoundTexts([
+          for (final r in rounds) r.processedText,
+        ]),
+        events: [for (final r in rounds) ...r.events],
+        contents: [for (final r in rounds) ...r.contents],
+      );
+
 String _mergeNarrativeTexts(List<String> texts) {
   final normalized = <String>[];
   final seen = <String>{};
@@ -286,6 +367,11 @@ class _VisibleAssistantStreamFilter {
     _HiddenStreamTagSpec(openTagPrefix: '<think', closeTag: '</think>'),
     // 对话选项由右下角选项气泡展示（ADR0045），生成中不在气泡里闪现。
     _HiddenStreamTagSpec(openTagPrefix: '<options', closeTag: '</options>'),
+    // 表情标签只去外壳，不隐藏成对写法的正文，也不等待自闭合标签的闭标签。
+    _HiddenStreamTagSpec(
+      openTagPrefix: '<${StickerTag.name}',
+      closeTag: '</${StickerTag.name}>',
+    ),
   ];
 
   String _pending = '';
@@ -302,7 +388,7 @@ class _VisibleAssistantStreamFilter {
     if (text.isEmpty) return;
     _attributedImageDepth +=
         _attributedImageOpenPattern.allMatches(text).length;
-    output.write(text);
+    output.write(StickerTag.removeFrom(firstPartyContentTagScanner, text));
   }
 
   bool get _insideHiddenTag => _activeCloseTag != null;
@@ -333,13 +419,17 @@ class _VisibleAssistantStreamFilter {
         if (openIndex > 0) {
           _emitVisible(output, _pending.substring(0, openIndex));
         }
-        final tagEndIndex = _pending.indexOf('>', openIndex);
+        final tagEndIndex = _findTagEnd(_pending, openIndex);
         if (tagEndIndex < 0) {
           _pending = _pending.substring(openIndex);
           break;
         }
+        final opening = _pending.substring(openIndex, tagEndIndex + 1);
+        final element = firstPartyContentTagScanner.scan(opening).first;
         _pending = _pending.substring(tagEndIndex + 1);
-        _activeCloseTag = hiddenTagMatch.closeTag;
+        if (!StickerTag.isElement(element)) {
+          _activeCloseTag = hiddenTagMatch.closeTag;
+        }
         continue;
       }
 
@@ -375,6 +465,22 @@ class _VisibleAssistantStreamFilter {
     }
 
     return output.toString();
+  }
+
+  // 属性里的 > 不结束标签；未收齐整个开标签时继续缓冲，不泄露属性文字。
+  static int _findTagEnd(String text, int start) {
+    String? quote;
+    for (var i = start; i < text.length; i++) {
+      final char = text[i];
+      if (quote != null) {
+        if (char == quote) quote = null;
+      } else if (char == '"' || char == "'") {
+        quote = char;
+      } else if (char == '>') {
+        return i;
+      }
+    }
+    return -1;
   }
 
   _HiddenTagMatch? _findNextHiddenTag(String lowerPending) {

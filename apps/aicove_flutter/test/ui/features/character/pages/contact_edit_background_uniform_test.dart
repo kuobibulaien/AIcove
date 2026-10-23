@@ -9,13 +9,12 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
 import 'package:aicove_flutter/src/ui/features/character/services/contact_edit_snapshot_store.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
-import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 /// 需求（2026-09-12）：联系人设置界面在亮色／暗色模式下背景色必须统一，
 /// 全部按下方的 `MoeSettingsGroup` 分组容器色（`componentBackground`）设置。
 ///
-/// 重做后（2026-09）：插件各容器与角色卡信息均为 `MoeSettingsGroup`，
+/// 重做后（2026-09）：已开启插件列表与角色提示词均为 `MoeSettingsGroup`，
 /// 本测试直接比较页面内所有分组容器的实际背景色。
 void main() {
   final themes = <String, ({bool dark, MoeColors colors})>{
@@ -67,8 +66,8 @@ void main() {
         expect(tester.takeException(), isNull);
 
         final settingsGroups = find.byType(MoeSettingsGroup);
-        expect(settingsGroups, findsAtLeastNWidgets(3),
-            reason: '插件容器与角色卡信息都应使用 MoeSettingsGroup');
+        expect(settingsGroups, findsAtLeastNWidgets(2),
+            reason: '插件列表与角色提示词都应使用 MoeSettingsGroup');
 
         final cardColors = <Color>{
           for (var i = 0; i < settingsGroups.evaluate().length; i++)

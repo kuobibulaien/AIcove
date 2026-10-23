@@ -10,12 +10,14 @@ library;
 import '../../../../core/media/cloud_image.dart';
 import '../../../../core/media/media_asset.dart';
 
+import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -34,6 +36,7 @@ import 'chat_record_bubble.dart';
 import '../../../../ui/features/voice_call/widgets/call_record_bubble.dart';
 import '../../../../ui/features/task_agent/task_receipt_bubble.dart';
 import 'incremental_message_text.dart';
+import 'message_text_viewer.dart';
 
 /// 语音消息转文字单条展开状态覆盖（null 表示跟随全局设置）
 final audioMessageTextExpandedProvider = StateProvider.family<bool?, String>(
@@ -48,14 +51,24 @@ class MessageBubble extends ConsumerWidget {
 
   static const double avatarBubbleGap = 8;
 
+  /// Left edge of the contact's bubbles in bubble mode: row padding, avatar
+  /// column and gap. Lines that sit under a bubble align to it.
+  static const double contactContentInset = 8 + _Avatar.kSize + avatarBubbleGap;
+
   final Widget Function(Widget child)? selectionWrapper;
   final bool isMe;
   final Message message; // 使用完整的Message对象
   final String? avatarUrl; // 仅用于左侧（AI）
   final String? displayName; // 对方名字（仅用于群聊模式）
   final VoidCallback? onRetry; // 重新发送回调
-  final void Function(RenderBox box, Offset globalPosition)?
-  onLongPress; // 长按回调（传递气泡RenderBox用于定位菜单）
+  /// 长按／右键回调：气泡 RenderBox 用于定位菜单；selectedText 为用户在气泡里
+  /// 选中的文字，没选时为 null。
+  final void Function(
+    RenderBox box,
+    Offset globalPosition,
+    String? selectedText,
+  )?
+  onLongPress;
   final void Function(RenderBox box, MessageBlock block, Offset globalPosition)?
   onMediaLongPress; // 媒体长按/右键回调
   final double fontSize; // 字体大小
@@ -120,6 +133,19 @@ class MessageBubble extends ConsumerWidget {
          role: isMe ? 'user' : 'assistant',
          content: text,
        );
+
+  /// 交互场景的气泡正文可直接选字，长按（右键）菜单照旧；导出图、预览等
+  /// 没有菜单的场景不包选择区。
+  Widget _wrapSelectable(Widget bubble, {required Color textColor}) {
+    final onLongPress = this.onLongPress;
+    if (onLongPress == null) return bubble;
+    return _SelectableBubble(
+      onLongPress: onLongPress,
+      // 气泡底色各异，选区高亮跟正文颜色走才看得清。
+      selectionColor: textColor.withValues(alpha: 0.3),
+      child: bubble,
+    );
+  }
 
   bool get _useDesktopContextMenu =>
       Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -193,6 +219,101 @@ class MessageBubble extends ConsumerWidget {
           )
         : null;
 
+    final bubbleChild = Column(
+      crossAxisAlignment: align,
+      children: [
+        // 群聊模式下，AI 消息上方显示名字
+        if (showName && !isMe && displayName != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4, left: 0),
+            child: Text(
+              displayName!,
+              style: TextStyle(
+                color: isDark ? Colors.grey[400] : Colors.grey[800],
+                fontSize: 13,
+                fontWeight: MoeFontWeights.emphasis,
+              ),
+            ),
+          ),
+
+        // Render image/sticker blocks separately without bubble
+        ..._buildMediaBlocksOnly(
+          context,
+          blocks,
+          imagePreviewScale: imagePreviewScale,
+        ),
+        // 折叠块（思维链、状态栏等）自成一个折叠气泡，不再套普通气泡。
+        for (final block in blocks.whereType<ThinkingBlock>())
+          _buildFoldBubble(context, block),
+        // Render non-image blocks in bubble (text, audio, etc.)
+        if (_shouldShowBubble(
+          blocks,
+          allowStreamingPlaceholder: allowStreamingPlaceholder,
+        ))
+          _wrapSelectable(
+            Container(
+              key: ValueKey<String>('message_bubble_${message.id}'),
+              width: documentAssistant ? double.infinity : null,
+              margin: const EdgeInsets.symmetric(vertical: 0),
+              padding: documentAssistant
+                  ? const EdgeInsets.symmetric(vertical: 2)
+                  : documentStyle
+                  ? _DocumentMessageRow.userPadding
+                  : MoeBubbleStyle.padding,
+              decoration: documentAssistant
+                  ? null
+                  : MoeG2Decoration(radius: bubbleRadius, color: bubbleColor),
+              // Non-image content (text, audio, etc.)
+              child: hasBlocks
+                  ? _buildNonImageBlocksContent(
+                      context,
+                      blocks,
+                      fg,
+                      allowStreamingPlaceholder: allowStreamingPlaceholder,
+                      isAudioTextExpanded: isAudioTextExpanded,
+                    )
+                  : Builder(
+                      builder: (context) {
+                        final text = message.displayText;
+                        if (text.trim().isEmpty) {
+                          // 空消息占位符（用于调试，避免完全不显示）
+                          return Text(
+                            '[空消息]',
+                            style: TextStyle(
+                              color: fg.withValues(alpha: 0.5),
+                              height: MoeBubbleStyle.textHeight,
+                              fontSize: fontSize - 1,
+                              fontStyle: FontStyle.italic,
+                            ),
+                          );
+                        }
+                        return _buildBodyText(
+                          text,
+                          TextStyle(
+                            color: fg,
+                            height: MoeBubbleStyle.textHeight,
+                            fontSize: fontSize,
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            textColor: fg,
+          ),
+      ],
+    );
+
+    if (documentStyle) {
+      return _DocumentMessageRow(
+        isMe: isMe,
+        startsTurn: showAvatar,
+        reserveSelectionGutter: hideContactAvatar,
+        selectionWrapper: hasVisibleContent(message) ? selectionWrapper : null,
+        failedIndicator: failedIndicator,
+        child: bubbleChild,
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: _AvatarAwareBubbleRow(
@@ -222,117 +343,7 @@ class MessageBubble extends ConsumerWidget {
           avatar: _Avatar(avatarUrl: userAvatar),
           gapOnLeft: true,
         ),
-        bubbleChild: Column(
-          crossAxisAlignment: align,
-          children: [
-            // 群聊模式下，AI 消息上方显示名字
-            if (showName && !isMe && displayName != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4, left: 0),
-                child: Text(
-                  displayName!,
-                  style: TextStyle(
-                    color: isDark ? Colors.grey[400] : Colors.grey[800],
-                    fontSize: 13,
-                    fontWeight: MoeFontWeights.emphasis,
-                  ),
-                ),
-              ),
-
-            // Render image/sticker blocks separately without bubble
-            ..._buildMediaBlocksOnly(
-              context,
-              blocks,
-              imagePreviewScale: imagePreviewScale,
-            ),
-            // 折叠块（思维链、状态栏等）自成一个折叠气泡，不再套普通气泡。
-            for (final block in blocks.whereType<ThinkingBlock>())
-              _buildFoldBubble(context, block),
-            // Render non-image blocks in bubble (text, audio, etc.)
-            if (_shouldShowBubble(
-              blocks,
-              allowStreamingPlaceholder: allowStreamingPlaceholder,
-            ))
-              Builder(
-                builder: (context) {
-                  return Listener(
-                    onPointerDown:
-                        (_useDesktopContextMenu && onLongPress != null)
-                        ? (event) {
-                            if ((event.buttons & kSecondaryMouseButton) != 0) {
-                              final box =
-                                  context.findRenderObject() as RenderBox?;
-                              if (box != null) {
-                                onLongPress!(box, event.position);
-                              }
-                            }
-                          }
-                        : null,
-                    child: GestureDetector(
-                      onLongPressStart: (onLongPress != null)
-                          ? (details) {
-                              final box =
-                                  context.findRenderObject() as RenderBox?;
-                              if (box != null) {
-                                onLongPress!(box, details.globalPosition);
-                              }
-                            }
-                          : null,
-                      child: Container(
-                        key: ValueKey<String>('message_bubble_${message.id}'),
-                        width: documentAssistant ? double.infinity : null,
-                        margin: const EdgeInsets.symmetric(vertical: 0),
-                        padding: documentAssistant
-                            ? const EdgeInsets.symmetric(vertical: 2)
-                            : MoeBubbleStyle.padding,
-                        decoration: documentAssistant
-                            ? null
-                            : MoeG2Decoration(
-                                radius: bubbleRadius,
-                                color: bubbleColor,
-                              ),
-                        // Non-image content (text, audio, etc.)
-                        child: hasBlocks
-                            ? _buildNonImageBlocksContent(
-                                context,
-                                blocks,
-                                fg,
-                                allowStreamingPlaceholder:
-                                    allowStreamingPlaceholder,
-                                isAudioTextExpanded: isAudioTextExpanded,
-                              )
-                            : Builder(
-                                builder: (context) {
-                                  final text = message.displayText;
-                                  if (text.trim().isEmpty) {
-                                    // 空消息占位符（用于调试，避免完全不显示）
-                                    return Text(
-                                      '[空消息]',
-                                      style: TextStyle(
-                                        color: fg.withValues(alpha: 0.5),
-                                        height: MoeBubbleStyle.textHeight,
-                                        fontSize: fontSize - 1,
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                    );
-                                  }
-                                  return _buildBodyText(
-                                    text,
-                                    TextStyle(
-                                      color: fg,
-                                      height: MoeBubbleStyle.textHeight,
-                                      fontSize: fontSize,
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
+        bubbleChild: bubbleChild,
       ),
     );
   }
@@ -359,28 +370,40 @@ class MessageBubble extends ConsumerWidget {
 
   Widget _buildFoldBubble(BuildContext context, ThinkingBlock block) {
     final title = block.title?.trim();
+    final displayTitle = title == null || title.isEmpty ? '思考过程' : title;
     return Builder(
       builder: (context) => GestureDetector(
         onLongPressStart: onLongPress == null
             ? null
             : (details) {
                 final box = context.findRenderObject() as RenderBox?;
-                if (box != null) onLongPress!(box, details.globalPosition);
+                if (box != null) {
+                  onLongPress!(box, details.globalPosition, null);
+                }
               },
-        child: MoeCollapsibleBubble(
-          key: ValueKey<String>('fold_bubble_${block.id}'),
-          isMe: isMe,
-          title: title == null || title.isEmpty ? '思考过程' : title,
-          content: block.content,
-          fontSize: fontSize,
-          child: documentStyle && !isMe
-              ? MoeMarkdownView(
-                  block.content,
+        // 文档模式的助手折叠内容用半隐藏折叠段，和正文区分开；其余仍是折叠气泡。
+        child: documentStyle && !isMe
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: MoeFoldSection(
+                  key: ValueKey<String>('fold_bubble_${block.id}'),
+                  title: displayTitle,
+                  content: block.content,
                   fontSize: fontSize,
-                  color: context.moeColors.bubbleLeftFg,
-                )
-              : null,
-        ),
+                  child: MoeMarkdownView(
+                    block.content,
+                    fontSize: fontSize - 1,
+                    color: MoeFoldSection.bodyColor(context),
+                  ),
+                ),
+              )
+            : MoeCollapsibleBubble(
+                key: ValueKey<String>('fold_bubble_${block.id}'),
+                isMe: isMe,
+                title: displayTitle,
+                content: block.content,
+                fontSize: fontSize,
+              ),
       ),
     );
   }
@@ -989,8 +1012,8 @@ class MessageBubble extends ConsumerWidget {
         for (final part in parts)
           switch (part) {
             FencedProsePart(:final text) => _buildPlainMessageText(text, style),
-            FencedCodePart(:final block) when !isMe &&
-                    MoeUiBlock.handles(block.language) =>
+            FencedCodePart(:final block)
+                when !isMe && MoeUiBlock.handles(block.language) =>
               MoeUiBlock(
                 code: block.code,
                 closed: block.closed,
@@ -998,11 +1021,11 @@ class MessageBubble extends ConsumerWidget {
                 fontSize: style.fontSize ?? fontSize,
               ),
             FencedCodePart(:final block) => MoeCodeBlock(
-                code: block.code,
-                language: block.language,
-                foregroundColor: style.color,
-                fontSize: (style.fontSize ?? fontSize) - 2,
-              ),
+              code: block.code,
+              language: block.language,
+              foregroundColor: style.color,
+              fontSize: (style.fontSize ?? fontSize) - 2,
+            ),
           },
       ],
     );
@@ -1042,6 +1065,277 @@ class MessageBubble extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// 文档模式的消息行：不画头像，消息落在居中的阅读栏里。
+///
+/// 助手正文占满阅读栏宽度；用户消息是靠右的浅色块，最宽占阅读栏的 85%。
+/// 换发言方时（[startsTurn]）多留一段间距，让一问一答成组。
+/// 气泡正文选择区：文字可直接选中，长按（右键）菜单照旧。
+///
+/// 触屏长按后原地松手：清掉长按顺带选中的词，弹消息菜单；长按后滑动：选中
+/// 文字，松手弹菜单并带上选中内容（选区随即收起）；双击全屏看文字。鼠标拖动选字，右键弹菜单。系统选择工具栏
+/// 不显示，复制等操作统一走消息菜单。
+class _SelectableBubble extends StatefulWidget {
+  const _SelectableBubble({
+    required this.onLongPress,
+    required this.selectionColor,
+    required this.child,
+  });
+
+  final void Function(
+    RenderBox box,
+    Offset globalPosition,
+    String? selectedText,
+  )
+  onLongPress;
+  final Color selectionColor;
+  final Widget child;
+
+  @override
+  State<_SelectableBubble> createState() => _SelectableBubbleState();
+}
+
+class _SelectableBubbleState extends State<_SelectableBubble> {
+  final _areaKey = GlobalKey<SelectionAreaState>();
+  Timer? _pressTimer;
+  int? _pointer;
+  Offset _downPosition = Offset.zero;
+  bool _longPressed = false;
+  bool _dragged = false;
+  Timer? _doubleTapTimer;
+  Offset _firstTapPosition = Offset.zero;
+  final _selectionDelegate = _LineAwareSelectionDelegate();
+
+  SelectableRegionState? get _region => _areaKey.currentState?.selectableRegion;
+
+  String? _selected;
+
+  String? _selectedText() => _selected;
+
+  // 选择区的手势在本次指针事件分发末尾才处理（长按结束才定稿选区，右键会
+  // 抢焦点），菜单都推迟到分发结束后再弹。
+  void _openMenuLater(Offset position, String? Function() selectedText) {
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      final box = context.findRenderObject() as RenderBox?;
+      if (box != null) widget.onLongPress(box, position, selectedText());
+    });
+  }
+
+  void _reset() {
+    _pressTimer?.cancel();
+    _pressTimer = null;
+    _pointer = null;
+    _longPressed = false;
+    _dragged = false;
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      if ((event.buttons & kSecondaryMouseButton) != 0) {
+        // 右键会改选区（macOS 选词、Windows 折叠），先记下原选区。
+        final selected = _selectedText();
+        _openMenuLater(event.position, () => selected);
+      }
+      return;
+    }
+    _reset();
+    _pointer = event.pointer;
+    _downPosition = event.position;
+    _pressTimer = Timer(kLongPressTimeout, () => _longPressed = true);
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer) return;
+    if ((event.position - _downPosition).distance <= kTouchSlop) return;
+    if (_longPressed) {
+      _dragged = true;
+    } else {
+      // 长按前已移动：是滚动，不是长按。
+      _reset();
+    }
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (event.pointer != _pointer) return;
+    final longPressed = _longPressed;
+    final dragged = _dragged;
+    final position = _downPosition;
+    _reset();
+    if (!longPressed) {
+      _handleTap(position);
+      return;
+    }
+    _openMenuLater(position, () {
+      final selected = dragged ? _selectedText() : null;
+      // 选中内容交给菜单；收起选区和把手，免得把手浮在菜单上面。
+      _region
+        ?..hideToolbar()
+        ..clearSelection();
+      return selected;
+    });
+  }
+
+  // 触屏双击：全屏看这条消息的文字（类似微信）。鼠标双击仍是选词。
+  void _handleTap(Offset position) {
+    final isDoubleTap =
+        _doubleTapTimer?.isActive == true &&
+        (position - _firstTapPosition).distance <= kDoubleTapSlop;
+    _doubleTapTimer?.cancel();
+    if (!isDoubleTap) {
+      _firstTapPosition = position;
+      _doubleTapTimer = Timer(kDoubleTapTimeout, () {});
+      return;
+    }
+    _doubleTapTimer = null;
+    scheduleMicrotask(() {
+      final region = _region;
+      if (!mounted || region == null) return;
+      // 选区里拿到的就是气泡实际显示的文字（Markdown 已渲染、引用已拆开）。
+      region.selectAll();
+      final text = _selected;
+      region
+        ..hideToolbar()
+        ..clearSelection();
+      if (text != null) showMessageTextViewer(context, text);
+    });
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (event.pointer == _pointer) _reset();
+  }
+
+  @override
+  void dispose() {
+    _pressTimer?.cancel();
+    _doubleTapTimer?.cancel();
+    _selectionDelegate.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
+      child: SelectionArea(
+        key: _areaKey,
+        contextMenuBuilder: (context, state) => const SizedBox.shrink(),
+        onSelectionChanged: (content) {
+          final text = content?.plainText;
+          _selected = text == null || text.isEmpty ? null : text;
+        },
+        child: SelectionContainer(
+          delegate: _selectionDelegate,
+          child: DefaultSelectionStyle(
+            selectionColor: widget.selectionColor,
+            child: widget.child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 选中内容按行拼接：Flutter 默认把各段文字首尾相连，Markdown 段落、长文本
+/// 逐行排版（[IncrementalMessageText]）复制出来会丢换行。上下错开的两段之间
+/// 补换行，同一行内的片段照旧直接相连；去掉空行占位用的零宽空格。
+class _LineAwareSelectionDelegate extends StaticSelectionContainerDelegate {
+  @override
+  SelectedContent? getSelectedContent() {
+    final buffer = StringBuffer();
+    var hasContent = false;
+    double? previousBottom;
+    for (final selectable in selectables) {
+      final content = selectable.getSelectedContent();
+      if (content == null) continue;
+      final top = MatrixUtils.transformPoint(
+        selectable.getTransformTo(null),
+        Offset.zero,
+      ).dy;
+      if (previousBottom != null && top >= previousBottom - 1) {
+        buffer.write('\n');
+      }
+      previousBottom = top + selectable.size.height;
+      buffer.write(content.plainText);
+      hasContent = true;
+    }
+    if (!hasContent) return null;
+    return SelectedContent(
+      plainText: buffer.toString().replaceAll('\u200b', ''),
+    );
+  }
+}
+
+class _DocumentMessageRow extends StatelessWidget {
+  static const double maxReadingWidth = 760;
+  static const double userMaxWidthFactor = 0.85;
+  static const double turnGap = 14;
+  static const double selectionGutter = 50; // 多选框 42 + 间距 8
+  static const EdgeInsets userPadding = EdgeInsets.symmetric(
+    horizontal: 14,
+    vertical: 9,
+  );
+
+  final bool isMe;
+  final bool startsTurn;
+  final bool reserveSelectionGutter;
+  final Widget Function(Widget child)? selectionWrapper;
+  final Widget? failedIndicator;
+  final Widget child;
+
+  const _DocumentMessageRow({
+    required this.isMe,
+    required this.startsTurn,
+    required this.reserveSelectionGutter,
+    required this.selectionWrapper,
+    required this.failedIndicator,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 助手一侧贴阅读栏左缘，只有折叠块这类窄内容时也不居中。
+    Widget content = Align(alignment: Alignment.topLeft, child: child);
+    if (isMe) {
+      content = LayoutBuilder(
+        builder: (context, constraints) => Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ?failedIndicator,
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: constraints.maxWidth * userMaxWidthFactor,
+                ),
+                child: child,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final row = Padding(
+      padding: EdgeInsets.fromLTRB(
+        reserveSelectionGutter ? selectionGutter : 16,
+        startsTurn ? turnGap : 0,
+        16,
+        0,
+      ),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: maxReadingWidth),
+          child: content,
+        ),
+      ),
+    );
+    return selectionWrapper?.call(row) ?? row;
   }
 }
 

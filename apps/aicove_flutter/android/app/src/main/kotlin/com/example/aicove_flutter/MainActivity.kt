@@ -210,6 +210,20 @@ class MainActivity : FlutterActivity() {
                     )
                 }
             }
+            "setWebAppActive" -> {
+                val active = call.argument<Boolean>("active") == true
+                val changed = PersistentGuardService.setWebAppActive(this, active)
+                if (changed) {
+                    result.success(null)
+                } else {
+                    result.error(
+                        "webapp_guard_start_failed",
+                        PersistentGuardService.getLastStartError()
+                            ?: "Unable to start web app guard service",
+                        null,
+                    )
+                }
+            }
             "requestIgnoreBatteryOptimizations" -> {
                 result.success(requestIgnoreBatteryOptimizations())
             }
@@ -243,6 +257,7 @@ class MainActivity : FlutterActivity() {
         return mapOf(
             "guardEnabled" to KeepAliveConfig.isGuardEnabled(this),
             "generationActive" to PersistentGuardService.isGenerationActive(),
+            "webAppActive" to PersistentGuardService.isWebAppActive(),
             "serviceRunning" to PersistentGuardService.isForegroundActive(),
             "generationWakeLockHeld" to PersistentGuardService.isGenerationWakeLockHeld(),
             "batteryOptimizationIgnored" to isBatteryOptimizationIgnored(),

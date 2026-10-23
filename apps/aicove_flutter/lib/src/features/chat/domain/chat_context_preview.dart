@@ -1,6 +1,11 @@
 library;
 
-/// 联系人上下文预览：按当前设置、当前历史装配一次请求但不发送。
+import 'dart:convert';
+
+import '../../../core/utils/token_estimator.dart';
+import '../../context/domain/context_window_policy.dart';
+
+/// 角色完整上下文预览：按当前设置、当前历史装配一次请求但不发送。
 ///
 /// 与真实发送共用 `ChatSendBackendService` 的装配链路，只跳过会写数据或
 /// 调用模型的步骤（补摘要、自动压缩、会话变量写回、追踪落盘）。
@@ -70,4 +75,57 @@ class ChatContextPluginStatus {
 
   /// [reason] is an exception message rather than a fixed explanation.
   final bool failed;
+}
+
+/// 用量组成的分类。
+enum ChatContextUsageKind { system, history, toolCalls, toolDefinitions }
+
+/// 一次请求的估算用量：每条消息的 token 与按分类汇总的组成。
+class ChatContextUsage {
+  const ChatContextUsage({
+    required this.messageTokens,
+    required this.byKind,
+    required this.total,
+  });
+
+  /// 按与真实发送相同的口径（[renderedContextTokens]）估算。
+  factory ChatContextUsage.measure(
+    List<Map<String, dynamic>> messages,
+    List<Map<String, dynamic>> tools,
+  ) {
+    final byKind = {for (final kind in ChatContextUsageKind.values) kind: 0};
+    final messageTokens = <int>[];
+    for (final message in messages) {
+      final tokens =
+          renderedContextTokens([message], const []) - estimateTokenCount('[]');
+      messageTokens.add(tokens);
+      final kind = kindOf(message);
+      byKind[kind] = byKind[kind]! + tokens;
+    }
+    if (tools.isNotEmpty) {
+      byKind[ChatContextUsageKind.toolDefinitions] = estimateTokenCount(
+        jsonEncode(tools),
+      );
+    }
+    return ChatContextUsage(
+      messageTokens: messageTokens,
+      byKind: byKind,
+      total: byKind.values.fold(0, (sum, tokens) => sum + tokens),
+    );
+  }
+
+  final List<int> messageTokens;
+  final Map<ChatContextUsageKind, int> byKind;
+  final int total;
+
+  static ChatContextUsageKind kindOf(Map<String, dynamic> message) {
+    final role = message['role'];
+    if (role == 'system') return ChatContextUsageKind.system;
+    if (role == 'tool') return ChatContextUsageKind.toolCalls;
+    final toolCalls = message['tool_calls'];
+    if (toolCalls is List && toolCalls.isNotEmpty) {
+      return ChatContextUsageKind.toolCalls;
+    }
+    return ChatContextUsageKind.history;
+  }
 }

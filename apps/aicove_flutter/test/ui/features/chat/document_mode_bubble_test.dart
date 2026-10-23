@@ -8,6 +8,7 @@ import 'package:aicove_flutter/src/features/chat/presentation/widgets/message_bu
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_code_block.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_collapsible_bubble.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_fold_section.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_markdown_view.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
 import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
@@ -147,6 +148,11 @@ void main() {
             tester.getRect(find.byKey(const ValueKey('message_bubble_u')));
         expect(rect.width, greaterThan(userRect.width), reason: '助手占满宽度');
         expect(rect.right, lessThanOrEqualTo(width));
+        // 不留头像列：正文落在居中的阅读栏里，窄屏贴 16 边距，宽屏最宽 760。
+        expect(rect.width, lessThanOrEqualTo(760));
+        expect((rect.left - (width - rect.right)).abs(), lessThan(1));
+        if (width < 760) expect(rect.left, 16);
+        expect(userRect.right, closeTo(rect.right, 1), reason: '用户消息靠阅读栏右缘');
       });
     }
   }
@@ -188,10 +194,16 @@ void main() {
     await tester.pumpWidget(_host(
         MessageBubble(isMe: false, message: message, documentStyle: true)));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(MoeCollapsibleBubble));
+    // 测试视口宽 800：阅读栏 760 居中，左缘在 20。
+    expect(find.byType(MoeCollapsibleBubble), findsNothing,
+        reason: '文档模式不再用折叠气泡');
+    expect(tester.getRect(find.byType(MoeFoldSection)).left, 20,
+        reason: '只有折叠块时也贴阅读栏左缘');
+    expect(find.byType(MoeMarkdownView), findsNothing, reason: '默认折叠');
+    await tester.tap(find.text('思考'));
     await tester.pumpAndSettle();
     expect(find.descendant(
-        of: find.byType(MoeCollapsibleBubble),
+        of: find.byType(MoeFoldSection),
         matching: find.byType(MoeMarkdownView)), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -224,7 +236,10 @@ void main() {
           role: 'assistant',
           content: '她想出去走走。',
           blocks: [
-            ThinkingBlock(messageId: 'f', content: '她想出去走走。', title: '思考')
+            ThinkingBlock(
+                messageId: 'f',
+                content: '她想出去走走，天气晴、紫外线强。\n\n- 先列必带物品\n- 再给个时间安排',
+                title: '思考')
           ],
           createdAt: DateTime(2026, 10, 1),
         );
@@ -240,7 +255,6 @@ void main() {
                       isMe: true,
                       message: _msg('u', 'user', '今天天气好，帮我列个出门清单吧'),
                       documentStyle: true),
-                  const SizedBox(height: 10),
                   MessageBubble(
                       isMe: false, message: fold, documentStyle: true),
                   const SizedBox(height: 4),
@@ -250,6 +264,16 @@ void main() {
                     documentStyle: true,
                     showAvatar: false,
                   ),
+                  MessageBubble(
+                      isMe: true,
+                      message: _msg('u2', 'user',
+                          '谢谢！那如果傍晚突然下雨了，有什么室内的地方可以去吗？最好离河边近一点'),
+                      documentStyle: true),
+                  MessageBubble(
+                      isMe: false,
+                      message: _msg('a2', 'assistant',
+                          '河边那家旧书店就很好，有靠窗的位子，下雨时听着雨声看书特别舒服。'),
+                      documentStyle: true),
                 ],
               ),
             ),
@@ -258,6 +282,11 @@ void main() {
           fontFamily: 'Preview',
         ));
         await tester.pumpAndSettle();
+        // 宽屏展开折叠段、窄屏保持折叠，两种状态都留预览。
+        if (width > 400) {
+          await tester.tap(find.text('思考'));
+          await tester.pumpAndSettle();
+        }
         expect(tester.takeException(), isNull);
         await tester.runAsync(() async {
           final boundary =

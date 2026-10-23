@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/ui/features/settings/pages/add_provider_sheet.dart';
+import '../../../../helpers/release_source_preview.dart';
 
 void main() {
   Widget buildSheet() {
@@ -26,12 +27,18 @@ void main() {
   });
 
   test('ComfyUI 只属于绘图分类', () {
-    expect(ApiFormat.forCategory(ProviderCategory.chat),
-        isNot(contains(ApiFormat.comfyui)));
-    expect(ApiFormat.forCategory(ProviderCategory.tts),
-        isNot(contains(ApiFormat.comfyui)));
-    expect(ApiFormat.forCategory(ProviderCategory.image),
-        contains(ApiFormat.comfyui));
+    expect(
+      ApiFormat.forCategory(ProviderCategory.chat),
+      isNot(contains(ApiFormat.comfyui)),
+    );
+    expect(
+      ApiFormat.forCategory(ProviderCategory.tts),
+      isNot(contains(ApiFormat.comfyui)),
+    );
+    expect(
+      ApiFormat.forCategory(ProviderCategory.image),
+      contains(ApiFormat.comfyui),
+    );
   });
 
   testWidgets('默认对话分类不显示 ComfyUI，切到绘图后才出现', (tester) async {
@@ -96,4 +103,62 @@ void main() {
 
     expect(find.textContaining('OpenAI 格式推荐'), findsNothing);
   });
+
+  for (final width in [390.0, 1000.0]) {
+    testWidgets('识别添加页不显示底部模型说明条 width=$width', (tester) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await loadReleasePreviewFonts(tester);
+      final previewKey = GlobalKey();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: RepaintBoundary(
+            key: previewKey,
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(
+                fontFamily: captureReleaseSourcePreview
+                    ? 'ReleasePreview'
+                    : null,
+              ),
+              home: Scaffold(
+                body: Builder(
+                  builder: (context) => TextButton(
+                    onPressed: () => showAddProviderSheet(
+                      context,
+                      initialCategory: ProviderCategory.stt,
+                    ),
+                    child: const Text('添加识别供应商'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('添加识别供应商'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('识别模型已按厂商预置'), findsNothing);
+      expect(find.text('基础 URL'), findsOneWidget);
+      expect(find.text('立即添加').hitTestable(), findsOneWidget);
+      expect(find.text('取消').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await saveReleaseSourcePreview(
+        tester,
+        previewKey,
+        'add-asr-provider-${width.toInt()}',
+      );
+
+      await tester.tap(find.text('立即添加'));
+      await tester.pumpAndSettle();
+      expect(find.text('请输入 API Key'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AddProviderSheet), findsNothing);
+    });
+  }
 }

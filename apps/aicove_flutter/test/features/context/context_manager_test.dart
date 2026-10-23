@@ -807,7 +807,6 @@ void main() {
             required config,
             required availableTools,
             required sessionId,
-            required maxRounds,
           }) async {
             requests.add(config);
             expect(availableTools, isEmpty);
@@ -878,7 +877,6 @@ void main() {
           required config,
           required availableTools,
           required sessionId,
-          required maxRounds,
         }) async {
           expect(availableTools, isEmpty);
           expect(config.tools, isNull);
@@ -1005,6 +1003,202 @@ void main() {
     );
     expect(attempts, greaterThan(1));
     expect(received.toString(), text);
+  });
+
+  test('自动压缩按角色模式选模板：聊天模式记关系与场景，工具模式记任务进度', () async {
+    await owner('a');
+    await message('m');
+    ApiCallResult reply(Map<String, List<String>> sections) => ApiCallResult(
+      replyText: jsonEncode({'summary': sections}),
+      processedText: '',
+      pluginEvents: [],
+      toolResults: [],
+    );
+    Future<(String, String)> run({
+      required bool companion,
+      required Map<String, List<String>> sections,
+    }) async {
+      late String prompt;
+      final adapter = BackgroundContextSummarizer(
+        summaryAgent((config) {
+          prompt = jsonEncode(config.messages);
+          return reply(sections);
+        }),
+        modelRef: 'fake',
+        contextTokens: 200000,
+        isCompanion: (ownerId) async {
+          expect(ownerId, 'a');
+          return companion;
+        },
+      );
+      final summary = await adapter.summarize(
+        await store.manualSnapshot('a'),
+        kind: ContextSummaryKind.auto,
+        onProgress: (_, __) {},
+        isCancelled: () => false,
+      );
+      return (prompt, summary);
+    }
+
+    final (companionPrompt, companionSummary) = await run(
+      companion: true,
+      sections: {
+        'relationship': ['刚和好，她还有点别扭'],
+        'scene': ['在海边散步，天快黑了'],
+        'promises': ['答应周五一起看日落'],
+        'background': [],
+        'details': [],
+      },
+    );
+    expect(companionPrompt, contains('陪伴聊天的上下文压缩器'));
+    expect(companionPrompt, isNot(contains('未完成事项')));
+    expect(companionSummary, contains('## 关系与情绪\n- 刚和好，她还有点别扭'));
+    expect(companionSummary, contains('## 当前场景\n- 在海边散步，天快黑了'));
+    expect(companionSummary, contains('## 约定与称呼\n- 答应周五一起看日落'));
+
+    final (taskPrompt, taskSummary) = await run(
+      companion: false,
+      sections: {
+        'background': [],
+        'preferences': [],
+        'progress': ['角色卡改完了开场白'],
+        'pending': ['还要调语音'],
+        'details': [],
+      },
+    );
+    expect(taskPrompt, contains('聊天上下文压缩器'));
+    expect(taskPrompt, isNot(contains('陪伴聊天')));
+    expect(taskSummary, contains('## 未完成事项\n- 还要调语音'));
+
+    // 两种结构互不放行：陪伴模板下交回任务结构算格式错误。
+    expect(
+      () => run(
+        companion: true,
+        sections: {
+          'background': [],
+          'preferences': [],
+          'progress': ['x'],
+          'pending': [],
+          'details': [],
+        },
+      ),
+      throwsA(isA<ContextCompactionException>()),
+    );
+  });
+
+  test('压缩给思考留足输出额度；只有思考没有正文时明确报错', () async {
+    await owner('a');
+    await message('m');
+    Future<int?> outputFor(int contextTokens) async {
+      int? max;
+      await BackgroundContextSummarizer(
+        summaryAgent((config) {
+          max = config.providerRequestOptions?.maxOutputTokens;
+          return facts();
+        }),
+        modelRef: 'fake',
+        contextTokens: contextTokens,
+      ).summarize(
+        await store.manualSnapshot('a'),
+        kind: ContextSummaryKind.auto,
+        onProgress: (_, __) {},
+        isCancelled: () => false,
+      );
+      return max;
+    }
+
+    expect(await outputFor(8192), 2048);
+    expect(await outputFor(32000), 8000);
+    expect(await outputFor(128000), 32000);
+    expect(await outputFor(1000000), 128000);
+
+    final thinkingOnly = BackgroundContextSummarizer(
+      summaryAgent(
+        (_) => const ApiCallResult(
+          replyText: '',
+          processedText: '',
+          pluginEvents: [],
+          toolResults: [],
+        ),
+      ),
+      modelRef: 'fake',
+      contextTokens: 32000,
+    );
+    await expectLater(
+      thinkingOnly.summarize(
+        await store.manualSnapshot('a'),
+        kind: ContextSummaryKind.auto,
+        onProgress: (_, __) {},
+        isCancelled: () => false,
+      ),
+      throwsA(
+        isA<ContextCompactionException>().having(
+          (e) => e.message,
+          'message',
+          contains('没有写出摘要'),
+        ),
+      ),
+    );
+  });
+
+  test('服务商拒绝过大的输出额度时逐次减半重试，不低于 8192', () async {
+    await owner('a');
+    await message('m');
+    final maxes = <int?>[];
+    final adapter = BackgroundContextSummarizer(
+      summaryAgent((config) {
+        maxes.add(config.providerRequestOptions?.maxOutputTokens);
+        if (maxes.length < 3) {
+          throw StateError(
+            'HTTP 400: max_tokens: ${maxes.last} > 8192, which is the maximum allowed',
+          );
+        }
+        return facts();
+      }),
+      modelRef: 'fake',
+      contextTokens: 128000,
+    );
+    expect(
+      await adapter.summarize(
+        await store.manualSnapshot('a'),
+        kind: ContextSummaryKind.auto,
+        onProgress: (_, __) {},
+        isCancelled: () => false,
+      ),
+      contains('保留的重要约定'),
+    );
+    expect(maxes, [32000, 16000, 8192]);
+  });
+
+  test('格式修复器带回 invalid_summary 外壳时剥掉外壳', () async {
+    await owner('a');
+    await message('m');
+    final contents = <String>[];
+    final adapter = BackgroundContextSummarizer(
+      summaryAgent((config) {
+        contents.add(config.messages.last['content'] as String);
+        return ApiCallResult(
+          replyText: contents.length == 1
+              ? '{"facts":["周五看海",]}'
+              : jsonEncode({'invalid_summary': '{"facts":["周五看海"]}'}),
+          processedText: '',
+          pluginEvents: [],
+          toolResults: [],
+        );
+      }),
+      modelRef: 'fake',
+      contextTokens: 32000,
+    );
+    expect(
+      await adapter.summarize(
+        await store.manualSnapshot('a'),
+        kind: ContextSummaryKind.manual,
+        onProgress: (_, __) {},
+        isCancelled: () => false,
+      ),
+      '- 周五看海',
+    );
+    expect(contents, hasLength(2));
   });
 
   test('进度回调中取消时不再发模型请求', () async {

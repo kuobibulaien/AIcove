@@ -81,7 +81,12 @@ void main() {
       await request.response.close();
     });
     settings = mapUiModelsToAppSettings({})
-        .copyWith(imageGenerationEnabled: true, modelTypes: {
+        .copyWith(
+            imageGenerationEnabled: true,
+            // The tool and async modes need draw_image, which the default
+            // fast flow does not offer.
+            callFlowSettings: const CallFlowSettings(mode: CallFlowMode.call),
+            modelTypes: {
       'local:original': 'image',
       'local:new-default': 'image'
     }, modelProviderMap: {

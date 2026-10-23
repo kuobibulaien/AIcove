@@ -1,3 +1,5 @@
+import 'workspace_read_only_mount.dart';
+import 'package:aicove_quickjs/process.dart' show DesktopFileLock;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -10,15 +12,17 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/app_logger.dart';
 import '../domain/workspace_errors.dart';
+import '../domain/workspace_grants.dart';
 import '../domain/workspace_models.dart';
 import '../domain/workspace_path_rules.dart';
 import 'workspace_index.dart';
 
+export '../domain/workspace_grants.dart' show defaultWorkspaceId;
+
+part 'workspace_shell_store.dart';
+
 /// Run id of host-maintained writes (metadata); never listed or undone.
 const hostRunId = 'host';
-
-/// Fixed id of the built-in AIcove workspace, the same on every device.
-const defaultWorkspaceId = 'aicove';
 
 const _uuid = Uuid();
 
@@ -63,6 +67,7 @@ class WorkspaceStore {
       historyBytes,
     );
     await index.fetch('SELECT 1');
+    await store.recoverCommands();
     await store.recover();
     await store.prune();
     return store;
@@ -82,6 +87,59 @@ class WorkspaceStore {
   @visibleForTesting
   Future<void> Function(WorkspaceOp op)? afterApply;
 
+  final _mounts = <(String, String), WorkspaceReadOnlyMount>{};
+  static const _commitGuardKey = #workspaceCommitGuard;
+
+  /// Host invocations keep their cancellation guard across every async step,
+  /// including nested file tools. Existing callers retain their old contract.
+  static Future<T> guardCommits<T>(
+    bool Function() active,
+    Future<T> Function() body,
+  ) {
+    final outer = Zone.current[_commitGuardKey] as bool Function()?;
+    return runZoned(
+      body,
+      zoneValues: {_commitGuardKey: () => active() && (outer?.call() ?? true)},
+    );
+  }
+
+  static void _checkCommitGuard() {
+    if (!((Zone.current[_commitGuardKey] as bool Function()?)?.call() ??
+        true)) {
+      throw const WorkspaceException(
+        'cancelled',
+        'Script invocation closed; write cancelled',
+      );
+    }
+  }
+
+  void registerReadOnlyMount(
+    String workspaceId,
+    String prefix,
+    WorkspaceReadOnlyMount mount,
+  ) {
+    _mounts[(workspaceId, WorkspacePathRules.normalize(prefix))] = mount;
+  }
+
+  (String, WorkspaceReadOnlyMount)? _mount(String ws, String path) {
+    for (final e in _mounts.entries) {
+      if (e.key.$1 == ws &&
+          (WorkspacePathRules.fold(path) == WorkspacePathRules.fold(e.key.$2) ||
+              WorkspacePathRules.fold(
+                path,
+              ).startsWith('${WorkspacePathRules.fold(e.key.$2)}/'))) {
+        return (e.key.$2, e.value);
+      }
+    }
+    return null;
+  }
+
+  void checkWritablePath(String workspaceId, String path) {
+    if (_mount(workspaceId, WorkspacePathRules.normalize(path)) != null) {
+      throw const WorkspaceException.readOnly(stickerViewReadOnly);
+    }
+  }
+
   Future<void> close() => index.close();
 
   // ---------------------------------------------------------------------
@@ -90,6 +148,22 @@ class WorkspaceStore {
 
   Directory directoryOf(String workspaceId) =>
       Directory(p.join(root.path, workspaceId));
+
+  /// A real local source for package import, after the caller checks its grant.
+  /// Virtual mounts, links and paths outside this workspace are never sources.
+  Future<FileSystemEntity> packageImportSource(String workspaceId, String path) async {
+    if (await get(workspaceId) == null) throw const WorkspaceException.notFound('工作区不存在');
+    final normalized = WorkspacePathRules.normalizeDirectory(path);
+    if (normalized.isNotEmpty && _mount(workspaceId, normalized) != null) {
+      throw const WorkspaceException.invalidPath('只能从本地工作区目录导入');
+    }
+    await _checkAncestors(workspaceId, normalized.isEmpty ? '__source' : '$normalized/__source');
+    final source = normalized.isEmpty ? directoryOf(workspaceId).path : _fileAt(workspaceId, normalized).path;
+    final type = await FileSystemEntity.type(source, followLinks: false);
+    if (type == FileSystemEntityType.directory) return Directory(source);
+    if (type == FileSystemEntityType.file) return File(source);
+    throw const WorkspaceException.invalidPath('安装来源必须是本地文件夹或 zip，不能是链接');
+  }
 
   Future<List<WorkspaceInfo>> list() async => [
     for (final row in await index.fetch(
@@ -116,6 +190,7 @@ class WorkspaceStore {
     String description = '',
     String? id,
   }) async {
+    _checkCommitGuard();
     final trimmed = name.trim();
     if (trimmed.isEmpty) {
       throw const WorkspaceException.invalidPath('空间名称不能为空');
@@ -139,15 +214,18 @@ class WorkspaceStore {
         '放不下 ${WorkspacePathRules.maxPathUnits} 个字符的空间路径，无法新建',
       );
     }
+    _checkCommitGuard();
     await directory.create(recursive: true);
-    await index.immediate(
-      () => index.run('INSERT INTO workspaces VALUES (?,?,?,?)', [
+    await index.immediate(() async {
+      _checkCommitGuard();
+      await index.run('INSERT INTO workspaces VALUES (?,?,?,?)', [
         info.id,
         info.name,
         info.description,
         info.createdAt.millisecondsSinceEpoch,
-      ]),
-    );
+      ]);
+      _checkCommitGuard();
+    });
     await write(
       info.id,
       '${WorkspacePathRules.hostDirectory}/workspace.json',
@@ -176,16 +254,54 @@ class WorkspaceStore {
   // ---------------------------------------------------------------------
 
   /// Live files of a workspace, by path.
-  Future<List<WorkspaceFile>> files(String workspaceId) async => [
+  Future<List<WorkspaceFile>> files(String workspaceId) async {
+    await _checkAncestors(workspaceId, '_files');
+    final files = <WorkspaceFile>[];
     for (final row in await index.fetch(
       "SELECT * FROM files WHERE ws=? AND revision<>'' ORDER BY path",
       [workspaceId],
-    ))
-      _fileOf(row),
-  ];
+    )) {
+      final path = row.read<String>('path');
+      if (_mount(workspaceId, path) != null) continue;
+      await _checkAncestors(workspaceId, path);
+      files.add(_fileOf(row));
+    }
+    for (final entry in _mounts.entries) {
+      if (entry.key.$1 != workspaceId) continue;
+      for (final file in (await entry.value.files()).entries) {
+        files.add(
+          WorkspaceFile(
+            path: '${entry.key.$2}/${file.key}',
+            revision: file.value.revision,
+            size: file.value.size,
+            updatedAt: file.value.updatedAt,
+          ),
+        );
+      }
+    }
+    return files;
+  }
 
   Future<WorkspaceFile?> stat(String workspaceId, String path) async {
     final normalized = WorkspacePathRules.normalize(path);
+    await _checkAncestors(workspaceId, normalized);
+    if (_mount(workspaceId, normalized) != null) {
+      try {
+        final mount = _mount(workspaceId, normalized)!;
+        if (normalized.length == mount.$1.length) return null;
+        final file = (await mount.$2
+            .files())[normalized.substring(mount.$1.length + 1)];
+        if (file == null) return null;
+        return WorkspaceFile(
+          path: normalized,
+          revision: file.revision,
+          size: file.size,
+          updatedAt: file.updatedAt,
+        );
+      } on WorkspaceException {
+        return null;
+      }
+    }
     final rows = await index.fetch(
       "SELECT * FROM files WHERE ws=? AND path=? AND revision<>''",
       [workspaceId, normalized],
@@ -199,6 +315,7 @@ class WorkspaceStore {
     String directory,
   ) async {
     final dir = WorkspacePathRules.normalizeDirectory(directory);
+    await _checkAncestors(workspaceId, dir.isEmpty ? '_list' : '$dir/_list');
     final prefix = dir.isEmpty ? '' : '$dir/';
     final directories = <String>{};
     final entries = <WorkspaceEntry>[];
@@ -223,10 +340,29 @@ class WorkspaceStore {
   Future<(Uint8List, String)> read(String workspaceId, String path) async {
     await _requireWorkspace(workspaceId);
     final normalized = WorkspacePathRules.normalize(path);
+    final mount = _mount(workspaceId, normalized);
+    if (mount != null) {
+      final read =
+          WorkspacePathRules.fold(normalized) ==
+              WorkspacePathRules.fold(mount.$1)
+          ? null
+          : (await mount.$2.files())[normalized.substring(mount.$1.length + 1)];
+      if (read == null) throw WorkspaceException.notFound('文件不存在：$normalized');
+      final bytes = await read.read();
+      return (bytes, read.revision);
+    }
+    await _checkAncestors(workspaceId, normalized);
     final file = _fileAt(workspaceId, normalized);
     final type = await FileSystemEntity.type(file.path, followLinks: false);
     if (type != FileSystemEntityType.file) {
       throw WorkspaceException.notFound('文件不存在：$normalized');
+    }
+    // Commands may create files beyond the ordinary store write limit.
+    // Full reads keep that same bound; readRange remains available for chunks.
+    if (await file.length() > WorkspaceLimits.maxFileBytes) {
+      throw const WorkspaceException.limit(
+        '文件超过 ${WorkspaceLimits.maxFileBytes >> 20} MiB 上限',
+      );
     }
     final bytes = await file.readAsBytes();
     return (bytes, _hash(bytes));
@@ -238,6 +374,39 @@ class WorkspaceStore {
     size: row.read<int>('size'),
     updatedAt: DateTime.fromMillisecondsSinceEpoch(row.read<int>('updated_at')),
   );
+
+  /// Bounded host byte reads avoid loading the rest of an ordinary file.
+  Future<Uint8List> readRange(
+    String workspaceId,
+    String path, {
+    required int offset,
+    required int length,
+  }) async {
+    if (offset < 0 || length < 0) throw ArgumentError('Invalid byte range');
+    await _requireWorkspace(workspaceId);
+    final normalized = WorkspacePathRules.normalize(path);
+    if (_mount(workspaceId, normalized) != null) {
+      final (bytes, _) = await read(workspaceId, normalized);
+      return Uint8List.sublistView(
+        bytes,
+        offset.clamp(0, bytes.length),
+        (offset + length).clamp(0, bytes.length),
+      );
+    }
+    await _checkAncestors(workspaceId, normalized);
+    final file = _fileAt(workspaceId, normalized);
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw WorkspaceException.notFound('文件不存在：$normalized');
+    }
+    final handle = await file.open();
+    try {
+      await handle.setPosition(offset);
+      return await handle.read(length);
+    } finally {
+      await handle.close();
+    }
+  }
 
   // ---------------------------------------------------------------------
   // Conditional commit
@@ -322,9 +491,14 @@ class WorkspaceStore {
     String? undoes,
     bool allowHost = false,
   }) async {
+    _checkCommitGuard();
     await _requireWorkspace(workspaceId);
     final source = WorkspacePathRules.normalize(path);
     final target = toPath == null ? null : WorkspacePathRules.normalize(toPath);
+    if (_mount(workspaceId, source) != null ||
+        (target != null && _mount(workspaceId, target) != null)) {
+      throw const WorkspaceException.readOnly(stickerViewReadOnly);
+    }
     if (!allowHost &&
         (WorkspacePathRules.isHostPath(source) ||
             (target != null && WorkspacePathRules.isHostPath(target)))) {
@@ -400,6 +574,8 @@ class WorkspaceStore {
     required String runId,
     required String? undoes,
   }) async {
+    _checkCommitGuard();
+    await _checkCommandLock(workspaceId);
     final paths = [source, ?target];
     for (final path in paths) {
       final claim = await index.rows(
@@ -463,6 +639,7 @@ class WorkspaceStore {
       phase: 'pending',
       createdAt: _now(),
     );
+    _checkCommitGuard();
     await index.run('INSERT INTO ops VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', [
       op.id,
       op.workspaceId,
@@ -484,6 +661,7 @@ class WorkspaceStore {
         op.id,
       ]);
     }
+    _checkCommitGuard();
     return op;
   }
 
@@ -538,6 +716,7 @@ class WorkspaceStore {
 
   /// Step 2.
   Future<void> _apply(WorkspaceOp op, Uint8List? data) async {
+    _checkCommitGuard();
     final source = _fileAt(op.workspaceId, op.path);
     switch (op.kind) {
       case WorkspaceOpKind.write:
@@ -545,6 +724,7 @@ class WorkspaceStore {
         await temp.parent.create(recursive: true);
         await temp.writeAsBytes(data!, flush: true);
         await source.parent.create(recursive: true);
+        _checkCommitGuard();
         await temp.rename(source.path);
       case WorkspaceOpKind.delete:
         await source.delete();
@@ -552,6 +732,7 @@ class WorkspaceStore {
       case WorkspaceOpKind.move:
         final target = _fileAt(op.workspaceId, op.toPath!);
         await target.parent.create(recursive: true);
+        _checkCommitGuard();
         await source.rename(target.path);
         await _pruneEmptyParents(op.workspaceId, source.parent);
     }
@@ -691,7 +872,9 @@ class WorkspaceStore {
   Future<List<WorkspaceRunSummary>> runs(String workspaceId) async {
     final rows = await index.fetch(
       'SELECT o.run_id, COUNT(*) AS n, MIN(o.created_at) AS started, '
-      "GROUP_CONCAT(o.path, char(10)) AS paths, u.status FROM ops o "
+      "GROUP_CONCAT(o.path, char(10)) AS paths, "
+      "GROUP_CONCAT(CASE WHEN c.op_id IS NOT NULL THEN o.path END, char(10)) AS command_paths, "
+      "u.status FROM ops o LEFT JOIN command_changes c ON c.op_id=o.id "
       'LEFT JOIN undo_runs u ON u.run_id=o.run_id AND u.ws=o.ws '
       "WHERE o.ws=? AND o.phase='done' AND o.run_id<>? "
       'GROUP BY o.run_id ORDER BY started DESC',
@@ -707,7 +890,17 @@ class WorkspaceStore {
           startedAt: DateTime.fromMillisecondsSinceEpoch(
             row.read<int>('started'),
           ),
-          undone: row.readNullable<String>('status') == 'done',
+          undone:
+              row.readNullable<String>('status') == 'done' &&
+              row.readNullable<String>('command_paths') == null,
+          commandPaths:
+              (row
+                        .readNullable<String>('command_paths')
+                        ?.split('\n')
+                        .toSet()
+                        .toList() ??
+                    [])
+                ..sort(),
         ),
     ];
   }
@@ -717,6 +910,16 @@ class WorkspaceStore {
   /// with the run's earlier changes to it, and reported. Progress is kept,
   /// so calling again after a crash continues.
   Future<WorkspaceUndoResult> undoRun(String workspaceId, String runId) async {
+    await index.immediate(() => _checkCommandLock(workspaceId));
+    final commandRows = await index.fetch(
+      'SELECT o.path FROM ops o JOIN command_changes c ON c.op_id=o.id '
+      "WHERE o.ws=? AND o.run_id=? AND o.phase='done' ORDER BY o.seq",
+      [workspaceId, runId],
+    );
+    final commandPaths = commandRows
+        .map((r) => r.read<String>('path'))
+        .toSet()
+        .toList();
     final progress = await index.immediate(() async {
       final rows = await index.rows(
         'SELECT * FROM undo_runs WHERE run_id=? AND ws=?',
@@ -750,6 +953,7 @@ class WorkspaceStore {
       return WorkspaceUndoResult(
         undone: await _undoneCount(undoRunId),
         conflicts: conflicts,
+        commandChanges: commandPaths,
       );
     }
 
@@ -781,7 +985,19 @@ class WorkspaceStore {
       }
     }
 
+    final commandBlocked = <String>{};
     for (final entry in entries) {
+      if ((await index.fetch('SELECT 1 FROM command_changes WHERE op_id=?', [
+        entry.id,
+      ])).isNotEmpty) {
+        commandBlocked.addAll(entry.paths);
+      }
+      if (entry.paths.any(commandBlocked.contains)) {
+        commandBlocked.addAll(entry.paths);
+        skipped.addAll(entry.paths);
+        await save('running');
+        continue;
+      }
       final reverted = await index.fetch(
         "SELECT 1 FROM ops WHERE undoes=? AND run_id=? AND phase='done'",
         [entry.id, undoRunId],
@@ -809,6 +1025,7 @@ class WorkspaceStore {
     return WorkspaceUndoResult(
       undone: await _undoneCount(undoRunId),
       conflicts: conflicts,
+      commandChanges: commandPaths,
     );
   }
 
@@ -969,6 +1186,20 @@ class WorkspaceStore {
 
   // ---------------------------------------------------------------------
 
+  Future<void> _checkAncestors(String workspaceId, String path) async {
+    var current = directoryOf(workspaceId).path;
+    for (final part in [
+      '',
+      ...path.split('/').take(path.split('/').length - 1),
+    ]) {
+      if (part.isNotEmpty) current = p.join(current, part);
+      if (await FileSystemEntity.type(current, followLinks: false) ==
+          FileSystemEntityType.link) {
+        throw WorkspaceException.invalidPath('$path 的祖先目录是符号链接');
+      }
+    }
+  }
+
   File _fileAt(String workspaceId, String normalizedPath) => File(
     p.joinAll([directoryOf(workspaceId).path, ...normalizedPath.split('/')]),
   );
@@ -976,6 +1207,7 @@ class WorkspaceStore {
   /// SHA-256 of the file at [path], or '' when nothing is there. A
   /// directory or link in the way is a layout error.
   Future<String> _diskHash(String workspaceId, String path) async {
+    await _checkAncestors(workspaceId, path);
     final file = _fileAt(workspaceId, path);
     final type = await FileSystemEntity.type(file.path, followLinks: false);
     return switch (type) {

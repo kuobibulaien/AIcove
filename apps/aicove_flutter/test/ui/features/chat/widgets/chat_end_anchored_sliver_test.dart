@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_end_anchored_sliver.dart';
@@ -46,6 +47,43 @@ class _HostState extends State<_Host> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 一个会在下一次布局时请求一次 [pendingCorrection] 的活跃区内容，
+/// 记录每次布局看到的 scrollOffset（SliverList 增删前部子项时同样会这样请求）。
+class _CorrectingSliver extends LeafRenderObjectWidget {
+  const _CorrectingSliver({required this.extent});
+  final double extent;
+  @override
+  _RenderCorrectingSliver createRenderObject(BuildContext context) =>
+      _RenderCorrectingSliver(extent);
+}
+
+class _RenderCorrectingSliver extends RenderSliver {
+  _RenderCorrectingSliver(this.extent);
+  final double extent;
+  double? pendingCorrection;
+  final scrollOffsets = <double>[];
+
+  @override
+  void performLayout() {
+    scrollOffsets.add(constraints.scrollOffset);
+    final correction = pendingCorrection;
+    if (correction != null) {
+      pendingCorrection = null;
+      geometry = SliverGeometry(scrollOffsetCorrection: correction);
+      return;
+    }
+    final paintExtent =
+        calculatePaintOffset(constraints, from: 0, to: extent);
+    geometry = SliverGeometry(
+      scrollExtent: extent,
+      paintExtent: paintExtent,
+      maxPaintExtent: extent,
+      cacheExtent: calculateCacheOffset(constraints, from: 0, to: extent),
+      hasVisualOverflow: extent > paintExtent,
     );
   }
 }
@@ -163,5 +201,56 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(controller.isArmed, isFalse);
+  });
+
+  testWidgets('子列表请求的 scrollOffsetCorrection 原样上报，不能拿该帧的 0 高度算贴底',
+      (tester) async {
+    final controller = ChatEndAnchorController();
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    const centerKey = ValueKey<String>('center');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 500,
+            width: 300,
+            child: CustomScrollView(
+              controller: scroll,
+              reverse: true,
+              center: centerKey,
+              slivers: [
+                ChatEndAnchoredSliver(
+                  controller: controller,
+                  sliver: const _CorrectingSliver(extent: 2000),
+                ),
+                const SliverToBoxAdapter(
+                    key: centerKey, child: SizedBox.shrink()),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    scroll.jumpTo(scroll.position.minScrollExtent);
+    await tester.pump();
+    final sliver = tester.renderObject<_RenderCorrectingSliver>(
+        find.byType(_CorrectingSliver));
+    final settledOffset = sliver.scrollOffsets.last;
+    expect(scroll.position.pixels - scroll.position.minScrollExtent,
+        closeTo(0, 0.5));
+
+    sliver.scrollOffsets.clear();
+    sliver.pendingCorrection = 80;
+    controller.arm();
+    sliver.markNeedsLayout();
+    await tester.pump();
+
+    expect(sliver.scrollOffsets.length, greaterThanOrEqualTo(2));
+    expect(sliver.scrollOffsets[1], closeTo(settledOffset + 80, 0.5),
+        reason: '子列表要的修正必须先生效，不能被换成按 0 高度算出的贴底位移');
+    expect(scroll.position.pixels - scroll.position.minScrollExtent,
+        closeTo(0, 0.5),
+        reason: '修正生效后的下一次布局再贴底');
   });
 }

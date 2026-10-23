@@ -3,7 +3,9 @@ import 'dart:convert';
 import '../../../core/utils/token_estimator.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../background_agent/domain/background_agent_definition.dart';
+import '../../background_agent/domain/background_agent_run_result.dart';
 import '../../chat/domain/message.dart';
+import '../../context/domain/context_window_policy.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/domain/handlers/tool_parameter.dart';
 import '../domain/memory_item.dart';
@@ -51,7 +53,11 @@ class BackgroundMemoryAgentAdapter implements MemoryAgentPort {
   final int contextTokens;
   final Duration requestTimeout;
 
-  int get _outputTokens => (contextTokens ~/ 8).clamp(1024, 4096);
+  /// 服务商拒绝过大额度后逐次减半，本实例后续沿用减半后的值。
+  int _outputCeiling = kMaxOutputTokens;
+
+  int get _outputTokens =>
+      backgroundOutputTokens(contextTokens, ceiling: _outputCeiling);
 
   @override
   int get batchTokenBudget =>
@@ -103,38 +109,49 @@ class BackgroundMemoryAgentAdapter implements MemoryAgentPort {
           },
       ],
     });
-    final result = await agent
-        .run(
-          definition: BackgroundAgentDefinition(
-            id: kMemoryAgentId,
-            name: '长期记忆整理',
-            objectivePrompt: _objective,
-            modelRef: modelRef,
-            temperature: 0.2,
-            maxRounds: 4,
-            contextProfile: ContextProfile.background(
-              const ConversationWindowSpec(
-                lastMessages: 1,
-                includeUser: true,
-                includeAssistant: false,
-                includeSystem: false,
-                includeTimestamps: false,
+    late final BackgroundAgentRunResult result;
+    while (true) {
+      try {
+        result = await agent
+            .run(
+              definition: BackgroundAgentDefinition(
+                id: kMemoryAgentId,
+                name: '长期记忆整理',
+                objectivePrompt: _objective,
+                modelRef: modelRef,
+                temperature: 0.2,
+                contextProfile: ContextProfile.background(
+                  const ConversationWindowSpec(
+                    lastMessages: 1,
+                    includeUser: true,
+                    includeAssistant: false,
+                    includeSystem: false,
+                    includeTimestamps: false,
+                  ),
+                ),
               ),
-            ),
-          ),
-          conversationId: ownerId,
-          maxOutputTokens: _outputTokens,
-          additionalTools: [search],
-          contextMessages: [
-            Message(
-              id: 'memory_batch_${messages.last.id}',
-              role: 'user',
-              createdAt: DateTime.now(),
-              content: payload,
-            ),
-          ],
-        )
-        .timeout(requestTimeout);
+              conversationId: ownerId,
+              maxOutputTokens: _outputTokens,
+              additionalTools: [search],
+              contextMessages: [
+                Message(
+                  id: 'memory_batch_${messages.last.id}',
+                  role: 'user',
+                  createdAt: DateTime.now(),
+                  content: payload,
+                ),
+              ],
+            )
+            .timeout(requestTimeout);
+        break;
+      } catch (error) {
+        final reduced = isOutputLimitRejected(error)
+            ? reducedOutputCeiling(_outputTokens)
+            : null;
+        if (reduced == null) rethrow;
+        _outputCeiling = reduced;
+      }
+    }
     final text = result.processedText.trim().isNotEmpty
         ? result.processedText
         : result.replyText;

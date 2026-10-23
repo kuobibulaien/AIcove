@@ -41,6 +41,16 @@ class ChatPendingTtsResolver {
   final StoreMutationEnqueuer _enqueueStoreMutation;
   final PendingTtsFallbackNotifier? _onTtsFallback;
 
+  void _notifyFallback(String reason) {
+    try {
+      _onTtsFallback?.call(reason);
+    } catch (error) {
+      // Notification failure must not prevent the text replacement.
+      AppLogger.warning('ChatPendingTtsResolver', '语音回退提示失败，继续显示文本',
+          metadata: {'reason': reason, 'errorType': error.runtimeType.toString()});
+    }
+  }
+
   static const Duration _ttsTimeout = Duration(seconds: 30);
 
   static bool isPendingPlaceholder(Message message) {
@@ -237,6 +247,7 @@ class ChatPendingTtsResolver {
                 url: audioUrl,
                 text: ttsText,
                 durationSeconds: block?.durationSeconds,
+                unread: true,
                 status: BlockStatus.success,
               ),
             ],
@@ -262,6 +273,7 @@ class ChatPendingTtsResolver {
           '流式 TTS 占位生成失败，回退文本补位',
           metadata: {'messageId': message.id, 'textLength': ttsText.length},
         );
+        _notifyFallback('empty_url');
         shouldFallbackToText = true;
       }
     } catch (e, stack) {
@@ -277,7 +289,7 @@ class ChatPendingTtsResolver {
         '流式 TTS 占位异常，回退文本补位',
         metadata: {'messageId': message.id, 'error': e.toString()},
       );
-      _onTtsFallback?.call('convert_error');
+      _notifyFallback('convert_error');
       shouldFallbackToText = true;
     }
     if (!shouldFallbackToText) {
@@ -408,7 +420,7 @@ class ChatPendingTtsResolver {
         'error': e.toString(),
       });
       if (notifyFallback) {
-        _onTtsFallback?.call('update_error');
+        _notifyFallback('update_error');
       }
       return false;
     }

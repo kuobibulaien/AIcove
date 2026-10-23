@@ -841,8 +841,8 @@ void main() {
     autoScrollReasons.clear();
 
     // 结构性追加一条文本消息：实质性时间线变化（length/尾 id 变化）关闭
-    // 入场收敛窗。既有产品裁决（auto_scroll_guard 锁定）：贴底时新 AI 消息
-    // 不拉底——列表组件不得发起任何显式回底请求。
+    // 入场收敛窗。「AI 发消息自动回底」默认开：新 AI 消息在布局期同帧
+    // 贴底，列表组件不得发起任何显式回底请求。
     harnessKey.currentState!.appendTextMessage(id: 'appended_text');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 120));
@@ -857,8 +857,8 @@ void main() {
     );
     expect(
       _distanceToBottom(controller),
-      greaterThan(40),
-      reason: '贴底时新消息不拉底（与 auto_scroll_guard 基线语义一致）',
+      closeTo(0, 0.5),
+      reason: '停在底部时跟着 AI 的新消息（与 auto_scroll_guard 基线语义一致）',
     );
 
     // 窗口已关：此时表情解码长高（原尾消息已随分界移入 history sliver，

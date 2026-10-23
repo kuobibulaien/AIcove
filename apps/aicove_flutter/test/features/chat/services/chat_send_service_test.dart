@@ -33,12 +33,15 @@ import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dar
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/image/drawing_preset.dart';
 import 'package:aicove_flutter/src/features/plugins/image/drawing_preset_provider.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_policy.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
+import 'package:aicove_flutter/src/features/memory/domain/memory_item.dart';
+import 'package:aicove_flutter/src/features/memory/providers/memory_providers.dart';
 import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_config.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
@@ -102,7 +105,7 @@ void main() {
     List<String>? defaultChatModels,
     Map<String, ModelConfig>? modelConfigs,
     bool imageGenerationEnabled = false,
-    CallFlowMode callFlowMode = CallFlowMode.auto,
+    CallFlowMode callFlowMode = CallFlowMode.call,
     AutoReplySettings autoReplySettings = const AutoReplySettings(),
   }) {
     return AppSettings(
@@ -112,7 +115,11 @@ void main() {
       modelList: const <String>[],
       allKnownModels: const <String>[],
       modelDisplayNames: const <String, String>{},
-      modelTypes: const <String, String>{},
+      // Drawing on means a usable image channel; the plugin stays silent
+      // without one.
+      modelTypes: imageGenerationEnabled
+          ? const <String, String>{'image-model': 'image'}
+          : const <String, String>{},
       modelConfigs: modelConfigs ?? const <String, ModelConfig>{},
       apiKey: '',
       apiBaseUrl: 'https://api.openai.com/v1',
@@ -120,12 +127,20 @@ void main() {
       maxFileUploadMB: 10,
       contextWindowTokens: 272000,
       customModels: const <CustomModel>[],
-      providers: const <ProviderAuth>[
-        ProviderAuth(
+      providers: <ProviderAuth>[
+        const ProviderAuth(
           id: 'openai',
           apiKeys: <String>['test-key'],
           apiBaseUrl: 'https://api.openai.com/v1',
         ),
+        if (imageGenerationEnabled)
+          const ProviderAuth(
+            id: 'image',
+            apiKeys: <String>['test-key'],
+            apiBaseUrl: 'https://image.invalid/v1',
+            models: <String>['image-model'],
+            visibleModels: <String>['image-model'],
+          ),
       ],
       modelProviderMap: const <String, String>{
         'openai:gpt-4o': 'openai',
@@ -784,7 +799,13 @@ void main() {
       final now = DateTime(2026, 9, 11);
       final container = ProviderContainer(overrides: [
         appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(
-          fakeSettings(defaultModelName: 'openai:gpt-4o'),
+          fakeSettings(
+            defaultModelName: 'openai:gpt-4o',
+            // 对话模型默认四项全开；这里关掉工具，验证无插件时上下文干净。
+            modelConfigs: const <String, ModelConfig>{
+              'openai:gpt-4o': ModelConfig(chatCapabilities: <String>['vision']),
+            },
+          ),
         )),
       ]);
       addTearDown(container.dispose);
@@ -931,7 +952,7 @@ void main() {
         ),
       },
       imageGenerationEnabled: true,
-      callFlowMode: CallFlowMode.auto,
+      callFlowMode: CallFlowMode.call,
     ).copyWith(
       modelTypes: const <String, String>{
         'openai:gpt-3.5-turbo': 'chat',
@@ -996,9 +1017,10 @@ void main() {
       orElse: () => const <String, dynamic>{},
     );
     final systemContent = (systemMessage['content'] ?? '').toString();
-    expect(systemContent, contains('<image>英文正向提示词</image>'));
-    expect(systemContent, contains('NovelAI'));
-    expect(systemContent, contains('第一人称自拍视角。'));
+    // test-image-model on an OpenAI-compatible channel: natural-language pack.
+    expect(systemContent, contains('<image>画面描述</image>'));
+    expect(systemContent, contains('提示词规范（自然语言模型）'));
+    expect(systemContent, contains('角色专属生图要求：\n第一人称自拍视角。'));
     final drawTools = apiConfig.tools?.where((tool) {
       final function = tool['function'] as Map<String, dynamic>?;
       return function?['name'] == 'draw_image';
@@ -1037,10 +1059,38 @@ void main() {
     expect(requestB.drawingConfig!.defaultWidth, 1024);
     expect(requestA.drawingConfig!.selectedProviderId, 'openai');
     expect(requestB.drawingConfig!.selectedProviderId, 'other');
-    expect(requestA.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, 'rule A');
-    expect(requestB.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, 'rule B');
+    expect(requestA.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, contains('rule A'));
+    expect(requestB.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, contains('rule B'));
+    expect(requestA.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, isNot(contains('rule B')));
+    expect(requestB.boundTools!.firstWhere((t) => t.name == 'draw_image').parameters['prompt']!.description, isNot(contains('rule A')));
     final next = await service.prepareApiConfig(conv: role('a'), history: history, userText: '画图');
     expect(next.drawingConfig!.defaultWidth, 1280);
+  });
+
+  test('a drawing preset bound to a deleted pack still sends, matching automatically', () async {
+    final root = await Directory.systemTemp.createTemp('drawing-missing-pack-');
+    final previousPaths = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
+    addTearDown(() async { PathProviderPlatform.instance = previousPaths; await root.delete(recursive: true); });
+    const preset = DrawingPreset(id: 'p', name: '绑了已删的包', config: ImageConfig(selectedProviderId: 'openai',
+      selectedModelId: 'openai:gpt-image-1'), prompts: PresetPromptBinding(packId: 'pack_gone'));
+    final catalog = DrawingPresetCatalog(presets: [preset], defaultPresetId: 'p', legacyConfig: const ImageConfig());
+    SharedPreferences.setMockInitialValues({PreferencesDrawingPresetStore.storageKey: jsonEncode(catalog.toJson())});
+    final settings = fakeSettings(imageGenerationEnabled: true, defaultModelName: 'openai:gpt-4o',
+      defaultChatModels: ['openai:gpt-4o'], modelConfigs: const {
+        'openai:gpt-4o': ModelConfig(chatCapabilities: ['tools', 'vision'])});
+    final container = ProviderContainer(overrides: [appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings))]);
+    addTearDown(container.dispose);
+    final now = DateTime(2026, 10, 19);
+    final request = await container.read(chatSendServiceProvider).prepareApiConfig(
+      conv: Conversation(id: 'r', title: 'r', displayName: 'r',
+        personaPrompt: PersonaPromptCodec.compose(userPrompt: 'r', drawingPresetId: 'p'),
+        enabledPlugins: const ['image'], createdAt: now, updatedAt: now, messages: const []),
+      history: [Message(id: 'u', role: 'user', content: '画图', createdAt: now)],
+      userText: '画图');
+    final drawImage = request.boundTools!.firstWhere((t) => t.name == 'draw_image');
+    expect(drawImage.parameters['prompt']!.description, isNotEmpty);
+    expect(drawImage.parameters['count']!.description, contains('生成张数'));
   });
 
   test(
@@ -1239,6 +1289,82 @@ void main() {
     );
   });
 
+  test('topic memories go before the last user message; system prompt stays '
+      'identical across turns', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final appDb = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    );
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(appDb),
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      ],
+    );
+    addTearDown(() async {
+      container.dispose();
+      await appDb.close();
+    });
+    final now = DateTime(2026, 3, 12, 20);
+    final conv = Conversation(
+      id: 'conv_memory_tail',
+      title: 'Chat',
+      displayName: '阿绫',
+      personaPrompt: PersonaPromptCodec.compose(userPrompt: '你是阿绫。'),
+      enabledPlugins: const <String>['memory'],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    await container
+        .read(conversationRepositoryProvider)
+        .upsert(ConversationConverter.toCompanion(conv));
+    final store = container.read(memoryStoreProvider);
+    await store.saveByUser(
+      ownerId: conv.id,
+      layer: MemoryLayer.core,
+      title: '称呼',
+      content: '用户叫小林',
+    );
+    await store.saveByUser(
+      ownerId: conv.id,
+      layer: MemoryLayer.archive,
+      title: '看海',
+      content: '周五一起去海边看日落',
+    );
+    await store.saveByUser(
+      ownerId: conv.id,
+      layer: MemoryLayer.archive,
+      title: '团子',
+      content: '家里的猫叫团子',
+    );
+    final service = container.read(chatSendServiceProvider);
+    Future<List<Map<String, dynamic>>> turn(String text) async =>
+        (await service.prepareApiConfig(
+          conv: conv,
+          history: [
+            Message(id: 'u_$text', role: 'user', content: text, createdAt: now),
+          ],
+          userText: text,
+        )).messages;
+
+    final sea = await turn('还记得海边吗');
+    final cat = await turn('团子最近乖吗');
+
+    expect(sea.first['role'], 'system');
+    expect(sea.first['content'], contains('用户叫小林'));
+    expect(sea.first['content'], isNot(contains('海边看日落')));
+    expect(cat.first['content'], sea.first['content']);
+    for (final (messages, topic) in [(sea, '海边看日落'), (cat, '团子')]) {
+      final reminder = messages[messages.length - 2]['content'].toString();
+      expect(reminder, startsWith('<system-reminder>'));
+      expect(reminder, contains(topic));
+    }
+  });
+
   test(
       'prepareApiConfig should insert system reminder before current user message',
       () async {
@@ -1332,7 +1458,8 @@ void main() {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4o-mini',
       defaultChatModels: const <String>['openai:gpt-4o-mini'],
-    ).copyWith(imageGenerationEnabled: imageActive);
+      imageGenerationEnabled: imageActive,
+    );
     final now = DateTime(2026, 3, 23, 12, 0, 0);
     final conv = Conversation(
       id: 'conv_image_failure_reminder',
@@ -1441,7 +1568,8 @@ void main() {
     final settings = fakeSettings(
       defaultModelName: 'openai:gpt-4o-mini',
       defaultChatModels: const <String>['openai:gpt-4o-mini'],
-    ).copyWith(imageGenerationEnabled: imageActive);
+      imageGenerationEnabled: imageActive,
+    );
     final now = DateTime(2026, 4, 16, 13, 0, 0);
     final internalImageHistoryText =
         ChatRequestMessageBuilder.buildInternalImageContextText(

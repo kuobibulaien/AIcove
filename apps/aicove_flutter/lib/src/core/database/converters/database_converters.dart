@@ -7,6 +7,7 @@ import '../database.dart' as db;
 import '../../../features/chat/domain/conversation.dart' as domain;
 import '../../../features/chat/domain/message.dart' as domain;
 import '../../../features/chat/domain/chat_display_policy.dart';
+import '../../../features/chat/domain/role_agent_mode.dart';
 import '../../../core/models/message_block.dart';
 import '../../api/thinking/thinking_level.dart';
 
@@ -48,6 +49,7 @@ class ConversationConverter {
               }),
       ),
       chatDisplayStyle: Value(c.chatDisplayStyle?.name),
+      agentMode: Value(c.agentMode?.name),
       contextStartMessageId: Value(c.contextStartMessageId),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
@@ -88,6 +90,7 @@ class ConversationConverter {
       recipeId: c.recipeId,
       thinkingLevels: decodeThinkingLevels(c.thinkingLevels),
       chatDisplayStyle: ChatDisplayStyle.fromValue(c.chatDisplayStyle),
+      agentMode: RoleAgentMode.fromValue(c.agentMode),
       contextStartMessageId: c.contextStartMessageId,
       lastMessage: c.lastMessage,
       lastMessageTime: c.lastMessageTime != null

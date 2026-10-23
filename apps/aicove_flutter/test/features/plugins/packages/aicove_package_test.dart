@@ -175,7 +175,7 @@ void main() {
               others: {path: 'x'},
             ),
           ),
-          rejects('技能文件'),
+          throwsA(isA<PackageFormatException>()),
           reason: path,
         );
       }
@@ -381,7 +381,7 @@ void main() {
       await expectLater(
         store.importZip(zip),
         throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('2 MB'))),
+            .having((e) => e.message, 'message', contains('MiB'))),
       );
     });
 
@@ -404,7 +404,7 @@ void main() {
       await expectLater(
         store.importFiles({...files(manifest()), 'skills/big.md': big}),
         throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('2 MB'))),
+            .having((e) => e.message, 'message', contains('MiB'))),
       );
 
       final src = writeSource();
@@ -414,7 +414,7 @@ void main() {
       await expectLater(
         store.importDirectory(src),
         throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('200'))),
+            .having((e) => e.message, 'message', contains('1000'))),
       );
     });
 

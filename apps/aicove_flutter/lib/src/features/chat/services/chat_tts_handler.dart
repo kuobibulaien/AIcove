@@ -206,6 +206,133 @@ class ChatTtsHandler {
     }
   }
 
+  /// Resolves multimodal segments without publishing partial messages. Normal
+  /// chat keeps its streaming delivery; background enrichment commits this list
+  /// and its raw payload together only after preparation succeeds.
+  Future<List<Message>> prepareBackgroundSnapshot({
+    required String convId,
+    required Message rawMessage,
+    required AssistantMessageBuildResult buildResult,
+    required String replyText,
+    required List<PluginEvent> pluginEvents,
+    required bool ttsEnabled,
+    bool fallbackFailedMedia = false,
+  }) async {
+    final request = VoiceRequest.forEvents(pluginEvents);
+    if (request != null && !identical(request, VoiceRequest.current)) {
+      return request.run(
+        () => prepareBackgroundSnapshot(
+          convId: convId,
+          rawMessage: rawMessage,
+          buildResult: buildResult,
+          replyText: replyText,
+          pluginEvents: pluginEvents,
+          ttsEnabled: ttsEnabled,
+          fallbackFailedMedia: fallbackFailedMedia,
+        ),
+      );
+    }
+    final previousStatus = _ref.read(chatStatusProvider);
+    try {
+      if (!pluginEvents.any(
+        (e) => e.type == 'tts_convert' || e.type == 'image_generate',
+      )) {
+        return buildResult.messages;
+      }
+      final steps = _deliveryPlanner.planSequentialSteps(
+        replyText: replyText,
+        pluginEvents: pluginEvents,
+        canGenerateTts: ttsEnabled && _ttsManager != null,
+        allowTtsTextFallback: true,
+        skipTextSegments: false,
+        pendingTtsPlaceholderBuilder: (text) =>
+            _buildPendingTtsPlaceholderMessage(
+              text,
+              sourceMessageId: rawMessage.id,
+            ),
+        stickerMessageBuilder: (segment) => _buildStickerMessageFromSegment(
+          segment,
+          sourceMessageId: rawMessage.id,
+        ),
+      );
+      final messages = <Message>[];
+      for (final (index, step) in steps.indexed) {
+        final id = '${rawMessage.id}_segment_$index';
+        Message? message;
+        switch (step.type) {
+          case ChatSequentialMultimodalStepType.text:
+            message = Message(
+              id: id,
+              role: 'assistant',
+              content: step.text ?? '',
+              createdAt: rawMessage.createdAt,
+              sourceMessageId: rawMessage.id,
+            );
+          case ChatSequentialMultimodalStepType.sticker:
+            message = step.message;
+          case ChatSequentialMultimodalStepType.pendingTts:
+            final pending = step.message!;
+            message = Message(
+              id: pending.id,
+              role: 'assistant',
+              content: pending.blocks!.whereType<AudioBlock>().first.text ?? '',
+              createdAt: rawMessage.createdAt,
+              sourceMessageId: rawMessage.id,
+            );
+            await _pendingTtsResolver.resolveSinglePendingMessage(
+              convId: convId,
+              message: pending,
+              persistResult: false,
+              onAudioResolved: (url, duration) {
+                message = Message.fromBlocks(
+                  id: pending.id,
+                  role: 'assistant',
+                  sourceMessageId: rawMessage.id,
+                  createdAt: rawMessage.createdAt,
+                  blocks: [
+                    AudioBlock(
+                      messageId: pending.id,
+                      url: url,
+                      text: pending.blocks!.whereType<AudioBlock>().first.text,
+                      durationSeconds: duration,
+                    ),
+                  ],
+                );
+              },
+            );
+          case ChatSequentialMultimodalStepType.deferredImage:
+            try {
+              message = await _deferredImageDelivery.prepareSnapshotImage(
+                convId: convId,
+                prompt: step.imagePrompt!,
+                messageId: id,
+              );
+            } catch (_) {
+              if (!fallbackFailedMedia) rethrow;
+              message = Message(
+                id: id, role: 'assistant', content: '[图片：${step.imagePrompt}]',
+                createdAt: rawMessage.createdAt,
+                sourceMessageId: rawMessage.id,
+              );
+            }
+        }
+        if (message != null) {
+          messages.add(
+            message!.copyWith(
+              sourceMessageId: rawMessage.id,
+              createdAt: rawMessage.createdAt,
+            ),
+          );
+        }
+      }
+      return messages;
+    } finally {
+      if (_ref.read(chatStatusProvider) == ChatStatus.generatingVoice) {
+        _ref.read(chatStatusProvider.notifier).state = previousStatus;
+      }
+    }
+  }
+
   /// 统一的消息交付入口
   ///
   /// 根据是否包含 TTS 标签，自动选择交付策略：

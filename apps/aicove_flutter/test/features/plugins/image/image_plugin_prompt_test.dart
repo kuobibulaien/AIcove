@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/builtin_prompt_packs.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,7 +26,7 @@ class _FakeAppSettingsNotifier extends AppSettingsNotifier {
 }
 
 AppSettings _buildImageSettings({
-  CallFlowMode mode = CallFlowMode.auto,
+  CallFlowMode mode = CallFlowMode.call,
 }) {
   const modelRef = 'openai:test-image-model';
   return AppSettings(
@@ -126,7 +128,7 @@ AppSettings _buildHiddenOnlyImageSettings() {
     accentColor: 'FC96AA',
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
-    callFlowSettings: CallFlowSettings(mode: CallFlowMode.auto),
+    callFlowSettings: CallFlowSettings(mode: CallFlowMode.call),
   );
 }
 
@@ -177,9 +179,11 @@ void main() {
 
     final prompt = plugin.buildTagSemanticsPrompt();
 
+    // An OpenAI-compatible unknown model gets the natural-language pack.
     expect(prompt, isNotNull);
-    expect(prompt, contains('<image>英文正向提示词</image>'));
-    expect(prompt, contains('NovelAI'));
+    expect(prompt, contains('<image>画面描述</image>'));
+    expect(prompt, contains('自然语言'));
+    expect(prompt, isNot(contains('NovelAI')));
     expect(plugin.getTools(), isEmpty);
   });
 
@@ -217,25 +221,13 @@ void main() {
     expect(emptyTagResult.processedText, '<image></image>');
   });
 
-  test('image plugin should use independent fast prompt preset in fast mode',
+  test('the request prompt pack decides the fast-mode text, not old presets',
       () async {
-    final stablePreset = DrawingPromptPreset(
-      name: '稳定预设',
-      content: ImageConfig.encodeToolDescriptionBlocks(
-        const DrawImageToolDescriptionBlocks(
-          promptDescription: '稳定模式专用规则',
-        ),
-      ),
-    );
-    const fastPreset = DrawingPromptPreset(
-      name: '快速预设',
-      content: '快速模式独立规则：只在需要时输出 <image>英文提示词</image>',
-    );
-    final config = ImageConfig(
-      systemPromptPresets: <DrawingPromptPreset>[stablePreset],
-      selectedSystemPromptPresetName: stablePreset.name,
-      fastPromptPresets: const <DrawingPromptPreset>[fastPreset],
-      selectedFastPromptPresetName: fastPreset.name,
+    const config = ImageConfig(
+      fastPromptPresets: <DrawingPromptPreset>[
+        DrawingPromptPreset(name: '快速预设', content: '旧的快速模式规则'),
+      ],
+      selectedFastPromptPresetName: '快速预设',
     );
     final container = ProviderContainer(
       overrides: [
@@ -248,16 +240,21 @@ void main() {
     );
     addTearDown(container.dispose);
     await container.read(appSettingsProvider.future);
+    final pack = PromptPackLibrary(builtins: kBuiltinPromptPacks).resolve(
+      'image',
+      const PresetPromptBinding(packId: 'builtin.image.novelai'),
+      format: 'openai',
+      model: 'hidden-image-model',
+    );
 
     final pluginProvider = Provider<ImagePlugin>((ref) {
-      return ImagePlugin(config, ref);
+      return ImagePlugin(config, ref, isRequestSnapshot: true, prompts: pack);
     });
-    final plugin = container.read(pluginProvider);
+    final prompt = container.read(pluginProvider).buildTagSemanticsPrompt();
 
-    final prompt = plugin.buildTagSemanticsPrompt();
-
-    expect(prompt, contains('快速模式独立规则'));
-    expect(prompt, isNot(contains('稳定模式专用规则')));
+    expect(prompt, contains('提示词规范（NovelAI）'));
+    expect(prompt, contains('"width":832'));
+    expect(prompt, isNot(contains('旧的快速模式规则')));
   });
 
   test('image config should preserve fast prompt preset selection', () {
@@ -311,7 +308,7 @@ void main() {
     final plugin = container.read(Provider((ref) => ImagePlugin(config, ref, requestSettings: settings, isRequestSnapshot: true)));
     final tool = plugin.getTools().single;
     expect(tool.parameters.keys, containsAll(['steps', 'guidance_scale', 'count']));
-    expect(tool.parameters['steps']!.description, contains('23'));
+    expect(tool.description, contains('参考 23'));
     expect(tool.parameters['width']!.required, isFalse);
     final events = plugin.convertInlineImageTags('<image>{"prompt":"cat","steps":35}</image>').events;
     expect((events.single.data['drawingConfig'] as Map)['defaultSteps'], 23);
@@ -366,6 +363,33 @@ void main() {
     expect([second['width'], second['height'], second['steps']], [768, 1024, 30]);
     final event = a.convertInlineImageTags('<image>cat</image>').events.single;
     expect((event.data['drawingConfig'] as Map)['defaultSteps'], 23);
+  });
+
+  test('no usable image channel: request snapshot offers no tool or prompt', () async {
+    // Fresh install: drawing is on globally, but no provider has image models.
+    final settings = _buildImageSettings(mode: CallFlowMode.fast)
+        .copyWith(providers: const <ProviderAuth>[]);
+    final container = ProviderContainer(overrides: [appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings))]);
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    ImagePlugin snapshot(ImageConfig config, AppSettings s) => container.read(
+        Provider((ref) => ImagePlugin(config, ref, requestSettings: s, isRequestSnapshot: true)));
+
+    final unconfigured = snapshot(const ImageConfig(), settings);
+    expect(unconfigured.isUsable, isFalse);
+    expect(unconfigured.getTools(), isEmpty);
+    expect(unconfigured.buildRequestSystemPrompt(useFastRoute: true), isNull);
+
+    // A configured channel makes it usable again.
+    final configured = snapshot(const ImageConfig(), _buildImageSettings());
+    expect(configured.isUsable, isTrue);
+    expect(configured.getTools(), hasLength(1));
+
+    // An explicit binding that broke stays usable, so the draw fails loudly
+    // instead of silently doing nothing.
+    final broken = snapshot(
+        const ImageConfig(selectedProviderId: 'missing', selectedModelId: 'missing:x'), settings);
+    expect(broken.isUsable, isTrue);
   });
 
   test('explicit missing provider/model fails without fallback or network request', () async {

@@ -23,21 +23,20 @@ String? _singleMediaCapability(List<String>? capabilities) {
 class UiModelsStoreLocalDataSource {
   const UiModelsStoreLocalDataSource();
 
-  Future<Map<String, dynamic>> fetchAll() async {
+  Future<Map<String, dynamic>> fetchAll() => cloudLocalWrite(() async {
     final prefs = await SharedPreferences.getInstance();
     final result = await _loadStore(prefs);
     return result;
-  }
+  });
 
-  Future<Map<String, dynamic>> updatePartial(
-    Map<String, dynamic> partial,
-  ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = await _loadStore(prefs);
-    final next = Map<String, dynamic>.from(current);
-    next.addAll(partial);
-    return _writeStore(prefs, next);
-  }
+  Future<Map<String, dynamic>> updatePartial(Map<String, dynamic> partial) =>
+      cloudLocalWrite(() async {
+        final prefs = await SharedPreferences.getInstance();
+        final current = await _loadStore(prefs);
+        final next = Map<String, dynamic>.from(current);
+        next.addAll(partial);
+        return _writeStore(prefs, next);
+      });
 
   Future<Map<String, dynamic>> importProvider({
     required String providerId,
@@ -50,7 +49,7 @@ class UiModelsStoreLocalDataSource {
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
     required List<String> models,
-  }) async {
+  }) => cloudLocalWrite(() async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
     final modelTypes =
@@ -95,7 +94,9 @@ class UiModelsStoreLocalDataSource {
     final normalizedConfig = Map<String, dynamic>.from(customConfig ?? {});
     if (isComfyUI) {
       normalizedConfig['requestFormat'] = 'comfyui';
-      normalizedConfig['defaultImageModel'] = ComfyUIWorkflow.modelId;
+      normalizedConfig['defaultImageModel'] = visible.isNotEmpty
+          ? visible.first
+          : (models.isNotEmpty ? models.first : ComfyUIWorkflow.modelId);
     }
     if (isNovelAi) {
       normalizedConfig['requestFormat'] = 'novelai';
@@ -149,7 +150,7 @@ class UiModelsStoreLocalDataSource {
     }
 
     return _writeStore(prefs, current);
-  }
+  });
 
   Future<Map<String, dynamic>> updateProvider({
     required String providerId,
@@ -171,7 +172,7 @@ class UiModelsStoreLocalDataSource {
     bool clearContextMessageLimit = false,
     int? maxContextTokens,
     bool clearMaxContextTokens = false,
-  }) async {
+  }) => cloudLocalWrite(() async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
     final providers = _copyProviders(current);
@@ -225,6 +226,12 @@ class UiModelsStoreLocalDataSource {
             ?.toString()
             .trim()
             .toLowerCase();
+    final providerIsComfyUI = ComfyUIWorkflow.isProvider(
+      providerId,
+      provider['custom_config'] is Map
+          ? Map<String, dynamic>.from(provider['custom_config'] as Map)
+          : null,
+    );
     final providerIsNovelAi =
         isNovelAiProvider(
           providerId: providerId,
@@ -238,6 +245,12 @@ class UiModelsStoreLocalDataSource {
       provider['models'] = providerIsNovelAi
           ? normalizeNovelAiModels(cleaned)
           : (cleaned..sort(caseInsensitiveSettingsSort));
+      if (providerIsComfyUI || providerIsNovelAi) {
+        for (final model in cleaned) {
+          currentModelTypes['$providerId:$model'] = 'image';
+        }
+        current['model_types'] = currentModelTypes;
+      }
     }
     if (visibleModels != null) {
       final models = cleanSettingsStrings(provider['models']);
@@ -293,43 +306,43 @@ class UiModelsStoreLocalDataSource {
     providers[index] = provider;
     current['providers'] = providers;
     return _writeStore(prefs, current);
-  }
+  });
 
-  Future<Map<String, dynamic>> deleteProvider(String providerId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = await _loadStore(prefs);
-    final providers = _copyProviders(current);
-    providers.removeWhere((p) => p['id'] == providerId);
-    current['providers'] = providers;
-    return _writeStore(prefs, current);
-  }
+  Future<Map<String, dynamic>> deleteProvider(String providerId) =>
+      cloudLocalWrite(() async {
+        final prefs = await SharedPreferences.getInstance();
+        final current = await _loadStore(prefs);
+        final providers = _copyProviders(current);
+        providers.removeWhere((p) => p['id'] == providerId);
+        current['providers'] = providers;
+        return _writeStore(prefs, current);
+      });
 
-  Future<Map<String, dynamic>> reorderProviders(
-    List<String> providerIds,
-  ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final current = await _loadStore(prefs);
-    final providers = _copyProviders(current);
+  Future<Map<String, dynamic>> reorderProviders(List<String> providerIds) =>
+      cloudLocalWrite(() async {
+        final prefs = await SharedPreferences.getInstance();
+        final current = await _loadStore(prefs);
+        final providers = _copyProviders(current);
 
-    final reordered = <Map<String, dynamic>>[];
-    for (final id in providerIds) {
-      final provider = providers.firstWhere(
-        (p) => p['id'] == id,
-        orElse: () => <String, dynamic>{},
-      );
-      if (provider.isNotEmpty) {
-        reordered.add(provider);
-      }
-    }
+        final reordered = <Map<String, dynamic>>[];
+        for (final id in providerIds) {
+          final provider = providers.firstWhere(
+            (p) => p['id'] == id,
+            orElse: () => <String, dynamic>{},
+          );
+          if (provider.isNotEmpty) {
+            reordered.add(provider);
+          }
+        }
 
-    current['providers'] = reordered;
-    return _writeStore(prefs, current);
-  }
+        current['providers'] = reordered;
+        return _writeStore(prefs, current);
+      });
 
   Future<Map<String, dynamic>> reorderProviderModels({
     required String providerId,
     required List<String> modelIds,
-  }) async {
+  }) => cloudLocalWrite(() async {
     final prefs = await SharedPreferences.getInstance();
     final current = await _loadStore(prefs);
     final providers = _copyProviders(current);
@@ -342,7 +355,7 @@ class UiModelsStoreLocalDataSource {
     providers[index] = provider;
     current['providers'] = providers;
     return _writeStore(prefs, current);
-  }
+  });
 
   List<Map<String, dynamic>> _copyProviders(Map<String, dynamic> current) {
     return (current['providers'] as List? ?? const <dynamic>[])

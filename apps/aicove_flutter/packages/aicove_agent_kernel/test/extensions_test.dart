@@ -22,7 +22,6 @@ KernelTool _tool(
 TurnContext _ctx({KernelCancellation? cancellation, List<KernelEvent>? log}) =>
     TurnContext(
       round: 1,
-      maxRounds: 3,
       cancellation: cancellation ?? KernelCancellation(),
       emit: (event) async => log?.add(event),
     );
@@ -329,7 +328,6 @@ void main() {
       final log = <ToolGated>[];
       final ctx = TurnContext(
         round: 1,
-        maxRounds: 3,
         cancellation: cancellation,
         emit: (event) async {
           if (event is! ToolGated) return;

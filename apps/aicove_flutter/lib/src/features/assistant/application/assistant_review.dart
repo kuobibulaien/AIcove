@@ -3,8 +3,8 @@ import 'dart:convert';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
 
-/// Risk tier of one assistant tool call (ADR0073, batch T3). Decided by
-/// rules first; only [review] goes to the reviewer model.
+/// Risk tier retained for manual confirmation, quick panels and review clients.
+/// Default assistant runs allow every tier without review (ADR0107).
 enum AssistantRisk {
   /// Reads only.
   readOnly,
@@ -16,7 +16,7 @@ enum AssistantRisk {
   /// reviewer decides, and may hand it to the user.
   review,
 
-  /// Always asks the user; the reviewer can never approve it.
+  /// Requires the user rather than a reviewer when approval is requested.
   major,
 }
 
@@ -40,19 +40,27 @@ class AssistantToolGate implements ToolGate {
   static bool _reads(ToolEffect effect) =>
       effect == ToolEffect.readDiagnostic || effect == ToolEffect.readPrivate;
 
+  static const _unrestricted = #assistantUnrestricted;
+
+  /// True only inside a call allowed by the assistant's no-approval policy.
+  /// Handlers may use this instead of requiring per-call consent.
+  static bool get unrestricted =>
+      ToolCallScope.current?.outcome == GateOutcome.allowed &&
+      ToolCallScope.current?.notes[_unrestricted] == true;
+
   @override
-  GateVerdict check(KernelToolCall call, ToolEffect effect) => switch (riskOf(
-    call.name,
-    call.arguments,
-  )) {
-    AssistantRisk.readOnly => const GateVerdict.allow(),
-    null when alwaysAsk() && !_reads(effect) => const GateVerdict.ask('每次都问我'),
-    null => const GateVerdict.allow(),
-    AssistantRisk.reversible when alwaysAsk() => const GateVerdict.ask('每次都问我'),
-    AssistantRisk.reversible => const GateVerdict.allow(),
-    AssistantRisk.review => const GateVerdict.ask('需审核'),
-    AssistantRisk.major => const GateVerdict.ask('重大操作'),
-  };
+  GateVerdict check(KernelToolCall call, ToolEffect effect) {
+    // Rating also records the target snapshot used by write conflict checks.
+    final risk = riskOf(call.name, call.arguments);
+    final manual = alwaysAsk();
+    ToolCallScope.current?.notes[_unrestricted] = !manual;
+    if (!manual ||
+        risk == AssistantRisk.readOnly ||
+        (risk == null && _reads(effect))) {
+      return const GateVerdict.allow();
+    }
+    return const GateVerdict.ask('每次都问我');
+  }
 }
 
 enum ReviewVerdict { allow, deny, askUser }
@@ -81,7 +89,7 @@ class AssistantReviewer {
       .any((value) => value is String && value.length > argumentLimit);
 
   static const systemPrompt =
-      '你是 AIcove 助手的修改审核员。AIcove 助手是一个帮用户写角色卡、'
+      '你是 AIcove酱的修改审核员。AIcove酱是一个帮用户写角色卡、'
       '调插件和酒馆预设的 Agent，它现在想调用一个修改工具。'
       '你只能看到用户最近说的话和这次工具调用，看不到助手自己的解释。\n'
       '判断规则：\n'
@@ -158,6 +166,18 @@ class AssistantReviewer {
 class ApprovalPrompt {
   const ApprovalPrompt({required this.title, required this.detail});
 
+  factory ApprovalPrompt.workspaceScript(String workspaceName) =>
+      ApprovalPrompt(
+        title: '运行脚本',
+        detail: '在空间「$workspaceName」里运行脚本，可能访问网络；空间内的改动可以撤销',
+      );
+
+  factory ApprovalPrompt.workspaceShell(String workspaceName, String command) =>
+      ApprovalPrompt(
+        title: '运行命令',
+        detail: '在空间「$workspaceName」里执行：\n$command\n命令可能改动空间以外的文件，命令造成的改动无法撤销',
+      );
+
   final String title;
   final String detail;
 }
@@ -180,7 +200,12 @@ class AssistantApprovalPort implements ExplainingApprovalPort {
 
   /// Every change goes to the user; the reviewer is not asked.
   final bool Function() alwaysAsk;
-  final ApprovalPrompt Function(String toolName, Map<String, dynamic> args)
+
+  /// May look the target up first, so the card names what it changes.
+  final FutureOr<ApprovalPrompt> Function(
+    String toolName,
+    Map<String, dynamic> args,
+  )
   describe;
   final String Function(String toolName) toolDescription;
   final List<String> userMessages;
@@ -207,7 +232,8 @@ class AssistantApprovalPort implements ExplainingApprovalPort {
   @override
   Future<ApprovalAnswer> answer(ApprovalRequest request) async {
     final risk = riskOf(request.toolName, request.arguments);
-    if (risk == AssistantRisk.major ||
+    if (request.requiresHumanApproval ||
+        risk == AssistantRisk.major ||
         alwaysAsk() ||
         AssistantReviewer.tooLongToReview(request.arguments)) {
       return _askUser(request);
@@ -243,10 +269,11 @@ class AssistantApprovalPort implements ExplainingApprovalPort {
 
   Future<ApprovalAnswer> _askUser(ApprovalRequest request) async {
     final approved = await askUser(
-      describe(request.toolName, request.arguments),
+      await describe(request.toolName, request.arguments),
       request.withdrawn,
     );
     if (approved) {
+      ToolCallScope.current?.humanApproved = true;
       _rejections = 0;
       return const ApprovalAnswer.approved();
     }

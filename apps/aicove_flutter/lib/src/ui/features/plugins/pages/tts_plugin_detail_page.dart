@@ -1,3 +1,4 @@
+import 'prompt_pack_pages.dart';
 import 'package:flutter/material.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -131,6 +132,16 @@ class TtsPluginDetailPage extends ConsumerWidget {
                 children: [
                   MoeSettingsGroup(
                     children: [
+                      MoeSettingsRow(
+                        icon: Icons.layers_outlined,
+                        label: PromptPackListPage.title,
+                        subtitle: '按模型写好的语音说明，可编辑、可自建',
+                        onTap: () => Navigator.of(context).push(
+                          ParallaxSlidePageRoute(
+                            page: const PromptPackListPage(pluginId: 'tts'),
+                          ),
+                        ),
+                      ),
                       MoeSettingsRow(
                         icon: Icons.call_outlined,
                         label: '语音通话',

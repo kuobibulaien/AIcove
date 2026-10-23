@@ -17,7 +17,7 @@ import 'message_segmentation_debug_page.dart';
 import 'debug_other_tools_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
-/// 调试中心 - 整合日志、联系人上下文、同步备份，低频工具收进「其他」
+/// 调试中心 - 整合日志、角色完整上下文、同步备份，低频工具收进「其他」
 class DebugCenterPage extends StatelessWidget {
   const DebugCenterPage({super.key});
 

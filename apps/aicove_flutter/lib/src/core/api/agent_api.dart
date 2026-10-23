@@ -1,3 +1,5 @@
+import 'tool_media.dart';
+import 'request_control.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:archive/archive.dart';
@@ -35,6 +37,9 @@ class SendMessageRichResult {
   /// 供应商原样的结束原因；未提供时为 null。
   final String? rawFinishReason;
 
+  /// 模型原生思考，只用于展示；没有时为空串。
+  final String reasoning;
+
   const SendMessageRichResult({
     required this.text,
     required this.toolResults,
@@ -42,6 +47,7 @@ class SendMessageRichResult {
     this.hiddenThoughtParts = const [],
     this.rawResponse,
     this.rawFinishReason,
+    this.reasoning = '',
   });
 
   FinishReason? get finishReason => normalizeFinishReason(rawFinishReason);

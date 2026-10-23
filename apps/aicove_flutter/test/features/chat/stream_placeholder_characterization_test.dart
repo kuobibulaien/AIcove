@@ -1,7 +1,7 @@
 // Characterization tests for the streaming placeholder state machine
 // (`_StreamPlaceholderDelivery`, private part of ChatActions).
 //
-// Scope: lock CURRENT behavior only — no product-code changes.
+// Scope: lock streaming behavior, including E5 visible-only cancellation.
 // Drive via public surface: ChatActions.send + scripted fake ChatSendService.
 // Core metric: ConversationTimelineCache.watchWindow emission count.
 //
@@ -9,6 +9,8 @@
 //   flush interval = 180ms
 //   thinking placeholder delay = 450ms
 //   segment reveal delay = settings.streamSegmentDelaySeconds
+@Tags(['slow'])
+library;
 
 import 'dart:async';
 import 'dart:io';
@@ -36,6 +38,9 @@ import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart
 import 'package:aicove_flutter/src/features/chat/services/chat_tts_handler.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
 import 'package:aicove_flutter/src/features/observability/trace_models.dart';
+import 'package:aicove_flutter/src/features/observability/frontend_diagnostics_port.dart';
+import 'package:aicove_flutter/src/features/observability/frontend_diagnostics_provider.dart';
+import 'package:aicove_flutter/src/features/observability/frontend_diagnostics_service.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
@@ -276,6 +281,15 @@ class _FallbackStep extends _StreamStep {
   const _FallbackStep();
 }
 
+class _FailureStep extends _StreamStep {
+  const _FailureStep();
+}
+
+class _BarrierStep extends _StreamStep {
+  const _BarrierStep(this.ready);
+  final Future<void> ready;
+}
+
 class _ScriptedStreamingSendService extends ChatSendService {
   _ScriptedStreamingSendService(
     super.ref,
@@ -411,7 +425,6 @@ class _ScriptedStreamingSendService extends ChatSendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -438,6 +451,10 @@ class _ScriptedStreamingSendService extends ChatSendService {
           onStreamTextReset?.call();
         case _FallbackStep():
           onStreamingFallback?.call();
+        case _FailureStep():
+          throw StateError('private fixture failure');
+        case _BarrierStep(:final ready):
+          await ready;
       }
     }
     return ApiCallResult(
@@ -453,6 +470,9 @@ class _ScriptedStreamingSendService extends ChatSendService {
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
+    if (apiResult.status != ApiRunStatus.completed) {
+      return super.buildAssistantMessages(apiResult: apiResult, settings: settings);
+    }
     return _buildResult(
       text: apiResult.processedText,
       rawReplyText: apiResult.replyText,
@@ -506,6 +526,26 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
 // ---------------------------------------------------------------------------
 // Harness: window notification counter
 // ---------------------------------------------------------------------------
+
+class _FallbackStreamTtsHandler extends _RecordingStreamTtsHandler {
+  _FallbackStreamTtsHandler(super.ref);
+
+  @override
+  Future<void> resolvePendingStreamMessage({
+    required String convId,
+    required Message message,
+    void Function(String audioUrl, double? durationSeconds)? onAudioResolved,
+    void Function(String text)? onTextFallback,
+    bool persistResult = true,
+    bool Function()? shouldApplyResult,
+  }) async {
+    recordedStreamPendingMessages.add(message);
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+    if (shouldApplyResult?.call() ?? true) {
+      onTextFallback?.call(message.blocks!.whereType<AudioBlock>().single.text!);
+    }
+  }
+}
 
 class _WindowProbe {
   _WindowProbe({
@@ -843,6 +883,46 @@ Future<_Harness> _buildHarness({
   );
 }
 
+// Wait for a real displayed segment, not merely an active user turn.
+Future<List<Message>> _waitForVisibleText(_Harness harness, String text) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (DateTime.now().isBefore(deadline)) {
+    final timeline = await harness.loadTimeline();
+    if (_assistantRealText(timeline).map((m) => m.displayText).join() == text) {
+      return timeline;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  throw TimeoutException('Expected visible assistant text: $text');
+}
+
+Future<String> _expectCancelledPartial(
+  _Harness harness,
+  String text, {
+  String? savedId,
+}) async {
+  final raw =
+      (await harness.container
+              .read(chatHistoryStoreProvider)
+              .loadAllRawMessages(harness.conv.id))
+          .where((m) => m.role == 'assistant')
+          .toList();
+  expect(raw, hasLength(1), reason: '部分回复只落库一次');
+  expect(raw.single.content, text, reason: '只保存中断那一刻已显示的文字');
+  expect(raw.single.rawPayload?['runStatus'], 'cancelled');
+  if (savedId != null) expect(raw.single.id, savedId);
+  final timeline = await harness.loadTimeline();
+  final assistants = timeline.where((m) => m.role == 'assistant').toList();
+  expect(_assistantRealText(timeline).map((m) => m.displayText).join(), text);
+  expect(assistants, isNotEmpty);
+  expect(assistants.map((m) => m.id).toSet(), hasLength(assistants.length));
+  expect(assistants.where((m) => m.status == 'sending'), isEmpty);
+  expect(assistants.where(_isGeneratingPlaceholder), isEmpty);
+  expect(assistants.last.rawPayload?['runStatus'], 'cancelled');
+  expect(harness.container.read(activeStreamProjectionsProvider), isEmpty);
+  return raw.single.id;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -850,6 +930,74 @@ Future<_Harness> _buildHarness({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   _installPlatformChannelMocks();
+
+  test('本轮失败留下受控异常类型和代码位置，不导出异常正文', () async {
+    final logs = <LogEntry>[];
+    final harness = await _buildHarness(
+      convId: 'diagnostic_failure',
+      settings: _buildTestSettings(),
+      script: const [_FailureStep()],
+      replyText: '',
+      extraOverrides: [
+        frontendDiagnosticsProvider.overrideWithValue(
+          FrontendDiagnosticsService(sink: logs.add),
+        ),
+      ],
+    );
+    addTearDown(harness.dispose);
+    await harness.runSend();
+    final failure = logs.singleWhere(
+        (log) => log.metadata?['event'] == FrontendStage.turnFailed.name);
+    expect(failure.metadata?['errorType'], 'StateError');
+    expect(failure.metadata?['codeLocations'], isNotEmpty);
+    expect(failure.metadata.toString(), isNot(contains('private fixture')));
+  });
+
+  for (final activeChannel in [false, true]) {
+    for (final prefix in ['', '新增前文。', '新增前文。第二句。']) {
+      test('TTS 回退后最终正文补前文仍完整提交 channel=$activeChannel prefix=$prefix',
+          () async {
+        const streamed = '原始前文。<tts>语音一</tts>中间正文。<tts>语音二</tts>末尾正文。';
+        late _FallbackStreamTtsHandler handler;
+        final harness = await _buildHarness(
+          convId: 'fallback_prefix_${activeChannel}_${prefix.length}',
+          settings: _buildTestSettings(),
+          script: const [
+            _DeltaStep(streamed),
+            _DelayStep(Duration(milliseconds: 250)),
+          ],
+          replyText: '$prefix$streamed',
+          extraOverrides: [
+            streamProjectionPolicyProvider.overrideWithValue(
+              StreamProjectionPolicy(useActiveStreamChannel: activeChannel),
+            ),
+            chatTtsHandlerProvider.overrideWith((ref) {
+              handler = _FallbackStreamTtsHandler(ref);
+              return handler;
+            }),
+          ],
+        );
+        addTearDown(harness.dispose);
+        await harness.runSend();
+        expect(harness.container.read(errorProvider), isNull);
+        final messages = await harness.loadTimeline();
+        final body = messages.where((m) => m.role == 'assistant').toList();
+        expect(body.map((m) => m.id).toSet(), hasLength(body.length));
+        for (final spoken in ['语音一', '语音二']) {
+          expect(body.where((m) => m.displayText == spoken), hasLength(1));
+        }
+        expect(body.any(_isPendingAudio), isFalse);
+        expect(body.map((m) => m.displayText).join(),
+            '$prefix原始前文。语音一中间正文。语音二末尾正文。');
+        expect(handler.recordedStreamPendingMessages, hasLength(2));
+        final cold = await harness.container.read(chatHistoryStoreProvider)
+            .loadProjectedMessagesFromRawStore(harness.conv.id);
+        final coldBody = cold.where((m) => m.role == 'assistant').toList();
+        expect(coldBody.map((m) => m.displayText).join(),
+            body.map((m) => m.displayText).join());
+      });
+    }
+  }
 
   for (final note in ['', '你怎么看这段聊天？']) {
     test('分享集合跨联系人保留归属并触发回复 note=$note', () async {
@@ -889,6 +1037,52 @@ void main() {
       expect(user.content, contains('用户与「小林」的聊天记录'));
       if (note.isNotEmpty) expect(user.content, contains(note));
       expect((await harness.loadTimeline(sourceId)).where((m) => m.role == 'user'), isEmpty);
+    });
+  }
+
+  for (final channel in [false, true]) {
+    test('sticker markup stays hidden in active and sealed stream text channel=$channel', () async {
+      const raw = '晚安<sticker tag="晚安"/>好梦';
+      final harness = await _buildHarness(
+        convId: 'sticker_markup_$channel',
+        settings: _buildTestSettings(enableChunking: false),
+        script: const [
+          _DeltaStep('晚安<sti'),
+          _DelayStep(Duration(milliseconds: 300)),
+          _DeltaStep('cker tag="晚安"/>'),
+          _DelayStep(Duration(milliseconds: 300)),
+          _DeltaStep('好梦'),
+          _DelayStep(Duration(milliseconds: 300)),
+        ],
+        replyText: raw,
+        processedText: '晚安好梦',
+        extraOverrides: [
+          streamProjectionPolicyProvider.overrideWithValue(
+            StreamProjectionPolicy(useActiveStreamChannel: channel),
+          ),
+        ],
+      );
+      addTearDown(harness.dispose);
+      harness.startSend();
+      final observed = <String>[];
+      for (var i = 0; i < 14; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 70));
+        if (channel) {
+          final live = harness.container.read(activeStreamProjectionsProvider)[harness.conv.id];
+          if (live?.phase == ActiveStreamPhase.streamingTail) observed.add(live!.tailText);
+        } else {
+          observed.addAll(_assistantRealText(await harness.loadTimeline()).map((m) => m.displayText));
+        }
+      }
+      await harness.awaitActiveSend();
+      expect(observed, contains('晚安'));
+      expect(observed, everyElement(isNot(contains('<'))));
+      expect(_assistantRealText(await harness.loadTimeline()).map((m) => m.displayText).join(), '晚安好梦');
+      final cold = await harness.container.read(chatHistoryStoreProvider)
+          .loadProjectedMessagesFromRawStore(harness.conv.id);
+      expect(_assistantRealText(cold).map((m) => m.displayText).join(), '晚安好梦');
+      final rawMessages = await harness.container.read(chatHistoryStoreProvider).loadAllRawMessages(harness.conv.id);
+      expect(rawMessages.singleWhere((m) => m.role == 'assistant').content, raw);
     });
   }
 
@@ -1694,6 +1888,41 @@ void main() {
         reason: '现状：DB 投影终态为完整 raw 正文。',
       );
     });
+
+    for (final chunking in [false, true]) {
+      test('kaomoji with < keeps the text after it (chunking=$chunking)',
+          () async {
+        const reply = '能边聊天边玩的那种(ง>◡<ง) 后台找好了我再告诉你哦~';
+        final harness = await _buildHarness(
+          convId: 'char_e_kaomoji_${DateTime.now().microsecondsSinceEpoch}',
+          settings: _buildTestSettings(
+            enableChunking: chunking,
+            minSegmentLength: 1,
+            streamSegmentDelaySeconds: 0,
+          ),
+          script: const <_StreamStep>[
+            _DeltaStep('能边聊天边玩的那种(ง>◡<'),
+            _DelayStep(Duration(milliseconds: 200)),
+            _DeltaStep('ง) 后台找好了我再告诉你哦~'),
+            _DelayStep(Duration(milliseconds: 220)),
+          ],
+          replyText: reply,
+        );
+        addTearDown(harness.dispose);
+
+        final probe = await harness.runSend(
+          text: 'kaomoji',
+          sampleInterval: const Duration(milliseconds: 80),
+          sampleTicks: 10,
+        );
+
+        final shown = probe.snapshots.last
+            .where((m) => m.role == 'assistant' && !_isGeneratingPlaceholder(m))
+            .map((m) => m.displayText.trim())
+            .join();
+        expect(shown, contains('(ง>◡<ง) 后台找好了我再告诉你哦~'));
+      });
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -1710,10 +1939,11 @@ void main() {
         streamSegmentDelaySeconds: 0,
       );
 
-      // Long idle past thinking delay, then late deltas that must not land
-      // after interrupt (generation no longer current).
+      // Hold the reply until the placeholder is observed. Request assembly
+      // can itself await tag mappings, before the 450ms timer even starts.
+      final releaseTail = Completer<void>();
       final script = <_StreamStep>[
-        const _DelayStep(Duration(milliseconds: 900)),
+        _BarrierStep(releaseTail.future),
         const _DeltaStep('中断后不该出现的迟到正文。'),
         const _DelayStep(Duration(milliseconds: 120)),
       ];
@@ -1728,10 +1958,18 @@ void main() {
 
       const userText = 'F1 think interrupt';
       harness.startSend(text: userText);
+      addTearDown(() async {
+        if (!releaseTail.isCompleted) releaseTail.complete();
+        await harness.awaitActiveSend();
+      });
 
-      // Wait past thinking placeholder delay (450ms).
-      await Future<void>.delayed(const Duration(milliseconds: 560));
-      final mid = await harness.loadTimeline();
+      var mid = await harness.loadTimeline();
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (!mid.any(_isGeneratingPlaceholder) &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        mid = await harness.loadTimeline();
+      }
       expect(
         mid.any(_isGeneratingPlaceholder),
         isTrue,
@@ -1764,6 +2002,7 @@ void main() {
       );
 
       // Let late script deltas finish; they must not re-materialize assistant.
+      releaseTail.complete();
       await harness.awaitActiveSend();
       final afterLate = await harness.loadTimeline();
       expect(
@@ -1840,274 +2079,204 @@ void main() {
       );
     });
 
-    test('F2 活跃文本期 interrupt：在飞尾气泡清理，无幽灵，历史恢复', () async {
+    test('F2 活跃文本期 interrupt：保留可见文字一次，无幽灵或迟到尾巴', () async {
       final settings = _buildTestSettings(
-        enableChunking: true,
-        minSegmentLength: 1,
-        streamSegmentDelaySeconds: 0,
+        enableChunking: false,
+        ttsEnabled: false,
       );
-
-      final script = <_StreamStep>[
-        const _DeltaStep('活跃期可见句。'),
-        // Hold stream open long enough to interrupt while text is visible.
-        const _DelayStep(Duration(milliseconds: 700)),
-        const _DeltaStep('中断后尾巴。'),
-        const _DelayStep(Duration(milliseconds: 100)),
-      ];
-
+      final releaseLate = Completer<void>();
       final harness = await _buildHarness(
         convId: 'char_f2_active_${DateTime.now().microsecondsSinceEpoch}',
         settings: settings,
-        script: script,
-        replyText: '活跃期可见句。中断后尾巴。',
+        script: [
+          const _DeltaStep('活跃期可见但未封口'),
+          _BarrierStep(releaseLate.future),
+          const _DeltaStep('中断后尾巴。'),
+        ],
+        replyText: '活跃期可见但未封口中断后尾巴。',
       );
       addTearDown(harness.dispose);
+      addTearDown(() async {
+        if (!releaseLate.isCompleted) releaseLate.complete();
+        await harness.awaitActiveSend();
+      });
 
       const userText = 'F2 active interrupt';
       harness.startSend(text: userText);
+      final before = await _waitForVisibleText(harness, '活跃期可见但未封口');
+      final visible = _assistantRealText(
+        before,
+      ).map((m) => m.displayText).join();
+      expect(await harness.interrupt(), isTrue);
+      final savedId = await _expectCancelledPartial(harness, visible);
+      final savedTimelineIds = (await harness.loadTimeline())
+          .map((m) => m.id)
+          .toList();
+      expect(await harness.interrupt(), isFalse);
 
-      // Wait for seal + flush (180ms) to surface active text.
-      var sawActiveText = false;
-      for (var i = 0; i < 20; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-        final snap = await harness.loadTimeline();
-        if (snap.any(
-          (m) =>
-              m.role == 'assistant' &&
-              !_isGeneratingPlaceholder(m) &&
-              m.displayText.contains('活跃期可见句'),
-        )) {
-          sawActiveText = true;
-          break;
-        }
-      }
-      expect(
-        sawActiveText,
-        isTrue,
-        reason: '前置：interrupt 前应先看到活跃 seal 文本。',
-      );
-
-      final stopped = await harness.interrupt();
-      expect(stopped, isTrue);
-
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+      releaseLate.complete();
+      await harness.awaitActiveSend(settle: const Duration(milliseconds: 600));
+      await _expectCancelledPartial(harness, visible, savedId: savedId);
       final after = await harness.loadTimeline();
-      expect(
-        after.where(_isGeneratingPlaceholder),
-        isEmpty,
-        reason: '现状：活跃期 interrupt 无生成中占位残留。',
-      );
-      expect(
-        after.any((m) => m.displayText.contains('活跃期可见句')),
-        isFalse,
-        reason: '现状：未 commit 的流式 seal 在 restore 后消失（非 DB 正式消息）。',
-      );
-      expect(
-        after.any((m) => m.displayText.contains('中断后尾巴')),
-        isFalse,
-      );
-      expect(
-        after.map((m) => m.displayText).toList(),
-        [userText],
-        reason: '现状：时间线恢复为持久用户消息。',
-      );
-
-      await harness.awaitActiveSend();
-      final finalSnap = await harness.loadTimeline();
-      expect(
-        finalSnap.where((m) => m.role == 'assistant'),
-        isEmpty,
-        reason: '现状：迟到结果不落 assistant。',
-      );
+      expect(after.map((m) => m.id), savedTimelineIds);
+      expect(after.where((m) => m.role == 'user').single.displayText, userText);
+      expect(after.any((m) => m.displayText.contains('中断后尾巴')), isFalse);
     });
 
     test('F3 分段揭示 backlog 期 interrupt：取消未揭示段，无幽灵', () async {
-      // segmentDelay large enough that multi-seal arrives as backlog.
-      // Hold stream well past interrupt so generation is still current.
       final settings = _buildTestSettings(
         enableChunking: true,
         minSegmentLength: 1,
         streamSegmentDelaySeconds: 0.35,
+        ttsEnabled: false,
       );
-
-      // Three sealed sentences arrive quickly → backlog under segment delay.
-      final script = <_StreamStep>[
-        const _DeltaStep('第一段。'),
-        const _DeltaStep('第二段。'),
-        const _DeltaStep('第三段。'),
-        // Keep generation alive long after interrupt window.
-        const _DelayStep(Duration(milliseconds: 1600)),
-      ];
-
+      final releaseLate = Completer<void>();
       final harness = await _buildHarness(
         convId: 'char_f3_backlog_${DateTime.now().microsecondsSinceEpoch}',
         settings: settings,
-        script: script,
-        replyText: '第一段。第二段。第三段。',
+        script: [
+          const _DeltaStep('第一段。第二段。第三段。'),
+          _BarrierStep(releaseLate.future),
+          const _DeltaStep('中断后迟到段。'),
+        ],
+        replyText: '第一段。第二段。第三段。中断后迟到段。',
       );
       addTearDown(harness.dispose);
+      addTearDown(() async {
+        if (!releaseLate.isCompleted) releaseLate.complete();
+        await harness.awaitActiveSend();
+      });
 
       const userText = 'F3 backlog interrupt';
       harness.startSend(text: userText);
-
-      // Enter backlog window while generation is still open:
-      // past flush (180ms) + into segmentDelay so seals may be partially
-      // revealed / still hidden — but BEFORE script ends (generation ends).
-      // 现状：无后续 dirty 时 mid-stream 可能长时间只见 0~1 段 + 生成中占位。
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      final mid = await harness.loadTimeline();
-      final sealedMid = _assistantRealText(mid)
-          .where((m) => m.displayText.contains('段'))
+      final before = await _waitForVisibleText(harness, '第一段。');
+      final visible = _assistantRealText(
+        before,
+      ).map((m) => m.displayText).join();
+      expect(visible, '第一段。', reason: '第二、三段已接收但尚未揭示');
+      expect(await harness.interrupt(), isTrue);
+      final savedId = await _expectCancelledPartial(harness, visible);
+      final savedTimelineIds = (await harness.loadTimeline())
+          .map((m) => m.id)
           .toList();
-      final hasBacklogSignal = mid.any(_isGeneratingPlaceholder) ||
-          sealedMid.isNotEmpty ||
-          mid.any((m) => m.role == 'user' && m.displayText == userText);
-      expect(
-        hasBacklogSignal,
-        isTrue,
-        reason: '前置：流仍在飞（用户消息已在时间线；或可见 seal/生成中）。'
-            ' sealed=${sealedMid.length} '
-            'placeholder=${mid.any(_isGeneratingPlaceholder)}',
-      );
-      // Must still be interruptible (generation not finished).
-      final stopped = await harness.interrupt();
-      expect(
-        stopped,
-        isTrue,
-        reason: '现状：脚本长 hold 下 500ms 时 generation 仍 active，'
-            'interruptCurrentGeneration 应返回 true。',
-      );
+      expect(await harness.interrupt(), isFalse);
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Past both outstanding reveal slots and the flush interval.
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      await _expectCancelledPartial(harness, visible, savedId: savedId);
+      releaseLate.complete();
+      await harness.awaitActiveSend(settle: const Duration(milliseconds: 400));
+      await _expectCancelledPartial(harness, visible, savedId: savedId);
       final after = await harness.loadTimeline();
-      expect(
-        after.where(_isGeneratingPlaceholder),
-        isEmpty,
-        reason: '现状：backlog 期 interrupt 无占位幽灵。',
-      );
-      expect(
-        after.any(
-          (m) =>
-              m.role == 'assistant' &&
-              (m.displayText.contains('第一段') ||
-                  m.displayText.contains('第二段') ||
-                  m.displayText.contains('第三段')),
-        ),
-        isFalse,
-        reason: '现状：interrupt → removePlaceholders + restore，流式 seal 全清。',
-      );
-
-      // Wait past remaining segment delays — old backlog must not reappear.
-      await Future<void>.delayed(const Duration(milliseconds: 600));
-      final afterWait = await harness.loadTimeline();
-      expect(
-        afterWait.any(
-          (m) =>
-              m.role == 'assistant' &&
-              (m.displayText.contains('第一段') ||
-                  m.displayText.contains('第二段') ||
-                  m.displayText.contains('第三段')),
-        ),
-        isFalse,
-        reason: '现状：interrupt 后旧揭示计时器不得再吐 backlog 段。',
-      );
-
-      await harness.awaitActiveSend();
-      final finalSnap = await harness.loadTimeline();
-      expect(finalSnap.where((m) => m.role == 'assistant'), isEmpty);
-      expect(
-        finalSnap.map((m) => m.displayText).toList(),
-        [userText],
-      );
+      expect(after.map((m) => m.id), savedTimelineIds);
+      expect(after.map((m) => m.displayText), [userText, visible]);
     });
   });
 
   group('G) retry / new delivery after end or interrupt', () {
-    test('中断旧轮后新 send：旧延迟 flush/计时器不产生额外消息，新轮序列正常',
-        () async {
+    test('中断旧轮后新 send：旧延迟 flush/计时器不产生额外消息，新轮序列正常', () async {
       final settings = _buildTestSettings(
         enableChunking: true,
         minSegmentLength: 1,
         streamSegmentDelaySeconds: 0.25,
+        ttsEnabled: false,
       );
-
+      final releaseOld = Completer<void>();
+      final releaseNew = Completer<void>();
       final harness = await _buildHarness(
         convId: 'char_g_retry_${DateTime.now().microsecondsSinceEpoch}',
         settings: settings,
-        script: const <_StreamStep>[],
+        script: const [],
         replyText: '',
         scriptsByCall: [
-          // Round 1: multi-seal backlog then long hold → interrupt mid-flight.
-          const <_StreamStep>[
-            _DeltaStep('旧轮甲。'),
-            _DeltaStep('旧轮乙。'),
-            _DeltaStep('旧轮丙。'),
-            _DelayStep(Duration(milliseconds: 800)),
+          [
+            const _DeltaStep('旧轮甲。旧轮乙。旧轮丙。'),
+            _BarrierStep(releaseOld.future),
+            const _DeltaStep('旧轮迟到。'),
           ],
-          // Round 2: new delivery content.
-          const <_StreamStep>[
-            _DeltaStep('新轮唯一句。'),
-            _DelayStep(Duration(milliseconds: 280)),
-          ],
+          [const _DeltaStep('新轮唯一句。'), _BarrierStep(releaseNew.future)],
         ],
-        replyTextsByCall: const [
-          '旧轮甲。旧轮乙。旧轮丙。',
-          '新轮唯一句。',
-        ],
+        replyTextsByCall: const ['旧轮甲。旧轮乙。旧轮丙。旧轮迟到。', '新轮唯一句。'],
       );
       addTearDown(harness.dispose);
+      addTearDown(() async {
+        if (!releaseOld.isCompleted) releaseOld.complete();
+        if (!releaseNew.isCompleted) releaseNew.complete();
+        await harness.awaitActiveSend();
+      });
 
       harness.startSend(text: 'G round1');
-      // Enter backlog window.
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      final stopped = await harness.interrupt();
-      expect(stopped, isTrue);
-      await harness.awaitActiveSend();
-
-      final between = await harness.loadTimeline();
-      expect(
-        between.any((m) => m.displayText.contains('旧轮')),
-        isFalse,
-        reason: '旧轮 interrupt 后前端无旧轮 seal。',
-      );
-
+      await _waitForVisibleText(harness, '旧轮甲。');
+      final oldSend = harness.activeSend!;
+      expect(await harness.interrupt(), isTrue);
+      final savedId = await _expectCancelledPartial(harness, '旧轮甲。');
+      final savedProjectionId = _assistantRealText(
+        await harness.loadTimeline(),
+      ).single.id;
+      final emissionStart = harness._emissions.length;
       final replaceBeforeRound2 = harness.timelineCache.transientReplaceCalls;
-      final probe2 = await harness.runSend(
-        text: 'G round2',
-        sampleInterval: const Duration(milliseconds: 70),
-        sampleTicks: 10,
-      );
 
-      expect(harness.sendService.executeCalls, greaterThanOrEqualTo(2));
-
-      // Wait well past old segmentDelay — old timers must not resurrect 旧轮.
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      final late = await harness.loadTimeline();
+      // Start the next delivery BEFORE the old provider returns.
+      harness.startSend(text: 'G round2');
+      await _waitForVisibleText(harness, '旧轮甲。新轮唯一句。');
+      releaseOld.complete();
+      await oldSend;
+      // Old finally/flush/reveal timers must not clear the new delivery.
+      await Future<void>.delayed(const Duration(milliseconds: 800));
       expect(
-        late.any((m) => m.displayText.contains('旧轮')),
-        isFalse,
-        reason: '现状：旧 delivery 的延迟 flush/segment 计时器在 dispose 后不产生额外消息。',
-      );
-      expect(
-        _assistantRealText(late).any((m) => m.displayText.contains('新轮唯一句')),
+        harness.container.read(conversationSendingProvider(harness.conv.id)),
         isTrue,
-        reason: '现状：新 delivery 序列正常 finalize。',
       );
       expect(
-        late.where(_isGeneratingPlaceholder),
+        _assistantRealText(
+          await harness.loadTimeline(),
+        ).map((m) => m.displayText),
+        ['旧轮甲。', '新轮唯一句。'],
+      );
+      releaseNew.complete();
+      await harness.awaitActiveSend(settle: const Duration(milliseconds: 400));
+      expect(harness.sendService.executeCalls, 2);
+
+      final raw =
+          (await harness.container
+                  .read(chatHistoryStoreProvider)
+                  .loadAllRawMessages(harness.conv.id))
+              .where((m) => m.role == 'assistant')
+              .toList();
+      expect(raw.map((m) => m.content), ['旧轮甲。', '新轮唯一句。']);
+      expect(raw.first.id, savedId);
+      expect(raw.first.rawPayload?['runStatus'], 'cancelled');
+      expect(raw.last.rawPayload?['runStatus'], isNull);
+      final late = await harness.loadTimeline();
+      final assistants = _assistantRealText(late);
+      expect(assistants.map((m) => m.displayText), ['旧轮甲。', '新轮唯一句。']);
+      expect(assistants.first.id, savedProjectionId);
+      expect(assistants.first.rawPayload?['runStatus'], 'cancelled');
+      expect(assistants.last.rawPayload?['runStatus'], isNull);
+      expect(late.where(_isGeneratingPlaceholder), isEmpty);
+      expect(
+        late.where((m) => m.role == 'assistant' && m.status == 'sending'),
         isEmpty,
       );
-
-      // New round should have performed its own transient replaces.
+      expect(harness.container.read(activeStreamProjectionsProvider), isEmpty);
       expect(
         harness.timelineCache.transientReplaceCalls,
         greaterThan(replaceBeforeRound2),
-        reason: '新轮 delivery 应独立驱动 replaceMessagesTransient。',
       );
-      expect(
-        probe2.snapshots.last.any((m) => m.displayText.contains('旧轮')),
-        isFalse,
-      );
+      for (final emission in harness._emissions.skip(emissionStart)) {
+        final texts = _assistantRealText(
+          emission.messages,
+        ).map((m) => m.displayText).toList();
+        expect(
+          texts.where(
+            (t) => t.contains('旧轮乙') || t.contains('旧轮丙') || t.contains('旧轮迟到'),
+          ),
+          isEmpty,
+          reason: '旧轮未揭示段与迟到正文不得再上屏',
+        );
+        expect(texts.where((t) => t == '旧轮甲。').length, lessThanOrEqualTo(1));
+        expect(texts.where((t) => t == '新轮唯一句。').length, lessThanOrEqualTo(1));
+      }
     });
 
     test('一轮正常结束后再 send：两轮内容共存，旧轮不重复追加', () async {

@@ -19,6 +19,16 @@ Future<_ToolExecutionOutcome> _executeToolCall({
   // Applied to tool output before it reaches logs and traces; the kernel
   // runner passes the run's secret redactor (2d review).
   String Function(String text) redactForLog = _unredacted,
+  bool richOutput = false,
+  bool supportsVision = false,
+  bool Function()? isCancelled,
+  kernel.KernelCancellation? cancellation,
+  void Function(String)? onProgress,
+  ScriptToolAccess? scriptTools,
+  String? stateOwner,
+  // Nested hosts stay pending until they actually settle; the script owns
+  // their deadline/cancellation and four-operation concurrency budget.
+  bool invocationOwnsDeadline = false,
 }) async {
   final startedAt = DateTime.now();
   if (traceContext != null) {
@@ -33,10 +43,7 @@ Future<_ToolExecutionOutcome> _executeToolCall({
       startedAt: startedAt,
       endedAt: startedAt,
       durationMs: 0,
-      meta: {
-        'toolName': toolCall.name,
-        'toolCallId': toolCall.id,
-      },
+      meta: {'toolName': toolCall.name, 'toolCallId': toolCall.id},
     );
   }
 
@@ -60,10 +67,32 @@ Future<_ToolExecutionOutcome> _executeToolCall({
           toolCallId: toolCall.id,
           name: toolCall.name,
           result: jsonEncode({'error': 'Tool not found: ${toolCall.name}'}),
+          isError: true,
         ),
       );
     }
 
+    final errors = validateToolArguments(
+      toolCall.arguments,
+      tool.validationSchema ??
+          (tool.toOpenAISchema()['function'] as Map)['parameters']
+              as Map<String, dynamic>,
+    );
+    if (errors.isNotEmpty) {
+      finishedStatus = TraceEventStatus.failed;
+      finishMeta['error'] = 'invalid_tool_arguments';
+      return _ToolExecutionOutcome(
+        toolResult: ToolResult(
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          isError: true,
+          result: jsonEncode({
+            'error': {'code': 'invalid_tool_arguments', 'details': errors},
+          }),
+        ),
+      );
+    }
+    cancellation?.throwIfCancelled();
     onToolExecuting?.call(toolCall.name);
     final actualFlowMode = useFastToolRoute
         ? EffectiveImageGenerationRoute.fast.value
@@ -78,24 +107,93 @@ Future<_ToolExecutionOutcome> _executeToolCall({
       roleToolPresetName: boundImageToolPresetName,
       roleArtistPresetName: boundImageArtistPresetName,
     );
-    AppLogger.info(ChatSendApiRunner._logTag, '执行工具调用', metadata: {
-      'round': round,
-      'name': toolCall.name,
-      'args': executionArgs,
-    });
+    AppLogger.info(
+      ChatSendApiRunner._logTag,
+      '执行工具调用',
+      metadata: {'round': round, 'name': toolCall.name, 'args': executionArgs},
+    );
 
-    final result = await ToolCallContext(
+    final callCancellation = kernel.KernelCancellation();
+    var callFinished = false;
+    if (cancellation != null) {
+      unawaited(
+        cancellation.whenCancelled.then((_) {
+          if (!callFinished) callCancellation.cancel();
+        }),
+      );
+    }
+    final operation = ToolCallContext(
       sessionId: sessionId,
       turnId: turnId,
       round: round,
       toolCallId: toolCall.id,
-    ).run(() => tool.handler(executionArgs)).timeout(toolTimeout);
-    final resultStr = result ?? '';
+      isCancelled: isCancelled,
+      cancellation: callCancellation,
+      onProgress: onProgress,
+      scriptTools: scriptTools,
+      stateOwner: stateOwner,
+    ).run(() => tool.invoke(executionArgs));
+    late ToolOutput output;
+    try {
+      if (tool.managesDeadline ||
+          tool.executionTimeout != null ||
+          invocationOwnsDeadline) {
+        output = await operation;
+      } else {
+        try {
+          output = await operation.timeout(toolTimeout);
+        } on TimeoutException {
+          callCancellation.cancel();
+          var settled = false;
+          await operation
+              .then<void>(
+                (_) {
+                  settled = true;
+                },
+                onError: (Object _, StackTrace __) {
+                  settled = true;
+                },
+              )
+              .timeout(const Duration(seconds: 5), onTimeout: () {});
+          if (!settled) {
+            return _ToolExecutionOutcome(
+              toolResult: ToolResult(
+                toolCallId: toolCall.id,
+                name: toolCall.name,
+                isError: true,
+                result: jsonEncode({
+                  'error': {
+                    'code': 'outcome_unknown',
+                    'message': '工具超时，已请求停止，但无法确认它是否已经生效。重试前先检查当前状态，避免重复操作。',
+                  },
+                }),
+              ),
+            );
+          }
+          throw TimeoutException('Tool timeout', toolTimeout);
+        }
+      }
+    } finally {
+      callFinished = true;
+    }
+    if (output.isError) finishedStatus = TraceEventStatus.failed;
+    finishMeta['isError'] = output.isError;
+    finishMeta['images'] = [
+      for (final image in output.images)
+        {
+          'mimeType': image.mimeType,
+          'bytes': image.bytes.length,
+          'width': image.width,
+          'height': image.height,
+        },
+    ];
+    final resultStr = richOutput ? output.text : output.persistentText;
     finishMeta['rawResultLength'] = resultStr.length;
-    AppLogger.info(ChatSendApiRunner._logTag, '工具调用完成', metadata: {
-      'name': toolCall.name,
-      'result': redactForLog(resultStr),
-    });
+    AppLogger.info(
+      ChatSendApiRunner._logTag,
+      '工具调用完成',
+      metadata: {'name': toolCall.name, 'result': redactForLog(resultStr)},
+    );
 
     if (toolCall.name == 'speak') {
       ToolAudioResult? audioResult;
@@ -107,22 +205,26 @@ Future<_ToolExecutionOutcome> _executeToolCall({
         if (success && audioUrl != null && audioUrl.isNotEmpty) {
           audioResult = ToolAudioResult(audioUrl: audioUrl, text: text);
           finishMeta['audioProduced'] = true;
-          AppLogger.info(ChatSendApiRunner._logTag, '收集到 speak 工具音频',
-              metadata: {
-                'audioUrlLength': audioUrl.length,
-                'text': text,
-              });
+          AppLogger.info(
+            ChatSendApiRunner._logTag,
+            '收集到 speak 工具音频',
+            metadata: {'audioUrlLength': audioUrl.length, 'text': text},
+          );
         }
       } catch (e) {
-        AppLogger.warning(ChatSendApiRunner._logTag, '解析 speak 结果失败',
-            metadata: {'error': e.toString()});
+        AppLogger.warning(
+          ChatSendApiRunner._logTag,
+          '解析 speak 结果失败',
+          metadata: {'error': e.toString()},
+        );
       }
 
       return _ToolExecutionOutcome(
         toolResult: ToolResult(
           toolCallId: toolCall.id,
           name: toolCall.name,
-          result: '{"success": true, "message": "语音已播放给用户"}',
+          result: resultStr,
+          isError: output.isError,
         ),
         audioResult: audioResult,
       );
@@ -131,7 +233,8 @@ Future<_ToolExecutionOutcome> _executeToolCall({
     if (toolCall.name == 'draw_image') {
       final asyncAccepted = _isAsyncDrawImageAccepted(resultStr);
       final imageContents = _extractToolImageContents(resultStr);
-      final requiresStableVisionReview = drawImageStableReviewEnabled &&
+      final requiresStableVisionReview =
+          drawImageStableReviewEnabled &&
           !useFastToolRoute &&
           imageContents.isNotEmpty;
       finishMeta['imageCount'] = imageContents.length;
@@ -165,40 +268,56 @@ Future<_ToolExecutionOutcome> _executeToolCall({
       toolResult: ToolResult(
         toolCallId: toolCall.id,
         name: toolCall.name,
-        result: _buildToolResultForModel(
-          toolName: toolCall.name,
-          rawResult: resultStr,
-        ),
+        result:
+            _buildToolResultForModel(
+              toolName: toolCall.name,
+              rawResult: resultStr,
+            ) +
+            (richOutput && !supportsVision && output.images.isNotEmpty
+                ? '\n$nonVisionToolImage\n${output.images.map((i) => omittedToolImage(i.source)).join('\n')}'
+                : ''),
+        images: richOutput && supportsVision ? output.images : const [],
+        isError: output.isError,
+        structured: output.structured,
       ),
     );
+  } on kernel.KernelCancelledException {
+    rethrow;
   } on TimeoutException {
     finishedStatus = TraceEventStatus.failed;
     finishMeta['error'] = 'timeout';
-    AppLogger.warning(ChatSendApiRunner._logTag, '工具调用超时', metadata: {
-      'name': toolCall.name,
-      'timeoutSec': flowSettings.toolTimeoutSeconds,
-    });
+    AppLogger.warning(
+      ChatSendApiRunner._logTag,
+      '工具调用超时',
+      metadata: {
+        'name': toolCall.name,
+        'timeoutSec': flowSettings.toolTimeoutSeconds,
+      },
+    );
     return _ToolExecutionOutcome(
       toolResult: ToolResult(
         toolCallId: toolCall.id,
         name: toolCall.name,
-        result: jsonEncode(
-          {'error': 'Tool timeout after ${flowSettings.toolTimeoutSeconds}s'},
-        ),
+        result: jsonEncode({
+          'error': 'Tool timeout after ${flowSettings.toolTimeoutSeconds}s',
+        }),
+        isError: true,
       ),
     );
   } catch (e) {
     finishedStatus = TraceEventStatus.failed;
     finishMeta['error'] = redactForLog(e.toString());
-    AppLogger.error(ChatSendApiRunner._logTag, '工具调用失败', metadata: {
-      'name': toolCall.name,
-      'error': redactForLog(e.toString()),
-    });
+    AppLogger.error(
+      ChatSendApiRunner._logTag,
+      '工具调用失败',
+      metadata: {'name': toolCall.name, 'error': redactForLog(e.toString())},
+    );
     return _ToolExecutionOutcome(
       toolResult: ToolResult(
         toolCallId: toolCall.id,
         name: toolCall.name,
         result: jsonEncode({'error': e.toString()}),
+        isError: true,
       ),
     );
   } finally {
@@ -233,11 +352,7 @@ String? _encodeToolCallsForLog(List<ToolCall> calls) {
   if (calls.isEmpty) return null;
   return jsonEncode([
     for (final call in calls)
-      {
-        'id': call.id,
-        'name': call.name,
-        'arguments': call.arguments,
-      },
+      {'id': call.id, 'name': call.name, 'arguments': call.arguments},
   ]);
 }
 
@@ -248,7 +363,7 @@ String? _encodeToolResultsForLog(List<ToolResult> results) {
       {
         'toolCallId': result.toolCallId,
         'name': result.name,
-        'result': result.result,
+        'result': result.persistentText,
       },
   ]);
 }
@@ -270,14 +385,17 @@ List<PluginImageContent> _extractToolImageContents(String result) {
 
     if (value is Map) {
       final map = _toStringDynamicMap(value);
-      localPath = (map['localPath'] ??
+      localPath =
+          (map['localPath'] ??
                   map['image_path'] ??
                   map['imagePath'] ??
                   map['path'])
               ?.toString()
               .trim() ??
           '';
-      generationSnapshot = ImageGenerationSnapshot.tryRead(map['generationSnapshot']);
+      generationSnapshot = ImageGenerationSnapshot.tryRead(
+        map['generationSnapshot'],
+      );
       caption = map['caption']?.toString().trim();
       caption ??= map['prompt']?.toString().trim();
     } else if (value is String) {
@@ -290,10 +408,16 @@ List<PluginImageContent> _extractToolImageContents(String result) {
 
     final effectiveCaption = (caption == null || caption.isEmpty)
         ? (fallbackCaption == null || fallbackCaption.isEmpty
-            ? null
-            : fallbackCaption)
+              ? null
+              : fallbackCaption)
         : caption;
-    contents.add(PluginImageContent(localPath, caption: effectiveCaption, generationSnapshot: generationSnapshot));
+    contents.add(
+      PluginImageContent(
+        localPath,
+        caption: effectiveCaption,
+        generationSnapshot: generationSnapshot,
+      ),
+    );
   }
 
   final promptCaption = payload['prompt']?.toString().trim();
@@ -341,12 +465,7 @@ Future<List<Map<String, dynamic>>> _buildStableDrawImageReviewMessages(
 ) async {
   if (images.isEmpty) return const <Map<String, dynamic>>[];
 
-  final content = <Map<String, dynamic>>[
-    <String, dynamic>{
-      'type': 'text',
-      'text': ChatSendApiRunner._stableDrawImageReviewInstruction,
-    },
-  ];
+  final content = <Map<String, dynamic>>[];
 
   for (final image in images) {
     final imagePart = await _buildLocalImageInputPart(image.localPath);
@@ -355,7 +474,7 @@ Future<List<Map<String, dynamic>>> _buildStableDrawImageReviewMessages(
     }
   }
 
-  if (content.length <= 1) {
+  if (content.isEmpty) {
     AppLogger.warning(
       ChatSendApiRunner._logTag,
       'Stable draw_image review image load failed',
@@ -363,16 +482,15 @@ Future<List<Map<String, dynamic>>> _buildStableDrawImageReviewMessages(
     return const <Map<String, dynamic>>[];
   }
 
-  return <Map<String, dynamic>>[
-    <String, dynamic>{
-      'role': 'user',
-      'content': content,
-    },
-  ];
+  return buildToolImageMessages(
+    content,
+    text: ChatSendApiRunner._stableDrawImageReviewInstruction,
+  );
 }
 
 Future<Map<String, dynamic>?> _buildLocalImageInputPart(
-    String localPath) async {
+  String localPath,
+) async {
   final trimmed = localPath.trim();
   if (trimmed.isEmpty) return null;
 
@@ -385,18 +503,13 @@ Future<Map<String, dynamic>?> _buildLocalImageInputPart(
     final base64 = base64Encode(bytes);
     return <String, dynamic>{
       'type': 'image_url',
-      'image_url': <String, dynamic>{
-        'url': 'data:$mime;base64,$base64',
-      },
+      'image_url': <String, dynamic>{'url': 'data:$mime;base64,$base64'},
     };
   } catch (e) {
     AppLogger.warning(
       ChatSendApiRunner._logTag,
       'Stable draw_image review image read failed',
-      metadata: {
-        'path': trimmed,
-        'error': e.toString(),
-      },
+      metadata: {'path': trimmed, 'error': e.toString()},
     );
     return null;
   }
@@ -405,22 +518,58 @@ Future<Map<String, dynamic>?> _buildLocalImageInputPart(
 bool _containsImagePlaceholder(String text) =>
     ChatSendApiRunner._imagePlaceholderRegex.hasMatch(text);
 
-List<ToolCall> _extractFallbackToolCalls(String text) =>
-    ChatSendApiRunner._fallbackParser.extractFallbackToolCalls(text);
-
-Map<String, dynamic>? _tryParseJsonMap(String raw) =>
-    ChatSendApiRunner._fallbackParser.tryParseJsonMap(raw);
-
-Map<String, dynamic> _toStringDynamicMap(Map raw) =>
-    ChatSendApiRunner._fallbackParser.toStringDynamicMap(raw);
-
-String _buildToolCallSignature(ToolCall call) {
-  final keys = call.arguments.keys.toList()..sort();
-  final normalizedArgs = <String, dynamic>{};
-  for (final key in keys) {
-    normalizedArgs[key] = call.arguments[key];
+Map<String, dynamic>? _tryParseJsonMap(String raw) {
+  final candidates = <String>{};
+  final trimmed = raw.trim();
+  if (trimmed.isNotEmpty) {
+    candidates.add(trimmed);
   }
-  return '${call.name}:${jsonEncode(normalizedArgs)}';
+
+  final unfenced = _stripMarkdownCodeFence(trimmed);
+  if (unfenced.isNotEmpty) {
+    candidates.add(unfenced);
+  }
+
+  final wrapped = _extractFirstJsonObject(unfenced);
+  if (wrapped != null && wrapped.isNotEmpty) {
+    candidates.add(wrapped);
+  }
+
+  for (final candidate in candidates) {
+    try {
+      final decoded = jsonDecode(candidate);
+      if (decoded is Map) {
+        return _toStringDynamicMap(decoded);
+      }
+    } catch (_) {
+      continue;
+    }
+  }
+  return null;
+}
+
+Map<String, dynamic> _toStringDynamicMap(Map raw) {
+  final map = <String, dynamic>{};
+  raw.forEach((key, value) {
+    map[key.toString()] = value;
+  });
+  return map;
+}
+
+String _stripMarkdownCodeFence(String raw) {
+  final match = RegExp(
+    r'^```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)\s*```$',
+    caseSensitive: false,
+  ).firstMatch(raw.trim());
+  if (match == null) return raw.trim();
+  return (match.group(1) ?? '').trim();
+}
+
+String? _extractFirstJsonObject(String raw) {
+  final start = raw.indexOf('{');
+  final end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  return raw.substring(start, end + 1).trim();
 }
 
 Map<String, dynamic> _buildToolArgumentsForExecution({
@@ -471,8 +620,11 @@ bool _isAsyncDrawImageAccepted(String rawResult) {
 
   final accepted = payload['accepted'] == true;
   final status = payload['status']?.toString().trim().toLowerCase() ?? '';
-  final hasJobId = [payload['job_id'], payload['jobId'], payload['id']]
-      .any((value) => value != null && value.toString().trim().isNotEmpty);
+  final hasJobId = [
+    payload['job_id'],
+    payload['jobId'],
+    payload['id'],
+  ].any((value) => value != null && value.toString().trim().isNotEmpty);
   final isPendingStatus =
       status == 'pending' || status == 'accepted' || status == 'queued';
 
@@ -588,31 +740,6 @@ String _buildToolResultForModel({
   return jsonEncode(summary);
 }
 
-Map<String, dynamic> _buildFallbackAssistantMessageForToolCalls(
-  List<ToolCall> toolCalls,
-  String adapterName,
-) {
-  if (adapterName != 'openai' && adapterName != 'minimax') {
-    return <String, dynamic>{'content': ''};
-  }
-  return <String, dynamic>{
-    'content': null,
-    'tool_calls': [
-      for (var i = 0; i < toolCalls.length; i++)
-        {
-          'id': toolCalls[i].id.trim().isNotEmpty
-              ? toolCalls[i].id
-              : 'fallback_tool_call_${i + 1}',
-          'type': 'function',
-          'function': {
-            'name': toolCalls[i].name,
-            'arguments': jsonEncode(toolCalls[i].arguments),
-          },
-        },
-    ],
-  };
-}
-
 Map<String, dynamic> _buildAssistantMessageFromRich(
   SendMessageRichResult rich,
   String adapterName,
@@ -623,29 +750,46 @@ Map<String, dynamic> _buildAssistantMessageFromRich(
     switch (adapterName) {
       case 'gemini':
       case 'google':
-        return {'content': {'parts': [
-          ...rich.hiddenThoughtParts,
-          if (rich.text.isNotEmpty) {'text': rich.text},
-          for (final call in rich.toolCalls) {
-            'functionCall': {
-              'name': call.name, 'args': call.arguments,
-              if (call.id.isNotEmpty) 'id': call.id,
-            },
-            if (call.thoughtSignature != null) 'thoughtSignature': call.thoughtSignature,
+        return {
+          'content': {
+            'parts': [
+              ...rich.hiddenThoughtParts,
+              if (rich.text.isNotEmpty) {'text': rich.text},
+              for (final call in rich.toolCalls)
+                {
+                  'functionCall': {
+                    'name': call.name,
+                    'args': call.arguments,
+                    if (call.id.isNotEmpty) 'id': call.id,
+                  },
+                  if (call.thoughtSignature != null)
+                    'thoughtSignature': call.thoughtSignature,
+                },
+            ],
           },
-        ]}};
+        };
       case 'claude':
       case 'anthropic':
-        return {'content': [
-          if (rich.text.isNotEmpty) {'type': 'text', 'text': rich.text},
-          for (final call in rich.toolCalls)
-            {'type': 'tool_use', 'id': call.id, 'name': call.name, 'input': call.arguments},
-        ]};
-      default:
-        return {'role': 'assistant', 'content': rich.text,
-          if (rich.toolCalls.isNotEmpty) 'tool_calls': [
-            for (final call in rich.toolCalls) call.toOpenAIFormat(),
+        return {
+          'content': [
+            if (rich.text.isNotEmpty) {'type': 'text', 'text': rich.text},
+            for (final call in rich.toolCalls)
+              {
+                'type': 'tool_use',
+                'id': call.id,
+                'name': call.name,
+                'input': call.arguments,
+              },
           ],
+        };
+      default:
+        return {
+          'role': 'assistant',
+          'content': rich.text,
+          if (rich.toolCalls.isNotEmpty)
+            'tool_calls': [
+              for (final call in rich.toolCalls) call.toOpenAIFormat(),
+            ],
         };
     }
   }

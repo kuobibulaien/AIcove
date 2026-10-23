@@ -10,23 +10,7 @@ import '../../agent_plugins/plugin_response.dart';
 import 'chat_send_api_runner.dart';
 import 'chat_types.dart';
 
-/// Compile-time switches for the agent kernel (ADR0064, batch 1).
-/// Foreground chat runs on the kernel by default since 2026-10-12 and
-/// background agents since 2026-10-13. Build with
-/// `--dart-define=AICOVE_AGENT_KERNEL_CHAT=false` or
-/// `--dart-define=AICOVE_AGENT_KERNEL_BG=false` to fall back to the legacy
-/// runner.
-const bool kAgentKernelBackground = bool.fromEnvironment(
-  'AICOVE_AGENT_KERNEL_BG',
-  defaultValue: true,
-);
-const bool kAgentKernelChat = bool.fromEnvironment(
-  'AICOVE_AGENT_KERNEL_CHAT',
-  defaultValue: true,
-);
-
-/// Model call and tool loop for one request. Implemented by the legacy
-/// [ChatSendApiRunner] and the kernel-backed [KernelApiRunner].
+/// Single execution contract shared by foreground and background agents.
 abstract interface class ApiRunner {
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,
@@ -38,7 +22,6 @@ abstract interface class ApiRunner {
     List<AITool>? availableTools,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -52,5 +35,4 @@ abstract interface class ApiRunner {
   });
 }
 
-ApiRunner createApiRunner({required bool useKernel}) =>
-    useKernel ? const KernelApiRunner() : const ChatSendApiRunner();
+ApiRunner createApiRunner() => const KernelApiRunner();

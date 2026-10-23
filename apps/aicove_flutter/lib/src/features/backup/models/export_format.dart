@@ -33,7 +33,7 @@ String? normalizeBackupPassword(String? password) {
 }
 
 /// 同步范围（Scope）定义
-/// 基于 docs/备份与同步方案/同步范围清单.md
+/// 基于 docs/05_历史归档/20261022_文档进度更新/04_功能模块规范/备份与同步方案/同步范围清单.md（旧 v1/v2 清单）
 class SyncScope {
   static const String chatHistory = 'chat.history';
   static const String characterCards = 'characters.cards';

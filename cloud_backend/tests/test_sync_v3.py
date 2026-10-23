@@ -288,6 +288,10 @@ class SyncTest(unittest.TestCase):
                   / 'src' / 'core' / 'sync' / 'cloud_setting_policy.dart').read_text(encoding='utf-8')
         body = re.search(r'const localGeneralSettings = <String>\{(.*?)\};', source, re.S).group(1)
         self.assertEqual(LOCAL_GENERAL_SETTINGS, set(re.findall(r"'([a-z_]+)'", body)))
+        # Chat view toggles stay on each device.
+        self.assertLessEqual({'auto_scroll_on_ai_reply', 'bubble_show_thinking',
+                              'document_show_thinking', 'document_show_tool_calls'},
+                             LOCAL_GENERAL_SETTINGS)
 
     def test_malformed_batch_rolls_back_preceding_writes(self):
         with self.assertRaises(SyncError):

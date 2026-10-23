@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart'
+    show ToolCall, ToolResult;
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show KernelCancellation, KernelCancelledException;
@@ -33,12 +35,12 @@ class _FakeRunner extends TaskAgentRunner {
               required config,
               required tools,
               required sessionId,
-              required maxRounds,
               required cancellation,
             }) => throw UnimplementedError(),
       );
 
   final List<String> transcripts = [];
+  final contexts = <List<Map<String, dynamic>>>[];
   final List<_Script> scripts = [];
 
   @override
@@ -50,10 +52,20 @@ class _FakeRunner extends TaskAgentRunner {
     required TaskAgentPreset preset,
     required KernelCancellation cancellation,
     AgentToolPolicy? toolPolicy,
+    List<Map<String, dynamic>>? contextMessages,
     void Function()? onExternalStart,
+    Future<void> Function()? onBeforeExternal,
+    void Function(bool Function(String) steer)? onRunReady,
+    Future<void> Function(ToolCall, ToolResult)? onToolStep,
+    Future<void> Function(List<Map<String, dynamic>>)? onTranscript,
+    void Function(String, String)? onToolProgress,
   }) {
     transcripts.add(transcript);
-    return scripts.removeAt(0)(transcript, cancellation, onExternalStart);
+    contexts.add(contextMessages ?? []);
+    return scripts.removeAt(0)(transcript, cancellation, () {
+      onExternalStart?.call();
+      onBeforeExternal?.call();
+    });
   }
 }
 
@@ -155,51 +167,54 @@ void main() {
     expect(runner.transcripts, hasLength(1));
   });
 
-  test('a question waits; the reply continues with the earlier process',
-      () async {
-    runner.scripts
-      ..add((_, _, _) async => _done('需要城市', question: '哪个城市？'))
-      ..add((_, _, _) async => _done('杭州今天小雨'));
-    await service.start(conversationId: 'c1', instruction: '查天气');
-    await service.idle();
-    expect((await store.get('t1'))!.status, AgentTaskStatus.needsInput);
-    expect(written.single.block.question, '哪个城市？');
+  test(
+    'a question waits; the reply continues with the earlier process',
+    () async {
+      runner.scripts
+        ..add((_, _, _) async => _done('需要城市', question: '哪个城市？'))
+        ..add((_, _, _) async => _done('杭州今天小雨'));
+      await service.start(conversationId: 'c1', instruction: '查天气');
+      await service.idle();
+      expect((await store.get('t1'))!.status, AgentTaskStatus.needsInput);
+      expect(written.single.block.question, '哪个城市？');
 
-    expect(
-      await service.reply(
-        taskId: 't1',
-        controlId: 'ctl',
-        answersReceiptId: 't1_1',
-        answer: '杭州',
-      ),
-      TaskControlOutcome.applied,
-    );
-    await service.idle();
-    expect((await store.get('t1'))!.status, AgentTaskStatus.done);
-    final second = runner.transcripts.last;
-    expect(second, contains('## 任务\n查天气'));
-    expect(second, contains('哪个城市？'));
-    expect(second, contains('杭州'));
-    expect(second, contains('结果：需要城市'));
-    expect(
-      await service.reply(
-        taskId: 't1',
-        controlId: 'ctl',
-        answersReceiptId: 't1_1',
-        answer: '杭州',
-      ),
-      TaskControlOutcome.ignored,
-    );
-    expect(
-      await service.reply(
-        taskId: 'elsewhere',
-        controlId: 'ctl2',
-        answersReceiptId: null,
-        answer: 'x',
-      ),
-      TaskControlOutcome.remote,
-    );
-  });
+      expect(
+        await service.reply(
+          taskId: 't1',
+          controlId: 'ctl',
+          answersReceiptId: 't1_1',
+          answer: '杭州',
+        ),
+        TaskControlOutcome.applied,
+      );
+      await service.idle();
+      expect((await store.get('t1'))!.status, AgentTaskStatus.done);
+      expect(runner.contexts.last.toString(), contains('需要城市'));
+      final second = runner.transcripts.last;
+      expect(second, contains('## 任务\n查天气'));
+      expect(second, contains('哪个城市？'));
+      expect(second, contains('杭州'));
+      expect(second, contains('结果：需要城市'));
+      expect(
+        await service.reply(
+          taskId: 't1',
+          controlId: 'ctl',
+          answersReceiptId: 't1_1',
+          answer: '杭州',
+        ),
+        TaskControlOutcome.ignored,
+      );
+      expect(
+        await service.reply(
+          taskId: 'elsewhere',
+          controlId: 'ctl2',
+          answersReceiptId: null,
+          answer: 'x',
+        ),
+        TaskControlOutcome.remote,
+      );
+    },
+  );
 
   test('cancel stops a running task after an outside call began', () async {
     final started = Completer<void>();
@@ -244,72 +259,76 @@ void main() {
     expect(await store.pendingDeliveries(), ['t1_1']);
   });
 
-  test('recovery interrupts stale runs and writes unwritten receipts',
-      () async {
-    await store.create(
-      id: 'old',
-      requestKey: null,
-      conversationId: 'c1',
-      instruction: '旧任务',
-    );
-    await store.markRunning('old');
-    writeFails = true;
-    await service.recover();
-    await service.idle();
-    expect((await store.get('old'))!.status, AgentTaskStatus.interrupted);
-    expect(written, isEmpty);
-    expect(await store.unwrittenReceipts(), hasLength(1));
+  test(
+    'recovery interrupts stale runs and writes unwritten receipts',
+    () async {
+      await store.create(
+        id: 'old',
+        requestKey: null,
+        conversationId: 'c1',
+        instruction: '旧任务',
+      );
+      await store.markRunning('old');
+      writeFails = true;
+      await service.recover();
+      await service.idle();
+      expect((await store.get('old'))!.status, AgentTaskStatus.interrupted);
+      expect(written, isEmpty);
+      expect(await store.unwrittenReceipts(), hasLength(1));
 
-    writeFails = false;
-    await service.recover();
-    await service.idle();
-    expect(written.single.block.receiptStatus, TaskReceiptStatus.interrupted);
-    expect(await store.unwrittenReceipts(), isEmpty);
-  });
+      writeFails = false;
+      await service.recover();
+      await service.idle();
+      expect(written.single.block.receiptStatus, TaskReceiptStatus.interrupted);
+      expect(await store.unwrittenReceipts(), isEmpty);
+    },
+  );
 
-  test('kill switch cancels runs, freezes the queue and holds relays',
-      () async {
-    final service1 = TaskAgentService(
-      store: store,
-      process: TaskProcessRecord(dir),
-      runner: runner,
-      capabilities: (_, _, _) async => const TaskAgentCapabilities(),
-      writeReceipt: (receipt) async => written.add(receipt),
-      relay: (_, receipt) async {
-        relayed.add(receipt.receiptId);
-        return true;
-      },
-      findReceipt: (id) async => _find(written, id),
-      ownsConversation: (_) async => true,
-      deviceId: () async => 'mac',
-      maxConcurrent: 1,
-      newId: () => 's${++ids}',
-    );
-    final started = Completer<void>();
-    runner.scripts
-      ..add((_, cancellation, _) async {
-        started.complete();
-        await cancellation.whenCancelled;
-        throw const KernelCancelledException();
-      })
-      ..add((_, _, _) async => _done('第二件'));
-    await service1.start(conversationId: 'c1', instruction: '一');
-    await service1.start(conversationId: 'c1', instruction: '二');
-    await started.future;
-    await service1.setEnabled(false);
-    expect((await store.get('s1'))!.status, AgentTaskStatus.cancelled);
-    expect((await store.get('s2'))!.frozen, isTrue);
-    expect(relayed, isEmpty, reason: '关闭后不转告');
-    expect(await store.pendingDeliveries(), ['s1_1']);
+  test(
+    'kill switch cancels runs, freezes the queue and holds relays',
+    () async {
+      final service1 = TaskAgentService(
+        store: store,
+        process: TaskProcessRecord(dir),
+        runner: runner,
+        capabilities: (_, _, _) async => const TaskAgentCapabilities(),
+        writeReceipt: (receipt) async => written.add(receipt),
+        relay: (_, receipt) async {
+          relayed.add(receipt.receiptId);
+          return true;
+        },
+        findReceipt: (id) async => _find(written, id),
+        ownsConversation: (_) async => true,
+        deviceId: () async => 'mac',
+        maxConcurrent: 1,
+        newId: () => 's${++ids}',
+      );
+      final started = Completer<void>();
+      runner.scripts
+        ..add((_, cancellation, _) async {
+          started.complete();
+          await cancellation.whenCancelled;
+          throw const KernelCancelledException();
+        })
+        ..add((_, _, _) async => _done('第二件'));
+      await service1.start(conversationId: 'c1', instruction: '一');
+      await service1.start(conversationId: 'c1', instruction: '二');
+      await started.future;
+      await service1.setEnabled(false);
+      expect((await store.get('s1'))!.status, AgentTaskStatus.cancelled);
+      expect((await store.get('s2'))!.frozen, isTrue);
+      expect(relayed, isEmpty, reason: '关闭后不转告');
+      expect(await store.pendingDeliveries(), ['s1_1']);
 
-    await service1.setEnabled(true);
-    await service1.idle();
-    expect((await store.get('s2'))!.status, AgentTaskStatus.queued);
-    expect(relayed, ['s1_1'], reason: '打开后补转告，但冻结任务不自动跑');
-    await service1.resume('s2');
-    await service1.idle();
-    expect((await store.get('s2'))!.status, AgentTaskStatus.done);
-  });
+      await service1.setEnabled(true);
+      await service1.idle();
+      expect((await store.get('s2'))!.status, AgentTaskStatus.queued);
+      expect(relayed, ['s1_1'], reason: '打开后补转告，但冻结任务不自动跑');
+      await service1.resume('s2');
+      await service1.idle();
+      expect((await store.get('s2'))!.status, AgentTaskStatus.done);
+    },
+  );
 
   group('sync scan', () {
     late Map<String, List<MessageBlock>> blocks;
@@ -350,15 +369,17 @@ void main() {
         executorDevice: 'phone',
       );
       await insertMessage('task_receipt_remote_1', receipt);
-      written.add(RecordedReceipt(
-        (await store.create(
-          id: 'shadow',
-          requestKey: null,
-          conversationId: 'c1',
-          instruction: '',
-        )).$1,
-        receipt,
-      ));
+      written.add(
+        RecordedReceipt(
+          (await store.create(
+            id: 'shadow',
+            requestKey: null,
+            conversationId: 'c1',
+            instruction: '',
+          )).$1,
+          receipt,
+        ),
+      );
       // The shadow task only lends findReceipt a RecordedReceipt; it runs too.
       runner.scripts.add((_, _, _) async => _done('影子'));
       await supervisor.scan();

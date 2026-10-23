@@ -12,6 +12,7 @@ const MethodChannel _keepAliveChannel = MethodChannel(
 class AndroidKeepAliveStatus {
   final bool guardEnabled;
   final bool generationActive;
+  final bool webAppActive;
   final bool generationWakeLockHeld;
   final bool serviceRunning;
   final bool batteryOptimizationIgnored;
@@ -28,6 +29,7 @@ class AndroidKeepAliveStatus {
   const AndroidKeepAliveStatus({
     required this.guardEnabled,
     required this.generationActive,
+    this.webAppActive = false,
     this.generationWakeLockHeld = false,
     required this.serviceRunning,
     required this.batteryOptimizationIgnored,
@@ -48,6 +50,7 @@ class AndroidKeepAliveStatus {
     return AndroidKeepAliveStatus(
       guardEnabled: map['guardEnabled'] == true,
       generationActive: map['generationActive'] == true,
+      webAppActive: map['webAppActive'] == true,
       generationWakeLockHeld: map['generationWakeLockHeld'] == true,
       serviceRunning: map['serviceRunning'] == true,
       batteryOptimizationIgnored: map['batteryOptimizationIgnored'] == true,
@@ -211,6 +214,14 @@ class AndroidKeepAliveManager {
     );
   }
 
+  /// Keeps the loopback web app host alive without a generation wake lock.
+  static Future<void> setWebAppActive(bool active) async {
+    if (!isSupported) return;
+    await _keepAliveChannel.invokeMethod<void>('setWebAppActive', {
+      'active': active,
+    });
+  }
+
   static Future<bool> openNotificationSettings() =>
       _invokeBool('openNotificationSettings');
 
@@ -243,7 +254,9 @@ class AndroidKeepAliveManager {
       if (!enabled) {
         final fullyStopped =
             !latest.guardEnabled &&
-            (!latest.serviceRunning || latest.generationActive);
+            (!latest.serviceRunning ||
+                latest.generationActive ||
+                latest.webAppActive);
         if (fullyStopped) return latest;
       } else {
         final started = latest.guardEnabled && latest.serviceRunning;

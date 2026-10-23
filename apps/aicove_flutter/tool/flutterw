@@ -1,46 +1,111 @@
 #!/usr/bin/env bash
 # Project SDK entry point. Does not change the machine-wide Flutter installation.
+#
+# SDK choice: AICOVE_FLUTTER_SDK when set; otherwise the newest Flutter under
+# ~/dev-sdks (flutter, flutter-*) that meets the pubspec minimum. When that
+# SDK's cache is read-only (sandbox), a shadow copy under /tmp is used; the
+# shadow is built atomically and rebuilt whenever it is incomplete.
 set -euo pipefail
 
-default_sdk="$HOME/dev-sdks/flutter-3.44.6"
-if [[ -z "${AICOVE_FLUTTER_SDK:-}" ]]; then
-  if [[ -d "/tmp/flutter-3.44.6" ]] && [[ -w "/tmp/flutter-3.44.6/bin/cache" ]]; then
-    sdk="/tmp/flutter-3.44.6"
-  elif ! touch "$default_sdk/bin/cache/.write_check" 2>/dev/null; then
-    # Sandbox or read-only dev-sdks: use shadow SDK in /tmp
-    if [[ ! -d "/tmp/flutter-3.44.6" ]]; then
-      mkdir -p "/tmp/flutter-3.44.6"
-      for item in "$default_sdk"/*; do
-        b="$(basename "$item")"
-        if [[ "$b" == "bin" ]]; then
-          cp -R "$item" "/tmp/flutter-3.44.6/bin"
-        elif [[ "$b" == "packages" ]]; then
-          mkdir -p "/tmp/flutter-3.44.6/packages"
-          for pkg in "$item"/*; do
-            pb="$(basename "$pkg")"
-            if [[ "$pb" == "flutter_tools" ]]; then
-              cp -R "$pkg" "/tmp/flutter-3.44.6/packages/"
-            else
-              ln -s "$pkg" "/tmp/flutter-3.44.6/packages/$pb"
-            fi
-          done
+app_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+sdk_root="${AICOVE_SDK_ROOT:-$HOME/dev-sdks}"
+min_version="$(sed -n "s/^  flutter: *'>=\([0-9.]*\)'.*/\1/p" "$app_dir/pubspec.yaml" | head -n 1)"
+min_version="${min_version:-0}"
+
+sdk_version() {
+  local json="$1/bin/cache/flutter.version.json"
+  if [[ -f "$json" ]]; then
+    sed -n 's/.*"frameworkVersion": *"\([^"]*\)".*/\1/p' "$json" | head -n 1
+  elif [[ -f "$1/version" ]]; then
+    head -n 1 "$1/version"
+  fi
+}
+
+# True when version $1 >= version $2.
+version_at_least() {
+  [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" == "$2" ]]
+}
+
+pick_sdk() {
+  local best="" best_version="" dir version
+  for dir in "$sdk_root"/flutter "$sdk_root"/flutter-*; do
+    [[ -x "$dir/bin/flutter" ]] || continue
+    version="$(sdk_version "$dir")"
+    [[ -n "$version" ]] || continue
+    version_at_least "$version" "$min_version" || continue
+    if [[ -z "$best" ]] || ! version_at_least "$best_version" "$version"; then
+      best="$dir"
+      best_version="$version"
+    fi
+  done
+  printf '%s' "$best"
+}
+
+# A writable stand-in for an SDK whose cache cannot be written: bin and
+# flutter_tools are copied, everything else is linked.
+shadow_sdk() {
+  local source="$1" name shadow tmp item b pkg pb
+  name="$(basename "$source")"
+  shadow="/tmp/aicove-${name}-shadow"
+  if [[ -x "$shadow/bin/flutter" && -w "$shadow/bin/cache" ]]; then
+    printf '%s' "$shadow"
+    return
+  fi
+  tmp="$(mktemp -d "/tmp/aicove-${name}-shadow.XXXXXX")"
+  for item in "$source"/*; do
+    b="$(basename "$item")"
+    if [[ "$b" == "bin" ]]; then
+      cp -R "$item" "$tmp/bin"
+    elif [[ "$b" == "packages" ]]; then
+      mkdir -p "$tmp/packages"
+      for pkg in "$item"/*; do
+        pb="$(basename "$pkg")"
+        if [[ "$pb" == "flutter_tools" ]]; then
+          cp -R "$pkg" "$tmp/packages/"
         else
-          ln -s "$item" "/tmp/flutter-3.44.6/$b"
+          ln -s "$pkg" "$tmp/packages/$pb"
         fi
       done
+    else
+      ln -s "$item" "$tmp/$b"
     fi
-    sdk="/tmp/flutter-3.44.6"
-  else
-    rm -f "$default_sdk/bin/cache/.write_check" 2>/dev/null || true
-    sdk="$default_sdk"
+  done
+  chmod -R u+w "$tmp/bin" "$tmp/packages/flutter_tools"
+  if [[ -e "$shadow" ]]; then
+    chmod -R u+w "$shadow" 2>/dev/null || true
+    rm -rf "$shadow" 2>/dev/null || true
   fi
-else
+  if [[ -e "$shadow" ]] || ! mv "$tmp" "$shadow" 2>/dev/null; then
+    # Another run holds the old shadow; use this fresh copy instead.
+    printf '%s' "$tmp"
+    return
+  fi
+  printf '%s' "$shadow"
+}
+
+if [[ -n "${AICOVE_FLUTTER_SDK:-}" ]]; then
   sdk="$AICOVE_FLUTTER_SDK"
+else
+  sdk="$(pick_sdk)"
+  if [[ -z "$sdk" ]]; then
+    printf 'No Flutter >= %s found under %s.\nInstall one there (e.g. %s/flutter-%s) or set AICOVE_FLUTTER_SDK.\n' \
+      "$min_version" "$sdk_root" "$sdk_root" "$min_version" >&2
+    exit 1
+  fi
+  if ! touch "$sdk/bin/cache/.write_check" 2>/dev/null; then
+    sdk="$(shadow_sdk "$sdk")"
+  else
+    rm -f "$sdk/bin/cache/.write_check"
+  fi
 fi
 
 if [[ ! -x "$sdk/bin/flutter" ]]; then
-  printf 'Flutter SDK not found: %s\nSet AICOVE_FLUTTER_SDK to your Flutter 3.44.6 SDK directory.\n' "$sdk" >&2
+  printf 'Flutter SDK not found: %s\nSet AICOVE_FLUTTER_SDK to a Flutter >= %s SDK directory.\n' "$sdk" "$min_version" >&2
   exit 1
+fi
+if [[ "${AICOVE_FLUTTERW_WHICH:-}" == "1" ]]; then
+  printf '%s\n' "$sdk"
+  exit 0
 fi
 export PATH="$sdk/bin:$PATH"
 export FLUTTER_ROOT="$sdk"

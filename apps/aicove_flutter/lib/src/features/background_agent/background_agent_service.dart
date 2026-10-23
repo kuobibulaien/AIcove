@@ -20,56 +20,49 @@ import '../settings/direct_mode.dart' as direct;
 import 'domain/background_agent_definition.dart';
 import 'domain/background_agent_run_result.dart';
 
-typedef LoadBackgroundAgentMessages = Future<List<Message>> Function(
-  String conversationId,
-  int limit,
-);
+typedef LoadBackgroundAgentMessages =
+    Future<List<Message>> Function(String conversationId, int limit);
 typedef LoadBackgroundAgentSettings = Future<AppSettings> Function();
 typedef BuildBackgroundAgentSessionId = String Function(String agentId);
-typedef ResolveBackgroundAgentRequestConfig
-    = Future<BackgroundAgentRequestConfig> Function({
-  required AppSettings settings,
-  required String? modelRef,
-});
-typedef BackgroundAgentExecutor = Future<ApiCallResult> Function({
-  required ApiConfig config,
-  required List<AITool> availableTools,
-  required String sessionId,
-  required int maxRounds,
-});
+typedef ResolveBackgroundAgentRequestConfig =
+    Future<BackgroundAgentRequestConfig> Function({
+      required AppSettings settings,
+      required String? modelRef,
+    });
+typedef BackgroundAgentExecutor =
+    Future<ApiCallResult> Function({
+      required ApiConfig config,
+      required List<AITool> availableTools,
+      required String sessionId,
+    });
 
-/// Runner used by background agents; the kernel is selected by the
-/// `AICOVE_AGENT_KERNEL_BG` compile-time switch (ADR0064, batch 1b; on by
-/// default since 2026-10-13).
+/// Runner shared by foreground and background agents (ADR0108).
 final backgroundApiRunnerProvider = Provider<ApiRunner>(
-  (ref) => createApiRunner(useKernel: kAgentKernelBackground),
+  (ref) => createApiRunner(),
 );
 
 final backgroundAgentServiceProvider = Provider<BackgroundAgentService>((ref) {
   final runner = ref.watch(backgroundApiRunnerProvider);
   return BackgroundAgentService(
-    loadRecentMessages: (conversationId, limit) =>
-        ref.read(chatHistoryStoreProvider).loadCanonicalContextMessages(
-              conversationId,
-              limit: limit,
-            ),
+    loadRecentMessages: (conversationId, limit) => ref
+        .read(chatHistoryStoreProvider)
+        .loadCanonicalContextMessages(conversationId, limit: limit),
     loadSettings: () => ref.read(appSettingsProvider.future),
-    executor: ({
-      required ApiConfig config,
-      required List<AITool> availableTools,
-      required String sessionId,
-      required int maxRounds,
-    }) {
-      return runner.executeApiCall(
-        config: config,
-        sessionId: sessionId,
-        userText: null,
-        responseProcessors: const [],
-        availableTools: availableTools,
-        maxRounds: maxRounds,
-        traceContext: config.traceContext,
-      );
-    },
+    executor:
+        ({
+          required ApiConfig config,
+          required List<AITool> availableTools,
+          required String sessionId,
+        }) {
+          return runner.executeApiCall(
+            config: config,
+            sessionId: sessionId,
+            userText: null,
+            responseProcessors: const [],
+            availableTools: availableTools,
+            traceContext: config.traceContext,
+          );
+        },
   );
 });
 
@@ -83,13 +76,12 @@ class BackgroundAgentService {
     BackgroundAgentExecutor? executor,
     BuildBackgroundAgentSessionId? sessionIdFactory,
     TraceStore? traceStore,
-  })  : _loadRecentMessages = loadRecentMessages,
-        _loadSettings = loadSettings,
-        _requestConfigResolver =
-            requestConfigResolver ?? resolveRequestConfig,
-        _executor = executor ?? _defaultExecutor,
-        _sessionIdFactory = sessionIdFactory ?? _defaultSessionIdFactory,
-        _traceStore = traceStore ?? TraceStore.instance;
+  }) : _loadRecentMessages = loadRecentMessages,
+       _loadSettings = loadSettings,
+       _requestConfigResolver = requestConfigResolver ?? resolveRequestConfig,
+       _executor = executor ?? _defaultExecutor,
+       _sessionIdFactory = sessionIdFactory ?? _defaultSessionIdFactory,
+       _traceStore = traceStore ?? TraceStore.instance;
 
   final LoadBackgroundAgentMessages _loadRecentMessages;
   final LoadBackgroundAgentSettings _loadSettings;
@@ -102,15 +94,13 @@ class BackgroundAgentService {
     required ApiConfig config,
     required List<AITool> availableTools,
     required String sessionId,
-    required int maxRounds,
   }) {
-    return createApiRunner(useKernel: kAgentKernelBackground).executeApiCall(
+    return createApiRunner().executeApiCall(
       config: config,
       sessionId: sessionId,
       userText: null,
       responseProcessors: const [],
       availableTools: availableTools,
-      maxRounds: maxRounds,
       traceContext: config.traceContext,
     );
   }
@@ -249,7 +239,6 @@ class BackgroundAgentService {
         config: config,
         availableTools: allowedTools,
         sessionId: sessionId,
-        maxRounds: definition.maxRounds,
       );
       final finalReply = result.processedText.trim().isNotEmpty
           ? result.processedText
@@ -298,7 +287,8 @@ class BackgroundAgentService {
     required BackgroundAgentDefinition definition,
     List<Message>? explicitMessages,
   }) async {
-    final messages = explicitMessages ??
+    final messages =
+        explicitMessages ??
         await _loadRecentMessages(
           conversationId,
           definition.conversationWindow.normalizedLastMessages,
@@ -317,10 +307,7 @@ class BackgroundAgentService {
   }) {
     final messages = <Map<String, dynamic>>[];
     if (systemPrompt.isNotEmpty) {
-      messages.add({
-        'role': 'system',
-        'content': systemPrompt,
-      });
+      messages.add({'role': 'system', 'content': systemPrompt});
     }
     final includeTimestamp = definition.conversationWindow.includeTimestamps;
     if (usedMessages.every((message) => message.role == 'user')) {
@@ -338,9 +325,11 @@ class BackgroundAgentService {
     messages.add({
       'role': 'user',
       'content': usedMessages
-          .map((message) =>
-              '${message.role == 'user' ? '用户' : '角色'}：'
-              '${_plainText(message, includeTimestamp)}')
+          .map(
+            (message) =>
+                '${message.role == 'user' ? '用户' : '角色'}：'
+                '${_plainText(message, includeTimestamp)}',
+          )
           .join('\n'),
     });
     return messages;
@@ -450,8 +439,9 @@ class BackgroundAgentService {
           'requestedModelRef': definition.modelRef,
           'extraInstruction': extraInstruction?.trim(),
           'contextMessagesCount': usedMessages.length,
-          'allowedToolNames':
-              allowedTools.map((tool) => tool.name).toList(growable: false),
+          'allowedToolNames': allowedTools
+              .map((tool) => tool.name)
+              .toList(growable: false),
           'contextSpec': <String, dynamic>{
             'lastMessages':
                 definition.conversationWindow.normalizedLastMessages,
@@ -484,8 +474,9 @@ class BackgroundAgentService {
           'messagesBeforeSystemCount': usedMessages.length,
           'messagesAfterSystemCount': requestMessages.length,
           'toolsCount': allowedTools.length,
-          'toolNames':
-              allowedTools.map((tool) => tool.name).toList(growable: false),
+          'toolNames': allowedTools
+              .map((tool) => tool.name)
+              .toList(growable: false),
         },
         'rawContext': jsonEncode(requestMessages),
       },

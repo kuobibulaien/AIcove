@@ -97,13 +97,22 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     final previousMaxScrollExtent = shouldPreserveHistoryViewport
         ? _scrollController.position.maxScrollExtent
         : null;
-    final shouldStabilizeFollowLatestViewport =
+    var shouldStabilizeFollowLatestViewport =
         _shouldStabilizeFollowLatestViewport(
       oldWidget,
       messagesChanged: messagesChanged,
       transientMessagesChanged: transientMessagesChanged,
       didPrependOlderHistory: didPrependOlderHistory,
     );
+    if (shouldStabilizeFollowLatestViewport &&
+        !_followAiOutput &&
+        _isAiOutputTimelineChange(oldWidget)) {
+      shouldStabilizeFollowLatestViewport = false;
+      _declineAiOutputFollow();
+    }
+    if (!_followAiOutput && (messagesChanged || transientMessagesChanged)) {
+      _refreshJumpToBottomAfterAiOutput();
+    }
     if (_pendingTransientHandoffIds.isNotEmpty &&
         _stableMessagesContainAllIds(
           widget.messages,
@@ -295,6 +304,15 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     if (item is ChatNewTopicDividerItem) {
       return 'topic:${item.associatedMessageId}';
     }
+    if (item is ChatTaskRunningItem) {
+      return 'task:${item.taskId}';
+    }
+    if (item is ChatRunStatusItem) {
+      return 'run-status:${item.associatedMessageId}';
+    }
+    if (item is ChatReplyActionsItem) {
+      return 'reply-actions:${item.message.id}';
+    }
     return item.runtimeType.toString();
   }
 
@@ -327,6 +345,15 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     }
     if (item is ChatNewTopicDividerItem) {
       return item.associatedMessageId;
+    }
+    if (item is ChatTaskRunningItem) {
+      return item.associatedMessageId;
+    }
+    if (item is ChatRunStatusItem) {
+      return item.associatedMessageId;
+    }
+    if (item is ChatReplyActionsItem) {
+      return item.message.id;
     }
     return null;
   }
@@ -635,6 +662,11 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
   /// 在贴底状态下调度既有视口稳底——守卫条件与 didUpdateWidget 稳底一致，
   /// detached/分页/程序滚动语义不变。
   void _onActiveStreamTailChanged() {
+    if (!_followAiOutput) {
+      if (_canFollowLatest) _declineAiOutputFollow();
+      _refreshJumpToBottomAfterAiOutput();
+      return;
+    }
     if (!_canFollowLatest) return;
     if (!_scrollController.hasClients) return;
     if (!_scrollController.position.hasContentDimensions) return;
@@ -642,6 +674,44 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
     // 260ms jumpTo；这类旧回调会在用户切换控制权后重新抢占视口。
     _endAnchor.arm();
     _scheduleFollowLatestViewportStabilization(targetDistanceToBottom: 0);
+  }
+
+  /// 这次时间线变化是不是 AI 在出内容：尾消息属于助手，且新增部分里没有
+  /// 用户消息（刚发送的那条照常回底，让用户看到自己说的话）。
+  bool _isAiOutputTimelineChange(ChatMessageList oldWidget) {
+    final previous = _mergeTimelineMessages(
+      oldWidget.messages,
+      oldWidget.transientMessages,
+    );
+    final current = _currentTimelineMessages;
+    if (previous.isEmpty || current.isEmpty) return false;
+    if (current.last.role != 'assistant') return false;
+    // 按新增的消息裁决：旧尾被替换掉（收尾换成新内容）时，从尾部往回找
+    // 旧尾会一路扫到早已存在的用户消息，把 AI 输出误判成用户发送。
+    final previousIds = {for (final message in previous) message.id};
+    final added = [
+      for (final message in current)
+        if (!previousIds.contains(message.id)) message,
+    ];
+    // 没有新增：同一条尾消息在长（流式增长）算 AI 输出，单纯删除不算。
+    if (added.isEmpty) return current.last.id == previous.last.id;
+    return added.every((message) => message.role != 'user');
+  }
+
+  /// 「AI 发消息自动回底」关闭：停在原处，交给 detached 保持阅读位置，
+  /// 新内容在下方长出，「回到底部」按钮照常出现。
+  void _declineAiOutputFollow() {
+    _endAnchor.disarm();
+    widget.viewportController.onAiOutputUnfollowed();
+  }
+
+  /// 没跟随时内容在下方长出、用户没动手指，「回到底部」按钮得等布局后
+  /// 按新距离刷新；只更新按钮，不重建列表。
+  void _refreshJumpToBottomAfterAiOutput() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.viewportController.isDetached) return;
+      _updateManualDetachedDistanceToBottom(isDragFrame: true);
+    });
   }
 
   bool _shouldStabilizeFollowLatestViewport(
@@ -680,6 +750,17 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       return false;
     }
 
+    // 本来贴底、只撤掉了消息（如生成结束移除「生成中」占位）：活跃区变矮，
+    // 不同帧修正时视口越过底边，弹性物理随后把画面弹回来。留在底部不算
+    // 拉动用户。带新消息的替换（收尾换成新内容）仍归下面的尾部规则裁决。
+    final wasAtBottom =
+        (position.pixels - position.minScrollExtent).abs() <= 0.5;
+    if (wasAtBottom &&
+        currentMessages.length < previousMessages.length &&
+        _onlyRemovedMessages(previousMessages, currentMessages)) {
+      return true;
+    }
+
     final previousTail = previousMessages.last;
     final currentTail = currentMessages.last;
     final sameTail = previousTail.id == currentTail.id &&
@@ -694,11 +775,10 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       return true;
     }
 
-    if (!widget.viewportController.shouldPinLatestTail) {
-      return false;
-    }
-
-    if (currentMessages.length < previousMessages.length) {
+    // 停在底部时 AI 的新消息也要裁决，不必是刚发送过（滚动过再回到底部
+    // 会清掉 pinLatestTail）；跟不跟由调用处按「AI 发消息自动回底」决定。
+    if (!widget.viewportController.shouldPinLatestTail &&
+        !_isAiOutputTimelineChange(oldWidget)) {
       return false;
     }
 
@@ -710,6 +790,11 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
         (currentTail.id != previousTail.id ||
             currentTail.role != previousTail.role);
     return sameTimeDiffId;
+  }
+
+  bool _onlyRemovedMessages(List<Message> previous, List<Message> current) {
+    final previousIds = {for (final message in previous) message.id};
+    return current.every((message) => previousIds.contains(message.id));
   }
 
   /// 判断两条「同 id/时间/role」的尾消息之间，是否发生了需要重新贴底的布局变化。

@@ -1,0 +1,161 @@
+{
+  "requests": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    }
+  ],
+  "modes": [
+    "rich:开始"
+  ],
+  "executions": [],
+  "executing": [],
+  "deltas": [],
+  "fallbacks": 0,
+  "observed": 0,
+  "contextCalls": null,
+  "error": null,
+  "trace": [
+    {
+      "round": 1,
+      "seq": 1,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 0,
+        "hasToolExecution": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 2,
+      "stage": "FINAL_REPLY_READY",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "status": "completed",
+        "stopReason": null,
+        "rawReplyLength": 68,
+        "finalReplyLength": 68
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "FINAL_REPLY_READY",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawAiResponse": "<execute_tool>{\"name\":\"lookup\",\"arguments\":{\"q\":\"x\"}}</execute_tool>",
+          "regexDisplayText": "<execute_tool>{\"name\":\"lookup\",\"arguments\":{\"q\":\"x\"}}</execute_tool>",
+          "regex": {
+            "declared": 0,
+            "authorized": false,
+            "warnings": [],
+            "trace": []
+          },
+          "finalReply": "<execute_tool>{\"name\":\"lookup\",\"arguments\":{\"q\":\"x\"}}</execute_tool>"
+        }
+      }
+    }
+  ],
+  "result": {
+    "raw": "<execute_tool>{\"name\":\"lookup\",\"arguments\":{\"q\":\"x\"}}</execute_tool>",
+    "reply": "<execute_tool>{\"name\":\"lookup\",\"arguments\":{\"q\":\"x\"}}</execute_tool>",
+    "processed": "<execute_tool>{\"name\":\"lookup\",\"arguments\":{\"q\":\"x\"}}</execute_tool>",
+    "hidden": [],
+    "toolCalls": [],
+    "rawToolResults": [],
+    "toolResults": [],
+    "events": [],
+    "contents": [],
+    "audio": []
+  }
+}

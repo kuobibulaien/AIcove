@@ -10,7 +10,6 @@ class BackgroundAgentDefinition {
   final List<String> allowedToolNames;
   final String? modelRef;
   final double? temperature;
-  final int maxRounds;
 
   const BackgroundAgentDefinition({
     required this.id,
@@ -20,7 +19,6 @@ class BackgroundAgentDefinition {
     this.allowedToolNames = const <String>[],
     this.modelRef,
     this.temperature,
-    this.maxRounds = 5,
   });
 
   ConversationWindowSpec get conversationWindow =>
@@ -36,7 +34,6 @@ class BackgroundAgentDefinition {
     bool clearModelRef = false,
     double? temperature,
     bool clearTemperature = false,
-    int? maxRounds,
   }) {
     return BackgroundAgentDefinition(
       id: id ?? this.id,
@@ -47,7 +44,6 @@ class BackgroundAgentDefinition {
       modelRef: clearModelRef ? null : (modelRef ?? this.modelRef),
       temperature:
           clearTemperature ? null : (temperature ?? this.temperature),
-      maxRounds: maxRounds ?? this.maxRounds,
     );
   }
 }

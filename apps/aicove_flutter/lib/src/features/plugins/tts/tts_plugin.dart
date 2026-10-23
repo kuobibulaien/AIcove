@@ -4,8 +4,8 @@ import '../../content_tags/domain/content_tag_spec.dart';
 import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
 import '../../../core/app_logger.dart';
-import '../../../core/prompts/prompt_builtin_defaults.g.dart';
-import '../../../core/prompts/prompt_template_renderer.dart';
+import '../prompts/plugin_prompt_resolution.dart';
+import '../prompts/prompt_pack.dart';
 import 'tts_agent_plugin.dart';
 import 'tts_config.dart';
 import 'tts_parser.dart';
@@ -30,29 +30,6 @@ class TtsPlugin extends BasePlugin {
     ],
     toolNames: {'speak'},
   );
-
-  static String get _minimaxGuide =>
-      PromptBuiltinDefaults.requireTemplate('tts.minimax_guide');
-
-  static const String _fishAudioGuide = r'''【Fish Audio (S2/S2.1) 语音控制】
-你可以在 <tts> 标签内使用方括号 `[描述]` 进行词级自然语言语音控制，标签会影响其后面的内容：
-
-1. 情绪标签（使用中括号）：
-   - 根据上下文自由发挥，优先使用表演特征明显、强度足够的描述，不要过于普通或保守。
-   - 例如：`[窃窃私语]`、`[笑着说]`、`[淫媚可怜]`、`[发情娇喘]`、`[崩溃哀求]` 等，不要局限于这些例子，应根据人物当时的状态自行生成最合适的标签。自然语言描述即可。
-2. 台词内部加入人声、呼吸或局部语气标签（同样使用中括号）：
-   - 例如：`[喘气]`、`[抽泣]`、`[呼吸急促]`、`[呻吟]`、`[哭腔]`、`[长停顿]`、`[短停顿]`、`[轻笑]`、`[叹气]` 等，可以自由使用其他符合上下文的表达。
-   - 【推荐】鼓励大量叠用情绪标签以增强表演层次感，标签可以穿插在台词任意位置，逐段渲染出情绪的递进与爆发。
-   - 普通示例：
-     `啊[喘气][呻吟]主人[轻笑]你终于来了[高兴的笑声]`
-     在每个词语的断句换气都可以使用标签，更多使用以及叠用标签可以增强气声。
-   - nsfw示例：
-     `[高潮的娇喘]小母狗，啊[被插入子宫]最喜欢主人了[颤音][高潮的尖叫]`
-     请参照该示例的叠用密度与位置，根据人物状态自行生成最合适的标签组合。
-3. 规则要求：
-   - 标签必须放在受影响的词或短语前，且方括号标签后必须紧跟朗读台词。
-   -  大多数场景都可以使用tts进行口语表达，不需要在意token。
-   - 【严禁】<tts> 内部严禁包含任何颜文字（如 (^_^)、(*¯︶¯*) ）、Emoji 或装饰性特殊符号，包括爱心也不行，避免影响发音或引发杂音。''';
 
   // ========== 元数据定义 ==========
   static const _metadata = PluginMetadata(
@@ -111,17 +88,19 @@ class TtsPlugin extends BasePlugin {
   final Future<void> Function(VoicePreset updatedPreset)? _onVoiceCreated;
   final VoiceRequest? voiceRequest;
 
-  /// [systemPromptTemplate] 为全局 `<tts>` 标签说明，不随音色预设变化。
+  /// 本次请求的提示词包；代码不在包外追加说明（ADR0092）。
+  final ResolvedPromptPack? prompts;
+
+  /// [prompts] 是本次音色预设解析出的提示词包（ADR0092）；为空时不注入说明。
   factory TtsPlugin.forRequest(
     VoiceRequest request, {
-    String? systemPromptTemplate,
+    ResolvedPromptPack? prompts,
   }) {
     final service = request.service;
     final config = service?.config ?? TtsConfig(enabled: false);
     return TtsPlugin(
-      systemPromptTemplate == null
-          ? config
-          : config.copyWith(systemPromptTemplate: systemPromptTemplate),
+      config,
+      prompts: prompts,
       apiKey: service?.apiKey,
       requestUrl: service?.requestUrl ?? '',
       requestFormat: service?.requestFormat ?? 'openai_tts',
@@ -141,6 +120,7 @@ class TtsPlugin extends BasePlugin {
     Map<String, dynamic>? customConfig,
     Future<void> Function(VoicePreset updatedPreset)? onVoiceCreated,
     this.voiceRequest,
+    this.prompts,
   }) : _apiKey = apiKey,
        _requestUrl = requestUrl,
        _requestFormat = requestFormat,
@@ -280,88 +260,24 @@ class TtsPlugin extends BasePlugin {
 
   // ========== 现有功能（保留） ==========
 
-  /// 获取系统提示词
-  ///
-  /// 始终返回标签模式的提示词（工具调用路径已暂时屏蔽）
-  /// [supportsToolCalling] 参数暂时忽略，保留接口兼容性
+  /// 本次请求的 `<tts>` 标签说明，全部来自提示词包。
   String? buildTagSemanticsPrompt() {
-    if (!enabled) {
-      return null;
-    }
-
-    // 频率为 0 时告知模型不要使用语音
-    if (_ttsConfig.voiceFrequency <= 0) {
-      return PromptBuiltinDefaults.requireTemplate(
-        'tts.disabled_voice_frequency',
-      );
-    }
-
-    // 检测是否为 MiniMax 渠道
-    final isMinimaxProvider = _isMinimaxProvider();
-    // 检测是否为 Fish Audio 渠道
-    final isFishAudioProvider = _isFishAudioProvider();
-
+    final pack = prompts;
+    if (!enabled || pack == null) return null;
+    final scope = _ttsConfig.voiceFrequency <= 0
+        ? PromptScopes.ttsChatOff
+        : PromptScopes.ttsChat;
     AppLogger.debug(
       'TTS',
       '注入 TTS 标签提示词',
       metadata: {
         'voiceFrequency': _ttsConfig.voiceFrequency,
-        'isMinimaxProvider': isMinimaxProvider,
-        'isFishAudioProvider': isFishAudioProvider,
+        'pack': pack.pack.id,
+        'automatic': pack.automatic,
       },
     );
-
-    var prompt = _ttsConfig.systemPromptTemplate.trim();
-    if (prompt.isEmpty ||
-        prompt == PromptBuiltinDefaults.ttsSystemDefault.trim()) {
-      prompt = PromptBuiltinDefaults.requireTemplate('tts.system.default');
-    }
-
-    prompt = PromptTemplateRenderer.renderTrimmed(prompt, <String, Object?>{
-      'max_chars_per_chunk': _ttsConfig.maxCharsPerChunk,
-      'voice_frequency': _ttsConfig.voiceFrequency,
-      'minimax_guide': isMinimaxProvider ? _minimaxGuide : '',
-      'fish_audio_guide': isFishAudioProvider ? _fishAudioGuide : '',
-    }, collapseExtraBlankLines: true);
-
-    if (isMinimaxProvider && !prompt.contains('MiniMax 语音增强')) {
-      prompt = '$prompt\n\n$_minimaxGuide';
-    } else if (isFishAudioProvider &&
-        !prompt.contains('Fish Audio (S2/S2.1) 语音控制')) {
-      prompt = '$prompt\n\n$_fishAudioGuide';
-    }
-
-    return prompt.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
-  }
-
-  /// 判断当前是否使用 MiniMax 渠道
-  bool _isMinimaxProvider() {
-    // 方式1：通过 requestFormat 判断
-    if (_requestFormat.toLowerCase().contains('minimax')) {
-      return true;
-    }
-    // 方式2：通过 URL 判断
-    if (_requestUrl.toLowerCase().contains('minimax')) {
-      return true;
-    }
-    return false;
-  }
-
-  /// 判断当前是否使用 Fish Audio 渠道
-  bool _isFishAudioProvider() {
-    final format = _requestFormat.toLowerCase();
-    if (format.contains('fish_audio') || format.contains('fishaudio')) {
-      return true;
-    }
-    final url = _requestUrl.toLowerCase();
-    if (url.contains('fish.audio')) {
-      return true;
-    }
-    final model = (_selectedModel ?? _ttsConfig.model ?? '').toLowerCase();
-    if (model.contains('s2.1') || model.contains('s2-pro')) {
-      return true;
-    }
-    return false;
+    final prompt = pack.render(scope, voicePromptVariables(_ttsConfig));
+    return prompt.isEmpty ? null : prompt;
   }
 
   /// Turns `<tts>` sections into speech events bound to [voiceRequest] and

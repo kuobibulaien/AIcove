@@ -4,12 +4,12 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
-import 'builtin_stickers.dart';
 import 'sticker_registry.dart';
 
 /// 表情包套组（对应 Telegram/Signal 的 sticker pack）。
@@ -19,15 +19,16 @@ class StickerPack {
     required this.name,
     required this.stickers,
     this.enabled = true,
-    this.builtin = false,
+    this.author = '',
   });
 
   final String id;
   final String name;
   final bool enabled;
 
-  /// 内置套组随应用打包：只能启停，不能改名、删除或编辑表情。
-  final bool builtin;
+  /// 原作者（来源公众号等），空表示未知。
+  final String author;
+
   final List<Sticker> stickers;
 
   int get untaggedCount => stickers.where((s) => s.tags.isEmpty).length;
@@ -37,8 +38,8 @@ class StickerPack {
         id: id,
         name: name ?? this.name,
         enabled: enabled ?? this.enabled,
-        builtin: builtin,
         stickers: stickers ?? this.stickers,
+        author: author,
       );
 }
 
@@ -61,12 +62,22 @@ class StickerImportResult {
   final int skipped;
 }
 
-/// 待导入的一张图片。
+/// 待导入的一张图片。[tags] 为空时从文件名推出标签与描述。
 class StickerImportFile {
-  const StickerImportFile(this.name, this.bytes);
+  const StickerImportFile(this.name, this.bytes, {this.tags, this.description});
   final String name;
   final Uint8List bytes;
+  final List<String>? tags;
+  final String? description;
 }
+
+/// 套组文件夹里的标注清单：
+/// `{"name": 套组名, "author": 原作者, "stickers": {文件名: {"tags", "description"}}}`。
+const String stickerLabelsFileName = 'labels.json';
+
+/// 随应用内置的套组：`assets/stickers/builtin/index.json` 列出子目录，
+/// 每个子目录是一个套组，带 [stickerLabelsFileName]。
+const String builtinStickerRoot = 'assets/stickers/builtin';
 
 /// 用户表情包库：套组清单存在 `stickers/library.json`，图片按内容哈希存在
 /// `stickers/files/`。不入数据库、不参与同步；已发出的表情由消息块引用文件，
@@ -81,6 +92,11 @@ class StickerLibrary {
     final support = await getApplicationSupportDirectory();
     final library = StickerLibrary(Directory(p.join(support.path, 'stickers')));
     await library.load();
+    try {
+      await library.seedBuiltin(rootBundle);
+    } catch (error) {
+      debugPrint('[StickerLibrary] 内置表情导入失败：$error');
+    }
     return library;
   }();
 
@@ -119,6 +135,9 @@ class StickerLibrary {
   /// 发出过的用户表情 id：删除表情时保留其文件，历史消息仍能显示。
   Set<String> _usedIds = {};
 
+  /// 内置套组已导入过：之后用户删改都不再重新放回。
+  bool _builtinSeeded = false;
+
   File get _manifest => File(p.join(root.path, 'library.json'));
   Directory get _files => Directory(p.join(root.path, 'files'));
 
@@ -130,27 +149,27 @@ class StickerLibrary {
       try {
         json = jsonDecode(await _manifest.readAsString()) as Map<String, dynamic>;
       } on FormatException {
-        // 清单损坏时不覆盖原文件，保留现场；界面只显示内置套组。
-        _packs = [_builtinPack(true)];
+        // 清单损坏时不覆盖原文件，保留现场；界面显示空库，也不自动导入内置套组。
+        _packs = const [];
+        _builtinSeeded = true;
         _publish();
         return;
       }
     }
     _usedIds = {...?(json['usedIds'] as List?)?.cast<String>()};
+    _builtinSeeded = json['builtinSeeded'] as bool? ?? false;
     final packs = <StickerPack>[];
-    var builtinEnabled = true;
     for (final raw in (json['packs'] as List? ?? const [])) {
       final pack = raw as Map<String, dynamic>;
-      if (pack['builtin'] == true) {
-        builtinEnabled = pack['enabled'] as bool? ?? true;
-        continue;
-      }
+      // 旧版清单里的内置套组已移除，遇到直接忽略
+      if (pack['builtin'] == true) continue;
       final id = pack['id'] as String;
       packs.add(
         StickerPack(
           id: id,
           name: pack['name'] as String? ?? '未命名',
           enabled: pack['enabled'] as bool? ?? true,
+          author: pack['author'] as String? ?? '',
           stickers: [
             for (final s in (pack['stickers'] as List? ?? const []))
               Sticker(
@@ -164,17 +183,9 @@ class StickerLibrary {
         ),
       );
     }
-    _packs = [_builtinPack(builtinEnabled), ...packs];
+    _packs = packs;
     _publish();
   }
-
-  StickerPack _builtinPack(bool enabled) => StickerPack(
-    id: builtinStickerPackId,
-    name: builtinStickerPackName,
-    enabled: enabled,
-    builtin: true,
-    stickers: builtinStickers,
-  );
 
   /// 把已启用套组同步给 AI 使用的注册表。
   void _publish() {
@@ -188,25 +199,24 @@ class StickerLibrary {
     final json = {
       'version': 1,
       'usedIds': _usedIds.toList(),
+      'builtinSeeded': _builtinSeeded,
       'packs': [
         for (final pack in _packs)
-          if (pack.builtin)
-            {'id': pack.id, 'builtin': true, 'enabled': pack.enabled}
-          else
-            {
-              'id': pack.id,
-              'name': pack.name,
-              'enabled': pack.enabled,
-              'stickers': [
-                for (final s in pack.stickers)
-                  {
-                    'id': s.id,
-                    'file': p.basename(s.path),
-                    'tags': s.tags,
-                    'description': s.description,
-                  },
-              ],
-            },
+          {
+            'id': pack.id,
+            'name': pack.name,
+            'enabled': pack.enabled,
+            if (pack.author.isNotEmpty) 'author': pack.author,
+            'stickers': [
+              for (final s in pack.stickers)
+                {
+                  'id': s.id,
+                  'file': p.basename(s.path),
+                  'tags': s.tags,
+                  'description': s.description,
+                },
+            ],
+          },
       ],
     };
     await root.create(recursive: true);
@@ -237,7 +247,7 @@ class StickerLibrary {
   Future<void> renamePack(String packId, String name) async {
     final pack = packById(packId);
     final trimmed = name.trim();
-    if (pack == null || pack.builtin || trimmed.isEmpty) return;
+    if (pack == null || trimmed.isEmpty) return;
     await _replacePack(pack.copyWith(name: trimmed));
   }
 
@@ -247,7 +257,6 @@ class StickerLibrary {
     String? description,
   }) async {
     for (final pack in _packs) {
-      if (pack.builtin) continue;
       final index = pack.stickers.indexWhere((s) => s.id == stickerId);
       if (index < 0) continue;
       final old = pack.stickers[index];
@@ -267,7 +276,7 @@ class StickerLibrary {
 
   Future<void> deleteStickers(String packId, Set<String> stickerIds) async {
     final pack = packById(packId);
-    if (pack == null || pack.builtin) return;
+    if (pack == null) return;
     final removed = pack.stickers.where((s) => stickerIds.contains(s.id));
     await _replacePack(
       pack.copyWith(
@@ -282,7 +291,7 @@ class StickerLibrary {
 
   Future<void> deletePack(String packId) async {
     final pack = packById(packId);
-    if (pack == null || pack.builtin) return;
+    if (pack == null) return;
     _packs = [for (final old in _packs) if (old.id != packId) old];
     await _save();
     await _deleteOrphanFiles(pack.stickers);
@@ -303,30 +312,32 @@ class StickerLibrary {
     }
   }
 
-  /// 记录表情已发出；内置表情是资源文件，不需要记录。
+  /// 记录表情已发出。
   Future<void> markUsed(String stickerId) async {
     if (_usedIds.contains(stickerId) ||
-        !_packs.any((pack) =>
-            !pack.builtin && pack.stickers.any((s) => s.id == stickerId))) {
+        !_packs.any((pack) => pack.stickers.any((s) => s.id == stickerId))) {
       return;
     }
     _usedIds = {..._usedIds, stickerId};
     await _save();
   }
 
-  /// 导入一组图片。[packId] 为空时新建名为 [packName] 的套组。
+  /// 导入一组图片。[packId] 为空时新建名为 [packName]、作者为 [author] 的套组。
   Future<StickerImportResult> importFiles(
     List<StickerImportFile> files, {
     String? packId,
     String packName = '我的表情',
+    String author = '',
   }) async {
     final target = packId == null ? null : packById(packId);
-    if (target != null && target.builtin) {
-      throw ArgumentError('内置套组不能添加表情');
-    }
     final pack =
         target ??
-        StickerPack(id: const Uuid().v4(), name: packName, stickers: const []);
+        StickerPack(
+          id: const Uuid().v4(),
+          name: packName,
+          author: author,
+          stickers: const [],
+        );
     final stickers = [...pack.stickers];
     final existing = {for (final s in stickers) p.basename(s.path)};
     var added = 0, untagged = 0, skipped = 0;
@@ -351,7 +362,12 @@ class StickerLibrary {
         await temp.writeAsBytes(file.bytes, flush: true);
         await temp.rename(stored.path);
       }
-      final parsed = stickerLabelFromFileName(file.name);
+      final parsed = file.tags == null
+          ? stickerLabelFromFileName(file.name)
+          : (
+              description: file.description?.trim() ?? '',
+              tags: normalizeStickerTags(file.tags!),
+            );
       if (parsed.tags.isEmpty) untagged++;
       stickers.add(
         Sticker(
@@ -379,11 +395,38 @@ class StickerLibrary {
     );
   }
 
+  /// 首次加载时把内置套组导入成普通套组，用户可以照常改名、停用、删除。
+  Future<void> seedBuiltin(AssetBundle bundle) async {
+    if (_builtinSeeded) return;
+    final index =
+        jsonDecode(await bundle.loadString('$builtinStickerRoot/index.json'))
+            as Map<String, dynamic>;
+    for (final dir in (index['packs'] as List).cast<String>()) {
+      final base = '$builtinStickerRoot/$dir';
+      final labels =
+          jsonDecode(await bundle.loadString('$base/$stickerLabelsFileName'))
+              as Map<String, dynamic>;
+      final files = <StickerImportFile>[];
+      for (final name in (labels['stickers'] as Map).keys.cast<String>()) {
+        final data = await bundle.load('$base/$name');
+        files.add(StickerImportFile(name, data.buffer.asUint8List()));
+      }
+      await importFiles(
+        applyStickerLabels(files, labels),
+        packName: labels['name'] as String? ?? dir,
+        author: labels['author'] as String? ?? '',
+      );
+    }
+    _builtinSeeded = true;
+    await _save();
+  }
+
   /// 导入压缩包：每个一级文件夹成为一个套组；图片直接放在根目录时，
-  /// 以压缩包名作为套组名。
+  /// 以压缩包名作为套组名。文件夹里有 [stickerLabelsFileName] 时按它标注。
   Future<StickerImportResult> importZip(Uint8List bytes, String zipName) async {
     final archive = ZipDecoder().decodeBytes(bytes);
     final groups = <String, List<StickerImportFile>>{};
+    final labels = <String, Map<String, dynamic>>{};
     final fallbackName = p.basenameWithoutExtension(zipName).trim();
     for (final entry in archive) {
       if (!entry.isFile) continue;
@@ -392,6 +435,12 @@ class StickerLibrary {
         continue;
       }
       final group = parts.length > 1 ? parts.first : fallbackName;
+      if (parts.last == stickerLabelsFileName) {
+        labels[group] =
+            jsonDecode(utf8.decode(entry.content as List<int>))
+                as Map<String, dynamic>;
+        continue;
+      }
       groups
           .putIfAbsent(group.isEmpty ? '我的表情' : group, () => [])
           .add(
@@ -404,7 +453,14 @@ class StickerLibrary {
     final packIds = <String>[];
     var added = 0, untagged = 0, skipped = 0;
     for (final group in groups.entries) {
-      final result = await importFiles(group.value, packName: group.key);
+      final groupLabels = labels[group.key];
+      final result = await importFiles(
+        groupLabels == null
+            ? group.value
+            : applyStickerLabels(group.value, groupLabels),
+        packName: groupLabels?['name'] as String? ?? group.key,
+        author: groupLabels?['author'] as String? ?? '',
+      );
       packIds.addAll(result.packIds);
       added += result.added;
       untagged += result.untagged;
@@ -419,11 +475,31 @@ class StickerLibrary {
   }
 }
 
-/// 标签清洗：去空白、去掉会破坏 [标签] 语法的方括号、限制长度、去重。
+/// 按标注清单给图片带上标签与描述；清单里没有的图片仍按文件名推断。
+List<StickerImportFile> applyStickerLabels(
+  List<StickerImportFile> files,
+  Map<String, dynamic> labels,
+) {
+  final entries = labels['stickers'] as Map? ?? const {};
+  return [
+    for (final file in files)
+      if (entries[file.name] case final Map entry)
+        StickerImportFile(
+          file.name,
+          file.bytes,
+          tags: (entry['tags'] as List? ?? const []).cast<String>(),
+          description: entry['description'] as String?,
+        )
+      else
+        file,
+  ];
+}
+
+/// 标签清洗：去空白、去掉会破坏 `<sticker tag="…"/>` 语法的符号、限制长度、去重。
 List<String> normalizeStickerTags(Iterable<String> tags) {
   final result = <String>[];
   for (final raw in tags) {
-    final tag = raw.replaceAll(RegExp(r'[\[\]]'), '').trim();
+    final tag = raw.replaceAll(RegExp(r'[<>"\[\]]'), '').trim();
     if (tag.isEmpty || tag.length > 16 || result.contains(tag)) continue;
     result.add(tag);
   }

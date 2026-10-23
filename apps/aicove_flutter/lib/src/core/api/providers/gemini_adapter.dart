@@ -1,6 +1,7 @@
 /// Gemini (Google) API adapter
 library;
 
+import '../tool_media.dart';
 import 'dart:convert';
 
 import 'provider_adapter.dart';
@@ -101,7 +102,12 @@ class GeminiAdapter implements ProviderAdapter {
         return {
           'name': function['name'],
           'description': function['description'],
-          'parameters': function['parameters'],
+          // oneOf is JSON Schema, not a field of Gemini's OpenAPI Schema.
+          // Leave ordinary tool declarations on their existing wire format.
+          if ((function['parameters'] as Map?)?.containsKey('oneOf') ?? false)
+            'parametersJsonSchema': function['parameters']
+          else
+            'parameters': function['parameters'],
         };
       }).toList();
     }
@@ -203,6 +209,7 @@ class GeminiAdapter implements ProviderAdapter {
     String text = '';
     final toolCalls = <ToolCall>[];
     final hiddenThoughtParts = <Map<String, dynamic>>[];
+    final reasoning = StringBuffer();
     final candidates = (response['candidates'] as List?) ?? const [];
     String? rawFinishReason;
 
@@ -216,6 +223,7 @@ class GeminiAdapter implements ProviderAdapter {
         if (part is! Map<String, dynamic>) continue;
         if (_isThoughtPart(part)) {
           hiddenThoughtParts.add(Map<String, dynamic>.from(part));
+          reasoning.write((part['text'] ?? '').toString());
           continue;
         }
         if (part.containsKey('text')) {
@@ -242,6 +250,7 @@ class GeminiAdapter implements ProviderAdapter {
       hiddenThoughtParts: hiddenThoughtParts,
       rawResponse: response,
       rawFinishReason: rawFinishReason,
+      reasoning: reasoning.toString(),
     );
   }
 
@@ -285,8 +294,16 @@ class GeminiAdapter implements ProviderAdapter {
     messages.add({
       'role': 'user',
       'parts': responseParts,
+      toolStepMarker: true,
     });
 
+    final images = toolResults.expand((r) => r.images).toList();
+    if (images.isNotEmpty) {
+      messages.add({'role': 'user', toolStepMarker: true, 'parts': [
+      {'text': '以下是工具返回的图片：'},
+      for (final image in images) toolImagePart(image, gemini: true),
+    ]});
+    }
     return messages;
   }
 

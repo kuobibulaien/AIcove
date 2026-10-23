@@ -475,6 +475,27 @@ class ConversationTimelineCache {
     ..._conversationTasks.keys,
   };
 
+  /// Old history imported below a warm window cannot change that window.
+  /// Existing anchors still refresh on edit/deletion, regardless of timestamp.
+  bool isRawChangeInLoadedWindow(
+    String conversationId,
+    String messageId,
+    int createdAt,
+  ) {
+    final snapshot = _snapshotsByConversation[conversationId];
+    if (snapshot == null) {
+      // A first read may already have fetched older rows but not installed them.
+      // Queue the refresh behind it instead of treating this as an unopened room.
+      return _conversationTasks.containsKey(conversationId);
+    }
+    if (snapshot.messages.any((m) => _messageRawSourceId(m) == messageId)) {
+      return true;
+    }
+    final oldest = snapshot.oldestRawCursor;
+    return oldest == null ||
+        createdAt >= oldest.createdAt.millisecondsSinceEpoch;
+  }
+
   /// Refresh committed remote changes in warm windows. This is explicit so
   /// projection-maintenance writes cannot trigger a database notification loop.
   Future<Set<String>> refreshConversationsFromRawStore(

@@ -21,7 +21,6 @@ KernelPlugin plugin(
 
 TurnContext ctx() => TurnContext(
       round: 1,
-      maxRounds: 1,
       cancellation: KernelCancellation(),
       emit: (_) async {},
     );

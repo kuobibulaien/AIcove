@@ -34,7 +34,6 @@ void main() {
         useFastImageRoute: false,
         useStableImageRoute: true,
         supportsToolCalling: true,
-        customDrawingPrompt: '',
         reminders: const SystemReminderService(),
       );
 

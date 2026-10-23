@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../core/api/request_control.dart';
 
 import 'package:flutter/material.dart';
 
@@ -48,7 +49,24 @@ class McpConnectorPlugin extends BasePlugin {
           description: _describe(tool),
           parameters: const {},
           inputSchema: normalizeInputSchema(tool.inputSchema),
-          handler: (args) => _call(tool.name, args),
+          validationSchema: tool.inputSchema,
+          outputSchema: tool.outputSchema,
+          namespace: connector.id,
+          handler: (args) async {
+            final output = await _callRich(tool.name, args);
+            return output.isError
+                ? jsonEncode({'error': output.persistentText})
+                : output.persistentText;
+          },
+          richHandler: (args) => _callRich(tool.name, args),
+          controlledHandler: (args, control) async {
+            control.progress('Calling MCP ${tool.name}');
+            final signal = control.cancellation;
+            final output = signal == null ? await _callRich(tool.name, args)
+                : await RequestControl.run(signal, () => _callRich(tool.name, args));
+            control.progress('MCP ${tool.name} finished');
+            return output;
+          },
         ),
     ];
   }
@@ -60,15 +78,16 @@ class McpConnectorPlugin extends BasePlugin {
     return '[${connector.displayName}] $text';
   }
 
-  Future<String?> _call(String toolName, Map<String, dynamic> args) async {
+  Future<ToolOutput> _callRich(
+    String toolName,
+    Map<String, dynamic> args,
+  ) async {
     final client =
         _clientFactory?.call() ?? McpClientPool.instance.clientFor(connector);
     try {
       final result = await client.callTool(toolName, args);
-      if (!result.isError) return result.text;
-      return jsonEncode({
-        'error': result.text.isEmpty ? '工具执行失败' : result.text,
-      });
+      return result.output ??
+          ToolOutput(text: result.text, isError: result.isError);
     } on McpException catch (e) {
       AppLogger.warning(
         _logTag,
@@ -79,7 +98,7 @@ class McpConnectorPlugin extends BasePlugin {
           'error': e.message,
         },
       );
-      return jsonEncode({'error': e.message});
+      return ToolOutput(text: jsonEncode({'error': e.message}), isError: true);
     }
   }
 

@@ -1,3 +1,4 @@
+import 'prompt_pack_pages.dart';
 import 'package:flutter/material.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -80,13 +81,29 @@ class ImagePluginDetailPage extends ConsumerWidget {
                   ),
                   const SizedBox(height: MoeSettingsLayout.sectionGap),
                   MoeSettingsGroup(
+                    children: [
+                      MoeSettingsRow(
+                        icon: Icons.layers_outlined,
+                        label: PromptPackListPage.title,
+                        subtitle: '按模型写好的生图说明，可编辑、可自建',
+                        showDivider: false,
+                        onTap: () => Navigator.of(context).push(
+                          ParallaxSlidePageRoute(
+                            page: const PromptPackListPage(pluginId: 'image'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: MoeSettingsLayout.sectionGap),
+                  MoeSettingsGroup(
                     title: '生图方式',
                     children: [
-                      for (final mode in [CallFlowMode.auto, CallFlowMode.fast])
+                      for (final mode in [CallFlowMode.fast, CallFlowMode.call])
                         MoeSettingsRow(
-                          label: mode == CallFlowMode.auto ? '自动模式' : '快速模式',
-                          subtitle: mode == CallFlowMode.auto
-                              ? '按对话模型能力自动选择'
+                          label: mode == CallFlowMode.call ? '调用模式' : '快速模式',
+                          subtitle: mode == CallFlowMode.call
+                              ? '由对话模型调用生图工具'
                               : '通过图片标签直连生图',
                           trailingType: mode == settings.callFlowSettings.mode
                               ? MoeSettingsRowTrailing.custom

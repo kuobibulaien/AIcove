@@ -234,7 +234,6 @@ class ChatSendService {
     required String? userText,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -248,7 +247,6 @@ class ChatSendService {
         userText: userText,
         turnId: turnId,
         trace: trace,
-        maxRounds: maxRounds,
         onToolExecuting: onToolExecuting,
         enableStreaming: enableStreaming,
         onStreamTextDelta: onStreamTextDelta,
@@ -286,7 +284,11 @@ class ChatSendService {
       pluginRuntime.responseProcessors(
         pluginRuntime.snapshot(),
         pluginRuntime.selectForRole(conv.enabledPlugins?.toSet()),
-        PluginResponseInputs(ref: _ref, voiceRequest: voiceRequest),
+        PluginResponseInputs(
+          ref: _ref,
+          voiceRequest: voiceRequest,
+          rolePluginIds: conv.enabledPlugins?.toSet(),
+        ),
       ),
       normalizedReply,
       logTag: _logTag,
@@ -345,7 +347,10 @@ class ChatSendService {
       }
       return _composeAssistantBuildResult(
         apiResult: apiResult,
-        projectedMessages: audioMessages,
+        projectedMessages: ChatMessageProcessor.attachModelThinking(
+          audioMessages,
+          apiResult.reasoning,
+        ),
         lastMessageText:
             audioMessages.isNotEmpty ? audioMessages.last.displayText : '',
       );
@@ -359,6 +364,8 @@ class ChatSendService {
       contents: apiResult.pluginContents,
       toolCalls: apiResult.toolCalls,
       rawToolResults: apiResult.rawToolResults,
+      reasoning: apiResult.reasoning,
+      replyRounds: apiResult.replyRounds,
     );
     return _composeAssistantBuildResult(
       apiResult: apiResult,
@@ -373,13 +380,13 @@ class ChatSendService {
     required String lastMessageText,
   }) {
     final rawMessageId = genId('raw_msg');
-    final normalizedProjectedMessages = <Message>[
+    final normalizedProjectedMessages = ChatMessageProjectionCodec.applyRunStatus(<Message>[
       for (final message in projectedMessages)
         message.copyWith(
           sourceMessageId: rawMessageId,
           rawPayload: null,
         ),
-    ];
+    ], ChatMessageProjectionCodec.buildRawAssistantPayload(apiResult: apiResult));
     final rawMessage = _buildRawAssistantMessage(
       rawMessageId: rawMessageId,
       apiResult: apiResult,
@@ -461,7 +468,8 @@ class ChatSendService {
           toolCallId: call.id,
           toolName: call.name,
           arguments: call.arguments,
-          result: <String, dynamic>{'content': result.result},
+          result: <String, dynamic>{'content': result.persistentText,
+            if(call.name=='codemode') 'codemodeCalls': (result.structured as Map?)?['codemodeCalls'] ?? const []},
         ),
       );
     }

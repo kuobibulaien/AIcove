@@ -10,15 +10,25 @@ class MoeChatWallpaper extends StatelessWidget {
     super.key,
     required this.child,
     this.slot = GlobalWallpaperSlot.chat,
+    this.style,
+    this.layout,
   });
   final Widget child;
   final GlobalWallpaperSlot slot;
+
+  /// See [MoeGlobalWallpaper.style].
+  final WallpaperStyle? style;
+
+  /// See [MoeWallpaperView.layout].
+  final WallpaperLayout? layout;
 
   @override
   Widget build(BuildContext context) {
     return MoeGlobalWallpaper(
       slot: slot,
       color: Theme.of(context).scaffoldBackgroundColor,
+      style: style,
+      layout: layout,
       child: SizedBox.expand(child: child),
     );
   }
@@ -30,10 +40,19 @@ class MoeGlobalWallpaper extends StatelessWidget {
     super.key,
     required this.slot,
     required this.color,
+    this.style,
+    this.layout,
     this.child,
   });
   final GlobalWallpaperSlot slot;
   final Color color;
+
+  /// Mask, blur and framing laid over the global image; null uses the global
+  /// wallpaper's own. A character following the global image may adjust its own.
+  final WallpaperStyle? style;
+
+  /// See [MoeWallpaperView.layout].
+  final WallpaperLayout? layout;
   final Widget? child;
 
   /// Whether a global wallpaper image is active in this context.
@@ -52,8 +71,9 @@ class MoeGlobalWallpaper extends StatelessWidget {
     }
     final wallpaper = MoeWallpaperView(
       source: source,
-      style: theme.style,
+      style: style ?? theme.style,
       color: color,
+      layout: layout,
       fallbackAlignment: theme.wallpaper.alignment,
     );
     return child == null

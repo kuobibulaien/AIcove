@@ -24,10 +24,16 @@ class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
   _FakeAudioPlaybackBackend({
     Duration? duration,
     this.initialPosition = Duration.zero,
+    this.waitForPlaybackEnd = false,
   })  : _duration = duration,
         _position = initialPosition;
 
   final Duration initialPosition;
+  final bool waitForPlaybackEnd;
+  Completer<void>? _playbackEnd;
+  Completer<void>? seekGate;
+  Completer<void>? pauseGate;
+  final List<Duration> playPositions = <Duration>[];
   final _playerStateController = StreamController<PlayerState>.broadcast();
   final _positionController = StreamController<Duration>.broadcast();
   final _durationController = StreamController<Duration?>.broadcast();
@@ -40,6 +46,7 @@ class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
   int pauseCalls = 0;
   final Duration? _duration;
   Duration _position;
+  bool _playing = false;
 
   @override
   Stream<PlayerState> get playerStateStream => _playerStateController.stream;
@@ -73,15 +80,23 @@ class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
 
   @override
   Future<void> play() async {
+    if (_playing) return;
+    _playing = true;
     playCalls += 1;
+    playPositions.add(_position);
+    if (waitForPlaybackEnd) _playbackEnd = Completer<void>();
     _playerStateController.add(
       PlayerState(true, ProcessingState.ready),
     );
+    await _playbackEnd?.future;
   }
 
   @override
   Future<void> pause() async {
     pauseCalls += 1;
+    await pauseGate?.future;
+    _finishPlayback();
+    _playing = false;
     _playerStateController.add(
       PlayerState(false, ProcessingState.ready),
     );
@@ -90,19 +105,35 @@ class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
   @override
   Future<void> seek(Duration position) async {
     seekCalls.add(position);
+    await seekGate?.future;
     _position = position;
     _positionController.add(position);
     _playerStateController.add(
-      PlayerState(false, ProcessingState.ready),
+      PlayerState(_playing, ProcessingState.ready),
     );
   }
 
+  void _finishPlayback() {
+    final playbackEnd = _playbackEnd;
+    if (playbackEnd != null && !playbackEnd.isCompleted) playbackEnd.complete();
+  }
+
+  void failPlayback(Object error) {
+    _playbackEnd!.completeError(error);
+  }
+
+  void emitPosition(Duration position) {
+    _position = position;
+    _positionController.add(position);
+  }
+
   void emitCompleted() {
+    _finishPlayback();
     final completedPosition = _duration ?? Duration.zero;
     _position = completedPosition;
     _positionController.add(completedPosition);
     _playerStateController.add(
-      PlayerState(false, ProcessingState.completed),
+      PlayerState(_playing, ProcessingState.completed),
     );
     _playbackEventController.add(
       PlaybackEvent(
@@ -140,6 +171,7 @@ class _FakeAudioPlaybackBackend implements AudioPlaybackBackend {
 
   @override
   Future<void> dispose() async {
+    _finishPlayback();
     await _playerStateController.close();
     await _positionController.close();
     await _durationController.close();
@@ -380,7 +412,154 @@ void main() {
     });
   }
 
+  for (final width in <double>[390, 1200]) {
+    testWidgets('语音气泡暂停后再点击从零播放（${width}px）', (tester) async {
+      tester.view.physicalSize = Size(width, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 10),
+        waitForPlaybackEnd: true,
+      );
+      await tester.pumpWidget(_buildPlayerHost(
+        block: AudioBlock(messageId: 'replay', url: 'https://example.invalid/tap.wav'),
+        textColor: Colors.black,
+        backend: backend,
+        dark: false,
+        material: MoeSurfaceMaterial.solid,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      backend.emitPosition(const Duration(seconds: 5));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.pause_rounded));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+      await tester.pump();
+      expect(backend.playPositions, [Duration.zero, Duration.zero]);
+      expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+  }
+
   group('AudioPlayerController', () {
+    test('暂停后再次点击播放必须从零开始，而不是续播中途位置', () async {
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 10),
+      );
+      final controller = AudioPlayerController(
+        'https://example.invalid/replay.wav',
+        backend: backend,
+      );
+      addTearDown(controller.dispose);
+      await _waitUntil(() => !controller.state.isLoading);
+
+      await controller.togglePlayPause();
+      await _settleAsync();
+      backend.emitPosition(const Duration(seconds: 5));
+      await _settleAsync();
+      await controller.togglePlayPause();
+      await _settleAsync();
+      expect(controller.state.isPlaying, isFalse);
+      expect(backend.position, const Duration(seconds: 5));
+
+      await controller.togglePlayPause();
+      expect(backend.playPositions, [Duration.zero, Duration.zero]);
+    });
+
+    test('play Future 等到播放结束才返回时，不阻塞后续暂停和重播', () async {
+      final backend = _FakeAudioPlaybackBackend(
+        duration: const Duration(seconds: 10),
+        waitForPlaybackEnd: true,
+      );
+      final controller = AudioPlayerController(
+        'https://example.invalid/native-play.wav',
+        backend: backend,
+      );
+      addTearDown(controller.dispose);
+      await _waitUntil(() => !controller.state.isLoading);
+
+      await controller.togglePlayPause().timeout(const Duration(seconds: 1));
+      await _settleAsync();
+      expect(controller.state.isPlaying, isTrue);
+      backend.emitPosition(const Duration(seconds: 5));
+      await _settleAsync();
+      await controller.togglePlayPause();
+      await _settleAsync();
+      await controller.togglePlayPause().timeout(const Duration(seconds: 1));
+      expect(backend.playPositions, [Duration.zero, Duration.zero]);
+    });
+
+    test('归零尚未结束时被另一条语音打断，不得迟到开播', () async {
+      final backend = _FakeAudioPlaybackBackend();
+      final coordinator = AudioPlaybackCoordinator();
+      final controller = AudioPlayerController(
+        'https://example.invalid/cancel-start.wav',
+        backend: backend,
+        coordinator: coordinator,
+      );
+      addTearDown(controller.dispose);
+      await _waitUntil(() => !controller.state.isLoading);
+      final gate = backend.seekGate = Completer<void>();
+      final play = controller.togglePlayPause();
+      await _waitUntil(() => backend.seekCalls.isNotEmpty);
+      final interrupt = coordinator.stopAll();
+      gate.complete();
+      await Future.wait([play, interrupt]);
+      await _settleAsync();
+      expect(backend.playCalls, 0);
+      expect(controller.state.isPlaying, isFalse);
+      expect(backend.position, Duration.zero);
+    });
+
+    test('被打断后立即重播，要等原生暂停完成再归零开播', () async {
+      final backend = _FakeAudioPlaybackBackend(waitForPlaybackEnd: true);
+      final controller = AudioPlayerController(
+        'https://example.invalid/interrupt-replay.wav',
+        backend: backend,
+      );
+      addTearDown(controller.dispose);
+      await _waitUntil(() => !controller.state.isLoading);
+      await controller.togglePlayPause();
+      await _settleAsync();
+      backend.emitPosition(const Duration(seconds: 5));
+      final gate = backend.pauseGate = Completer<void>();
+
+      final interrupt = controller.interrupt();
+      await _waitUntil(() => backend.pauseCalls > 0);
+      final replay = controller.togglePlayPause();
+      await _settleAsync();
+      expect(backend.playCalls, 1);
+      gate.complete();
+      await Future.wait([interrupt, replay]);
+      await _settleAsync();
+      expect(backend.playPositions, [Duration.zero, Duration.zero]);
+      expect(controller.state.isPlaying, isTrue);
+    });
+
+    test('不等待整段播放后，原生 play 异步失败仍反馈错误并释放播放状态', () async {
+      final backend = _FakeAudioPlaybackBackend(waitForPlaybackEnd: true);
+      final coordinator = AudioPlaybackCoordinator();
+      final controller = AudioPlayerController(
+        'https://example.invalid/play-error.wav',
+        backend: backend,
+        coordinator: coordinator,
+      );
+      addTearDown(controller.dispose);
+      await _waitUntil(() => !controller.state.isLoading);
+      await controller.togglePlayPause();
+      await _settleAsync();
+      backend.failPlayback(StateError('native playback failed'));
+      await _settleAsync();
+      expect(controller.state.error, contains('native playback failed'));
+      expect(controller.state.isPlaying, isFalse);
+      expect(coordinator.activeController, isNull);
+    });
+
     test('播放完成后不应立即 pause+seek 回卷，应在下次播放时再从头开始', () async {
       final backend = _FakeAudioPlaybackBackend(
         duration: const Duration(seconds: 2),

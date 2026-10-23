@@ -38,6 +38,24 @@ final voicePresetReadyProvider = FutureProvider<void>(
   (ref) => ref.read(voicePresetApplicationProvider).initialize(),
 );
 
+/// Why a role's voice cannot speak now, or null when it can: the same
+/// resolution a request runs, without migrating or saving anything.
+final voicePresetProblemProvider = Provider.autoDispose
+    .family<String?, String?>((ref, boundPresetId) {
+      final settings = ref.watch(appSettingsProvider).valueOrNull;
+      if (settings == null) return null;
+      final config = ref.watch(ttsPluginConfigProvider);
+      return VoicePresetApplication(ref)
+          ._prepare(
+            'check',
+            boundPresetId,
+            config,
+            settings,
+            defaultId: config.defaultVoicePresetId,
+          )
+          .error;
+    });
+
 class VoicePresetApplication implements VoicePresetApplicationPort {
   VoicePresetApplication(this.ref);
   final Ref ref;
@@ -237,6 +255,7 @@ class VoicePresetApplication implements VoicePresetApplicationPort {
         maxCharsPerChunk: synthesis.maxCharsPerChunk,
         voiceFrequency: synthesis.voiceFrequency,
         systemPromptTemplate: synthesis.systemPromptTemplate,
+        prompts: synthesis.prompts,
       ),
     );
   }

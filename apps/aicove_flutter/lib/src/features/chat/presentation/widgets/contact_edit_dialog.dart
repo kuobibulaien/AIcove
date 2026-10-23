@@ -9,6 +9,7 @@ import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 
 import '../../domain/conversation.dart';
 import '../../domain/persona_prompt_codec.dart';
+import '../../domain/role_agent_mode.dart';
 import '../../../../ui/shared/widgets/buttons/moe_primary_button.dart';
 import '../../../../ui/shared/widgets/buttons/moe_secondary_button.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
@@ -25,6 +26,7 @@ class ContactEditResult {
   final String personaPrompt; // 人格提示词（给 AI 用的设定）
   final List<String>? enabledPlugins; // 允许插件列表，null=允许全部
   final String? recipeId; // SillyTavern preset recipe ID
+  final RoleAgentMode? agentMode; // 角色工作模式，null 为不修改（ADR0097）
   final bool clearAvatarUrl;
   final bool clearCharacterImage;
   final bool clearChatBackgroundImage;
@@ -47,6 +49,7 @@ class ContactEditResult {
     required this.personaPrompt,
     this.enabledPlugins,
     this.recipeId,
+    this.agentMode,
     this.clearAvatarUrl = false,
     this.clearCharacterImage = false,
     this.clearChatBackgroundImage = false,

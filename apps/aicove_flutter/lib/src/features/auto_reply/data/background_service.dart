@@ -11,7 +11,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../../observability/background_delivery_diagnostics.dart';
 import '../../../core/database/database.dart' hide MessageBlock;
+import '../../../core/media/media_store.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/database/repositories/repositories.dart';
 import '../../chat/services/chat_message_processor.dart';
@@ -319,6 +321,7 @@ Future<T> _withClaimStore<T>(
 /// 一次任务共用一个数据库连接（含生成用的容器）。逐步开关连接时，上一个
 /// 连接在后台 isolate 里还没真正关掉，下一次打开就会撞上锁。
 AppDatabase? _taskDb;
+Stopwatch? _taskClock;
 
 /// 打开成功才缓存：drift 把打开阶段（读 schema 版本）的失败永久记在连接上，
 /// 撞锁后复用同一连接，重试只会读回旧错误，所以失败的连接直接关掉重开。
@@ -341,11 +344,13 @@ Future<AppDatabase> _taskDatabase() async {
 }
 
 Future<void> _runActiveReplyTask(Map<String, dynamic> data) async {
+  _taskClock = Stopwatch()..start();
   try {
     await _handleActiveReplyTask(data);
   } finally {
     final db = _taskDb;
     _taskDb = null;
+    _taskClock = null;
     await db?.close();
   }
 }
@@ -386,6 +391,16 @@ Future<void> _appendHistoryLog({
   AutoReplyTriggerLogLevel level = AutoReplyTriggerLogLevel.info,
   Map<String, dynamic> metadata = const <String, dynamic>{},
 }) async {
+  await recordBackgroundDelivery(
+    event: event,
+    entityId: triggerId == null
+        ? 'background'
+        : backgroundTriggerMessageId(triggerId),
+    conversationId: conversationId,
+    phase: category.name,
+    success: success,
+    elapsedMs: _taskClock?.elapsedMilliseconds ?? 0,
+  );
   try {
     await _historyStorage.appendLog(
       AutoReplyTriggerLog(
@@ -1147,6 +1162,10 @@ Future<bool> _saveMessageToStorage(
     // 消息、会话摘要与未读数同一事务写入：有消息就一定有摘要和未读，
     // 崩溃恢复只需看消息是否存在。
     final now = DateTime.now().millisecondsSinceEpoch;
+    final rawPayload = {
+      ...payload.rawPayload,
+      'bg_origin_device_id': await MediaStore.localDeviceId,
+    };
     await db.transaction(() async {
       await msgRepo.insert(MessagesCompanion(
         id: Value(messageId),
@@ -1155,7 +1174,7 @@ Future<bool> _saveMessageToStorage(
         content: Value(payload.rawText),
         status: const Value('sent'),
         createdAt: Value(now),
-        rawPayload: Value(jsonEncode(payload.rawPayload)),
+        rawPayload: Value(jsonEncode(rawPayload)),
       ));
       await convRepo.updateSummary(convId, payload.displayText, now);
       await db.customUpdate(

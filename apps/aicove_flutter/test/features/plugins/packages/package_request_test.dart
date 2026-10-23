@@ -2,6 +2,8 @@
 // request through the normal plugin path only when the role enables it.
 import 'dart:convert';
 import 'dart:io';
+import 'extension_test_support.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -186,7 +188,7 @@ void main() {
       expect(messagesOf(config), contains(_prompt));
       expect(messagesOf(config), contains('<mood>开心</mood>'));
       // delegate_task is built in for every chat run (ADR0088).
-      expect(toolsOf(config), [_tool, 'delegate_task']);
+      expect(toolsOf(config), [_tool, 'delegate_task', 'steer_task', 'read_tool_result']);
       final tool = config.boundTools!.singleWhere((t) => t.name == _tool);
       expect(await tool.handler({'name': 'guide'}), '# 写诗指南\n押韵。');
     },
@@ -230,4 +232,52 @@ void main() {
       isNot(contains(_tool)),
     );
   });
+
+  test(
+    'script prompts stay on chat; execution tools only reach tool-mode roles and revoke next run',
+    () async {
+      await container
+          .read(aicovePackagesProvider.notifier)
+          .importFiles(scriptFiles(scriptSource));
+      Future<ApiConfig> request({bool toolMode = false, bool enabled = true}) =>
+          container
+              .read(chatSendServiceProvider)
+              .prepareApiConfig(
+                conv: conversation(enabled ? ['pkg:demo'] : []).copyWith(
+                  agentMode: toolMode ? RoleAgentMode.tool : RoleAgentMode.chat,
+                ),
+                history: _history,
+                userText: 'compute',
+              );
+      final chat = await request();
+      expect(messagesOf(chat), contains('script-prompt'));
+      expect(toolsOf(chat), isNot(contains('pkg_4_demo_answer')));
+      expect(
+        chat.boundTools?.map((t) => t.name) ?? [],
+        isNot(contains('pkg_4_demo_answer')),
+      );
+      final tool = await request(toolMode: true);
+      expect(toolsOf(tool), contains('codemode'));
+      expect(toolsOf(tool), isNot(contains('pkg_4_demo_answer')));
+      expect(jsonEncode(tool.tools), contains('pkg_4_demo_answer'));
+      expect(
+        tool.boundTools!.map((t) => t.name),
+        contains('pkg_4_demo_answer'),
+      );
+      expect(toolsOf(tool), isNot(contains('delegate_task')));
+      final off = await request(toolMode: true, enabled: false);
+      expect(toolsOf(off), isNot(contains('pkg_4_demo_answer')));
+      expect(
+        off.boundTools!.map((t) => t.name),
+        isNot(contains('pkg_4_demo_answer')),
+      );
+      expect(jsonEncode(off.tools), isNot(contains('pkg_4_demo_answer')));
+      expect(messagesOf(off), isNot(contains('script-prompt')));
+      // A prior run's bound handler keeps its snapshot.
+      final output = await tool.boundTools!
+          .singleWhere((t) => t.name == 'pkg_4_demo_answer')
+          .invoke({'value': 4});
+      expect(output.text, contains('12'));
+    },
+  );
 }

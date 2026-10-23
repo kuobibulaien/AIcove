@@ -7,9 +7,11 @@ import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/blurred_background_service.dart';
 import 'domain/chat_display_policy.dart';
 import 'domain/conversation.dart';
+import 'domain/role_agent_mode.dart';
 import 'id_gen.dart';
 import 'data/preset_characters_loader.dart';
 import '../assistant/domain/assistant_onboarding.dart' show kAicoveAssistantId;
+import '../assistant/domain/assistant_rename.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/database/database.dart' as db;
 import '../../core/database/database_provider.dart';
@@ -46,6 +48,9 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     }
     final assistant = await _seedAssistantOnce(list);
     if (assistant != null) list.insert(0, assistant);
+    await _syncAssistantPreset(list);
+    await _updateNahidaPersonaOnce(list);
+    await _narrowDefaultPluginsOnce(list);
 
     // Loading awaits the database and the assistant seed; a container
     // disposed meanwhile has closed the database.
@@ -74,6 +79,78 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     }
   }
 
+  static const _defaultPluginsKey = 'role_default_plugins_v1';
+
+  /// Roles that never narrowed their plugins (null = every plugin) drop to
+  /// [kDefaultRolePluginIds], once per device.
+  Future<void> _narrowDefaultPluginsOnce(List<Conversation> list) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_defaultPluginsKey) == true) return;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].enabledPlugins != null) continue;
+        final narrowed = list[i].copyWith(
+          enabledPlugins: kDefaultRolePluginIds,
+        );
+        await _saveOne(narrowed);
+        list[i] = narrowed;
+      }
+      await prefs.setBool(_defaultPluginsKey, true);
+    } catch (error) {
+      debugPrint('[ConversationsNotifier] 默认插件收窄失败：$error');
+    }
+  }
+
+  static const _assistantPresetKey = 'aicove_assistant_preset_fingerprint';
+
+  /// Overwrites AIcove酱 with the shipped preset whenever the preset changed
+  /// since the last launch (she is in beta, so user edits are not kept).
+  Future<void> _syncAssistantPreset(List<Conversation> list) async {
+    try {
+      final preset = await _loadAssistant();
+      if (preset == null) return;
+      final fingerprint = assistantPresetFingerprint(preset);
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString(_assistantPresetKey) == fingerprint) return;
+      final index = list.indexWhere((c) => c.id == kAicoveAssistantId);
+      if (index >= 0) {
+        final overwritten = overwrittenAssistant(list[index], preset);
+        await _saveOne(overwritten);
+        list[index] = overwritten;
+      }
+      await prefs.setString(_assistantPresetKey, fingerprint);
+    } catch (error) {
+      debugPrint('[ConversationsNotifier] 内置助手预设覆盖失败：$error');
+    }
+  }
+
+  static const _nahidaPersonaUpdatedKey = 'nahida_persona_updated_v2';
+
+  /// Moves a preset Nahida still on an untouched legacy factory prompt to the
+  /// current WeChat-style prompt, leaving user edits and drawing bindings intact.
+  Future<void> _updateNahidaPersonaOnce(List<Conversation> list) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_nahidaPersonaUpdatedKey) == true) return;
+      final index = list.indexWhere((c) => c.id == 'preset_nahida');
+      if (index < 0) {
+        await prefs.setBool(_nahidaPersonaUpdatedKey, true);
+        return;
+      }
+      final presets = await PresetCharactersLoader.load();
+      final preset = presets.where((c) => c.id == 'preset_nahida').firstOrNull;
+      if (preset == null) return;
+      final updated = updatedNahidaPersona(list[index], preset);
+      if (updated != null) {
+        await _saveOne(updated);
+        list[index] = updated;
+      }
+      await prefs.setBool(_nahidaPersonaUpdatedKey, true);
+    } catch (error) {
+      debugPrint('[ConversationsNotifier] 纳西妲人设更新失败：$error');
+    }
+  }
+
   Future<Conversation?> _loadAssistant() async {
     final presets = await PresetCharactersLoader.load();
     final preset = presets.where((c) => c.id == kAicoveAssistantId).firstOrNull;
@@ -93,10 +170,14 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     final convRepo = ref.read(conversationRepositoryProvider);
     await convRepo.restore(kAicoveAssistantId);
     final restored = await convRepo.getById(kAicoveAssistantId);
-    if (restored != null && restored.deletedAt == null) {
-      return ConversationConverter.fromDb(restored);
-    }
     final assistant = await _loadAssistant();
+    if (restored != null && restored.deletedAt == null) {
+      final current = ConversationConverter.fromDb(restored);
+      if (assistant == null) return current;
+      final overwritten = overwrittenAssistant(current, assistant);
+      await _saveOne(overwritten);
+      return overwritten;
+    }
     if (assistant != null) await _saveOne(assistant);
     return assistant;
   }
@@ -137,6 +218,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       description: 'Default preset character',
       characterImage: 'assets/characters/images/nahida.jpg',
       voiceFile: VoicePreset.defaultPresetId,
+      enabledPlugins: kDefaultRolePluginIds,
       createdAt: now,
       updatedAt: now,
     );
@@ -149,6 +231,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
       id: genId('conv'),
       title: 'New Chat',
       displayName: 'New Chat',
+      enabledPlugins: kDefaultRolePluginIds,
       createdAt: now,
       updatedAt: now,
     );
@@ -246,6 +329,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     bool clearEnabledPlugins = false,
     String? recipeId,
     bool clearRecipeId = false,
+    RoleAgentMode? agentMode,
   }) async {
     final currentList = state.value ?? const <Conversation>[];
     Conversation? current;
@@ -299,6 +383,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
           ? null
           : (enabledPlugins ?? current.enabledPlugins),
       recipeId: clearRecipeId ? null : (recipeId ?? current.recipeId),
+      agentMode: agentMode ?? current.agentMode,
       updatedAt: nextUpdatedAt,
     );
 
@@ -332,6 +417,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
                   ? null
                   : (enabledPlugins ?? c.enabledPlugins),
               recipeId: clearRecipeId ? null : (recipeId ?? c.recipeId),
+              agentMode: agentMode ?? c.agentMode,
               updatedAt: nextUpdatedAt,
             ));
 
@@ -590,8 +676,10 @@ String? nextChatBackgroundFraming(
   String? framing,
   bool clearFraming = false,
 }) {
-  if (clearFraming || clearImage) return null;
+  // 没有自己的图时截取作用在跟随的全局壁纸上，清除图片时可一并给出。
+  if (clearFraming) return null;
   if (framing != null) return framing;
+  if (clearImage) return null;
   final imageChanged = image != null && image != current.chatBackgroundImage;
   return imageChanged ? null : current.chatBackgroundFraming;
 }

@@ -23,4 +23,14 @@ class KernelCancellation {
   void throwIfCancelled() {
     if (isCancelled) throw const KernelCancelledException();
   }
+
+  /// Stops awaiting non-cooperative ports immediately. Late completions
+  /// remain observed, but can never resume the cancelled run.
+  Future<T> bind<T>(Future<T> operation) {
+    throwIfCancelled();
+    return Future.any([
+      operation,
+      whenCancelled.then<T>((_) => throw const KernelCancelledException()),
+    ]);
+  }
 }

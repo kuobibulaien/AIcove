@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/services/dismissible_notice_service.dart';
+import '../../../core/app_logger.dart';
 import '../../../ui/shared/widgets/moe_toast.dart';
 
 /// TTS 失败原因
@@ -73,7 +74,7 @@ final ttsFallbackNotificationServiceProvider = Provider<TtsFallbackNotificationS
 
 /// TTS 失败通知 Widget
 /// 
-/// 放置在 App 根部，监听 TTS 失败事件并显示 Toast
+/// 放置在 Navigator 的页面内，监听 TTS 失败事件并显示 Toast。
 class TtsFallbackNotificationListener extends ConsumerStatefulWidget {
   final Widget child;
 
@@ -99,23 +100,29 @@ class _TtsFallbackNotificationListenerState
 
   void _setupListener() {
     final service = ref.read(ttsFallbackNotificationServiceProvider);
-    _subscription = service.stream.listen((event) async {
+    _subscription = service.stream.listen(_showNotification);
+  }
+
+  Future<void> _showNotification(TtsFallbackEvent event) async {
+    try {
       if (!mounted) return;
-      
-      // 检查是否需要显示通知
-      final shouldShow = await dismissibleNoticeService.shouldShowNotice('tts_fallback');
-      if (!shouldShow) return;
-      
-      if (!mounted) return;
-      
-      // 显示可静默通知
+      final shouldShow =
+          await dismissibleNoticeService.shouldShowNotice('tts_fallback');
+      if (!mounted || !shouldShow) return;
+      if (Overlay.maybeOf(context) == null) {
+        AppLogger.warning('TtsFallbackNotification', '没有可用浮层，跳过语音回退提示');
+        return;
+      }
       MoeToast.showDismissible(
         context,
         event.message,
         noticeKey: 'tts_fallback',
         onDismissForever: () => dismissibleNoticeService.dismissForever('tts_fallback'),
       );
-    });
+    } catch (error) {
+      AppLogger.warning('TtsFallbackNotification', '语音回退提示失败，聊天文本不受影响',
+          metadata: {'errorType': error.runtimeType.toString()});
+    }
   }
 
   @override

@@ -18,6 +18,30 @@ class FakeChatInterfaceSettingsNotifier extends AppSettingsNotifier {
     settings = settings.copyWith(autoScrollOnSend: enabled);
     state = AsyncData(settings);
   }
+
+  @override
+  Future<void> setAutoScrollOnAiReply(bool enabled) async {
+    settings = settings.copyWith(autoScrollOnAiReply: enabled);
+    state = AsyncData(settings);
+  }
+
+  @override
+  Future<void> setBubbleShowThinking(bool enabled) async {
+    settings = settings.copyWith(bubbleShowThinking: enabled);
+    state = AsyncData(settings);
+  }
+
+  @override
+  Future<void> setDocumentShowThinking(bool enabled) async {
+    settings = settings.copyWith(documentShowThinking: enabled);
+    state = AsyncData(settings);
+  }
+
+  @override
+  Future<void> setDocumentShowToolCalls(bool enabled) async {
+    settings = settings.copyWith(documentShowToolCalls: enabled);
+    state = AsyncData(settings);
+  }
 }
 
 AppSettings chatInterfaceTestSettings() => const AppSettings(

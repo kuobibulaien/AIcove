@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:aicove_flutter/src/core/app_logger.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/media/media_store.dart';
@@ -43,6 +44,9 @@ class ObservedLanRepository extends LanRepository {
   bool alreadyHasRevisions = false;
   Map<String, dynamic>? manifestFixture;
   bool holdMessages = false;
+  Future<void> Function()? beforeManifest;
+  String? rejectId;
+  String? slowId;
   final messageEntered = Completer<void>();
   final resumeMessages = Completer<void>();
 
@@ -55,13 +59,23 @@ class ObservedLanRepository extends LanRepository {
   }
 
   @override
-  Future<Map<String, dynamic>> manifest({String after = '', int limit = 100}) =>
-      manifestFixture != null
-      ? Future.value(manifestFixture!)
-      : super.manifest(after: after, limit: limit);
+  Future<Map<String, dynamic>> manifest({
+    String after = '',
+    int limit = 100,
+  }) async {
+    if (after.isEmpty) await beforeManifest?.call();
+    return manifestFixture != null
+        ? Future.value(manifestFixture!)
+        : super.manifest(after: after, limit: limit);
+  }
 
   @override
   Future<void> receive(LanRevision incoming) async {
+    if (incoming.id == rejectId) throw const LanSyncFailure('fixture rejected');
+    if (incoming.id == slowId) {
+      slowId = null;
+      await Future<void>.delayed(const Duration(milliseconds: 2100));
+    }
     if (holdMessages && incoming.kind == 'messages') {
       if (!messageEntered.isCompleted) messageEntered.complete();
       await resumeMessages.future;
@@ -157,6 +171,212 @@ void main() {
       await d.local.db.close();
     }
     await root.delete(recursive: true);
+  });
+
+  test(
+    'bulk successful transfer emits one round summary, not per-entity logs',
+    () async {
+      await seedLan(b);
+      for (var i = 0; i < 250; i++) {
+        await b.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+          ['bulk_$i', 'role', 'assistant', 'private body', i + 2],
+        );
+      }
+      await connect();
+      AppLogger.clear();
+      await sb.synchronize();
+      final logs = AppLogger.entries.value
+          .where((e) => e.source == 'LanSync')
+          .toList();
+      expect(logs.length, lessThanOrEqualTo(3));
+      final summary = logs.singleWhere(
+        (e) => e.metadata?['event'] == 'lanRound',
+      );
+      expect(summary.metadata?['pushed'], greaterThanOrEqualTo(251));
+      expect(summary.metadata?['pulled'], isA<int>());
+      expect(summary.metadata?['failed'], 0);
+      expect(summary.metadata?['complete'], true);
+      expect(summary.metadata?['elapsedMs'], isA<int>());
+      expect(
+        jsonEncode(logs.map((e) => e.toJson()).toList()),
+        isNot(contains('private body')),
+      );
+    },
+  );
+
+  test(
+    'slow successful entity is logged with safe identity and included in round totals',
+    () async {
+      await seedLan(b);
+      (a.repo as ObservedLanRepository).slowId = 'message';
+      await connect();
+      AppLogger.clear();
+      await sb.synchronize();
+      final logs = AppLogger.entries.value
+          .where((e) => e.source == 'LanSync')
+          .toList();
+      final entity = logs.singleWhere(
+        (e) => e.metadata?['event'] == 'lanEntity',
+      );
+      expect(entity.metadata?['entityId'], 'message');
+      expect(entity.metadata?['result'], 'success');
+      expect(entity.metadata?['elapsedMs'], greaterThanOrEqualTo(2000));
+      expect(
+        logs
+            .singleWhere((e) => e.metadata?['event'] == 'lanRound')
+            .metadata?['complete'],
+        true,
+      );
+    },
+  );
+
+  test(
+    'preexisting dirty bg outranks historical seed rows in first priority batch',
+    () async {
+      await seedLan(b);
+      await b.local.execute('UPDATE lan_state SET suspended=1 WHERE id=1');
+      for (var i = 0; i < 1200; i++) {
+        await b.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+          ['aaa_history_$i', 'role', 'assistant', 'history', i + 2],
+        );
+      }
+      await b.local.execute('UPDATE lan_state SET suspended=0 WHERE id=1');
+      await b.local.execute(
+        'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+        ['bg_latest_seed', 'role', 'assistant', 'new', 1000000],
+      );
+      await b.repo.capture(scanExternal: false);
+      final priority = await b.repo.recentChanges();
+      expect(
+        (priority['items'] as List).any(
+          (i) => i['entity_id'] == 'bg_latest_seed',
+        ),
+        true,
+      );
+      var ready = false;
+      (a.repo as ObservedLanRepository).beforeManifest = () async {
+        ready = await a.local.read('messages', 'bg_latest_seed') != null;
+      };
+      await connect();
+      await sb.synchronize();
+      expect(ready, true);
+    },
+  );
+
+  test(
+    'new bg/msg/raw edits arrive before the first full manifest despite history backlog',
+    () async {
+      await seedLan(b);
+      for (var i = 0; i < 650; i++) {
+        await b.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+          ['history_$i', 'role', 'assistant', 'history', i + 2],
+        );
+      }
+      const ids = ['bg_latest', 'msg_latest', 'raw_msg_latest'];
+      for (final id in ids) {
+        await b.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+          [id, 'role', 'assistant', 'new', 1000000],
+        );
+      }
+      final priority = await b.repo.recentChanges();
+      expect(
+        (priority['items'] as List).where((i) => ids.contains(i['entity_id'])),
+        hasLength(3),
+      );
+      var checked = false;
+      var readyBeforeFullScan = false;
+      (a.repo as ObservedLanRepository).beforeManifest = () async {
+        if (checked) return;
+        checked = true;
+        readyBeforeFullScan =
+            (await a.local.rows(
+              "SELECT id FROM messages WHERE id IN ('bg_latest','msg_latest','raw_msg_latest')",
+            )).length ==
+            3;
+      };
+      await connect();
+      await sb.synchronize();
+      expect(
+        checked,
+        true,
+        reason: '${sa.state.error} ${sa.peers.peers["b"]?.error}',
+      );
+      expect(readyBeforeFullScan, true);
+    },
+  );
+
+  test(
+    'edits and soft deletion of old messages precede the full manifest',
+    () async {
+      await seedLan(b);
+      await b.local.execute(
+        'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+        ['old_delete', 'role', 'assistant', 'old', 2],
+      );
+      await copyLan(b, a);
+      for (var i = 0; i < 650; i++) {
+        await b.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+          ['history_$i', 'role', 'assistant', 'history', i + 3],
+        );
+      }
+      await b.local.execute(
+        "UPDATE messages SET content='edited' WHERE id='message'",
+      );
+      await b.local.execute(
+        "UPDATE messages SET deleted_at=1000000 WHERE id='old_delete'",
+      );
+      var checked = false, ready = false;
+      (a.repo as ObservedLanRepository).beforeManifest = () async {
+        if (checked) return;
+        checked = true;
+        final message = await a.local.read('messages', 'message');
+        final deleted = await a.local.read('messages', 'old_delete');
+        ready =
+            (message?.payload['row'] as Map?)?['content'] == 'edited' &&
+            (deleted?.payload['row'] as Map?)?['deleted_at'] == 1000000;
+      };
+      await connect();
+      await sb.synchronize();
+      expect(checked, true);
+      expect(ready, true);
+    },
+  );
+
+  test('one rejected fresh entity does not block other fresh messages', () async {
+    await seedLan(a);
+    await copyLan(a, b);
+    (b.repo as ObservedLanRepository).rejectId = 'bg_bad';
+    for (final id in ['bg_bad', 'msg_good', 'raw_msg_good']) {
+      await a.local.execute(
+        'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+        [id, 'role', 'assistant', 'new', 1000000],
+      );
+    }
+    await connect();
+    AppLogger.clear();
+    await sb.synchronize();
+    expect(await b.local.read('messages', 'msg_good'), isNotNull);
+    expect(await b.local.read('messages', 'raw_msg_good'), isNotNull);
+    final logs = AppLogger.entries.value
+        .where((e) => e.source == 'LanSync')
+        .toList();
+    expect(
+      logs.any(
+        (e) =>
+            e.metadata?['event'] == 'lanEntity' &&
+            e.metadata?['entityId'] == 'bg_bad' &&
+            e.metadata?['result'] == 'failed',
+      ),
+      true,
+    );
+    final summary = logs.singleWhere((e) => e.metadata?['event'] == 'lanRound');
+    expect(summary.metadata?['failed'], greaterThan(0));
+    expect(summary.metadata?['complete'], false);
   });
 
   test('message receive does not rescan unrelated settings or presets', () async {

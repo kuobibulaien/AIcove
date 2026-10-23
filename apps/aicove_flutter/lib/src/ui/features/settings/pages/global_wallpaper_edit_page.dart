@@ -43,7 +43,10 @@ class GlobalWallpaperEditPage extends ConsumerWidget {
       fallbackAlignment: wallpaper.alignment,
       onSave: (_, style) => ref
           .read(appSettingsProvider.notifier)
-          .setGlobalWallpaperStyle(key, style),
+          .setGlobalWallpaperStyle(
+            key,
+            style ?? WallpaperStyle.defaultFor(custom: isCustom),
+          ),
       onDelete: isCustom ? () => _delete(context, ref) : null,
     );
   }

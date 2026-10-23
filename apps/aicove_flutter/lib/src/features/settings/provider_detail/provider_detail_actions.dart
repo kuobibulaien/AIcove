@@ -167,21 +167,6 @@ class ProviderDetailActions {
     );
   }
 
-  Future<void> saveComfyUIWorkflow(
-    ProviderAuth provider,
-    Map<String, dynamic> workflow,
-  ) {
-    final latest =
-        _settings?.providers
-            .where((item) => item.id == provider.id)
-            .firstOrNull ??
-        provider;
-    return _notifier.editProvider(
-      providerId: provider.id,
-      customConfig: {...latest.customConfig, ...workflow},
-    );
-  }
-
   /// 合并若干 customConfig 键；值为 null 的键删除。
   Future<void> saveCustomConfigValues(
     ProviderAuth provider,

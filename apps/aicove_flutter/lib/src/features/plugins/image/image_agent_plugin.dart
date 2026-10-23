@@ -43,6 +43,7 @@ class ImageRequestScope extends PluginRequestScope {
           inputs.ref,
           requestSettings: inputs.settings,
           isRequestSnapshot: true,
+          prompts: inputs.imagePrompts,
         ) {
     // Computed once so the prompt and the reminder agree. A failure here
     // drops the reminder (and its prompt hint) instead of blocking the
@@ -67,13 +68,12 @@ class ImageRequestScope extends PluginRequestScope {
   String get pluginName => snapshot.name;
 
   @override
-  bool get active => snapshot.enabled;
+  bool get active => snapshot.isUsable;
 
   @override
   Future<String?> prompt(PluginRequestContext ctx) async =>
       snapshot.buildRequestSystemPrompt(
         useFastRoute: inputs.useFastImageRoute,
-        customDrawingPrompt: inputs.customDrawingPrompt,
         hasInternalImageContext: ctx.hasInternalImageContext,
         hasFailureReminder: _failure?.isNotEmpty ?? false,
       );
@@ -95,20 +95,21 @@ class ImageRequestScope extends PluginRequestScope {
         : tools;
   }
 
-  /// Applies the role's drawing preset to the `draw_image` schema on the
+  /// Applies this request's prompt pack to the `draw_image` schema on the
   /// stable route. Matches by name across all collected schemas.
   @override
   List<Map<String, dynamic>> rewriteToolSchemas(
     List<Map<String, dynamic>> schemas,
-  ) =>
-      inputs.useStableImageRoute
-          ? applyRoleDrawImageToolPreset(
-              tools: schemas,
-              imageConfig: inputs.imageConfig,
-              toolPresetName: null,
-              customDrawingPrompt: inputs.customDrawingPrompt,
-            )
-          : schemas;
+  ) {
+    if (!inputs.useStableImageRoute) return schemas;
+    final drawImage = snapshot
+        .getTools()
+        .where((tool) => tool.name == 'draw_image')
+        .firstOrNull;
+    return drawImage == null
+        ? schemas
+        : applyDrawImageToolText(tools: schemas, drawImage: drawImage);
+  }
 
   @override
   Set<OutputTagHint> get outputTags => !snapshot.enabled

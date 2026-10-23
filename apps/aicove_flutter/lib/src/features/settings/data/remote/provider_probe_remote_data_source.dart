@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -32,7 +33,7 @@ class ProviderProbeRemoteDataSource {
     Map<String, dynamic>? customConfig,
   }) async {
     if (ComfyUIWorkflow.isProvider(providerId, customConfig)) {
-      return const [ComfyUIWorkflow.modelId];
+      return _previewComfyUIProvider(apiBaseUrl: apiBaseUrl, apiKey: apiKey);
     }
     final resolvedProvider = ProviderAdapterFactory.resolveProvider(
       providerId,
@@ -229,6 +230,38 @@ class ProviderProbeRemoteDataSource {
       throw Exception('模型测试失败: $e');
     } finally {
       if (_httpClient == null) httpClient.close();
+    }
+  }
+
+  Future<List<String>> _previewComfyUIProvider({
+    required String apiBaseUrl,
+    required String apiKey,
+  }) async {
+    try {
+      final List<String> checkpoints;
+      try {
+        checkpoints = await ComfyUIImageAdapter.fetchCheckpoints(
+          baseUrl: apiBaseUrl,
+          apiKey: apiKey,
+          client: _httpClient,
+        );
+      } on StateError catch (error) {
+        // A modal-comfy gateway has no /object_info but lists templates.
+        if (!error.message.contains('HTTP 404')) rethrow;
+        final templates = await ComfyUIImageAdapter.fetchTemplates(
+          baseUrl: apiBaseUrl,
+          apiKey: apiKey,
+          client: _httpClient,
+        );
+        return [...templates, ComfyUIWorkflow.modelId];
+      }
+      return [...checkpoints, ComfyUIWorkflow.modelId];
+    } on http.ClientException {
+      // Keep offline channel creation available. HTTP and protocol errors are
+      // surfaced rather than mistaken for a server with no models installed.
+      return const [ComfyUIWorkflow.modelId];
+    } on TimeoutException {
+      return const [ComfyUIWorkflow.modelId];
     }
   }
 

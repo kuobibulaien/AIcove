@@ -69,7 +69,7 @@ void main() {
     test('流式后补计划会把 TTS 和表情变成插入项，把图片留给独立慢任务', () {
       final plan = planner.planPostStreamSupplements(
         replyText:
-            '文本a。<tts>语音段</tts>文本b。<image>slow landscape</image>[早安]文本c。',
+            '文本a。<tts>语音段</tts>文本b。<image>slow landscape</image><sticker tag="早安"/>文本c。',
         pluginEvents: <PluginEvent>[
           PluginEvent(
             pluginId: 'tts',

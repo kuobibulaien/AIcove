@@ -4,6 +4,7 @@ import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show KernelCancellation, KernelCancelledException;
 
 import '../../../core/app_logger.dart';
+import '../../chat/services/chat_types.dart';
 import '../../../core/models/message_block.dart';
 import '../data/agent_task_store.dart';
 import '../data/task_process_record.dart';
@@ -75,6 +76,66 @@ class TaskAgentService {
 
   final Map<String, KernelCancellation> _running = {};
   final Map<String, Future<void>> _runs = {};
+  final Map<String, bool Function(String)> _steering = {};
+  final Map<String, List<String>> _pendingSteering = {};
+  final Set<String> _snapshots = {};
+  final Map<String, Future<void>> _updates = {};
+
+  Future<T> _update<T>(String id, Future<T> Function() body) {
+    final next = (_updates[id] ?? Future<void>.value()).then((_) => body());
+    final tail = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _updates[id] = tail;
+    unawaited(
+      tail.whenComplete(() {
+        if (identical(_updates[id], tail)) _updates.remove(id);
+      }),
+    );
+    return next;
+  }
+
+  /// Saves the requirement first; running tasks consume it at the next model
+  /// boundary, queued/waiting tasks include it in their next execution.
+  Future<TaskControlOutcome> steer({
+    required String taskId,
+    required String instruction,
+  }) async {
+    return _update(taskId, () async {
+      final task = await store.get(taskId);
+      if (task == null) return TaskControlOutcome.remote;
+      if ((_running[taskId]?.isCancelled ?? false) ||
+          task.status.isTerminal ||
+          instruction.trim().isEmpty)
+        return TaskControlOutcome.ignored;
+      final checkpoint =
+          await process.checkpoint(taskId) ??
+          TaskCheckpoint(
+            transcript: TaskAgentRunner.firstTranscript(task.instruction),
+          );
+      await process.saveCheckpoint(
+        taskId,
+        TaskCheckpoint(
+          transcript:
+              '${checkpoint.transcript}\n\n## 追加要求\n${instruction.trim()}',
+          lastLog: checkpoint.lastLog,
+          question: checkpoint.question,
+          messages: [
+            ...checkpoint.contextMessages,
+            {'role': 'user', 'content': instruction.trim()},
+          ],
+        ),
+      );
+      if (_running.containsKey(taskId)) {
+        final handle = _steering[taskId];
+        if (handle == null && _snapshots.contains(taskId)) {
+          (_pendingSteering[taskId] ??= []).add(instruction.trim());
+        } else if (handle != null && !handle(instruction.trim())) {
+          return TaskControlOutcome.ignored;
+        }
+      }
+      return TaskControlOutcome.applied;
+    });
+  }
+
   final Set<String> _relaying = {};
   Future<void>? _pump;
   bool _pumpAgain = false;
@@ -106,7 +167,9 @@ class TaskAgentService {
     if (created) {
       await process.saveCheckpoint(
         task.id,
-        TaskCheckpoint(transcript: TaskAgentRunner.firstTranscript(instruction)),
+        TaskCheckpoint(
+          transcript: TaskAgentRunner.firstTranscript(instruction),
+        ),
       );
     }
     await pump();
@@ -120,29 +183,39 @@ class TaskAgentService {
     required String? answersReceiptId,
     required String answer,
   }) async {
-    final task = await store.get(taskId);
-    if (task == null) return TaskControlOutcome.remote;
-    final checkpoint = await process.checkpoint(taskId);
-    if (!await store.consumeReply(
-      controlId: controlId,
-      taskId: taskId,
-      answersReceiptId: answersReceiptId,
-    )) {
-      return TaskControlOutcome.ignored;
-    }
-    if (checkpoint != null) {
-      await process.saveCheckpoint(
-        taskId,
-        TaskCheckpoint(
-          transcript: TaskAgentRunner.continueTranscript(
-            previous: checkpoint.transcript,
-            processLog: checkpoint.lastLog,
-            question: checkpoint.question ?? '',
-            answer: answer,
+    final outcome = await _update(taskId, () async {
+      final task = await store.get(taskId);
+      if (task == null) return TaskControlOutcome.remote;
+      final checkpoint = await process.checkpoint(taskId);
+      if (!await store.consumeReply(
+        controlId: controlId,
+        taskId: taskId,
+        answersReceiptId: answersReceiptId,
+      )) {
+        return TaskControlOutcome.ignored;
+      }
+      if (checkpoint != null) {
+        await process.saveCheckpoint(
+          taskId,
+          TaskCheckpoint(
+            messages: [
+              ...checkpoint.contextMessages,
+              if (checkpoint.question != null)
+                {'role': 'assistant', 'content': checkpoint.question},
+              {'role': 'user', 'content': answer},
+            ],
+            transcript: TaskAgentRunner.continueTranscript(
+              previous: checkpoint.transcript,
+              processLog: checkpoint.lastLog,
+              question: checkpoint.question ?? '',
+              answer: answer,
+            ),
           ),
-        ),
-      );
-    }
+        );
+      }
+      return TaskControlOutcome.applied;
+    });
+    if (outcome != TaskControlOutcome.applied) return outcome;
     await pump();
     return TaskControlOutcome.applied;
   }
@@ -154,8 +227,12 @@ class TaskAgentService {
     required String controlId,
   }) async {
     if (await store.get(taskId) == null) return TaskControlOutcome.remote;
-    final task = await store.consumeCancel(controlId: controlId, taskId: taskId);
-    if (task == null || task.status.isTerminal) return TaskControlOutcome.ignored;
+    final task = await store.consumeCancel(
+      controlId: controlId,
+      taskId: taskId,
+    );
+    if (task == null || task.status.isTerminal)
+      return TaskControlOutcome.ignored;
     final running = _running[taskId];
     if (running != null) {
       running.cancel();
@@ -244,6 +321,9 @@ class TaskAgentService {
         _runs[task.id] = _execute(task, cancellation).whenComplete(() {
           _running.remove(task.id);
           _runs.remove(task.id);
+          _steering.remove(task.id);
+          _pendingSteering.remove(task.id);
+          _snapshots.remove(task.id);
           unawaited(pump());
         });
       }
@@ -264,37 +344,134 @@ class TaskAgentService {
     final device = await deviceId();
     RecordedReceipt? recorded;
     try {
-      final checkpoint =
-          await process.checkpoint(task.id) ??
-          TaskCheckpoint(
-            transcript: TaskAgentRunner.firstTranscript(task.instruction),
-          );
+      final checkpoint = await _update(task.id, () async {
+        final saved =
+            await process.checkpoint(task.id) ??
+            TaskCheckpoint(
+              transcript: TaskAgentRunner.firstTranscript(task.instruction),
+            );
+        _snapshots.add(task.id);
+        return saved;
+      });
+      var completedSteps = 0;
+      var hasTranscript = false;
       final outcome = await runner.run(
         taskId: task.id,
         runId: runId,
-        transcript: checkpoint.transcript,
+        transcript: [
+          checkpoint.transcript,
+          if (checkpoint.lastLog.isNotEmpty)
+            '## 已完成的步骤（不要重做）\n${checkpoint.lastLog}',
+        ].join('\n\n'),
+        contextMessages: checkpoint.contextMessages,
         capabilities: await capabilities(task, runId, cancellation),
         preset: preset,
         cancellation: cancellation,
-        onExternalStart: () => unawaited(store.markSideEffectUncertain(task.id)),
+        onBeforeExternal: () => store.markSideEffectUncertain(task.id),
+        onRunReady: (handle) {
+          _steering[task.id] = handle;
+          for (final text in _pendingSteering.remove(task.id) ?? <String>[]) {
+            handle(text);
+          }
+        },
+        onToolStep: (call, result) => _update(task.id, () async {
+          final latest = await process.checkpoint(task.id) ?? checkpoint;
+          final step = TaskAgentRunner.processLog([call], [result], '');
+          completedSteps++;
+          await process.saveCheckpoint(
+            task.id,
+            TaskCheckpoint(
+              transcript: latest.transcript,
+              lastLog: [
+                latest.lastLog,
+                step,
+              ].where((s) => s.isNotEmpty).join('\n'),
+              question: latest.question,
+              messages: [
+                ...latest.contextMessages,
+                if (hasTranscript)
+                  {
+                    'role': 'tool',
+                    'tool_call_id': call.id,
+                    'name': call.name,
+                    'content': result.persistentText,
+                  }
+                else
+                  {'role': 'assistant', 'content': step},
+              ],
+            ),
+          );
+          await process.appendLog(task.id, '第 $runIndex 轮步骤', step);
+        }),
+        onTranscript: (messages) {
+          hasTranscript = true;
+          return _update(task.id, () async {
+            final latest = await process.checkpoint(task.id) ?? checkpoint;
+            await process.saveCheckpoint(
+              task.id,
+              TaskCheckpoint(
+                transcript: latest.transcript,
+                lastLog: latest.lastLog,
+                question: latest.question,
+                messages: [
+                  for (final message in messages)
+                    if (message['role'] != 'system') message,
+                ],
+              ),
+            );
+          });
+        },
+        onToolProgress: (name, text) {
+          AppLogger.info(
+            'TaskAgent',
+            'Tool progress',
+            metadata: {'task': task.id, 'tool': name, 'progress': text},
+          );
+        },
       );
       // The checkpoint goes first, so a reply after a crash still continues
       // from this run.
-      await process.appendLog(task.id, '第 $runIndex 轮', outcome.processLog);
-      await process.saveCheckpoint(
+      await process.appendLog(
         task.id,
-        TaskCheckpoint(
-          transcript: checkpoint.transcript,
-          lastLog: outcome.processLog,
-          question: outcome.question,
-        ),
+        '第 $runIndex 轮',
+        completedSteps == 0 ? outcome.processLog : '- 你的回复：${outcome.summary}',
       );
+      await _update(task.id, () async {
+        final latest = await process.checkpoint(task.id) ?? checkpoint;
+        await process.saveCheckpoint(
+          task.id,
+          TaskCheckpoint(
+            transcript: latest.transcript,
+            lastLog: outcome.processLog,
+            question: outcome.question,
+            messages: outcome.runningMessages.isNotEmpty
+                ? [
+                    for (final message in outcome.runningMessages)
+                      if (message['role'] != 'system') message,
+                  ]
+                : hasTranscript
+                ? latest.contextMessages
+                : [
+                    ...latest.contextMessages,
+                    if (completedSteps == 0 && outcome.processLog.isNotEmpty)
+                      {'role': 'assistant', 'content': outcome.processLog},
+                  ],
+          ),
+        );
+      });
       recorded = await store.finish(
         task.id,
         from: {AgentTaskStatus.running},
-        to: outcome.question == null
-            ? AgentTaskStatus.done
-            : AgentTaskStatus.needsInput,
+        to: switch (outcome.status) {
+          ApiRunStatus.truncated ||
+          ApiRunStatus.waitingForUser => AgentTaskStatus.needsInput,
+          ApiRunStatus.failed => AgentTaskStatus.failed,
+          ApiRunStatus.cancelled => AgentTaskStatus.cancelled,
+          ApiRunStatus.completed =>
+            outcome.question == null
+                ? AgentTaskStatus.done
+                : AgentTaskStatus.needsInput,
+        },
         executorDevice: device,
         summary: outcome.summary,
         question: outcome.question,
@@ -309,11 +486,15 @@ class TaskAgentService {
         summary: '任务已取消。',
       );
     } catch (error, stack) {
-      AppLogger.warning('TaskAgent', '杂活任务执行失败', metadata: {
-        'task': task.id,
-        'error': error.toString(),
-        'stack': stack.toString().split('\n').take(4).join(' | '),
-      });
+      AppLogger.warning(
+        'TaskAgent',
+        '杂活任务执行失败',
+        metadata: {
+          'task': task.id,
+          'error': error.toString(),
+          'stack': stack.toString().split('\n').take(4).join(' | '),
+        },
+      );
       recorded = await store.finish(
         task.id,
         from: {AgentTaskStatus.running},
@@ -326,16 +507,23 @@ class TaskAgentService {
   }
 
   /// Writes the receipt message, then relays it when this device should.
-  Future<void> _publish(RecordedReceipt recorded, {bool relayNow = true}) async {
+  Future<void> _publish(
+    RecordedReceipt recorded, {
+    bool relayNow = true,
+  }) async {
     try {
       await writeReceipt(recorded);
-      await store.markReceiptWritten(recorded.task.id, recorded.block.receiptId);
+      await store.markReceiptWritten(
+        recorded.task.id,
+        recorded.block.receiptId,
+      );
     } catch (error) {
       // Stays in the outbox; recovery writes it on the next start.
-      AppLogger.warning('TaskAgent', '回执消息写入失败，下次启动补写', metadata: {
-        'task': recorded.task.id,
-        'error': error.toString(),
-      });
+      AppLogger.warning(
+        'TaskAgent',
+        '回执消息写入失败，下次启动补写',
+        metadata: {'task': recorded.task.id, 'error': error.toString()},
+      );
       return;
     }
     if (relayNow && recorded.block.relays) {
@@ -366,10 +554,11 @@ class TaskAgentService {
       try {
         delivered = await relay(conversationId, receipt);
       } catch (error) {
-        AppLogger.warning('TaskAgent', '回执转告失败，稍后重试', metadata: {
-          'receipt': receiptId,
-          'error': error.toString(),
-        });
+        AppLogger.warning(
+          'TaskAgent',
+          '回执转告失败，稍后重试',
+          metadata: {'receipt': receiptId, 'error': error.toString()},
+        );
       }
       await store.completeDelivery(receiptId, delivered: delivered);
     } finally {

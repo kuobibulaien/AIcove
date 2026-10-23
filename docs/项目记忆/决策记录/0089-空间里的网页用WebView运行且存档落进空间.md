@@ -1,6 +1,6 @@
 # 0089 空间里的网页用 WebView 运行，存档落进空间
 
-- 状态：accepted（2026-10-17 用户确认第一档范围：空间里的 HTML 用 WebView 打开、横屏、localStorage 落到空间存档文件供助手读写；新增核心依赖 `flutter_inappwebview` 以 H0 原型通过为前提）
+- 状态：第 1、2、3、5 条已由 [ADR0105](0105-空间网页用系统浏览器加本机服务运行.md) 取代（2026-10-22，改用系统浏览器＋本机服务，不再引入 `flutter_inappwebview`）；第 4 条存档格式与第 6 条导入保留。原状态：accepted（2026-10-17 用户确认第一档范围：空间里的 HTML 用 WebView 打开、横屏、localStorage 落到空间存档文件供助手读写；新增核心依赖 `flutter_inappwebview` 以 H0 原型通过为前提）
 - 日期：2026-10-17
 - 关联：ADR0087（Agent 工作区插件：存储、条件提交、撤销、同步）、ADR0088（杂活 Agent 使用工作区文件工具）、ADR0073（AIcove 助手）、ADR0046／0071（聊天里不渲染卡片 HTML，本 ADR 不改）、ADR0064（插件界面只开放声明式描述，本 ADR 不改）、ADR0086（应用数据目录）
 

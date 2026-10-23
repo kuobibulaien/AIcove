@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'features/plugins/prompts/prompt_pack_migration.dart';
 import 'features/task_agent/application/delegate_task_plugin.dart';
 import 'features/task_agent/task_agent_providers.dart';
 import 'features/sync/providers/cloud_sync_provider.dart';
@@ -20,6 +21,7 @@ import 'ui/shared/widgets/moe_scroll_behavior.dart';
 import 'ui/shared/widgets/windows_close_guard.dart';
 import 'ui/features/home/pages/main_page.dart';
 import 'ui/features/chat/pages/chat_page.dart';
+import 'ui/features/settings/widgets/settings_load_failed_view.dart';
 import 'ui/shared/widgets/moe_adaptive_shell.dart';
 import 'ui/shared/widgets/moe_global_ui_scale.dart';
 import 'ui/features/character/pages/contact_edit_page.dart';
@@ -82,6 +84,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ref.read(lanSyncPortProvider);
       unawaited(_retireLegacyMemory());
       unawaited(_applyFactoryNahidaVoice());
+      unawaited(ref.read(promptPackMigratorProvider).ensure());
       // 后台响过的角色来电：点了通知就接通，没接的记为未接（方案 12 §4.8）。
       unawaited(ref.read(incomingCallNotificationBridgeProvider).start());
       // 杂活任务：启动恢复，之后定时接收同步来的回执与控制（ADR0088）。
@@ -359,12 +362,14 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ShellRoute(
           navigatorKey: _detailNavigatorKey,
           observers: [_detailObserver],
-          builder: (context, state, child) => WindowsCloseGuard(
-            child: MoeAdaptiveShell(
-              navigatorKey: _detailNavigatorKey,
-              observer: _detailObserver,
-              primary: const MainPage(),
-              detail: child,
+          builder: (context, state, child) => TtsFallbackNotificationListener(
+            child: WindowsCloseGuard(
+              child: MoeAdaptiveShell(
+                navigatorKey: _detailNavigatorKey,
+                observer: _detailObserver,
+                primary: const MainPage(),
+                detail: child,
+              ),
             ),
           ),
           routes: [
@@ -469,9 +474,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           Locale('en', 'US'),
         ],
         locale: const Locale('zh', 'CN'),
-        home: const Scaffold(
-          body: Center(child: Text('加载设置失败')),
-        ),
+        home: const SettingsLoadFailedView(),
       ),
       data: (settings) {
         // 根据设置决定主题模式
@@ -479,10 +482,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             ? ThemeMode.system
             : (settings.isDarkMode ? ThemeMode.dark : ThemeMode.light);
 
-        return TtsFallbackNotificationListener(
-          // Experimental: resolves the effective light/dark mode and ripples
-          // between them from the tapped toggle (or window center).
-          child: ThemeRippleReveal(
+        // Experimental: resolves the effective light/dark mode and ripples
+        // between them from the tapped toggle (or window center).
+        return ThemeRippleReveal(
             themeMode: themeMode,
             builder: (context, effectiveMode) => MaterialApp.router(
             debugShowCheckedModeBanner: false,
@@ -558,7 +560,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 ),
               );
             },
-          ),
           ),
         );
       },

@@ -57,7 +57,7 @@ void main() {
       final plugins = report['plugins'] as List;
 
       expect(raw, isNot(contains('私密')));
-      expect((plugins[0] as Map)['reason'], contains('设置 · 调试 · 联系人上下文'));
+      expect((plugins[0] as Map)['reason'], contains('设置 · 调试 · 角色完整上下文'));
       expect((plugins[1] as Map)['reason'], '角色未开启');
       expect(report['warning_count'], 1);
     },

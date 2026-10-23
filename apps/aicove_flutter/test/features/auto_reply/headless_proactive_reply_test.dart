@@ -4,15 +4,18 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/proactive_reply_generator.dart';
 import 'package:aicove_flutter/src/features/auto_reply/domain/proactive_action.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_backend_service.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/memory/application/memory_keeper_service.dart';
 import 'package:aicove_flutter/src/features/memory/providers/memory_providers.dart';
+import 'package:aicove_flutter/src/features/observability/trace_models.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:drift/drift.dart' show Value;
@@ -31,6 +34,34 @@ class _Paths extends PathProviderPlatform {
   Future<String?> getApplicationSupportPath() async => path;
   @override
   Future<String?> getTemporaryPath() async => path;
+}
+
+class _RecordingSendService extends ChatSendService {
+  _RecordingSendService(super.ref);
+  final configs = <ApiConfig>[];
+
+  @override
+  Future<ApiCallResult> executeApiCall({
+    required ApiConfig config,
+    required String sessionId,
+    required String? userText,
+    String? turnId,
+    TraceLogger? trace,
+    void Function(String toolName)? onToolExecuting,
+    bool enableStreaming = false,
+    void Function(String delta)? onStreamTextDelta,
+    void Function()? onStreamTextReset,
+    void Function()? onStreamToolCallObserved,
+    void Function()? onStreamingFallback,
+  }) async {
+    configs.add(config);
+    return const ApiCallResult(
+      replyText: '找到啦',
+      processedText: '找到啦',
+      pluginEvents: [],
+      toolResults: [],
+    );
+  }
 }
 
 class _Settings extends AppSettingsNotifier {
@@ -301,5 +332,47 @@ void main() {
 
     expect(reply, isNull);
     expect(sent, isEmpty);
+  });
+
+  // A task relay or proactive reply must show in the log center's
+  // conversation view, which only lists traced turns.
+  test('the real executor records the request as a traced turn', () async {
+    late _RecordingSendService service;
+    final container = ProviderContainer(
+      overrides: [
+        chatSendServiceProvider.overrideWith(
+          (ref) => service = _RecordingSendService(ref),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final prep = ProviderContainer(overrides: overrides);
+    addTearDown(prep.dispose);
+    final generator = prep.read(proactiveReplyGeneratorProvider);
+    final config = await generator.prepare(
+      conversation: (await generator.loadConversation(_conv))!,
+      reminder: _reminder,
+    );
+
+    await container.read(proactiveReplyExecutorProvider)(
+      config: config,
+      sessionId: _conv,
+      userText: _reminder,
+      turnId: 'task_relay_r1',
+    );
+    await TraceStore.instance.waitForPendingWrites();
+
+    final trace = service.configs.single.traceContext;
+    expect(trace, isNotNull);
+    expect(trace!.turnId, 'task_relay_r1');
+    final stages = TraceStore.instance
+        .debugInMemoryEvents()
+        .where((e) => e.traceId == trace.traceId)
+        .map((e) => e.stage)
+        .toList();
+    expect(stages, [
+      TraceStage.turnStarted.value,
+      TraceStage.turnCompleted.value,
+    ]);
   });
 }

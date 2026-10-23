@@ -18,6 +18,7 @@ class StoredSupplementInsertOp {
     this.generationSnapshot,
     this.audioUrl,
     this.text,
+    this.unread = false,
   });
 
   final String kind;
@@ -28,6 +29,7 @@ class StoredSupplementInsertOp {
   final ImageGenerationSnapshot? generationSnapshot;
   final String? audioUrl;
   final String? text;
+  final bool unread;
 }
 
 class ChatMessageProjectionCodec {
@@ -44,12 +46,16 @@ class ChatMessageProjectionCodec {
   static const String _rawToolResultsKey = 'rawToolResults';
   static const String _projectedMessagesKey = 'projectedMessages';
   static const String _supplementInsertOpsKey = 'supplementInsertOps';
+  static const String _reasoningKey = 'reasoning';
+  static const String _replyRoundsKey = 'replyRounds';
 
   static Map<String, dynamic> buildRawAssistantPayload({
     required ApiCallResult apiResult,
   }) {
     return <String, dynamic>{
       _versionKey: rawPayloadVersion,
+      if (apiResult.status != ApiRunStatus.completed) 'runStatus': apiResult.status.name,
+      if (apiResult.stopReason != null) 'stopReason': apiResult.stopReason,
       _rawReplyTextKey: apiResult.rawReplyText,
       _processedTextKey: apiResult.processedText,
       _displayReplyTextKey: apiResult.replyText,
@@ -85,10 +91,43 @@ class ChatMessageProjectionCodec {
           <String, dynamic>{
             'toolCallId': result.toolCallId,
             'name': result.name,
-            'result': result.result,
+            'result': result.persistentText,
+            'isError':result.isError, 'structured':result.structured,
           },
       ],
+      if (apiResult.reasoning.trim().isNotEmpty)
+        _reasoningKey: apiResult.reasoning,
+      if (apiResult.replyRounds.isNotEmpty)
+        _replyRoundsKey: <Map<String, dynamic>>[
+          for (final round in apiResult.replyRounds)
+            <String, dynamic>{
+              'replyText': round.replyText,
+              'processedText': round.processedText,
+              'pluginEvents': <Map<String, dynamic>>[
+                for (final event in round.pluginEvents) event.toJson(),
+              ],
+              'pluginContents': <Map<String, dynamic>>[
+                for (final content in round.pluginContents)
+                  if (_encodePluginContent(content) case final encoded?)
+                    encoded,
+              ],
+              if (round.reasoning.isNotEmpty) 'reasoning': round.reasoning,
+              'toolCallIds': round.toolCallIds,
+            },
+        ],
     };
+  }
+
+  /// Status is display metadata on the final bubble, never model input.
+  static List<Message> applyRunStatus(List<Message> messages, Map<String, dynamic>? payload) {
+    final index = messages.lastIndexWhere((m) => m.role == 'assistant');
+    if (index < 0 || (payload?['runStatus'] == null && payload?['stopReason'] == null)) return messages;
+    return [for (var i = 0; i < messages.length; i++)
+      if (i == index) messages[i].copyWith(rawPayload: {
+        ...?messages[i].rawPayload,
+        if (payload?['runStatus'] != null) 'runStatus': payload!['runStatus'],
+        if (payload?['stopReason'] != null) 'stopReason': payload!['stopReason'],
+      }) else messages[i]];
   }
 
   static Map<String, dynamic> copyWithProjectedMessages(
@@ -166,6 +205,7 @@ class ChatMessageProjectionCodec {
           if (op.generationSnapshot != null) 'generationSnapshot': op.generationSnapshot!.toJson(),
           if (op.audioUrl != null) 'audioUrl': op.audioUrl,
           if (op.text != null) 'text': op.text,
+          if (op.unread) 'unread': true,
         },
     ];
     return next;
@@ -187,6 +227,12 @@ class ChatMessageProjectionCodec {
     return value is String ? value : null;
   }
 
+  /// 模型原生思考；旧数据没有这一项时为空串。
+  static String reasoning(Map<String, dynamic>? rawPayload) {
+    final value = rawPayload?[_reasoningKey];
+    return value is String ? value : '';
+  }
+
   static List<Map<String, dynamic>> hiddenThoughtParts(
     Map<String, dynamic>? rawPayload,
   ) {
@@ -198,6 +244,27 @@ class ChatMessageProjectionCodec {
       parts.add(Map<String, dynamic>.from(item));
     }
     return parts;
+  }
+
+  static List<ReplyRound> replyRounds(Map<String, dynamic>? rawPayload) {
+    final rawList = rawPayload?[_replyRoundsKey];
+    if (rawList is! List) return const <ReplyRound>[];
+    return <ReplyRound>[
+      for (final item in rawList)
+        if (item is Map)
+          ReplyRound(
+            replyText: item['replyText'] as String? ?? '',
+            processedText: item['processedText'] as String? ?? '',
+            pluginEvents: pluginEvents({_pluginEventsKey: item['pluginEvents']}),
+            pluginContents:
+                pluginContents({_pluginContentsKey: item['pluginContents']}),
+            reasoning: item['reasoning'] as String? ?? '',
+            toolCallIds: <String>[
+              for (final id in item['toolCallIds'] as List? ?? const [])
+                if (id is String) id,
+            ],
+          ),
+    ];
   }
 
   static List<PluginEvent> pluginEvents(Map<String, dynamic>? rawPayload) {
@@ -271,6 +338,7 @@ class ChatMessageProjectionCodec {
           generationSnapshot: ImageGenerationSnapshot.tryRead(map['generationSnapshot']),
           audioUrl: map['audioUrl'] as String?,
           text: map['text'] as String?,
+          unread: map['unread'] == true,
         ),
       );
     }
@@ -316,6 +384,7 @@ class ChatMessageProjectionCodec {
           toolCallId: toolCallId,
           name: name,
           result: result,
+          isError:map['isError']==true, structured:map['structured'],
         ),
       );
     }

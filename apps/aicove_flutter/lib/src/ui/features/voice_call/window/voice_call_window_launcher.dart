@@ -104,7 +104,7 @@ VoiceCallWindowAppearance voiceCallWindowAppearanceOf(
   final source = useOwn
       ? own
       : global?.sourceFor(GlobalWallpaperSlot.chat, brightness);
-  final style = useOwn ? chatWallpaperStyleOf(conv) : global?.style;
+  final style = resolveChatWallpaperStyle(context, conv);
   final alignment = useOwn
       ? Alignment.center
       : global?.wallpaper.alignment ?? Alignment.center;
@@ -114,7 +114,7 @@ VoiceCallWindowAppearance voiceCallWindowAppearanceOf(
     avatarUrl: conv.avatarUrl,
     characterImage: conv.characterImage,
     wallpaper: source,
-    wallpaperStyle: style?.toJson() ?? const {},
+    wallpaperStyle: style.toJson(),
     wallpaperAlignment: [alignment.x, alignment.y],
     backgroundColor: theme.scaffoldBackgroundColor.toARGB32(),
     dark: brightness == Brightness.dark,

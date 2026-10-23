@@ -85,44 +85,38 @@ class _SequencedToolCallClient extends http.BaseClient {
     payloads.add(jsonDecode(request.body) as Map<String, dynamic>);
 
     if (callCount == 1) {
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content': '',
-                'tool_calls': <Map<String, dynamic>>[
-                  <String, dynamic>{
-                    'id': 'call_memory_1',
-                    'type': 'function',
-                    'function': <String, dynamic>{
-                      'name': 'memory_lookup',
-                      'arguments': '{}',
-                    },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-      );
-    }
-
-    return _json(
-      200,
-      <String, dynamic>{
+      return _json(200, <String, dynamic>{
         'choices': <Map<String, dynamic>>[
           <String, dynamic>{
             'message': <String, dynamic>{
               'role': 'assistant',
-              'content': '记忆整理完成',
+              'content': '',
+              'tool_calls': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'call_memory_1',
+                  'type': 'function',
+                  'function': <String, dynamic>{
+                    'name': 'memory_lookup',
+                    'arguments': '{}',
+                  },
+                },
+              ],
             },
           },
         ],
-      },
-    );
+      });
+    }
+
+    return _json(200, <String, dynamic>{
+      'choices': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'message': <String, dynamic>{
+            'role': 'assistant',
+            'content': '记忆整理完成',
+          },
+        },
+      ],
+    });
   }
 
   Future<http.StreamedResponse> _json(int statusCode, Object body) async {
@@ -136,7 +130,9 @@ class _SequencedToolCallClient extends http.BaseClient {
 }
 
 AITool _buildTool(
-    String name, Future<String?> Function(Map<String, dynamic>) handler) {
+  String name,
+  Future<String?> Function(Map<String, dynamic>) handler,
+) {
   return AITool(
     name: name,
     description: 'test tool $name',
@@ -156,8 +152,9 @@ void main() {
 
       ApiConfig? capturedConfig;
       List<AITool>? capturedTools;
-      final tempDir =
-          await Directory.systemTemp.createTemp('bg_agent_trace_prepare_');
+      final tempDir = await Directory.systemTemp.createTemp(
+        'bg_agent_trace_prepare_',
+      );
       final traceStore = TraceStore(rootDirResolver: () async => tempDir);
       addTearDown(() async {
         traceStore.debugResetForTest();
@@ -188,35 +185,33 @@ void main() {
           ),
         ],
         loadSettings: () async => _buildTestSettings(),
-        requestConfigResolver: ({
-          required AppSettings settings,
-          required String? modelRef,
-        }) async {
-          return const BackgroundAgentRequestConfig(
-            modelFullId: 'openai:gpt-3.5-turbo',
-            providerApiBase: 'https://api.openai.com/v1',
-            providerApiKey: 'test-key',
-            customConfig: <String, dynamic>{},
-            modelTemperature: null,
-            modelTopP: null,
-            modelContextMessageLimit: null,
-          );
-        },
-        executor: ({
-          required ApiConfig config,
-          required List<AITool> availableTools,
-          required String sessionId,
-          required int maxRounds,
-        }) async {
-          capturedConfig = config;
-          capturedTools = availableTools;
-          return const ApiCallResult(
-            replyText: '',
-            processedText: 'done',
-            pluginEvents: <PluginEvent>[],
-            toolResults: <Map<String, dynamic>>[],
-          );
-        },
+        requestConfigResolver:
+            ({required AppSettings settings, required String? modelRef}) async {
+              return const BackgroundAgentRequestConfig(
+                modelFullId: 'openai:gpt-3.5-turbo',
+                providerApiBase: 'https://api.openai.com/v1',
+                providerApiKey: 'test-key',
+                customConfig: <String, dynamic>{},
+                modelTemperature: null,
+                modelTopP: null,
+                modelContextMessageLimit: null,
+              );
+            },
+        executor:
+            ({
+              required ApiConfig config,
+              required List<AITool> availableTools,
+              required String sessionId,
+            }) async {
+              capturedConfig = config;
+              capturedTools = availableTools;
+              return const ApiCallResult(
+                replyText: '',
+                processedText: 'done',
+                pluginEvents: <PluginEvent>[],
+                toolResults: <Map<String, dynamic>>[],
+              );
+            },
         sessionIdFactory: (_) => 'bg_test_session',
         traceStore: traceStore,
       );
@@ -273,125 +268,124 @@ void main() {
       final payloadEnvelope = await traceStore.readPayloadByRef(
         apiConfigEvent.payloadRef,
       );
-      final payload = payloadEnvelope?['payload'] as Map<String, dynamic>? ??
+      final payload =
+          payloadEnvelope?['payload'] as Map<String, dynamic>? ??
           const <String, dynamic>{};
       final runtimeContext =
           payload['runtimeContext'] as Map<String, dynamic>? ??
-              const <String, dynamic>{};
+          const <String, dynamic>{};
       final promptAssembly =
           payload['promptAssembly'] as Map<String, dynamic>? ??
-              const <String, dynamic>{};
+          const <String, dynamic>{};
       expect(runtimeContext['requestSource'], TraceKind.backgroundAgent.value);
       expect(promptAssembly['systemPrompt'], contains('只输出关键信息'));
       expect(payload['rawContext'], contains('我喜欢喝美式'));
     });
 
     for (final (variant, createRunner) in apiRunnerVariants) {
-    test('[$variant] 通过 availableTools 可在无插件执行链下完成工具调用', () async {
-      final client = _SequencedToolCallClient();
-      final runner = createRunner(
-        agentClientFactory: (timeout) => AgentApiClient(
-          client: client,
-          timeout: timeout,
-        ),
-      );
-      final tools = <AITool>[
-        _buildTool('memory_lookup', (_) async {
-          return jsonEncode(<String, dynamic>{
-            'success': true,
-            'memory': '用户偏好无糖美式',
-          });
-        }),
-      ];
-      TraceStore.instance.debugResetForTest();
-      addTearDown(TraceStore.instance.debugResetForTest);
-      TraceContext? capturedTraceContext;
+      test('[$variant] 通过 availableTools 可在无插件执行链下完成工具调用', () async {
+        final client = _SequencedToolCallClient();
+        final runner = createRunner(
+          agentClientFactory: (timeout) =>
+              AgentApiClient(client: client, timeout: timeout),
+        );
+        final tools = <AITool>[
+          _buildTool('memory_lookup', (_) async {
+            return jsonEncode(<String, dynamic>{
+              'success': true,
+              'memory': '用户偏好无糖美式',
+            });
+          }),
+        ];
+        TraceStore.instance.debugResetForTest();
+        addTearDown(TraceStore.instance.debugResetForTest);
+        TraceContext? capturedTraceContext;
 
-      final service = BackgroundAgentService(
-        loadRecentMessages: (_, __) async => <Message>[
-          Message.text(
-            id: 'm1',
-            role: 'user',
-            content: '我喜欢无糖美式',
-            createdAt: DateTime(2026, 3, 18, 10, 0),
+        final service = BackgroundAgentService(
+          loadRecentMessages: (_, __) async => <Message>[
+            Message.text(
+              id: 'm1',
+              role: 'user',
+              content: '我喜欢无糖美式',
+              createdAt: DateTime(2026, 3, 18, 10, 0),
+            ),
+          ],
+          loadSettings: () async => _buildTestSettings(),
+          requestConfigResolver:
+              ({
+                required AppSettings settings,
+                required String? modelRef,
+              }) async {
+                return const BackgroundAgentRequestConfig(
+                  modelFullId: 'openai:gpt-3.5-turbo',
+                  providerApiBase: 'https://api.openai.com/v1',
+                  providerApiKey: 'test-key',
+                  customConfig: <String, dynamic>{},
+                  modelTemperature: null,
+                  modelTopP: null,
+                  modelContextMessageLimit: null,
+                );
+              },
+          executor:
+              ({
+                required ApiConfig config,
+                required List<AITool> availableTools,
+                required String sessionId,
+              }) {
+                capturedTraceContext = config.traceContext;
+                return runner.executeApiCall(
+                  config: config,
+                  sessionId: sessionId,
+                  userText: null,
+                  responseProcessors: const [],
+                  availableTools: availableTools,
+                  traceContext: config.traceContext,
+                );
+              },
+          sessionIdFactory: (_) => 'bg_memory_session',
+        );
+
+        final result = await service.run(
+          definition: BackgroundAgentDefinition(
+            id: 'memory_agent',
+            name: '记忆整理',
+            objectivePrompt: '调用工具读取记忆并给出总结',
+            contextProfile: ContextProfile.background(
+              const ConversationWindowSpec(lastMessages: 1),
+            ),
+            allowedToolNames: <String>['memory_lookup'],
           ),
-        ],
-        loadSettings: () async => _buildTestSettings(),
-        requestConfigResolver: ({
-          required AppSettings settings,
-          required String? modelRef,
-        }) async {
-          return const BackgroundAgentRequestConfig(
-            modelFullId: 'openai:gpt-3.5-turbo',
-            providerApiBase: 'https://api.openai.com/v1',
-            providerApiKey: 'test-key',
-            customConfig: <String, dynamic>{},
-            modelTemperature: null,
-            modelTopP: null,
-            modelContextMessageLimit: null,
-          );
-        },
-        executor: ({
-          required ApiConfig config,
-          required List<AITool> availableTools,
-          required String sessionId,
-          required int maxRounds,
-        }) {
-          capturedTraceContext = config.traceContext;
-          return runner.executeApiCall(
-            config: config,
-            sessionId: sessionId,
-            userText: null,
-            responseProcessors: const [],
-            availableTools: availableTools,
-            maxRounds: maxRounds,
-            traceContext: config.traceContext,
-          );
-        },
-        sessionIdFactory: (_) => 'bg_memory_session',
-      );
+          conversationId: 'conv_2',
+          additionalTools: tools,
+        );
 
-      final result = await service.run(
-        definition: BackgroundAgentDefinition(
-          id: 'memory_agent',
-          name: '记忆整理',
-          objectivePrompt: '调用工具读取记忆并给出总结',
-          contextProfile: ContextProfile.background(
-            const ConversationWindowSpec(lastMessages: 1),
-          ),
-          allowedToolNames: <String>['memory_lookup'],
-          maxRounds: 2,
-        ),
-        conversationId: 'conv_2',
-        additionalTools: tools,
-      );
+        expect(client.callCount, 2);
+        expect(result.toolCalls.map((call) => call.name), <String>[
+          'memory_lookup',
+        ]);
+        expect(result.text, contains('记忆整理完成'));
+        await TraceStore.instance.waitForPendingWrites();
+        expect(capturedTraceContext, isNotNull);
 
-      expect(client.callCount, 2);
-      expect(
-          result.toolCalls.map((call) => call.name), <String>['memory_lookup']);
-      expect(result.text, contains('记忆整理完成'));
-      await TraceStore.instance.waitForPendingWrites();
-      expect(capturedTraceContext, isNotNull);
-
-      final events = await TraceStore.instance.readEventsByTraceId(
-        capturedTraceContext!.traceId,
-      );
-      expect(
-        events.map((event) => event.stage),
-        containsAll(<String>[
-          TraceStage.turnStarted.value,
-          TraceStage.historyPrepared.value,
-          TraceStage.apiConfigReady.value,
-          TraceStage.roundRequestBuilt.value,
-          TraceStage.modelRequestSent.value,
-          TraceStage.modelResponseReceived.value,
-          TraceStage.toolCallDetected.value,
-          TraceStage.toolExecFinished.value,
-          TraceStage.finalReplyReady.value,
-          TraceStage.turnCompleted.value,
-        ]),
-      );
-    });
+        final events = await TraceStore.instance.readEventsByTraceId(
+          capturedTraceContext!.traceId,
+        );
+        expect(
+          events.map((event) => event.stage),
+          containsAll(<String>[
+            TraceStage.turnStarted.value,
+            TraceStage.historyPrepared.value,
+            TraceStage.apiConfigReady.value,
+            TraceStage.roundRequestBuilt.value,
+            TraceStage.modelRequestSent.value,
+            TraceStage.modelResponseReceived.value,
+            TraceStage.toolCallDetected.value,
+            TraceStage.toolExecFinished.value,
+            TraceStage.finalReplyReady.value,
+            TraceStage.turnCompleted.value,
+          ]),
+        );
+      });
     }
 
     test('传入指定上下文时不再回退到最近消息加载器', () async {
@@ -402,34 +396,32 @@ void main() {
           fail('传入 contextMessages 后不应再调用 loadRecentMessages');
         },
         loadSettings: () async => _buildTestSettings(),
-        requestConfigResolver: ({
-          required AppSettings settings,
-          required String? modelRef,
-        }) async {
-          return const BackgroundAgentRequestConfig(
-            modelFullId: 'openai:gpt-3.5-turbo',
-            providerApiBase: 'https://api.openai.com/v1',
-            providerApiKey: 'test-key',
-            customConfig: <String, dynamic>{},
-            modelTemperature: null,
-            modelTopP: null,
-            modelContextMessageLimit: null,
-          );
-        },
-        executor: ({
-          required ApiConfig config,
-          required List<AITool> availableTools,
-          required String sessionId,
-          required int maxRounds,
-        }) async {
-          capturedConfig = config;
-          return const ApiCallResult(
-            replyText: '',
-            processedText: 'done',
-            pluginEvents: <PluginEvent>[],
-            toolResults: <Map<String, dynamic>>[],
-          );
-        },
+        requestConfigResolver:
+            ({required AppSettings settings, required String? modelRef}) async {
+              return const BackgroundAgentRequestConfig(
+                modelFullId: 'openai:gpt-3.5-turbo',
+                providerApiBase: 'https://api.openai.com/v1',
+                providerApiKey: 'test-key',
+                customConfig: <String, dynamic>{},
+                modelTemperature: null,
+                modelTopP: null,
+                modelContextMessageLimit: null,
+              );
+            },
+        executor:
+            ({
+              required ApiConfig config,
+              required List<AITool> availableTools,
+              required String sessionId,
+            }) async {
+              capturedConfig = config;
+              return const ApiCallResult(
+                replyText: '',
+                processedText: 'done',
+                pluginEvents: <PluginEvent>[],
+                toolResults: <Map<String, dynamic>>[],
+              );
+            },
       );
 
       final result = await service.run(
@@ -471,34 +463,32 @@ void main() {
       final service = BackgroundAgentService(
         loadRecentMessages: (_, __) async => const <Message>[],
         loadSettings: () async => _buildTestSettings(),
-        requestConfigResolver: ({
-          required AppSettings settings,
-          required String? modelRef,
-        }) async {
-          return const BackgroundAgentRequestConfig(
-            modelFullId: 'openai:gpt-3.5-turbo',
-            providerApiBase: 'https://api.openai.com/v1',
-            providerApiKey: 'test-key',
-            customConfig: <String, dynamic>{},
-            modelTemperature: null,
-            modelTopP: null,
-            modelContextMessageLimit: null,
-          );
-        },
-        executor: ({
-          required ApiConfig config,
-          required List<AITool> availableTools,
-          required String sessionId,
-          required int maxRounds,
-        }) async {
-          capturedConfig = config;
-          return const ApiCallResult(
-            replyText: '',
-            processedText: '{}',
-            pluginEvents: <PluginEvent>[],
-            toolResults: <Map<String, dynamic>>[],
-          );
-        },
+        requestConfigResolver:
+            ({required AppSettings settings, required String? modelRef}) async {
+              return const BackgroundAgentRequestConfig(
+                modelFullId: 'openai:gpt-3.5-turbo',
+                providerApiBase: 'https://api.openai.com/v1',
+                providerApiKey: 'test-key',
+                customConfig: <String, dynamic>{},
+                modelTemperature: null,
+                modelTopP: null,
+                modelContextMessageLimit: null,
+              );
+            },
+        executor:
+            ({
+              required ApiConfig config,
+              required List<AITool> availableTools,
+              required String sessionId,
+            }) async {
+              capturedConfig = config;
+              return const ApiCallResult(
+                replyText: '',
+                processedText: '{}',
+                pluginEvents: <PluginEvent>[],
+                toolResults: <Map<String, dynamic>>[],
+              );
+            },
       );
 
       await service.run(
@@ -540,15 +530,12 @@ void main() {
     test('后台执行器默认走内核执行器，开关为假时为旧执行器', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      expect(kAgentKernelBackground, isTrue);
-      expect(container.read(backgroundApiRunnerProvider), isA<KernelApiRunner>());
-      expect(createApiRunner(useKernel: true), isA<KernelApiRunner>());
-      expect(createApiRunner(useKernel: false), isA<ChatSendApiRunner>());
-    });
-
-    test('内核执行器只在轮次上限小于 1 时回退旧执行器', () {
-      expect(KernelApiRunner.needsLegacyRunner(maxRounds: 0), isTrue);
-      expect(KernelApiRunner.needsLegacyRunner(maxRounds: 1), isFalse);
+      expect(
+        container.read(backgroundApiRunnerProvider),
+        isA<KernelApiRunner>(),
+      );
+      expect(createApiRunner(), isA<KernelApiRunner>());
+      expect(createApiRunner(), isA<KernelApiRunner>());
     });
   });
 }

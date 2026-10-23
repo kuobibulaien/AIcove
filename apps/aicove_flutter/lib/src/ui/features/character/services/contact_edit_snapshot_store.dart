@@ -28,6 +28,7 @@ class ContactEditSnapshot {
     this.description,
     required this.personaPrompt,
     this.enabledPlugins,
+    this.agentMode,
   });
 
   final String conversationId;
@@ -43,6 +44,7 @@ class ContactEditSnapshot {
   final String? description;
   final String personaPrompt;
   final List<String>? enabledPlugins;
+  final String? agentMode;
 
   factory ContactEditSnapshot.fromConversation(Conversation conversation) {
     return ContactEditSnapshot(
@@ -61,6 +63,7 @@ class ContactEditSnapshot {
       enabledPlugins: conversation.enabledPlugins == null
           ? null
           : List<String>.from(conversation.enabledPlugins!),
+      agentMode: conversation.agentMode?.name,
     );
   }
 
@@ -87,6 +90,7 @@ class ContactEditSnapshot {
       description: json['description']?.toString(),
       personaPrompt: json['personaPrompt']?.toString() ?? '',
       enabledPlugins: plugins == null ? null : List<String>.unmodifiable(plugins),
+      agentMode: json['agentMode']?.toString(),
     );
   }
 
@@ -105,6 +109,7 @@ class ContactEditSnapshot {
       'description': description,
       'personaPrompt': personaPrompt,
       'enabledPlugins': enabledPlugins,
+      'agentMode': agentMode,
     };
   }
 

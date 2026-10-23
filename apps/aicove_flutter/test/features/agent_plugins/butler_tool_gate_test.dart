@@ -352,6 +352,31 @@ void main() {
     expect(redactor.redact('key sk-channel'), 'key ${SecretRedactor.mask}');
   });
 
+  test('channel keys become shell variables for the assistant', () {
+    final settings = mapUiModelsToAppSettings({
+      'providers': [
+        {
+          'id': 'novelai',
+          'displayName': 'NovelAI',
+          'apiBaseUrl': 'https://image.novelai.net',
+          'apiKeys': ['', ' pst-key '],
+        },
+        {
+          'id': 'my-comfy.1',
+          'apiBaseUrl': '',
+          'apiKeys': ['comfy-key'],
+        },
+        {'id': 'empty', 'apiBaseUrl': 'https://x.test', 'apiKeys': <String>[]},
+      ],
+    });
+    expect(channelKeyEnvironment(settings), {
+      'AICOVE_KEY_NOVELAI': 'pst-key',
+      'AICOVE_URL_NOVELAI': 'https://image.novelai.net',
+      'AICOVE_KEY_MY_COMFY_1': 'comfy-key',
+      'AICOVE_KEYS': 'NOVELAI:NovelAI,MY_COMFY_1:my-comfy.1',
+    });
+  });
+
   test('without a policy tools run exactly as before (D6)', () async {
     final (_, client) = await run(
       [call('read_chat'), call('leak_key')],

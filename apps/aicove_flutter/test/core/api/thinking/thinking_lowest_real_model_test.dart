@@ -3,6 +3,9 @@
 // Sends through AgentApiClient to DeepSeek Flash. Skipped unless
 // DEEPSEEK_API_KEY is set; the key is read from the environment only and
 // never written anywhere.
+@Tags(['real_model'])
+library;
+
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';

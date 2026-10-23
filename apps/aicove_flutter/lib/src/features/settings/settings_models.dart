@@ -10,7 +10,6 @@ import 'package:flutter/material.dart';
 import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/message_formatter.dart';
 import '../chat/domain/chat_display_policy.dart';
-import '../../core/utils/token_estimator.dart';
 import '../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../ui/theme/tokens.dart';
 
@@ -168,7 +167,8 @@ final _imagePatterns = RegExp(
 enum ChatModelCapability {
   vision('vision'),
   tools('tools'),
-  reasoning('reasoning');
+  reasoning('reasoning'),
+  web('web');
 
   const ChatModelCapability(this.value);
   final String value;
@@ -198,95 +198,10 @@ enum ChatModelCapability {
   }
 }
 
-// Chat 能力识别规则（自动推断）
-final _chatVisionPatterns = RegExp(
-  r'\b('
-  r'vision|'
-  r'vl\b|'
-  r'4o|'
-  r'gpt-4-turbo|'
-  r'gpt-4\.1|'
-  r'gpt-5|'
-  r'claude-3|'
-  r'claude-.*-4|'
-  r'gemini|'
-  r'gemma-3|'
-  r'glm-4v|'
-  r'qvq|'
-  r'o1(?!-mini)|'
-  r'o3(?!-mini)|'
-  r'o4|'
-  r'grok-vision|'
-  r'grok-4|'
-  r'pixtral|'
-  r'llava|'
-  r'moondream|'
-  r'minicpm|'
-  r'internvl'
-  r')\b',
-  caseSensitive: false,
-);
-
-final _chatToolsPatterns = RegExp(
-  r'\b('
-  r'gpt-4|'
-  r'gpt-3\.5-turbo|'
-  r'gpt-5|'
-  r'o1|o3|o4|'
-  r'claude|'
-  r'qwen|'
-  r'deepseek(?!-vl)|'
-  r'glm-5|'
-  r'glm-4|'
-  r'gemini|'
-  r'grok|'
-  r'hunyuan|'
-  r'doubao|'
-  r'minimax|'
-  r'kimi'
-  r')\b',
-  caseSensitive: false,
-);
-
-final _chatReasoningPatterns = RegExp(
-  r'\b('
-  r'o1|o3|o4|'
-  r'qwq|'
-  r'reasoner|'
-  r'reasoning|'
-  r'thinking|'
-  r'think\b|'
-  r'r1\b|'
-  r'glm-5|'
-  r'hunyuan-t1|'
-  r'glm-zero|'
-  r'deepseek-r|'
-  r'marco-o1'
-  r')\b',
-  caseSensitive: false,
-);
-
+/// 对话模型能力暂不做自动识别：所有对话模型默认四项全开。
+/// 已在模型编辑页手动保存的能力仍优先生效（见 AppSettings.getChatModelCapabilities）。
 List<ChatModelCapability> inferChatModelCapabilities(String modelId) {
-  final id = modelId.toLowerCase();
-  final result = <ChatModelCapability>[];
-  if (_chatVisionPatterns.hasMatch(id)) {
-    result.add(ChatModelCapability.vision);
-  }
-  if (_chatToolsPatterns.hasMatch(id)) {
-    result.add(ChatModelCapability.tools);
-  }
-  if (_chatReasoningPatterns.hasMatch(id)) {
-    result.add(ChatModelCapability.reasoning);
-  }
-  // 未识别的模型默认开启视觉、工具与思考，用户可在模型设置中手动关闭。
-  if (result.isEmpty) {
-    return const <ChatModelCapability>[
-      ChatModelCapability.vision,
-      ChatModelCapability.tools,
-      ChatModelCapability.reasoning,
-    ];
-  }
-  return result;
+  return ChatModelCapability.values;
 }
 
 /// 全局背景色选项（影响整个 App 的 Scaffold 底色）
@@ -588,22 +503,24 @@ class EnhancedDialogueSettings {
 
 /// 调用流程模式
 enum CallFlowMode {
-  auto('auto', '自动'),
-  fast('fast', '快速');
+  fast('fast', '快速'),
+  call('call', '调用');
 
   const CallFlowMode(this.value, this.label);
   final String value;
   final String label;
 
+  /// Old saved values: `auto` and `stable` both meant "call the tool when the
+  /// model can", which is what the call mode now does.
   static CallFlowMode fromValue(String? value) {
     final normalized = value?.trim().toLowerCase();
-    if (normalized == 'stable') {
-      return CallFlowMode.auto;
+    if (normalized == 'auto' || normalized == 'stable') {
+      return CallFlowMode.call;
     }
     for (final mode in CallFlowMode.values) {
       if (mode.value == normalized) return mode;
     }
-    return CallFlowMode.auto;
+    return CallFlowMode.fast;
   }
 }
 
@@ -627,7 +544,7 @@ class CallFlowSettings {
   final int toolTimeoutSeconds;
 
   const CallFlowSettings({
-    this.mode = CallFlowMode.auto,
+    this.mode = CallFlowMode.fast,
     this.modelTimeoutSeconds = 120,
     this.toolTimeoutSeconds = 30,
   });
@@ -1156,6 +1073,18 @@ class AppSettings {
   /// 发送消息后是否自动回到聊天底部；关闭后保持当前阅读位置。
   final bool autoScrollOnSend;
 
+  /// 停在底部时 AI 回复是否跟着往下滚；关闭后停在原处，新内容在下方长出。
+  final bool autoScrollOnAiReply;
+
+  /// 气泡模式是否显示思维链折叠气泡。
+  final bool bubbleShowThinking;
+
+  /// 文档模式是否显示思维链折叠段。
+  final bool documentShowThinking;
+
+  /// 文档模式是否把工具调用过程显示成折叠段。
+  final bool documentShowToolCalls;
+
   const AppSettings({
     this.compactionModel = '',
     this.memoryModel = '',
@@ -1210,6 +1139,10 @@ class AppSettings {
     this.streamSegmentDelaySeconds = 0,
     this.chatDisplayStyle = ChatDisplayStyle.bubble,
     this.autoScrollOnSend = true,
+    this.autoScrollOnAiReply = true,
+    this.bubbleShowThinking = true,
+    this.documentShowThinking = true,
+    this.documentShowToolCalls = true,
     this.userAvatar,
     this.userName,
   });
@@ -1285,6 +1218,10 @@ class AppSettings {
     double? streamSegmentDelaySeconds,
     ChatDisplayStyle? chatDisplayStyle,
     bool? autoScrollOnSend,
+    bool? autoScrollOnAiReply,
+    bool? bubbleShowThinking,
+    bool? documentShowThinking,
+    bool? documentShowToolCalls,
     String? userAvatar,
     String? userName,
   }) => AppSettings(
@@ -1349,6 +1286,11 @@ class AppSettings {
         streamSegmentDelaySeconds ?? this.streamSegmentDelaySeconds,
     chatDisplayStyle: chatDisplayStyle ?? this.chatDisplayStyle,
     autoScrollOnSend: autoScrollOnSend ?? this.autoScrollOnSend,
+    autoScrollOnAiReply: autoScrollOnAiReply ?? this.autoScrollOnAiReply,
+    bubbleShowThinking: bubbleShowThinking ?? this.bubbleShowThinking,
+    documentShowThinking: documentShowThinking ?? this.documentShowThinking,
+    documentShowToolCalls:
+        documentShowToolCalls ?? this.documentShowToolCalls,
     userAvatar: userAvatar ?? this.userAvatar,
     userName: userName ?? this.userName,
   );
@@ -1556,7 +1498,7 @@ class AppSettings {
     return getModelConfig(modelId).disableToolCalling;
   }
 
-  /// 获取模型的最大上下文 Token 数（优先用户配置 > 硬编码表 > 128K 兜底）
+  /// 获取模型的最大上下文 Token 数（模型配置 > 渠道配置 > 全局上下文窗口设置）
   int getMaxContextTokens(String modelId) {
     // 1. 模型级别配置
     final modelConfig = getModelConfig(modelId);
@@ -1571,8 +1513,8 @@ class AppSettings {
         return provider!.maxContextTokens!;
       }
     }
-    // 3. 回退到硬编码表
-    final rawId = getRawModelId(modelId);
-    return getModelContextLimit(rawId);
+    // 3. 没单独配置时用全局「上下文窗口」设置；不用写死的模型表压低它，
+    //    真超出模型上限时由服务商报错，发送链路按超限压缩重试。
+    return contextWindowTokens;
   }
 }

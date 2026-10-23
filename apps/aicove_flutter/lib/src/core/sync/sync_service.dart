@@ -200,6 +200,7 @@ class SyncService {
       sessionProvider: Value(data['session_provider'] as String?),
       thinkingLevels: Value(data['thinking_levels'] as String?),
       chatDisplayStyle: Value(data['chat_display_style'] as String?),
+      agentMode: Value(data['agent_mode'] as String?),
       isPinned: Value(data['is_pinned'] as bool? ?? false),
       isHidden: Value(data['is_hidden'] as bool? ?? false),
       isFavorite: Value(data['is_favorite'] as bool? ?? false),

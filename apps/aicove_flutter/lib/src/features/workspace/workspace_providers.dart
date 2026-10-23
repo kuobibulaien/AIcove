@@ -1,3 +1,5 @@
+import '../stickers/sticker_library.dart';
+import 'data/sticker_workspace_mount.dart';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +16,11 @@ final workspaceStoreProvider = FutureProvider<WorkspaceStore>((ref) async {
   final store = await WorkspaceStore.open(root);
   ref.onDispose(store.close);
   await store.ensureDefault();
+  store.registerReadOnlyMount(
+    defaultWorkspaceId,
+    'stickers',
+    StickerWorkspaceMount(() => StickerLibrary.shared),
+  );
   return store;
 });
 

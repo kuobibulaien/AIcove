@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 
 /// 画师串预设（正面 + 负面提示词）
@@ -178,6 +179,16 @@ class ImageConfig {
   final String? selectedFastPromptPresetName;
   final List<ArtistPreset> artistPresets;
   final String? selectedArtistPresetName;
+  final String? comfyLoraName;
+  final double comfyLoraStrength;
+  final Map<String, dynamic>? comfyWorkflowConfig;
+
+  /// Empty means the built-in default (standard) or the workflow's own value.
+  final String? comfySampler;
+  final String? comfyScheduler;
+
+  /// `inherit` preserves legacy presets; new editors should save an explicit mode.
+  final String comfyWorkflowMode;
 
   /// 内置默认画师串预设
   static const defaultArtistPresets = [
@@ -235,6 +246,12 @@ class ImageConfig {
     this.selectedFastPromptPresetName,
     this.artistPresets = defaultArtistPresets,
     this.selectedArtistPresetName,
+    this.comfyLoraName,
+    this.comfyLoraStrength = 1.0,
+    this.comfyWorkflowConfig,
+    this.comfySampler,
+    this.comfyScheduler,
+    this.comfyWorkflowMode = ComfyUIWorkflow.inheritMode,
   });
 
   ImageConfig copyWith({
@@ -259,6 +276,16 @@ class ImageConfig {
     List<ArtistPreset>? artistPresets,
     String? selectedArtistPresetName,
     bool clearSelectedArtistPreset = false,
+    String? comfyLoraName,
+    bool clearComfyLoraName = false,
+    double? comfyLoraStrength,
+    Map<String, dynamic>? comfyWorkflowConfig,
+    bool clearComfyWorkflowConfig = false,
+    String? comfySampler,
+    bool clearComfySampler = false,
+    String? comfyScheduler,
+    bool clearComfyScheduler = false,
+    String? comfyWorkflowMode,
   }) {
     return ImageConfig(
       selectedProviderId: clearSelectedProviderId
@@ -289,6 +316,20 @@ class ImageConfig {
       selectedArtistPresetName: clearSelectedArtistPreset
           ? null
           : (selectedArtistPresetName ?? this.selectedArtistPresetName),
+      comfyLoraName: clearComfyLoraName
+          ? null
+          : (comfyLoraName ?? this.comfyLoraName),
+      comfyLoraStrength: comfyLoraStrength ?? this.comfyLoraStrength,
+      comfyWorkflowConfig: clearComfyWorkflowConfig
+          ? null
+          : (comfyWorkflowConfig ?? this.comfyWorkflowConfig),
+      comfySampler: clearComfySampler
+          ? null
+          : (comfySampler ?? this.comfySampler),
+      comfyScheduler: clearComfyScheduler
+          ? null
+          : (comfyScheduler ?? this.comfyScheduler),
+      comfyWorkflowMode: comfyWorkflowMode ?? this.comfyWorkflowMode,
     );
   }
 
@@ -311,10 +352,21 @@ class ImageConfig {
       'selectedFastPromptPresetName': selectedFastPromptPresetName,
       'artistPresets': artistPresets.map((e) => e.toJson()).toList(),
       'selectedArtistPresetName': selectedArtistPresetName,
+      if (comfyLoraName != null && comfyLoraName!.trim().isNotEmpty)
+        'comfyLoraName': comfyLoraName!.trim(),
+      if (comfyLoraStrength != 1.0) 'comfyLoraStrength': comfyLoraStrength,
+      if (comfyWorkflowConfig != null && comfyWorkflowConfig!.isNotEmpty)
+        'comfyWorkflowConfig': comfyWorkflowConfig,
+      if (comfySampler != null && comfySampler!.trim().isNotEmpty)
+        'comfySampler': comfySampler!.trim(),
+      if (comfyScheduler != null && comfyScheduler!.trim().isNotEmpty)
+        'comfyScheduler': comfyScheduler!.trim(),
+      'comfyWorkflowMode': comfyWorkflowMode,
     };
   }
 
   factory ImageConfig.fromJson(Map<String, dynamic> json) {
+    final rawWorkflow = json['comfyWorkflowConfig'];
     return ImageConfig(
       selectedProviderId: json['selectedProviderId'] as String?,
       selectedModelId: json['selectedModelId'] as String?,
@@ -347,8 +399,85 @@ class ImageConfig {
               .toList() ??
           defaultArtistPresets,
       selectedArtistPresetName: json['selectedArtistPresetName'] as String?,
+      comfyLoraName: (json['comfyLoraName'] as String?)?.trim(),
+      comfyLoraStrength: (json['comfyLoraStrength'] as num?)?.toDouble() ?? 1.0,
+      comfyWorkflowConfig: rawWorkflow is Map
+          ? Map<String, dynamic>.from(rawWorkflow)
+          : null,
+      comfySampler: (json['comfySampler'] as String?)?.trim(),
+      comfyScheduler: (json['comfyScheduler'] as String?)?.trim(),
+      comfyWorkflowMode:
+          json['comfyWorkflowMode'] as String? ?? ComfyUIWorkflow.inheritMode,
     );
   }
+
+  String effectiveComfyWorkflowMode({
+    required String modelId,
+    Map<String, dynamic> providerCustomConfig = const {},
+  }) => ComfyUIWorkflow.resolveMode(
+    mode: comfyWorkflowMode,
+    model: modelId,
+    presetConfig: comfyWorkflowConfig,
+    providerConfig: providerCustomConfig,
+  );
+
+  /// Creates a request copy; channel configuration and inactive drafts are
+  /// never modified. Pass the unqualified Checkpoint/workflow model ID.
+  Map<String, dynamic> buildComfyCustomConfig({
+    required String modelId,
+    Map<String, dynamic> providerCustomConfig = const {},
+  }) {
+    final mode = effectiveComfyWorkflowMode(
+      modelId: modelId,
+      providerCustomConfig: providerCustomConfig,
+    );
+    final next = Map<String, dynamic>.from(providerCustomConfig);
+    final source = ComfyUIWorkflow.hasCustomWorkflow(comfyWorkflowConfig)
+        ? comfyWorkflowConfig
+        : (comfyWorkflowMode == ComfyUIWorkflow.inheritMode
+              ? providerCustomConfig
+              : null);
+    for (final key in [
+      ComfyUIWorkflow.workflowKey,
+      ComfyUIWorkflow.bindingsKey,
+      ComfyUIWorkflow.outputKey,
+    ]) {
+      next.remove(key);
+      if (mode == ComfyUIWorkflow.customMode &&
+          source?.containsKey(key) == true) {
+        next[key] = source![key];
+      }
+    }
+    next[ComfyUIWorkflow.modeKey] = mode;
+    for (final (key, value) in [
+      (ComfyUIWorkflow.samplerKey, comfySampler),
+      (ComfyUIWorkflow.schedulerKey, comfyScheduler),
+    ]) {
+      next.remove(key);
+      if ((value?.trim() ?? '').isNotEmpty) next[key] = value!.trim();
+    }
+    if (mode == ComfyUIWorkflow.customMode) {
+      next.remove(ComfyUIWorkflow.loraNameKey);
+      next.remove(ComfyUIWorkflow.loraStrengthKey);
+    } else if ((comfyLoraName?.trim() ?? '').isNotEmpty) {
+      next[ComfyUIWorkflow.loraNameKey] = comfyLoraName!.trim();
+      next[ComfyUIWorkflow.loraStrengthKey] = comfyLoraStrength;
+    }
+    return next;
+  }
+
+  /// Call only for a ComfyUI provider. Throws FormatException on active fields;
+  /// hidden LoRA drafts do not block custom workflow saves.
+  void validateComfyConfiguration({
+    required String modelId,
+    Map<String, dynamic> providerCustomConfig = const {},
+  }) => ComfyUIWorkflow.validateForModel(
+    buildComfyCustomConfig(
+      modelId: modelId,
+      providerCustomConfig: providerCustomConfig,
+    ),
+    modelId,
+  );
 
   /// 获取当前选中的系统提示词预设（如果有）
   DrawingPromptPreset? get selectedSystemPromptPreset {

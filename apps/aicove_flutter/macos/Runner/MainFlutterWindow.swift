@@ -12,6 +12,7 @@ class MainFlutterWindow: NSWindow {
   private var alignmentScheduled = false
 
   override func awakeFromNib() {
+    importSandboxedPreferences()
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
@@ -113,4 +114,29 @@ class MainFlutterWindow: NSWindow {
     }
     trafficLightsHost = host
   }
+}
+
+/// Builds before ADR0106 ran in the App Sandbox and kept their preferences in
+/// the container. Copies them once, before Flutter reads any; the Dart side
+/// (AppDataMigration) moves the files and rewrites stored paths afterwards.
+private func importSandboxedPreferences() {
+  guard ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] == nil,
+        let bundleId = Bundle.main.bundleIdentifier else { return }
+  let defaults = UserDefaults.standard
+  let marker = "aicove.sandboxPreferencesImported"
+  if defaults.bool(forKey: marker) { return }
+  let old = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Containers/\(bundleId)/Data/Library/Preferences/\(bundleId).plist")
+  if FileManager.default.fileExists(atPath: old.path) {
+    // Unreadable (e.g. access to the container was refused): retry next launch.
+    guard let values = NSDictionary(contentsOf: old) as? [String: Any] else { return }
+    let current = defaults.persistentDomain(forName: bundleId) ?? [:]
+    // Preferences this build already wrote are newer than the container's.
+    if !current.keys.contains(where: { $0.hasPrefix("flutter.") }) {
+      for (key, value) in values where current[key] == nil {
+        defaults.set(value, forKey: key)
+      }
+    }
+  }
+  defaults.set(true, forKey: marker)
 }

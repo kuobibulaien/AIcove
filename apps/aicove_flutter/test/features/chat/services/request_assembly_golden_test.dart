@@ -13,6 +13,7 @@ import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_request_message_builder.dart';
@@ -69,12 +70,16 @@ AppSettings _settings({required CallFlowMode mode, required bool tools}) =>
           chatCapabilities: tools ? const ['tools', 'vision'] : const [],
         ),
       },
-      modelTypes: const {_model: 'chat'},
+      // An image channel, so the image plugin is usable (it stays silent
+      // without one); its generic model keeps the default prompt pack.
+      modelTypes: const {_model: 'chat', 'image-model': 'image'},
       providers: const [
         ProviderAuth(
           id: 'openai',
           apiKeys: ['test-key'],
           apiBaseUrl: 'https://api.openai.com/v1',
+          models: ['image-model'],
+          visibleModels: ['image-model'],
         ),
       ],
       modelProviderMap: const {_model: 'openai', 'gpt-4o': 'openai'},
@@ -98,13 +103,14 @@ class _Scenario {
   const _Scenario(
     this.name, {
     this.plugins,
-    this.mode = CallFlowMode.auto,
+    this.mode = CallFlowMode.call,
     this.tools = true,
     this.preset = false,
     this.mcpConfigured = false,
     this.imageFailure = false,
     this.tts = false,
     this.webSearch = false,
+    this.agentMode,
   });
 
   final String name;
@@ -118,6 +124,9 @@ class _Scenario {
   final bool imageFailure;
   final bool tts;
   final bool webSearch;
+
+  /// Null means chat mode (ADR0097).
+  final RoleAgentMode? agentMode;
 }
 
 const _scenarios = [
@@ -135,6 +144,8 @@ const _scenarios = [
       mcpConfigured: true),
   _Scenario('tts_enabled', plugins: ['tts', 'time_awareness'], tts: true),
   _Scenario('web_search_takeover', plugins: ['web_search'], webSearch: true),
+  _Scenario('tool_mode_web_search', plugins: ['web_search'], webSearch: true,
+      agentMode: RoleAgentMode.tool),
 ];
 
 List<Message> _history(_Scenario s) => [
@@ -318,6 +329,7 @@ void main() {
         personaPrompt: PersonaPromptCodec.compose(userPrompt: '你是测试角色。'),
         enabledPlugins: s.plugins,
         recipeId: recipeId,
+        agentMode: s.agentMode,
         createdAt: _now,
         updatedAt: _now,
         messages: const [],

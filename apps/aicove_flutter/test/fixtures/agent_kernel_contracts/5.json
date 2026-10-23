@@ -1,0 +1,2020 @@
+{
+  "requests": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "2",
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "2",
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "3",
+          "tool_calls": [
+            {
+              "id": "c3",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c3",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "2",
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "3",
+          "tool_calls": [
+            {
+              "id": "c3",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c3",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "4",
+          "tool_calls": [
+            {
+              "id": "c4",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c4",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "2",
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "3",
+          "tool_calls": [
+            {
+              "id": "c3",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c3",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "4",
+          "tool_calls": [
+            {
+              "id": "c4",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c4",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "5",
+          "tool_calls": [
+            {
+              "id": "c5",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c5",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "2",
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "3",
+          "tool_calls": [
+            {
+              "id": "c3",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c3",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "4",
+          "tool_calls": [
+            {
+              "id": "c4",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c4",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "5",
+          "tool_calls": [
+            {
+              "id": "c5",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c5",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "6",
+          "tool_calls": [
+            {
+              "id": "c6",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c6",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "content": "开始"
+        },
+        {
+          "role": "assistant",
+          "content": "1",
+          "tool_calls": [
+            {
+              "id": "c1",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c1",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "2",
+          "tool_calls": [
+            {
+              "id": "c2",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c2",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "3",
+          "tool_calls": [
+            {
+              "id": "c3",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c3",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "4",
+          "tool_calls": [
+            {
+              "id": "c4",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c4",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "5",
+          "tool_calls": [
+            {
+              "id": "c5",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c5",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "6",
+          "tool_calls": [
+            {
+              "id": "c6",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c6",
+          "content": "result-of-lookup"
+        },
+        {
+          "role": "assistant",
+          "content": "7",
+          "tool_calls": [
+            {
+              "id": "c7",
+              "type": "function",
+              "function": {
+                "name": "lookup",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "c7",
+          "content": "result-of-lookup"
+        }
+      ],
+      "model": "openai:gpt-test",
+      "temperature": 0.7,
+      "topP": 0.9,
+      "apiBase": "https://invalid.test",
+      "customConfig": {
+        "region": "test"
+      },
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "lookup",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "note",
+            "description": "test",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "read_tool_result",
+            "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "reference": {
+                  "type": "string"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8192
+                }
+              },
+              "required": [
+                "reference"
+              ]
+            }
+          }
+        }
+      ],
+      "options": {
+        "useSystemPrompt": true,
+        "temperature": 0.7,
+        "topP": 0.9,
+        "topK": null,
+        "minP": null,
+        "topA": null,
+        "repetitionPenalty": null,
+        "frequencyPenalty": null,
+        "presencePenalty": null,
+        "seed": 3,
+        "maxOutputTokens": 512,
+        "toolChoice": null,
+        "reasoningEffort": null,
+        "thinkingLevel": null,
+        "thinkingScheme": "null",
+        "disableBuiltinWebSearch": false
+      }
+    }
+  ],
+  "modes": [
+    "rich:开始",
+    "rich:",
+    "rich:",
+    "rich:",
+    "rich:",
+    "rich:",
+    "rich:",
+    "rich:"
+  ],
+  "executions": [
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:lookup:null",
+    "end:lookup:null",
+    "start:lookup:null",
+    "end:lookup:null"
+  ],
+  "executing": [
+    "lookup",
+    "lookup",
+    "lookup",
+    "lookup",
+    "lookup",
+    "lookup",
+    "lookup"
+  ],
+  "deltas": [],
+  "fallbacks": 0,
+  "observed": 7,
+  "contextCalls": null,
+  "error": null,
+  "trace": [
+    {
+      "round": 1,
+      "seq": 1,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 2,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c1"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 3,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c1",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 1,
+      "seq": 4,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 1,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c1\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c1\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 1,
+      "seq": 5,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 6,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 7,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c2"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 8,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c2",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 2,
+      "seq": 9,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 2,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c2\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c2\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 2,
+      "seq": 10,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 3,
+      "seq": 11,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 3,
+      "seq": 12,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c3"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 3,
+      "seq": 13,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c3",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 3,
+      "seq": 14,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 3,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c3\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c3\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 3,
+      "seq": 15,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 4,
+      "seq": 16,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 4,
+      "seq": 17,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c4"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 4,
+      "seq": 18,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c4",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 4,
+      "seq": 19,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 4,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c4\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c4\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 4,
+      "seq": 20,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 5,
+      "seq": 21,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 5,
+      "seq": 22,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c5"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 5,
+      "seq": 23,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c5",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 5,
+      "seq": 24,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 5,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c5\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c5\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 5,
+      "seq": 25,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 6,
+      "seq": 26,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 6,
+      "seq": 27,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c6"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 6,
+      "seq": 28,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c6",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 6,
+      "seq": 29,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 6,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c6\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c6\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 6,
+      "seq": 30,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 7,
+      "seq": 31,
+      "stage": "TOOL_CALL_DETECTED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "count": 1,
+        "names": [
+          "lookup"
+        ],
+        "fallbackParsed": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 7,
+      "seq": 32,
+      "stage": "TOOL_EXEC_STARTED",
+      "status": "running",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c7"
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 7,
+      "seq": 33,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolName": "lookup",
+        "toolCallId": "c7",
+        "isError": false,
+        "images": [],
+        "rawResultLength": 16
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 7,
+      "seq": 34,
+      "stage": "TOOL_EXEC_FINISHED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "aggregated": true
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 7,
+        "stage": "TOOL_EXEC_FINISHED",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawToolCalls": "[{\"id\":\"c7\",\"name\":\"lookup\",\"arguments\":{}}]",
+          "rawToolResults": "[{\"toolCallId\":\"c7\",\"name\":\"lookup\",\"result\":\"result-of-lookup\"}]"
+        }
+      }
+    },
+    {
+      "round": 7,
+      "seq": 35,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 1,
+        "toolResults": 1,
+        "hasToolExecution": true
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 8,
+      "seq": 36,
+      "stage": "ROUND_COMPLETED",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "toolCalls": 0,
+        "hasToolExecution": false
+      },
+      "payloadRef": false,
+      "payload": null
+    },
+    {
+      "round": 8,
+      "seq": 37,
+      "stage": "FINAL_REPLY_READY",
+      "status": "success",
+      "source": "ChatSendApiRunner",
+      "turn": "turn",
+      "meta": {
+        "status": "completed",
+        "stopReason": null,
+        "rawReplyLength": 16,
+        "finalReplyLength": 16
+      },
+      "payloadRef": true,
+      "payload": {
+        "schema": "trace_payload_v1",
+        "traceId": "trace",
+        "sessionId": "session",
+        "turnId": "turn",
+        "roundIndex": 8,
+        "stage": "FINAL_REPLY_READY",
+        "source": "ChatSendApiRunner",
+        "payload": {
+          "rawAiResponse": "1\n2\n3\n4\n5\n6\n7\n完成",
+          "regexDisplayText": "1\n2\n3\n4\n5\n6\n7\n完成",
+          "regex": {
+            "declared": 0,
+            "authorized": false,
+            "warnings": [],
+            "trace": []
+          },
+          "finalReply": "1\n2\n3\n4\n5\n6\n7\n完成"
+        }
+      }
+    }
+  ],
+  "result": {
+    "raw": "1\n2\n3\n4\n5\n6\n7\n完成",
+    "reply": "1\n2\n3\n4\n5\n6\n7\n完成",
+    "processed": "1\n2\n3\n4\n5\n6\n7\n完成",
+    "hidden": [],
+    "toolCalls": [
+      [
+        "c1",
+        "lookup",
+        {},
+        null
+      ],
+      [
+        "c2",
+        "lookup",
+        {},
+        null
+      ],
+      [
+        "c3",
+        "lookup",
+        {},
+        null
+      ],
+      [
+        "c4",
+        "lookup",
+        {},
+        null
+      ],
+      [
+        "c5",
+        "lookup",
+        {},
+        null
+      ],
+      [
+        "c6",
+        "lookup",
+        {},
+        null
+      ],
+      [
+        "c7",
+        "lookup",
+        {},
+        null
+      ]
+    ],
+    "rawToolResults": [
+      [
+        "c1",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c2",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c3",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c4",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c5",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c6",
+        "lookup",
+        "result-of-lookup"
+      ],
+      [
+        "c7",
+        "lookup",
+        "result-of-lookup"
+      ]
+    ],
+    "toolResults": [],
+    "events": [],
+    "contents": [],
+    "audio": []
+  }
+}

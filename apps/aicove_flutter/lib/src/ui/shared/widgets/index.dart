@@ -78,6 +78,7 @@ export 'moe_chat_wallpaper.dart';
 export 'moe_static_blur_layer.dart';
 export 'moe_wallpaper_view.dart';
 export 'moe_collapsible_bubble.dart';
+export 'moe_fold_section.dart';
 export 'moe_quote_block.dart';
 export 'moe_avatar.dart';
 export 'moe_scroll_edge.dart';

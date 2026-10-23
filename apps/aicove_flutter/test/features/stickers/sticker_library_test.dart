@@ -1,14 +1,15 @@
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:aicove_flutter/src/features/plugins/sticker/sticker_config.dart';
 import 'package:aicove_flutter/src/features/plugins/sticker/sticker_plugin.dart';
-import 'package:aicove_flutter/src/features/stickers/builtin_stickers.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_library.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_registry.dart';
 import 'package:archive/archive.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
 
 Uint8List _png(int seed) => Uint8List.fromList(
   img.encodePng(img.Image(width: 4, height: 4)..setPixelRgb(0, 0, seed, 0, 0)),
@@ -25,7 +26,7 @@ void main() {
   });
 
   tearDown(() async {
-    StickerRegistry.instance.replaceStickers(builtinStickers);
+    StickerRegistry.instance.replaceStickers(const []);
     await root.delete(recursive: true);
   });
 
@@ -77,7 +78,6 @@ void main() {
 
     await reloaded.setPackEnabled(packId, false);
     expect(StickerRegistry.instance.hasTag('摸摸头'), isFalse);
-    await reloaded.setPackEnabled(builtinStickerPackId, false);
     expect(StickerRegistry.instance.stickers, isEmpty);
   });
 
@@ -117,16 +117,83 @@ void main() {
     expect(StickerRegistry.instance.hasTag('得意'), isFalse);
   });
 
-  test('builtin pack is read-only', () async {
-    await library.renamePack(builtinStickerPackId, '改名');
-    await library.deletePack(builtinStickerPackId);
-    expect(library.packById(builtinStickerPackId)!.name, builtinStickerPackName);
-    expect(
-      () => library.importFiles([
-        StickerImportFile('a.png', _png(10)),
-      ], packId: builtinStickerPackId),
-      throwsArgumentError,
+  test('zip import applies labels.json tags, description and pack name', () async {
+    final labels = {
+      'name': '猫猫·动图',
+      'author': '猫猫作者',
+      'stickers': {
+        'a.png': {
+          'tags': ['委屈', '撒娇'],
+          'description': '哄我',
+        },
+      },
+    };
+    final archive = Archive()
+      ..addFile(ArchiveFile('猫猫/a.png', 0, _png(8)))
+      ..addFile(ArchiveFile('猫猫/开心.png', 0, _png(9)))
+      ..addFile(
+        ArchiveFile.string('猫猫/labels.json', jsonEncode(labels)),
+      );
+    final bytes = Uint8List.fromList(ZipEncoder().encode(archive)!);
+
+    final result = await library.importZip(bytes, 'pets.zip');
+
+    expect(result.added, 2);
+    expect(result.skipped, 0);
+    final pack = library.packById(result.packIds.single)!;
+    expect(pack.name, '猫猫·动图');
+    expect(pack.author, '猫猫作者');
+    // 清单里有的按清单标注，没有的仍按文件名推断
+    expect(pack.stickers.map((s) => s.tags), [
+      ['委屈', '撒娇'],
+      ['开心'],
+    ]);
+    expect(pack.stickers.first.description, '哄我');
+  });
+
+  test('built-in packs are seeded once with labels and survive reload', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    await library.seedBuiltin(rootBundle);
+
+    expect(library.packs.map((p) => p.name).toSet(), {
+      'YoMee企鹅',
+      '呆猫八条与淑熊',
+      '小哭猫',
+      '这狗',
+      '鱼烧哥',
+    });
+    final stickers = [for (final p in library.packs) ...p.stickers];
+    expect(stickers, hasLength(291));
+    expect(stickers.where((s) => s.tags.isEmpty), isEmpty);
+    expect(library.packs.firstWhere((p) => p.name == '这狗').author, '这狗ZOGGY');
+    expect(StickerRegistry.instance.hasTag('撒娇'), isTrue);
+
+    // 用户删掉一个内置套组后，重新加载不会再放回来
+    await library.deletePack(library.packs.first.id);
+    final reloaded = StickerLibrary(root);
+    await reloaded.load();
+    await reloaded.seedBuiltin(rootBundle);
+    expect(reloaded.packs, hasLength(4));
+    expect(reloaded.packs.every((p) => p.author.isNotEmpty), isTrue);
+  });
+
+  test('库里没有内置套组，旧清单里的内置条目读取时忽略', () async {
+    expect(library.packs, isEmpty);
+
+    await root.create(recursive: true);
+    await File(p.join(root.path, 'library.json')).writeAsString(
+      jsonEncode({
+        'version': 1,
+        'usedIds': <String>[],
+        'packs': [
+          {'id': 'builtin_nahida', 'builtin': true, 'enabled': true},
+        ],
+      }),
     );
+    final reloaded = StickerLibrary(root);
+    await reloaded.load();
+    expect(reloaded.packs, isEmpty);
+    expect(StickerRegistry.instance.stickers, isEmpty);
   });
 
   test('plugin converts an imported sticker tag into a sticker event', () async {
@@ -136,7 +203,7 @@ void main() {
     final prompt = await plugin.buildSystemPrompt();
     expect(prompt, contains('比心'));
 
-    final processed = await plugin.convertStickerTags('爱你哦 [比心]');
+    final processed = await plugin.convertStickerTags('爱你哦 <sticker tag="比心"/>');
     expect(processed.processedText, '爱你哦');
     final event = processed.events.single;
     expect(event.type, 'sticker_convert');

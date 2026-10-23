@@ -1,7 +1,11 @@
+import '../domain/handlers/tool_output.dart';
+import '../../workspace/application/workspace_image.dart';
 import 'dart:async';
+import '../../../core/api/request_control.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show KernelCancelledException;
 
 import 'mcp_connector.dart';
 
@@ -25,10 +29,15 @@ class McpServerSnapshot {
 
 /// tools/call 的结果，已压平成可回给模型的文本。
 class McpToolCallResult {
-  const McpToolCallResult({required this.text, required this.isError});
+  const McpToolCallResult({
+    required this.text,
+    required this.isError,
+    this.output,
+  });
 
   final String text;
   final bool isError;
+  final ToolOutput? output;
 }
 
 /// 远程 MCP 服务客户端，只实现 Streamable HTTP 传输上的工具能力：
@@ -95,8 +104,37 @@ class McpHttpClient {
       'name': name,
       'arguments': arguments,
     }, timeout: callTimeout);
+    final images = <ToolImage>[];
+    final omitted = <String>[];
+    for (final block in result['content'] as List? ?? const []) {
+      if (block is Map && block['type'] == 'image' && block['data'] is String) {
+        try {
+          final image = await prepareWorkspaceImage(
+            base64Decode(block['data'] as String),
+            'MCP $name',
+          );
+          if (image != null) {
+            images.add(image);
+          } else {
+            omitted.add(omittedToolImage('MCP $name'));
+          }
+        } on FormatException {
+          omitted.add(omittedToolImage('MCP $name'));
+        }
+      }
+    }
+    final text = [
+      flattenToolResult(result, includeImagePlaceholder: false),
+      ...omitted,
+    ].where((s) => s.isNotEmpty).join('\n');
     return McpToolCallResult(
-      text: flattenToolResult(result),
+      output: ToolOutput(
+        text: text,
+        images: images,
+        isError: result['isError'] == true,
+        structured: result['structuredContent'],
+      ),
+      text: text,
       isError: result['isError'] == true,
     );
   }
@@ -107,7 +145,10 @@ class McpHttpClient {
 
   /// 把 CallToolResult 压成文本：文本块原样拼接，其它块给出简短占位，
   /// 只有结构化结果时输出 JSON。
-  static String flattenToolResult(Map<String, dynamic> result) {
+  static String flattenToolResult(
+    Map<String, dynamic> result, {
+    bool includeImagePlaceholder = true,
+  }) {
     final parts = <String>[];
     for (final block in result['content'] as List? ?? const []) {
       if (block is! Map) continue;
@@ -124,7 +165,8 @@ class McpHttpClient {
         case 'resource_link':
           parts.add('[链接 ${block['name'] ?? ''} ${block['uri'] ?? ''}]'.trim());
         case 'image':
-          parts.add('[图片 ${block['mimeType'] ?? ''}，未转给模型]');
+          if (includeImagePlaceholder)
+            parts.add(omittedToolImage('MCP ${block['mimeType'] ?? ''}'));
         case 'audio':
           parts.add('[音频 ${block['mimeType'] ?? ''}，未转给模型]');
       }
@@ -133,19 +175,42 @@ class McpHttpClient {
     if (text.isEmpty && result['structuredContent'] != null) {
       text = jsonEncode(result['structuredContent']);
     }
-    if (text.length > maxResultChars) {
-      text = '${text.substring(0, maxResultChars)}\n…（结果过长，已截断）';
-    }
     return text;
   }
 
-  Future<void> _ensureInitialized() {
-    if (_sessionId != null || _negotiatedVersion != null) {
-      return Future.value();
+  Future<void> _ensureInitialized() async {
+    // A caller may be waiting for another task's cancellable handshake.
+    // Its own cancellation is independent: only restart initialization, never
+    // replay a tools/call, when that other task aborts the shared handshake.
+    final pending = _initializing;
+    if (pending != null) {
+      try {
+        await pending;
+      } on KernelCancelledException {
+        RequestControl.cancellation?.throwIfCancelled();
+        await _ensureInitialized();
+      }
+      return;
     }
-    return _initializing ??= _initialize().whenComplete(
+    if (_sessionId != null || _negotiatedVersion != null) {
+      return;
+    }
+    _initializing = _initializeSafely().whenComplete(
       () => _initializing = null,
     );
+    await _initializing;
+  }
+
+  Future<void> _initializeSafely() async {
+    try {
+      await _initialize();
+    } catch (_) {
+      // initialize may have returned a session before the initialized
+      // notification failed. Such a partial handshake is not ready for use.
+      _sessionId = null;
+      _negotiatedVersion = null;
+      rethrow;
+    }
   }
 
   Future<void> _initialize() async {
@@ -192,7 +257,7 @@ class McpHttpClient {
   };
 
   Future<void> _notify(String method) async {
-    final request = http.Request('POST', Uri.parse(url))
+    final request = RequestControl.request('POST', Uri.parse(url))
       ..headers.addAll(_headers())
       ..body = jsonEncode({'jsonrpc': '2.0', 'method': method});
     final response = await _client.send(request).timeout(listTimeout);
@@ -210,7 +275,7 @@ class McpHttpClient {
   }) async {
     final id = _nextId++;
     final hadSession = _sessionId != null;
-    final request = http.Request('POST', Uri.parse(url))
+    final request = RequestControl.request('POST', Uri.parse(url))
       ..headers.addAll(_headers())
       ..body = jsonEncode({
         'jsonrpc': '2.0',
@@ -224,6 +289,7 @@ class McpHttpClient {
     } on TimeoutException {
       throw McpException('连接超时（$method）');
     } catch (e) {
+      RequestControl.cancellation?.throwIfCancelled();
       throw McpException('无法连接到 MCP 服务：$e');
     }
     if (response.statusCode == 404 && hadSession) {
@@ -256,6 +322,7 @@ class McpHttpClient {
     } on McpException {
       rethrow;
     } catch (e) {
+      RequestControl.cancellation?.throwIfCancelled();
       throw McpException('读取响应失败（$method）：$e');
     }
     final error = message['error'];

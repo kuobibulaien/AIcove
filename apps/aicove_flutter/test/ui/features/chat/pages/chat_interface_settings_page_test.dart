@@ -109,7 +109,7 @@ void main() {
     });
   }
 
-  testWidgets('上方用真实消息气泡预览，下方面板默认停在壁纸标签', (tester) async {
+  testWidgets('上方用真实消息气泡预览，下方面板默认停在界面标签', (tester) async {
     final key = await pumpPage(tester, conversation());
 
     expect(find.byType(MessageBubble), findsNWidgets(4));
@@ -127,9 +127,11 @@ void main() {
       greaterThan(viewSize.height * 0.6),
       reason: '预览区应占据一半以上的高度',
     );
+    expect(find.text('界面'), findsOneWidget);
     expect(find.text('编辑壁纸'), findsOneWidget);
     expect(find.text('样式'), findsOneWidget);
-    expect(find.text('发送消息自动回底'), findsNothing);
+    expect(find.text('默认'), findsNothing, reason: '样式只剩气泡和文档');
+    expect(find.text('用户发消息自动回底'), findsNothing);
     expect(tester.takeException(), isNull);
     await shot(tester, key, 'chat-interface-wallpaper');
   });
@@ -148,7 +150,60 @@ void main() {
     await shot(tester, key, 'chat-interface-document');
   });
 
-  testWidgets('行为标签切换发送自动回底', (tester) async {
+  testWidgets('更多选项只列当前样式的细节', (tester) async {
+    final settings = FakeChatInterfaceSettingsNotifier(
+      chatInterfaceTestSettings(),
+    );
+    final key = await pumpPage(tester, conversation(), settings: settings);
+    expect(find.text('气泡样式更多选项'), findsOneWidget);
+    expect(find.text('消息分段'), findsNothing);
+
+    await tester.tap(find.text('气泡样式更多选项'));
+    await tester.pumpAndSettle();
+    expect(find.text('消息分段'), findsOneWidget);
+    expect(find.text('过滤句末标点'), findsOneWidget);
+    expect(find.text('显示工具调用'), findsNothing);
+    await shot(tester, key, 'chat-interface-bubble-options');
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('bubble_show_thinking_switch')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bubble_show_thinking_switch')));
+    await tester.pumpAndSettle();
+    expect(settings.settings.bubbleShowThinking, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('文档样式的更多选项是思维链与工具调用，默认都开', (tester) async {
+    final settings = FakeChatInterfaceSettingsNotifier(
+      chatInterfaceTestSettings(),
+    );
+    final key = await pumpPage(
+      tester,
+      conversation(style: ChatDisplayStyle.document),
+      settings: settings,
+    );
+    await tester.tap(find.text('文档样式更多选项'));
+    await tester.pumpAndSettle();
+    expect(find.text('消息分段'), findsNothing);
+    expect(settings.settings.documentShowThinking, isTrue);
+    expect(settings.settings.documentShowToolCalls, isTrue);
+    await shot(tester, key, 'chat-interface-document-options');
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('document_show_tool_calls_switch')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('document_show_tool_calls_switch')),
+    );
+    await tester.pumpAndSettle();
+    expect(settings.settings.documentShowToolCalls, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('行为标签分用户与 AI 两个自动回底', (tester) async {
     final settings = FakeChatInterfaceSettingsNotifier(
       chatInterfaceTestSettings(),
     );
@@ -159,9 +214,14 @@ void main() {
     expect(settings.settings.autoScrollOnSend, isTrue);
     await shot(tester, key, 'chat-interface-behavior');
 
-    await tester.tap(find.text('发送消息自动回底'));
+    await tester.tap(find.text('用户发消息自动回底'));
     await tester.pumpAndSettle();
     expect(settings.settings.autoScrollOnSend, isFalse);
+    expect(settings.settings.autoScrollOnAiReply, isTrue);
+
+    await tester.tap(find.text('AI 发消息自动回底'));
+    await tester.pumpAndSettle();
+    expect(settings.settings.autoScrollOnAiReply, isFalse);
     expect(tester.takeException(), isNull);
   });
 }

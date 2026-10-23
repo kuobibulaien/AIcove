@@ -7,6 +7,7 @@
 /// - 2026-01-27: 添加 tool result 消息构建支持（两回合工具调用）
 library;
 
+import '../../../features/plugins/domain/handlers/tool_output.dart';
 import 'dart:convert';
 
 import '../thinking/thinking_level.dart';
@@ -26,6 +27,10 @@ class ApiCallResult {
   /// The provider's own finish reason, unchanged; null when absent.
   final String? rawFinishReason;
 
+  /// 模型原生思考（reasoning_content／thinking 块／Gemini thought），
+  /// 只用于展示，不回放给模型；没有时为空串。
+  final String reasoning;
+
   const ApiCallResult({
     required this.text,
     this.toolResults = const [],
@@ -33,6 +38,7 @@ class ApiCallResult {
     this.hiddenThoughtParts = const [],
     this.rawResponse,
     this.rawFinishReason,
+    this.reasoning = '',
   });
 
   FinishReason? get finishReason => normalizeFinishReason(rawFinishReason);
@@ -102,6 +108,10 @@ class ToolCall {
 
 /// 工具执行结果
 class ToolResult {
+  final List<ToolImage> images;
+  final bool isError;
+  final Object? structured;
+  String get persistentText => ToolOutput(text: result, images: images).persistentText;
   final String toolCallId;
   final String name;
   final String result;
@@ -110,6 +120,9 @@ class ToolResult {
     required this.toolCallId,
     required this.name,
     required this.result,
+    this.images = const [],
+    this.isError = false,
+    this.structured,
   });
 }
 

@@ -170,8 +170,8 @@ void main() {
       findsNothing,
     );
 
-    await tester.ensureVisible(find.text('管理开启的插件'));
-    await tester.tap(find.text('管理开启的插件'));
+    await tester.ensureVisible(find.text('管理插件'));
+    await tester.tap(find.text('管理插件'));
     await tester.pumpAndSettle();
     final memoryRow = find.byKey(const ValueKey('all-plugins-mcp:def456'));
     await tester.ensureVisible(memoryRow);
@@ -239,7 +239,7 @@ void main() {
       await save(tester, key, 'detail-360');
 
       await _mount(tester, const _SectionHost(), width: 360, boundary: key);
-      await tester.tap(find.text('管理开启的插件'));
+      await tester.tap(find.text('管理插件'));
       await tester.pumpAndSettle();
       await save(tester, key, 'character-360');
       expect(tester.takeException(), isNull);

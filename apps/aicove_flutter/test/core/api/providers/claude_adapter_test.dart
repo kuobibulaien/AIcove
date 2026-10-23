@@ -53,5 +53,17 @@ void main() {
         {'role': 'assistant', 'content': 'prefill'},
       ]);
     });
+
+    test('without any configured limit the output cap is not kept low', () {
+      final body = ClaudeAdapter().buildRequestBody(
+        model: 'claude-sonnet-4-5',
+        messages: const <Map<String, dynamic>>[
+          {'role': 'user', 'content': 'hi'},
+        ],
+        requestOptions: const ProviderChatRequestOptions(),
+      );
+
+      expect(body['max_tokens'], 32000);
+    });
   });
 }

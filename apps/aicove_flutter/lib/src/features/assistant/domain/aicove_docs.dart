@@ -22,6 +22,7 @@ const kAicoveDocs = <AicoveDoc>[
   AicoveDoc('tavern_presets', '酒馆预设、正则与世界书', '绑定规则、条目开关、正则授权、常见问题'),
   AicoveDoc('context_and_models', '上下文装配与模型', '一次请求包含什么、压缩、内置渠道、错误码'),
   AicoveDoc('voice_call', '语音通话', '怎么打、需要的三样配置、常见提示怎么处理、通话里的限制'),
+  AicoveDoc('sticker_packs', '表情包：导入与打标', '从网页链接导入、给表情打标签、打标规则、做不到的事'),
   AicoveDoc('known_limits', '已知限制', '还没有的功能，承诺前先查'),
   AicoveDoc(
     kAicoveSettingsDocId,

@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aicove_flutter/src/core/database/database.dart';
+import 'package:aicove_flutter/src/core/media/media_store.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/background_service.dart';
 import 'package:drift/native.dart';
@@ -121,8 +122,27 @@ void main() {
     final messages = await _messages();
     expect(messages.single.id, backgroundTriggerMessageId(_trigger));
     expect(messages.single.content, '早上好呀');
+    expect(jsonDecode(messages.single.rawPayload!)['bg_origin_device_id'],
+        await MediaStore.localDeviceId);
     expect(await _unread(), 1);
     expect(await _status(), 'fired');
+    final logs = await Directory(
+      '${root.path}/logs',
+    ).list().where((f) => f is File).toList();
+    final diagnosticText = await (logs.single as File).readAsString();
+    final records = diagnosticText
+        .trim()
+        .split('\n')
+        .map((line) => jsonDecode(line) as Map);
+    final completed =
+        records.singleWhere(
+              (r) => r['metadata']?['event'] == 'task_completed',
+            )['metadata']
+            as Map;
+    expect(completed['category'], 'backgroundDelivery');
+    expect(completed['entityId'], backgroundTriggerMessageId(_trigger));
+    expect(completed['elapsedMs'], isNonNegative);
+    expect(diagnosticText, isNot(contains('早上好呀')));
     // The completed claim keeps a late foreground attempt out for good.
     expect(
       await _withDb((db) => AutoReplyClaimStore(db).tryClaim(

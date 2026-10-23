@@ -1,3 +1,6 @@
+@Tags(['preview'])
+library;
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -175,9 +178,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('已开启插件'), findsOneWidget);
+    expect(find.text('管理插件'), findsOneWidget);
     expect(find.text('壁纸'), findsNothing);
-    expect(find.text('角色卡信息'), findsOneWidget);
+    expect(find.text('角色提示词'), findsOneWidget);
+    expect(find.text('角色卡信息'), findsNothing);
 
     if (capture) {
       await _capture(tester, boundaryKey, 'contact-edit');
@@ -212,27 +216,35 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(CharacterAppearancePage), findsNothing);
 
-    await tester.ensureVisible(find.text('角色卡信息'));
+    await tester.ensureVisible(find.text('角色提示词'));
     await tester.pumpAndSettle();
+    // ADR0092: the drawing requirement lives in the drawing preset now.
+    expect(find.text('绘图提示'), findsNothing);
     if (capture) {
       await _capture(tester, boundaryKey, 'contact-edit-scrolled');
     }
 
-    await tester.tap(find.text('角色卡信息'));
+    // ADR0092 batch: the contact's context sits at the bottom of the page.
+    await tester.scrollUntilVisible(
+      find.text('角色完整上下文'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
-    expect(find.text('人设提示词'), findsOneWidget);
-    expect(find.text('绘图提示'), findsOneWidget);
+    expect(find.text('角色完整上下文'), findsOneWidget);
     if (capture) {
-      await _capture(tester, boundaryKey, 'contact-edit-expanded');
+      await _capture(tester, boundaryKey, 'contact-edit-bottom');
     }
 
-    await tester.ensureVisible(find.text('管理开启的插件'));
-    await tester.tap(find.text('管理开启的插件'));
+    await tester.ensureVisible(find.text('管理插件'));
+    await tester.tap(find.text('管理插件'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('all-plugins-tts')), findsOneWidget);
     if (capture) {
       await _capture(tester, boundaryKey, 'contact-edit-all-plugins');
     }
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
 
     // 宽屏预览
     tester.view.physicalSize = const Size(1000, 900);

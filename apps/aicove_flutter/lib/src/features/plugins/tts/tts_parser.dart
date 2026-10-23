@@ -1,5 +1,6 @@
 import '../../content_tags/domain/content_tag_scanner.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
+import '../../stickers/sticker_tag.dart';
 import '../plugin_content_tags.dart';
 
 /// TTS 文本解析器
@@ -78,10 +79,14 @@ class TtsParser {
     final cleanText = StringBuffer();
     for (final segment in firstPartyContentTagScanner.scan(text)) {
       if (!isSpeechElement(segment)) {
-        cleanText.write(segment.raw);
+        // 表情标签不进入语音文字，成对写法只留正文
+        cleanText.write(StickerTag.textOf(segment));
         continue;
       }
-      final content = (segment as ContentTagElement).inner.trim();
+      final content = StickerTag.removeFrom(
+        firstPartyContentTagScanner,
+        (segment as ContentTagElement).inner,
+      ).trim();
       if (content.isNotEmpty) {
         segments.add(TtsSegment(
           text: content,

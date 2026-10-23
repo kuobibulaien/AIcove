@@ -39,6 +39,48 @@ class _OfflineTts extends TtsPlayerManager {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'identical historyReady samples are coalesced, changed counts remain immediate',
+    () async {
+      final entries = <LogEntry>[];
+      final service = FrontendDiagnosticsService(sink: entries.add);
+      for (var i = 0; i < 10; i++) {
+        final context = service.child(
+          null,
+          FrontendStage.historyReady,
+          conversationId: 'c',
+        );
+        service.record(
+          context,
+          FrontendStage.historyReady,
+          itemCount: 20,
+          facts: const DiagnosticFacts(
+            phase: DiagnosticPhase.end,
+            state: {'syncRefresh': true},
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(entries, hasLength(1));
+      final context = service.child(
+        null,
+        FrontendStage.historyReady,
+        conversationId: 'c',
+      );
+      service.record(
+        context,
+        FrontendStage.historyReady,
+        itemCount: 21,
+        facts: const DiagnosticFacts(
+          phase: DiagnosticPhase.end,
+          state: {'syncRefresh': true},
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(entries, hasLength(2));
+    },
+  );
+
   test('schema2：运行身份、父子链、单调序号和受控错误细节', () async {
     final entries = <LogEntry>[];
     final service = FrontendDiagnosticsService(sink: entries.add);

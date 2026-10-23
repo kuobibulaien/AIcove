@@ -158,7 +158,7 @@ class _MessageFormatSettingsPageState
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                           child: Text(
-                            'AI 使用 [标签] 语法发送表情包，如 [晚安]、[抱抱]。同义词自动匹配。',
+                            'AI 用 <sticker tag="标签"/> 发送表情包，如 tag="晚安"、tag="抱抱"。同义词自动匹配。',
                             style: TextStyle(fontSize: 12, color: colors.muted),
                           ),
                         ),

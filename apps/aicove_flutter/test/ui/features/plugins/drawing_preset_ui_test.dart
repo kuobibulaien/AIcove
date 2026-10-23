@@ -111,12 +111,28 @@ Future<void> _mount(
   await tester.pumpAndSettle();
 }
 
+Element? _editorList;
+
 Future<void> _scrollTo(WidgetTester tester, Finder target) async {
+  // In the preset editor scroll its own list: on wide screens the first
+  // scrollable is the preset list beside it.
+  final editor = find.ancestor(
+    of: find.byWidgetPredicate((w) => w is MoeTextField && w.label == '预设名称'),
+    matching: find.byType(Scrollable),
+  );
+  // Pin the element: the name field is disposed once scrolled away.
+  final found = editor.evaluate();
+  if (found.isNotEmpty) _editorList = found.first;
+  final pinned = _editorList?.mounted == true ? _editorList : null;
   await tester.scrollUntilVisible(
     target,
     300,
-    scrollable: find.byType(Scrollable).first,
+    scrollable: pinned == null
+        ? find.byType(Scrollable).first
+        : find.byElementPredicate((e) => identical(e, pinned)),
   );
+  // Clear of the translucent app bar the list scrolls under.
+  await Scrollable.ensureVisible(tester.element(target), alignment: 0.5);
   await tester.pumpAndSettle();
 }
 
@@ -309,7 +325,14 @@ void main() {
       final parts = PersonaPromptCodec.parse(saved.personaPrompt);
       expect(parts.drawingPresetId, 'role-b');
       expect(parts.userPrompt, '温柔');
-      expect(parts.customDrawingPrompt, '绿色眼睛');
+      // ADR0092: the requirement moved into a preset only this role used.
+      expect(parts.customDrawingPrompt, isEmpty);
+      expect(
+        store.catalog.presets.any(
+          (p) => p.prompts.ownSections.any((s) => s.text.contains('绿色眼睛')),
+        ),
+        isTrue,
+      );
       expect(parts.drawingArtistPresetName, isNull);
       expect(parts.drawingToolPresetName, isNull);
       expect(tester.takeException(), isNull);
@@ -387,34 +410,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'failed autosave retains edits and back asks before discarding',
-    (tester) async {
-      final store = _store()..fail = true;
-      await _mount(tester, store);
-      await tester.tap(find.text('角色A绘图'));
-      await tester.pumpAndSettle();
-      final name = find.byWidgetPredicate(
-        (w) => w is MoeTextField && w.label == '预设名称',
-      );
-      await tester.enterText(
-        find.descendant(of: name, matching: find.byType(TextField)),
-        '未保存',
-      );
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pumpAndSettle();
-      expect(store.catalog.require('stable-id').name, '角色A绘图');
-      final context = tester.element(find.byType(DrawingPresetEditorPage));
-      Navigator.of(context).maybePop();
-      await tester.pumpAndSettle();
-      expect(find.text('保存失败，修改已保留。'), findsOneWidget);
-      expect(find.text('未保存'), findsOneWidget);
-      store.fail = false;
-      await tester.tap(find.text('重试'));
-      await tester.pumpAndSettle();
-      expect(store.catalog.require('stable-id').name, '未保存');
-      expect(find.byType(DrawingPresetEditorPage), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('failed autosave retains edits and back asks before discarding', (
+    tester,
+  ) async {
+    final store = _store()..fail = true;
+    await _mount(tester, store);
+    await tester.tap(find.text('角色A绘图'));
+    await tester.pumpAndSettle();
+    final name = find.byWidgetPredicate(
+      (w) => w is MoeTextField && w.label == '预设名称',
+    );
+    await tester.enterText(
+      find.descendant(of: name, matching: find.byType(TextField)),
+      '未保存',
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(store.catalog.require('stable-id').name, '角色A绘图');
+    final context = tester.element(find.byType(DrawingPresetEditorPage));
+    Navigator.of(context).maybePop();
+    await tester.pumpAndSettle();
+    expect(find.text('保存失败，修改已保留。'), findsOneWidget);
+    expect(find.text('未保存'), findsOneWidget);
+    store.fail = false;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(store.catalog.require('stable-id').name, '未保存');
+    expect(find.byType(DrawingPresetEditorPage), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

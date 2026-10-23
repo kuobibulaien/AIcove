@@ -30,8 +30,8 @@ class SecretRedactor {
 }
 
 /// ⑦ decorator that redacts [KernelToolResult.content] before it reaches the
-/// model. [KernelToolResult.payload] passes through untouched, so the model
-/// must only ever see the redacted content.
+/// model. Rewritten results discard images and carry an explicit marker so
+/// the continuation cannot restore unredacted fields from an opaque payload.
 class RedactingToolExecutor implements ToolBatchExecutor {
   RedactingToolExecutor(this._inner, this._redactor);
 
@@ -49,13 +49,15 @@ class RedactingToolExecutor implements ToolBatchExecutor {
   ) async {
     final result = await _inner.executeOne(call, ctx);
     final content = _redactor.redact(result.content);
-    if (identical(content, result.content)) return result;
+    if (content == result.content) return result;
     return KernelToolResult(
       callId: result.callId,
       name: result.name,
       content: content,
       isError: result.isError,
       payload: result.payload,
+      terminationReason: result.terminationReason,
+      outputRewritten: true,
     );
   }
 }

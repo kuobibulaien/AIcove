@@ -5,6 +5,8 @@ import 'dart:isolate';
 import 'package:ffi/ffi.dart';
 import 'src/bindings.dart' as native;
 
+part 'src/async_session.dart';
+
 class QuickJsException implements Exception {
   final String message;
   const QuickJsException(this.message);

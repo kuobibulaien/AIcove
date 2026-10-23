@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/workspace/data/workspace_store.dart';
 import '../../../../features/workspace/domain/workspace_models.dart';
+import '../../../../features/workspace/webapp/webapp_launcher.dart';
 import '../../../../features/workspace/workspace_providers.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
@@ -155,13 +156,15 @@ class _WorkspaceDetailPageState extends ConsumerState<WorkspaceDetailPage> {
                 MoeSettingsRow(
                   key: ValueKey('workspace-run-${run.runId}'),
                   icon: Icons.history,
-                  label: '${_time(run.startedAt)} · ${run.opCount} 处修改',
+                  label: run.runId.startsWith('webapp-')
+                      ? '${_time(run.startedAt)} · 网页存档'
+                      : '${_time(run.startedAt)} · ${run.opCount} 处修改',
                   subtitle: _pathsText(run.paths),
                   trailingType: MoeSettingsRowTrailing.text,
                   detailText: run.undone ? '已撤销' : '撤销',
                   enabled: !run.undone && !_undoing,
                   showDivider: index < detail.runs.length - 1,
-                  onTap: () => _undo(context, detail.store, run),
+                  onTap: () => _undo(context, run),
                 ),
             ],
           ),
@@ -185,33 +188,39 @@ class _WorkspaceDetailPageState extends ConsumerState<WorkspaceDetailPage> {
     );
   }
 
-  Future<void> _undo(
-    BuildContext context,
-    WorkspaceStore store,
-    WorkspaceRunSummary run,
-  ) async {
+  Future<void> _undo(BuildContext context, WorkspaceRunSummary run) async {
     final confirmed = await showMeoTalkConfirm(
       context: context,
       title: '撤销这一轮修改？',
-      message:
-          '这一轮改过的 ${run.paths.length} 个文件会恢复到改之前的样子。'
-          '之后又被别处改过的文件会保留现状。',
+      message: [
+        if (run.paths.length > run.commandPaths.length)
+          '这一轮改过的 ${run.paths.length - run.commandPaths.length} 个文件'
+              '会恢复到改之前的样子。之后又被别处改过的文件会保留现状。',
+        if (run.commandPaths.isNotEmpty)
+          '命令造成的改动不能撤销：\n${_pathList(run.commandPaths)}',
+      ].join('\n\n'),
       confirmText: '撤销',
     );
     if (confirmed != true || !context.mounted) return;
     setState(() => _undoing = true);
     try {
-      final result = await store.undoRun(widget.workspaceId, run.runId);
+      // The web app host pauses page saves around the undo (ADR0105 §4).
+      final server = await ref.read(webAppServerProvider.future);
+      final result = await server.undoRun(widget.workspaceId, run.runId);
       if (!context.mounted) return;
-      if (result.conflicts.isEmpty) {
+      if (result.conflicts.isEmpty && result.commandChanges.isEmpty) {
         MoeToast.success(context, '已撤销 ${result.undone} 处修改');
       } else {
         await showMeoTalkAlert(
           context: context,
           title: '部分文件没有撤销',
-          message:
+          message: [
+            if (result.conflicts.isNotEmpty)
               '这些文件在这一轮之后又被改过，已保留现状：\n'
-              '${result.conflicts.join('\n')}',
+                  '${_pathList(result.conflicts)}',
+            if (result.commandChanges.isNotEmpty)
+              '命令造成的改动不能撤销：\n${_pathList(result.commandChanges)}',
+          ].join('\n\n'),
         );
       }
     } catch (error) {
@@ -223,6 +232,12 @@ class _WorkspaceDetailPageState extends ConsumerState<WorkspaceDetailPage> {
       }
     }
   }
+
+  /// Up to five paths, then a count of the rest.
+  static String _pathList(List<String> paths) => [
+    ...paths.take(5),
+    if (paths.length > 5) '等 ${paths.length} 个文件',
+  ].join('\n');
 
   static String _time(DateTime time) {
     String two(int value) => value.toString().padLeft(2, '0');

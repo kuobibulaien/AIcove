@@ -114,6 +114,13 @@ class RenderChatEndAnchoredSliver extends RenderProxySliver {
     }
     child.layout(constraints, parentUsesSize: true);
     final childGeometry = child.geometry!;
+    // 子列表自己请求修正（如前部子项增删）时，这一帧的 scrollExtent 无效
+    // （默认 0）。先原样上报，viewport 修正后重新布局，再按真实末端贴底；
+    // 拿 0 算 gap 会把画面推到活跃区与历史区的接缝。
+    if (childGeometry.scrollOffsetCorrection != null) {
+      geometry = childGeometry;
+      return;
+    }
     if (_controller._armed &&
         constraints.growthDirection == GrowthDirection.reverse) {
       // reverse 增长的 sliver 可见窗口终点 = scrollOffset + remainingPaintExtent

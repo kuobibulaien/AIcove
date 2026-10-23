@@ -142,6 +142,7 @@ Future<ProviderContainer> _pumpHost(
   WidgetTester tester,
   GlobalKey<_HostState> hostKey, {
   double width = 360,
+  AppSettings? settings,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 640);
@@ -163,7 +164,9 @@ Future<ProviderContainer> _pumpHost(
     ProviderScope(
       overrides: [
         appSettingsProvider
-            .overrideWith(() => _FakeAppSettingsNotifier(_buildSettings())),
+            .overrideWith(
+              () => _FakeAppSettingsNotifier(settings ?? _buildSettings()),
+            ),
         streamProjectionPolicyProvider.overrideWithValue(
           const StreamProjectionPolicy(useActiveStreamChannel: true),
         ),
@@ -306,6 +309,57 @@ void main() {
       });
     }
   }
+
+  testWidgets('AI 发消息自动回底关闭：AI 增长不跟随，用户发送仍回底', (tester) async {
+    final hostKey = GlobalKey<_HostState>();
+    final container = await _pumpHost(
+      tester,
+      hostKey,
+      settings: _buildSettings().copyWith(autoScrollOnAiReply: false),
+    );
+    final host = hostKey.currentState!;
+    expect(_distanceToBottom(tester), lessThanOrEqualTo(8), reason: '初始应贴底');
+    container.read(activeStreamProjectionsProvider.notifier).publish(
+          const ActiveStreamProjection(
+            conversationId: _kConvId,
+            generationSeq: 1,
+            writeEpoch: 0,
+            tailMessageId: _kStreamShellId,
+            tailText: '起',
+            phase: ActiveStreamPhase.streamingTail,
+          ),
+        );
+    await _settleStabilization(tester);
+
+    for (var step = 1; step <= 6; step++) {
+      _publishGrowth(container, step);
+      await _settleStabilization(tester);
+    }
+    expect(host.viewportController.isDetached, isTrue);
+    expect(
+      _distanceToBottom(tester),
+      greaterThan(120),
+      reason: 'AI 新内容应在下方长出，视口停在原处',
+    );
+    expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsWidgets,
+        reason: '没跟随时显示回到底部按钮');
+
+    host.viewportController.onUserSend();
+    host.setMessages([
+      ...host.messages,
+      Message.text(
+        id: 'user_after_detach',
+        role: 'user',
+        content: '用户发的新消息',
+        createdAt:
+            host.messages.last.createdAt.add(const Duration(seconds: 1)),
+        status: 'sent',
+      ),
+    ]);
+    await tester.pumpAndSettle();
+    expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+    expect(host.viewportController.shouldFollowLatest, isTrue);
+  });
 
   testWidgets('S1 贴底跟随：通道驱动气泡增高仍贴底，且列表不重建、实时文本上屏', (tester) async {
     final hostKey = GlobalKey<_HostState>();
@@ -686,6 +740,118 @@ void main() {
         reason: '分页/脱离窗口期通道增高不得抢占视口回底');
   });
 
+  for (final scenario in [
+    (name: '用户发送后', pinned: true, followAi: true),
+    (name: '手动回到底部', pinned: false, followAi: true),
+    (name: 'AI 回复不自动回底时滑回底部', pinned: false, followAi: false),
+  ]) {
+    testWidgets('S6 ${scenario.name}：生成结束移除尾部占位，同帧贴底不回弹', (tester) async {
+      final hostKey = GlobalKey<_HostState>();
+      await _pumpHost(
+        tester,
+        hostKey,
+        width: 1000,
+        settings: _buildSettings()
+            .copyWith(autoScrollOnAiReply: scenario.followAi),
+      );
+      final host = hostKey.currentState!;
+      final base = host.messages.last.createdAt;
+      // 生成中：正文之后还挂着「生成中...」占位（文档模式不分段时的形态）。
+      final reply = Message.text(
+        id: 'm_reply',
+        role: 'assistant',
+        content: _growingText(4),
+        createdAt: base.add(const Duration(seconds: 1)),
+        status: 'sent',
+      );
+      final placeholder = Message.text(
+        id: 'm_generating',
+        role: 'assistant',
+        content: '生成中...',
+        createdAt: base.add(const Duration(seconds: 2)),
+        status: 'sending',
+      );
+      if (scenario.pinned) host.viewportController.onUserSend();
+      host.setMessages([...host.messages, reply, placeholder]);
+      await _settleStabilization(tester);
+      final scroll = tester
+          .widget<CustomScrollView>(find.byType(CustomScrollView))
+          .controller!;
+      if (!scenario.pinned) {
+        // 新 AI 消息不拉底；这里代表用户自己滑回了底部。
+        scroll.jumpTo(scroll.position.minScrollExtent);
+        host.viewportController.onViewportReachedLatest();
+        await _settleStabilization(tester);
+      }
+      expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+      expect(host.viewportController.shouldPinLatestTail, scenario.pinned);
+      final replyBubble =
+          find.byKey(const ValueKey<String>('message_bubble_m_reply'));
+      host.setMessages(
+          host.messages.where((m) => m.id != placeholder.id).toList());
+      double? settledBottom;
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(_distanceToBottom(tester), closeTo(0, 0.5),
+            reason: '第 $frame 帧：内容变矮不能越过底边');
+        expect(scroll.position.activity, isNot(isA<BallisticScrollActivity>()),
+            reason: '第 $frame 帧：不能出现回弹动画');
+        final bottom = tester.getBottomLeft(replyBubble).dy;
+        settledBottom ??= bottom;
+        expect(bottom, closeTo(settledBottom, 0.5),
+            reason: '第 $frame 帧：正文位置不能移动');
+      }
+      expect(host.viewportController.shouldFollowLatest, isTrue,
+          reason: '移除占位不算新 AI 输出，不能因此脱离跟随');
+    });
+  }
+
+  testWidgets('AI 发消息自动回底关闭：收尾把短回复换成长正文，不跟随长高', (tester) async {
+    final hostKey = GlobalKey<_HostState>();
+    await _pumpHost(
+      tester,
+      hostKey,
+      width: 1000,
+      settings: _buildSettings().copyWith(autoScrollOnAiReply: false),
+    );
+    final host = hostKey.currentState!;
+    final base = host.messages.last.createdAt;
+    Message reply(String id, String text, int second) => Message.text(
+          id: id,
+          role: 'assistant',
+          content: text,
+          createdAt: base.add(Duration(seconds: second)),
+          status: 'sent',
+        );
+    // 用户发送和两段短回复一起到达：有用户消息，照常回底。
+    host.viewportController.onUserSend();
+    host.setMessages([
+      ...host.messages,
+      Message.text(
+        id: 'm_user_send',
+        role: 'user',
+        content: '帮我看看这个项目',
+        createdAt: base.add(const Duration(seconds: 1)),
+        status: 'sent',
+      ),
+      reply('m_short_1', '我先看看。', 2),
+      reply('m_short_2', '马上好。', 3),
+    ]);
+    await _settleStabilization(tester);
+    expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+
+    // 收尾：两段短回复被一条更长的最终正文替换，条数变少但内容是新的。
+    host.setMessages([
+      ...host.messages.where((m) => !m.id.startsWith('m_short_')),
+      reply('m_final', _growingText(8), 4),
+    ]);
+    await _settleStabilization(tester);
+    expect(host.viewportController.isDetached, isTrue,
+        reason: '新的 AI 正文属于 AI 输出，关闭自动回底时不能跟随');
+    expect(_distanceToBottom(tester), greaterThan(120),
+        reason: '长正文应在下方长出，视口停在原处');
+  });
+
   testWidgets('S5 键盘/底部遮挡同帧变化：贴底不破、不遮输入区', (tester) async {
     final hostKey = GlobalKey<_HostState>();
     final container = await _pumpHost(tester, hostKey);
@@ -704,4 +870,74 @@ void main() {
     expect(_distanceToBottom(tester), lessThanOrEqualTo(8),
         reason: 'overlay 收起后继续增高仍贴底');
   });
+
+  for (final style in ChatDisplayStyle.values) {
+    for (final scenario in [
+      (name: '用户发送后', pinned: true, followAi: true),
+      (name: '滚动后回到底部', pinned: false, followAi: true),
+      (name: 'AI 回复不自动回底', pinned: false, followAi: false),
+    ]) {
+      testWidgets('S7 ${style.name} ${scenario.name}：工具轮收尾整条换掉流式尾消息',
+          (tester) async {
+        final hostKey = GlobalKey<_HostState>();
+        final container = await _pumpHost(
+          tester,
+          hostKey,
+          width: 1000,
+          settings: _buildSettings().copyWith(
+            chatDisplayStyle: style,
+            autoScrollOnAiReply: scenario.followAi,
+          ),
+        );
+        final host = hostKey.currentState!;
+        if (scenario.pinned) host.viewportController.onUserSend();
+        for (var step = 1; step <= 4; step++) {
+          _publishGrowth(container, step);
+          await _settleStabilization(tester);
+        }
+        if (!scenario.followAi) {
+          final scroll = tester
+              .widget<CustomScrollView>(find.byType(CustomScrollView))
+              .controller!;
+          scroll.jumpTo(scroll.position.minScrollExtent);
+          host.viewportController.onViewportReachedLatest();
+          await _settleStabilization(tester);
+        }
+        expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5));
+        expect(host.viewportController.shouldPinLatestTail, scenario.pinned);
+        // 收尾按轮重建：话术、工具、正文都是新 id，流式尾壳被移除。
+        final committedAt =
+            host.messages.last.createdAt.add(const Duration(seconds: 30));
+        Message round(String id, MessageBlock block) => Message.fromBlocks(
+              id: id,
+              role: 'assistant',
+              blocks: <MessageBlock>[block],
+              createdAt: committedAt,
+              status: 'sent',
+            );
+        host.setMessages([
+          ...host.messages.where((m) => m.id != _kStreamShellId),
+          round('r1', TextBlock(messageId: 'r1', content: _growingText(2))),
+          round('t1', ToolBlock(messageId: 't1', toolName: 'read')),
+          round('r2', TextBlock(messageId: 'r2', content: _growingText(6))),
+        ]);
+        if (scenario.followAi) {
+          for (var frame = 0; frame < 10; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(_distanceToBottom(tester), closeTo(0, 0.5),
+                reason: '第 $frame 帧：停在底部时要跟着 AI 的新消息');
+          }
+          await _settleStabilization(tester);
+          expect(_distanceToBottom(tester), closeTo(0, 0.5));
+          expect(host.viewportController.shouldFollowLatest, isTrue);
+        } else {
+          await _settleStabilization(tester);
+          expect(host.viewportController.isDetached, isTrue,
+              reason: '换尾也是 AI 新输出，关闭自动回底时停在原处');
+          expect(_distanceToBottom(tester), greaterThan(8),
+              reason: '新内容在下方长出');
+        }
+      });
+    }
+  }
 }

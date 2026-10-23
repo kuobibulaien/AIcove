@@ -37,7 +37,7 @@ class WorkspaceIndex extends GeneratedDatabase {
   Future<void> _tail = Future.value();
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
   @override
   Iterable<TableInfo> get allTables => const [];
   @override
@@ -47,7 +47,20 @@ class WorkspaceIndex extends GeneratedDatabase {
         await customStatement(statement);
       }
     },
+    onUpgrade: (_, from, to) async {
+      if (from < 2) {
+        for (final statement in _shellSchema) {
+          await customStatement(statement);
+        }
+      }
+    },
   );
+
+  static const _shellSchema = [
+    'CREATE TABLE shell_intents (ws TEXT PRIMARY KEY, id TEXT NOT NULL, '
+        'run_id TEXT NOT NULL, phase TEXT NOT NULL)',
+    'CREATE TABLE command_changes (op_id TEXT PRIMARY KEY)',
+  ];
 
   static const _schema = [
     'CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, '
@@ -73,6 +86,7 @@ class WorkspaceIndex extends GeneratedDatabase {
         'undo_run_id TEXT NOT NULL, status TEXT NOT NULL, '
         'skipped TEXT NOT NULL, conflicts TEXT NOT NULL, '
         'created_at INTEGER NOT NULL, PRIMARY KEY (run_id, ws))',
+    ..._shellSchema,
     'CREATE TABLE sync_dirty (ws TEXT NOT NULL, path TEXT NOT NULL, '
         'PRIMARY KEY (ws, path))',
   ];

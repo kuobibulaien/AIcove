@@ -115,7 +115,6 @@ void main() {
               required config,
               required tools,
               required sessionId,
-              required maxRounds,
               required cancellation,
             }) => throw UnimplementedError(),
       ),

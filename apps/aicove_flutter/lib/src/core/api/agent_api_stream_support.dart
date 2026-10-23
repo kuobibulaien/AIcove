@@ -89,6 +89,8 @@ class _AgentApiStreamSupport {
     final endpointForLogs = preparedRequest.endpointForLogs;
     final chatMessages = preparedRequest.chatMessages;
     final requestBodyJson = preparedRequest.requestBodyJson;
+    final logRequestBodyJson = ToolMedia.logJson(requestBodyJson);
+    final logContextJson = jsonEncode(ToolMedia.log(chatMessages));
     final headers = preparedRequest.headers;
     final requestDiagnostics = preparedRequest.requestDiagnostics;
     final round = roundIndex ?? 0;
@@ -113,7 +115,7 @@ class _AgentApiStreamSupport {
     });
 
     final sw = Stopwatch()..start();
-    final request = http.Request('POST', requestUri);
+    final request = RequestControl.request('POST', requestUri);
     request.headers.addAll(headers);
     request.body = requestBodyJson;
     final requestSentAt = await _owner._recordModelRequestSent(
@@ -142,8 +144,8 @@ class _AgentApiStreamSupport {
           traceId: traceId,
           stage: TraceStage.modelStreamAggregated.value,
           payload: {
-            'rawContext': jsonEncode(chatMessages),
-            'rawRequestBody': requestBodyJson,
+            'rawContext': logContextJson,
+            'rawRequestBody': logRequestBodyJson,
             'rawResponseBody': errBody,
           },
         );
@@ -175,11 +177,11 @@ class _AgentApiStreamSupport {
           url: endpoint,
           status: response.statusCode,
           durationMs: sw.elapsedMilliseconds,
-          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
           responseBody: ApiLogger.safeSnippet(errBody),
           ok: false,
-          rawContext: jsonEncode(chatMessages),
-          rawRequestBody: requestBodyJson,
+          rawContext: logContextJson,
+          rawRequestBody: logRequestBodyJson,
           rawResponseBody: errBody,
           sessionId: sessionId,
           turnId: turnId,
@@ -197,7 +199,8 @@ class _AgentApiStreamSupport {
           'responseBody': ApiLogger.safeSnippet(errBody, max: 2000),
           ...requestDiagnostics,
         });
-        throw Exception('HTTP ${response.statusCode}: $errBody');
+        throw ModelHttpException(response.statusCode, errBody,
+          retryAfter: ModelHttpException.parseRetryAfter(response.headers['retry-after']));
       }
 
       final responseContentType =
@@ -620,8 +623,8 @@ class _AgentApiStreamSupport {
         traceId: traceId,
         stage: TraceStage.modelStreamAggregated.value,
         payload: {
-          'rawContext': jsonEncode(chatMessages),
-          'rawRequestBody': requestBodyJson,
+          'rawContext': logContextJson,
+          'rawRequestBody': logRequestBodyJson,
           'rawResponseBody': rawResponseBodyForLog,
           'rawToolCalls': _owner._encodeToolCalls(builtToolCalls),
         },
@@ -654,12 +657,12 @@ class _AgentApiStreamSupport {
         url: endpoint,
         status: response.statusCode,
         durationMs: sw.elapsedMilliseconds,
-        requestBody: ApiLogger.safeSnippet(requestBodyJson),
+        requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
         responseBody: '[stream]',
         ok: true,
-        rawContext: jsonEncode(chatMessages),
+        rawContext: logContextJson,
         rawAiResponse: finalText,
-        rawRequestBody: requestBodyJson,
+        rawRequestBody: logRequestBodyJson,
         rawResponseBody: rawResponseBodyForLog,
         rawToolCalls: _owner._encodeToolCalls(builtToolCalls),
         sessionId: sessionId,
@@ -689,6 +692,7 @@ class _AgentApiStreamSupport {
         hiddenThoughtParts: hiddenThoughtParts,
         rawResponse: synthesizedRawResponse,
         rawFinishReason: rawFinishReason,
+        reasoning: finalReasoning,
       );
     } catch (e) {
       sw.stop();
@@ -704,8 +708,8 @@ class _AgentApiStreamSupport {
           traceId: traceId,
           stage: TraceStage.modelStreamAggregated.value,
           payload: {
-            'rawContext': jsonEncode(chatMessages),
-            'rawRequestBody': requestBodyJson,
+            'rawContext': logContextJson,
+            'rawRequestBody': logRequestBodyJson,
             'error': e.toString(),
           },
         );
@@ -733,8 +737,8 @@ class _AgentApiStreamSupport {
           traceId: traceId,
           stage: TraceStage.modelStreamAggregated.value,
           payload: {
-            'rawContext': jsonEncode(chatMessages),
-            'rawRequestBody': requestBodyJson,
+            'rawContext': logContextJson,
+            'rawRequestBody': logRequestBodyJson,
             'error': e.toString(),
           },
         );
@@ -744,11 +748,11 @@ class _AgentApiStreamSupport {
           url: endpoint,
           status: null,
           durationMs: sw.elapsedMilliseconds,
-          requestBody: ApiLogger.safeSnippet(requestBodyJson),
+          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
           responseBody: ApiLogger.safeSnippet(e.toString()),
           ok: false,
-          rawContext: jsonEncode(chatMessages),
-          rawRequestBody: requestBodyJson,
+          rawContext: logContextJson,
+          rawRequestBody: logRequestBodyJson,
           rawResponseBody: jsonEncode({'error': e.toString()}),
           sessionId: sessionId,
           turnId: turnId,

@@ -101,6 +101,17 @@ def normalize(entry, origin, tz):
                 if atom(build.get(key)):
                     output['build'][key] = build[key]
         output['kind'] = 'frontend'
+    elif isinstance(meta, dict) and meta.get('category') in ('sync', 'backgroundDelivery'):
+        output['kind'] = meta['category']
+        for key in ('event', 'entityId', 'messageId', 'conversationId', 'kind', 'phase', 'result', 'errorType'):
+            value = atom(meta.get(key))
+            if value is not None:
+                output['entityKind' if key == 'kind' else key] = value
+        for key in ('elapsedMs', 'pushed', 'pulled', 'failed'):
+            if type(meta.get(key)) in (int, float) and abs(meta[key]) < 1e20:
+                output[key] = meta[key]
+        if isinstance(meta.get('complete'), bool):
+            output['complete'] = meta['complete']
     elif origin['file'].startswith(('trace_', 'trace/')):
         output['kind'] = 'trace'
         for key in ('traceId', 'sessionId', 'turnId', 'stage', 'status', 'source'):
@@ -178,7 +189,7 @@ def make_summary(records, report):
             reason = 'old_bubble_animation'
         elif item.get('event') == 'ttsApplyDecision' and item.get('reason') in ('ownerRejected', 'rawInactive', 'unknownMessage'):
             reason = 'tts_result_rejected_may_be_expected_cancellation'
-        elif (item.get('phase') == 'error' or item.get('level') in ('error', 'fatal', 'ERROR')
+        elif (item.get('phase') == 'error' or item.get('result') == 'failed' or item.get('level') in ('error', 'fatal', 'ERROR')
               or item.get('stage') == 'TURN_FAILED' or item.get('status') in ('error', 'failed')
               or item.get('kind') == 'network' and item.get('ok') is False):
             reason = 'recorded_error'

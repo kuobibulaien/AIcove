@@ -12,6 +12,7 @@ import 'package:aicove_flutter/src/features/agent_context/providers/preset_recip
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show GateDecision, GateOutcome, KernelToolCall, ToolCallScope, ToolEffect;
 import 'package:aicove_flutter/src/features/assistant/application/assistant_review.dart';
+import 'package:aicove_flutter/src/features/assistant/application/assistant_approvals.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_write_tools.dart';
 import 'package:aicove_flutter/src/features/assistant/assistant_providers.dart';
 import 'package:aicove_flutter/src/features/assistant/domain/aicove_docs.dart';
@@ -23,6 +24,7 @@ import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dar
 import 'package:aicove_flutter/src/features/chat/services/chat_send_backend_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
+import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/memory/application/memory_keeper_service.dart';
 import 'package:aicove_flutter/src/features/memory/providers/memory_providers.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
@@ -195,7 +197,9 @@ void main() {
     final other = await prepare(_role('role_li'));
 
     expect(
-      toolsOf(own),
+      own.boundTools!
+          .where((t) => t.exposure == ToolExposure.codemode)
+          .map((t) => t.name),
       containsAll([
         'aicove_docs_read',
         'aicove_list_roles',
@@ -203,9 +207,15 @@ void main() {
         'aicove_inspect_context',
       ]),
     );
-    expect(jsonEncode(own.messages), contains('aicove_inspect_context'));
+    expect(toolsOf(own), contains('codemode'));
+    expect(toolsOf(own).where((t) => t.startsWith('aicove_')), isEmpty);
+    expect(jsonEncode(own.tools), contains('aicove_inspect_context'));
+    expect(
+      other.boundTools?.where((t) => t.name.startsWith('aicove_')) ?? [],
+      isEmpty,
+    );
     expect(toolsOf(other).where((t) => t.startsWith('aicove_')), isEmpty);
-    expect(jsonEncode(other.messages), isNot(contains('AIcove 内置的助手')));
+    expect(jsonEncode(other.messages), isNot(contains('住在 AIcove 里的小管家')));
   });
 
   test('roles in the privacy space stay invisible', () async {
@@ -217,7 +227,8 @@ void main() {
 
     final card = await call(config, 'aicove_read_role', {'role_id': 'role_li'});
     expect(card['persona_prompt'], _personaText);
-    expect(card['plugins'], '全部插件');
+    // Roles that never narrowed their plugins drop to the defaults on load.
+    expect(card['plugins'], ['memory', 'time_awareness']);
     final hidden = await call(config, 'aicove_read_role', {
       'role_id': 'role_secret',
     });
@@ -310,7 +321,7 @@ void main() {
     Future<void> undo(String id) =>
         container.read(assistantChangeJournalProvider).undo(id);
 
-    test('the assistant run carries the review gate; previews and other '
+    test('the assistant run defaults to no approval; previews and other '
         'roles carry none', () async {
       final own = await prepare(assistant());
       final other = await prepare(_role('role_li'));
@@ -325,67 +336,139 @@ void main() {
           )
           .decision;
 
-      expect(toolsOf(own), contains(AssistantWriteTools.updateRole));
+      expect(
+        own.boundTools!
+            .singleWhere((t) => t.name == AssistantWriteTools.updateRole)
+            .exposure,
+        ToolExposure.codemode,
+      );
+      expect(toolsOf(own), isNot(contains(AssistantWriteTools.updateRole)));
       expect(own.toolPolicy!.gate, isA<AssistantToolGate>());
       expect(decide('aicove_read_role'), GateDecision.allow);
       expect(decide(AssistantWriteTools.togglePresetItem), GateDecision.allow);
-      expect(decide(AssistantWriteTools.updateRole), GateDecision.ask);
+      expect(decide(AssistantWriteTools.updateRole), GateDecision.allow);
+      expect(
+        other.boundTools?.where((t) => t.name.startsWith('aicove_')) ?? [],
+        isEmpty,
+      );
       expect(other.toolPolicy, isNull);
       expect(toolsOf(other), isNot(contains(AssistantWriteTools.updateRole)));
     });
 
-    test('a role edit keeps the drawing prompt and is undoable, but never '
-        'over a later edit', () async {
-      final repo = container.read(conversationRepositoryProvider);
-      await container
-          .read(conversationsProvider.notifier)
-          .applyContactEdit(
-            'role_li',
-            personaPrompt: PersonaPromptCodec.compose(
-              userPrompt: _personaText,
-              customDrawingPrompt: '黑发',
-            ),
+    test(
+      'existing per-call switch takes effect inside a prepared run',
+      () async {
+        final config = await prepare(assistant());
+        final gate = config.toolPolicy!.gate;
+        const call = KernelToolCall(id: 'shell', name: 'bash');
+        expect(
+          gate.check(call, ToolEffect.external).decision,
+          GateDecision.allow,
+        );
+        await container.read(assistantAlwaysAskProvider.notifier).set(true);
+        expect(
+          gate.check(call, ToolEffect.external).decision,
+          GateDecision.ask,
+        );
+        await container.read(assistantAlwaysAskProvider.notifier).set(false);
+        expect(
+          gate.check(call, ToolEffect.external).decision,
+          GateDecision.allow,
+        );
+      },
+    );
+
+    test(
+      'default policy reads visible chat and enables external plugins directly',
+      () async {
+        final config = await prepare(assistant());
+        Future<Map<String, dynamic>> allowed(
+          String name,
+          Map<String, dynamic> args,
+        ) => ToolCallScope().run(() async {
+          final verdict = config.toolPolicy!.gate.check(
+            KernelToolCall(id: name, name: name, arguments: args),
+            ToolEffect.write,
           );
-      final config = await prepare(assistant());
+          expect(verdict.decision, GateDecision.allow);
+          ToolCallScope.current!.outcome = GateOutcome.allowed;
+          return call(config, name, args);
+        });
+        final chat = await allowed('aicove_read_role_chat', {
+          'role_id': 'role_li',
+        });
+        expect(jsonEncode(chat), contains('小理的私密聊天内容'));
+        final hidden = await allowed('aicove_read_role_chat', {
+          'role_id': 'role_secret',
+        });
+        expect(hidden['error'], isNotNull);
+        final changed = await allowed(AssistantWriteTools.setRolePlugins, {
+          'role_id': 'role_li',
+          'plugins': ['web_search'],
+        });
+        expect(changed['ok'], isTrue);
+        expect((await roleNow('role_li'))!.enabledPlugins, ['web_search']);
+      },
+    );
 
-      final done = await call(config, AssistantWriteTools.updateRole, {
-        'role_id': 'role_li',
-        'persona_prompt': '你是小理，说话活泼。',
-      });
-      expect(done['ok'], isTrue);
-      var parts = PersonaPromptCodec.parse(
-        (await roleNow('role_li'))!.personaPrompt,
-      );
-      expect(parts.userPrompt, '你是小理，说话活泼。');
-      expect(parts.customDrawingPrompt, '黑发');
-      expect((await repo.getById('role_li'))!.personaPrompt, contains('说话活泼'));
+    test(
+      'a role edit keeps the drawing preset binding and is undoable, but never '
+      'over a later edit',
+      () async {
+        final repo = container.read(conversationRepositoryProvider);
+        await container
+            .read(conversationsProvider.notifier)
+            .applyContactEdit(
+              'role_li',
+              personaPrompt: PersonaPromptCodec.compose(
+                userPrompt: _personaText,
+                drawingPresetId: 'drawing_li',
+              ),
+            );
+        final config = await prepare(assistant());
 
-      await undo(await latestChange());
-      parts = PersonaPromptCodec.parse(
-        (await roleNow('role_li'))!.personaPrompt,
-      );
-      expect(parts.userPrompt, _personaText);
-      expect(parts.customDrawingPrompt, '黑发');
-
-      await call(config, AssistantWriteTools.updateRole, {
-        'role_id': 'role_li',
-        'persona_prompt': '第二版',
-      });
-      final change = await latestChange();
-      await container
-          .read(conversationsProvider.notifier)
-          .applyContactEdit(
-            'role_li',
-            personaPrompt: PersonaPromptCodec.compose(userPrompt: '用户手改'),
-          );
-      await expectLater(undo(change), throwsStateError);
-      expect(
-        PersonaPromptCodec.parse(
+        final done = await call(config, AssistantWriteTools.updateRole, {
+          'role_id': 'role_li',
+          'persona_prompt': '你是小理，说话活泼。',
+        });
+        expect(done['ok'], isTrue);
+        var parts = PersonaPromptCodec.parse(
           (await roleNow('role_li'))!.personaPrompt,
-        ).userPrompt,
-        '用户手改',
-      );
-    });
+        );
+        expect(parts.userPrompt, '你是小理，说话活泼。');
+        expect(parts.drawingPresetId, 'drawing_li');
+        expect(
+          (await repo.getById('role_li'))!.personaPrompt,
+          contains('说话活泼'),
+        );
+
+        await undo(await latestChange());
+        parts = PersonaPromptCodec.parse(
+          (await roleNow('role_li'))!.personaPrompt,
+        );
+        expect(parts.userPrompt, _personaText);
+        expect(parts.drawingPresetId, 'drawing_li');
+
+        await call(config, AssistantWriteTools.updateRole, {
+          'role_id': 'role_li',
+          'persona_prompt': '第二版',
+        });
+        final change = await latestChange();
+        await container
+            .read(conversationsProvider.notifier)
+            .applyContactEdit(
+              'role_li',
+              personaPrompt: PersonaPromptCodec.compose(userPrompt: '用户手改'),
+            );
+        await expectLater(undo(change), throwsStateError);
+        expect(
+          PersonaPromptCodec.parse(
+            (await roleNow('role_li'))!.personaPrompt,
+          ).userPrompt,
+          '用户手改',
+        );
+      },
+    );
 
     test('undo stops at the privacy space, a used new role, and bad '
         'arguments', () async {
@@ -730,7 +813,7 @@ void main() {
       });
       final id = created['role_id'] as String;
       expect((await roleNow(id))!.displayName, '小新');
-      expect((await roleNow(id))!.enabledPlugins, isEmpty);
+      expect((await roleNow(id))!.enabledPlugins, ['memory', 'time_awareness']);
       await undo(await latestChange());
       expect(await roleNow(id), isNull);
     });

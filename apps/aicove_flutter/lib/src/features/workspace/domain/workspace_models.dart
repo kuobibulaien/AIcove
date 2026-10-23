@@ -2,7 +2,9 @@
 abstract final class WorkspaceLimits {
   static const maxWriteBytes = 1 << 20;
   static const maxFileBytes = 32 << 20;
-  static const maxReadBytes = 64 << 10;
+  static const maxReadBytes = 50 << 10;
+  static const maxReadLines = 2000;
+  static const maxGrepLineChars = 500;
   static const maxResults = 200;
   static const maxResultBytes = 64 << 10;
   static const quotaBytes = 512 << 20;
@@ -102,6 +104,7 @@ class WorkspaceRunSummary {
     required this.paths,
     required this.startedAt,
     required this.undone,
+    this.commandPaths = const [],
   });
 
   final String runId;
@@ -111,10 +114,20 @@ class WorkspaceRunSummary {
 
   /// An undo of this run has completed.
   final bool undone;
+  final List<String> commandPaths;
 }
 
 class WorkspaceUndoResult {
-  const WorkspaceUndoResult({required this.undone, required this.conflicts});
+  const WorkspaceUndoResult({
+    required this.undone,
+    required this.conflicts,
+    this.commandChanges = const [],
+  });
+
+  final List<String> commandChanges;
+  List<String> get commandMessages => [
+    for (final path in commandChanges) '命令造成的改动不能撤销：$path',
+  ];
 
   final int undone;
 

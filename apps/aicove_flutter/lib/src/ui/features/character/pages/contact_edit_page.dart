@@ -7,6 +7,10 @@ import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/app_logger.dart';
+import '../../../../features/chat/conversation_providers.dart';
+import '../../../../features/plugins/prompts/prompt_pack_migration.dart';
+import '../../debug/pages/contact_context_page.dart';
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
@@ -14,7 +18,10 @@ import '../../../../features/agent_context/data/silly_tavern_character_card_load
 import '../../../../features/agent_context/domain/silly_tavern_character_card.dart';
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
 import '../../../../features/chat/application/chat_page_conversation_actions.dart';
+import '../../../../features/assistant/domain/assistant_onboarding.dart'
+    show kAicoveAssistantId;
 import '../../../../features/chat/domain/conversation.dart';
+import '../../../../features/chat/domain/role_agent_mode.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/chat/presentation/widgets/contact_edit_dialog.dart';
 import '../../../../features/chat/providers2.dart';
@@ -29,12 +36,14 @@ import 'character_appearance_page.dart';
 import 'contact_memory_page.dart';
 import '../services/contact_edit_snapshot_store.dart';
 
-import '../widgets/background_info_section.dart';
+import '../widgets/role_prompt_section.dart';
+import '../widgets/character_agent_mode_section.dart';
 import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
 import '../widgets/tavern_greeting_picker_sheet.dart';
 import '../../../../features/plugins/mcp/mcp_connector.dart';
 import '../../../../features/plugins/packages/aicove_package.dart';
+import '../../../../features/stickers/sticker_pack_grants.dart';
 import '../../../../features/workspace/domain/workspace_grants.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
@@ -53,10 +62,17 @@ class ContactEditPage extends ConsumerStatefulWidget {
   final EditMode editMode;
   final ContactEditSnapshot? initialSnapshot;
 
+  /// Starts importing a character card as soon as the page opens: from
+  /// [importCardUrl] when given, else from a file the user picks.
+  final bool importCardOnOpen;
+  final String? importCardUrl;
+
   const ContactEditPage({
     super.key,
     required this.conversation,
     this.initialSnapshot,
+    this.importCardOnOpen = false,
+    this.importCardUrl,
     @Deprecated('Use editMode instead') bool isNew = false,
     EditMode? editMode,
   }) : editMode =
@@ -71,7 +87,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _personaCtrl;
-  late final TextEditingController _customDrawingPromptCtrl;
+  /// A drawing requirement not moved into the drawing preset yet (ADR0092);
+  /// kept so a save before the move does not drop it.
+  String _legacyDrawingPrompt = '';
   String? _drawingPresetId;
   late PersonaPromptParts _legacyDrawingParts;
   bool _drawingBindingChanged = false;
@@ -81,8 +99,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   late final TextEditingController _refImageCtrl;
   late final TextEditingController _chatBackgroundCtrl;
 
-  /// 角色壁纸的遮罩、模糊与截取，与 [_chatBackgroundCtrl] 一起保存。
-  late WallpaperStyle _wallpaperStyle;
+  /// 角色壁纸的遮罩、模糊与截取，与 [_chatBackgroundCtrl] 一起保存；
+  /// 为 null 表示没调过（有图取聊天默认值，跟随全局壁纸时沿用全局的）。
+  late WallpaperStyle? _wallpaperStyle;
   bool _importingCard = false;
   bool _importingPreset = false;
   bool _submitting = false;
@@ -97,12 +116,12 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   List<String> _cardGreetings = const [];
   int _greetingIndex = 0;
   late Set<String> _selectedPluginIds;
+  late RoleAgentMode _agentMode;
   String? _boundVoiceId;
   String? _selectedRecipeId;
   String? _scheduledBlurSource;
   Timer? _deferredVisualsTimer;
   bool _deferHeavyVisuals = true;
-  bool _backgroundInfoExpanded = false;
 
   bool get _enableAutoSave => widget.editMode != EditMode.create;
   List<TextEditingController> get _autoSaveControllers => [
@@ -111,7 +130,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _refImageCtrl,
     _descCtrl,
     _personaCtrl,
-    _customDrawingPromptCtrl,
     _selfAddressCtrl,
     _addressUserCtrl,
     _chatBackgroundCtrl,
@@ -120,6 +138,19 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   @override
   void initState() {
     super.initState();
+    if (widget.importCardOnOpen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final url = widget.importCardUrl;
+        unawaited(
+          url == null
+              ? _importTavernCardFromFile()
+              : _runTavernCardImport(
+                  () => SillyTavernCharacterCardLoader().load(url),
+                ),
+        );
+      });
+    }
     final conv = _resolveInitialConversation();
     final personaParts = PersonaPromptCodec.parse(conv.personaPrompt);
     _legacyDrawingParts = personaParts;
@@ -128,9 +159,11 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _nameCtrl = TextEditingController(text: conv.displayName);
     _descCtrl = TextEditingController(text: conv.description ?? '');
     _personaCtrl = TextEditingController(text: personaParts.userPrompt);
-    _customDrawingPromptCtrl = TextEditingController(
-      text: personaParts.customDrawingPrompt,
-    );
+    _legacyDrawingPrompt = personaParts.customDrawingPrompt;
+    if (_legacyDrawingPrompt.isNotEmpty &&
+        widget.editMode == EditMode.editConversation) {
+      unawaited(_moveDrawingPromptIntoPreset());
+    }
     _selfAddressCtrl = TextEditingController(text: conv.selfAddress ?? '');
     _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
     _avatarCtrl = TextEditingController(text: conv.avatarUrl ?? '');
@@ -138,14 +171,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _chatBackgroundCtrl = TextEditingController(
       text: conv.chatBackgroundImage ?? '',
     );
-    _wallpaperStyle = chatWallpaperStyleOf(conv);
+    _wallpaperStyle = chatWallpaperOwnStyleOf(conv);
+    _agentMode = conv.effectiveAgentMode;
 
     final allPluginIds = conversationScopedChatPluginItems
         .map((e) => e.id)
         .toSet();
     if (widget.editMode == EditMode.create) {
-      // 新建角色默认不开启任何插件，由用户在「管理开启的插件」中逐项开启
-      _selectedPluginIds = {};
+      // 新建角色默认只开记忆和时间感知，其余在「管理插件」中逐项开启
+      _selectedPluginIds = {...kDefaultRolePluginIds};
     } else if (conv.enabledPlugins == null) {
       _selectedPluginIds = {...allPluginIds};
     } else {
@@ -155,7 +189,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
               McpToolNaming.isConnectorPluginId(id) ||
               AicovePackage.isPackagePluginId(id) ||
               // 本机没有的工作区也保留授权（ADR0087 第 1 条）
-              WorkspaceGrants.isGrantId(id))
+              WorkspaceGrants.isGrantId(id) ||
+              StickerPackGrants.isGrantId(id))
             id,
       };
     }
@@ -195,7 +230,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _personaCtrl.dispose();
-    _customDrawingPromptCtrl.dispose();
     _selfAddressCtrl.dispose();
     _addressUserCtrl.dispose();
     _avatarCtrl.dispose();
@@ -231,6 +265,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       enabledPlugins: snapshot.enabledPlugins == null
           ? null
           : List<String>.from(snapshot.enabledPlugins!),
+      agentMode: RoleAgentMode.fromValue(snapshot.agentMode) ??
+          widget.conversation.agentMode,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(
         snapshot.sourceUpdatedAtMs,
       ),
@@ -326,7 +362,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
             const SizedBox(height: 16),
 
-            // 酒馆预设、已开启插件列表，末尾为管理开启的插件开关列表
+            // 酒馆预设、已开启插件列表，末尾为「管理插件」按钮（底部弹窗逐项开关）
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: CharacterPluginsSection(
@@ -335,9 +371,13 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                 voicePresets: voicePresets,
                 drawingPersonaPrompt: _drawingPersonaPrompt(),
                 selectedRecipeId: _selectedRecipeId,
+                roleName: _nameCtrl.text,
                 memoryDocAvailable:
                     widget.editMode == EditMode.editConversation,
                 onOpenMemoryDoc: _openMemoryDoc,
+                builtInWorkspaceIds: WorkspaceGrants.builtInFor(
+                  widget.conversation.id,
+                ),
                 onPluginIdsChanged: (newIds) {
                   setState(() => _selectedPluginIds = newIds);
                   _scheduleAutoSave();
@@ -368,25 +408,14 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
             const SizedBox(height: 16),
 
-            // 角色卡信息：人设提示词 + 绘图提示
+            // 角色提示词（绘图要求在绘图预设的提示词里）
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: BackgroundInfoSection(
-                expanded: _backgroundInfoExpanded,
-                onToggle: () => setState(
-                  () => _backgroundInfoExpanded = !_backgroundInfoExpanded,
-                ),
-                personaText: _personaCtrl.text,
-                drawingText: _customDrawingPromptCtrl.text,
-                onEditPersona: () => _openFullScreenEditor(
-                  title: '编辑人设提示词',
+              child: RolePromptSection(
+                onEdit: () => _openFullScreenEditor(
+                  title: '编辑角色提示词',
                   controller: _personaCtrl,
                   hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
-                ),
-                onEditDrawing: () => _openFullScreenEditor(
-                  title: '编辑绘图提示',
-                  controller: _customDrawingPromptCtrl,
-                  hint: '填写角色的外貌、服装或画面风格要求…',
                 ),
               ),
             ),
@@ -407,6 +436,37 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                 Center(child: _buildGreetingPickerButton()),
               ],
             ],
+
+            if (widget.editMode == EditMode.editConversation) ...[
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: MoeSettingsGroup(
+                  margin: EdgeInsets.zero,
+                  children: [
+                    MoeSettingsRow(
+                      label: ContactContextListPage.title,
+                      showDivider: false,
+                      onTap: _openContactContext,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // 角色模式（ADR0097）单独一个容器，放在最底部
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: CharacterAgentModeSection(
+                mode: _agentMode,
+                locked: _agentModeLocked,
+                onChanged: (mode) {
+                  setState(() => _agentMode = mode);
+                  _scheduleAutoSave();
+                },
+              ),
+            ),
 
             // 底部留白
             const SizedBox(height: 48),
@@ -448,6 +508,48 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       drawingArtistPresetName: _drawingBindingChanged
           ? null
           : _legacyDrawingParts.drawingArtistPresetName,
+    );
+  }
+
+  /// Moves the old drawing requirement into the role's drawing preset, then
+  /// picks up the binding the move wrote.
+  Future<void> _moveDrawingPromptIntoPreset() async {
+    try {
+      await autoSave.flush();
+      await ref
+          .read(promptPackMigratorProvider)
+          .forRole(widget.conversation);
+      final roles = await ref.read(conversationsProvider.future);
+      final saved = roles
+          .where((r) => r.id == widget.conversation.id)
+          .firstOrNull;
+      if (saved == null || !mounted) return;
+      final parts = PersonaPromptCodec.parse(saved.personaPrompt);
+      if (parts.customDrawingPrompt.isNotEmpty) return;
+      setState(() {
+        _legacyDrawingPrompt = '';
+        _legacyDrawingParts = parts;
+        _drawingPresetId = parts.drawingPresetId;
+        _drawingBindingChanged = false;
+      });
+    } catch (e) {
+      AppLogger.warning(
+        'ContactEdit',
+        '角色绘图提示并入绘图预设失败',
+        metadata: {'error': e.toString()},
+      );
+    }
+  }
+
+  void _openContactContext() {
+    Navigator.of(context).push(
+      ParallaxSlidePageRoute(
+        page: ContactContextPage(
+          conversation:
+              ref.read(resolvedConversationByIdProvider(widget.conversation.id)) ??
+              widget.conversation,
+        ),
+      ),
     );
   }
 
@@ -553,7 +655,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       result.personaPrompt,
       plugins,
       result.recipeId ?? '',
-      _wallpaperStyle.toJson(),
+      result.agentMode?.name ?? '',
+      _wallpaperStyle?.toJson(),
       '${result.clearAvatarUrl}',
       '${result.clearCharacterImage}',
       '${result.clearChatBackgroundImage}',
@@ -780,8 +883,14 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       context,
       WallpaperEditorPage(
         source: raw.isEmpty ? null : raw,
-        style: _wallpaperStyle,
-        defaultStyle: const WallpaperStyle(mask: kDefaultChatWallpaperMask),
+        style:
+            _wallpaperStyle ??
+            (raw.isEmpty
+                ? MoeWallpaperTheme.maybeOf(context)?.style ??
+                      const WallpaperStyle()
+                : kDefaultChatWallpaperStyle),
+        defaultStyle: kDefaultChatWallpaperStyle,
+        followStyle: MoeWallpaperTheme.maybeOf(context)?.style,
         kind: WallpaperPreviewKind.chat,
         conversation: _buildPreviewConversation(),
         canChangeImage: true,
@@ -977,6 +1086,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
   // ==================== 保存逻辑 ====================
 
+  bool get _agentModeLocked => widget.conversation.id == kAicoveAssistantId;
+
   ContactEditResult _buildEditResult() {
     final name = _nameCtrl.text.trim();
     final avatar = _avatarCtrl.text.trim().isEmpty
@@ -1000,7 +1111,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
         : _descCtrl.text.trim();
     final personaPrompt = PersonaPromptCodec.compose(
       userPrompt: _personaCtrl.text.trim(),
-      customDrawingPrompt: _customDrawingPromptCtrl.text.trim(),
+      customDrawingPrompt: _legacyDrawingPrompt,
       drawingPresetId: _drawingPresetId,
       drawingToolPresetName: _drawingBindingChanged
           ? null
@@ -1036,6 +1147,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       clearDescription: description == null,
       clearEnabledPlugins: enabledPlugins == null,
       clearRecipeId: recipeId == null && widget.conversation.recipeId != null,
+      // AIcove酱的模式固定，不随保存写入
+      agentMode: _agentModeLocked ? null : _agentMode,
     );
   }
 
@@ -1083,18 +1196,12 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
           clearCharacterImage: result.clearCharacterImage,
           chatBackgroundImage: result.chatBackgroundImage,
           clearChatBackgroundImage: result.clearChatBackgroundImage,
-          chatBackgroundMaskOpacity: result.clearChatBackgroundImage
-              ? null
-              : _wallpaperStyle.mask,
-          clearChatBackgroundMaskOpacity: result.clearChatBackgroundImage,
-          chatBackgroundBlurSigma: result.clearChatBackgroundImage
-              ? null
-              : _wallpaperStyle.blur,
-          clearChatBackgroundBlurSigma: result.clearChatBackgroundImage,
-          chatBackgroundFraming: _wallpaperStyle.encodedFraming,
-          clearChatBackgroundFraming:
-              result.clearChatBackgroundImage ||
-              _wallpaperStyle.encodedFraming == null,
+          chatBackgroundMaskOpacity: _wallpaperStyle?.mask,
+          clearChatBackgroundMaskOpacity: _wallpaperStyle == null,
+          chatBackgroundBlurSigma: _wallpaperStyle?.blur,
+          clearChatBackgroundBlurSigma: _wallpaperStyle == null,
+          chatBackgroundFraming: _wallpaperStyle?.encodedFraming,
+          clearChatBackgroundFraming: _wallpaperStyle?.encodedFraming == null,
           selfAddress: result.selfAddress,
           clearSelfAddress: result.clearSelfAddress,
           addressUser: result.addressUser,
@@ -1108,6 +1215,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
           clearEnabledPlugins: result.clearEnabledPlugins,
           recipeId: result.recipeId,
           clearRecipeId: result.clearRecipeId,
+          agentMode: result.agentMode,
         );
   }
 

@@ -93,7 +93,7 @@ class _PluginPromptsPageState extends ConsumerState<PluginPromptsPage>
                     Padding(
                       padding: const EdgeInsets.fromLTRB(4, 0, 4, 16),
                       child: Text(
-                        '这些说明所有角色共用。角色自己的要求请在角色设置里填写。',
+                        '这些说明所有角色共用。语音、绘图的说明已移到各自预设的「提示词」里，按模型分包。',
                         style: TextStyle(
                           fontSize: 13,
                           color: colors.textSecondary,

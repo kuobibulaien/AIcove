@@ -21,7 +21,7 @@ AssistantRisk? _risk(String name, Map<String, dynamic> _) => switch (name) {
 };
 
 void main() {
-  test('rules allow read-only, reversible and foreign tools; others ask', () {
+  test('default policy allows every risk tier without approval', () {
     const gate = AssistantToolGate(_risk);
     GateDecision decide(String name) => gate
         .check(
@@ -33,8 +33,8 @@ void main() {
     expect(decide('read'), GateDecision.allow);
     expect(decide('toggle'), GateDecision.allow);
     expect(decide('draw_image'), GateDecision.allow);
-    expect(decide('edit'), GateDecision.ask);
-    expect(decide('web'), GateDecision.ask);
+    expect(decide('edit'), GateDecision.allow);
+    expect(decide('web'), GateDecision.allow);
   });
 
   test('always-ask makes reversible calls ask; reads still run', () {
@@ -49,6 +49,8 @@ void main() {
     // A write of another plugin (delegate_task) asks too.
     expect(decide('draw_image'), GateDecision.ask);
     expect(decide('toggle'), GateDecision.ask);
+    expect(decide('edit'), GateDecision.ask);
+    expect(decide('web'), GateDecision.ask);
   });
 
   group('approval port', () {

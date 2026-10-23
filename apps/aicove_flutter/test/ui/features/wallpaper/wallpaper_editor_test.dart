@@ -56,7 +56,7 @@ void main() {
                       style: const WallpaperStyle(),
                       defaultStyle: const WallpaperStyle(),
                       kind: WallpaperPreviewKind.home,
-                      onSave: (_, style) async => saved.add(style),
+                      onSave: (_, style) async => saved.add(style!),
                     ),
                   ),
                 ),

@@ -61,7 +61,10 @@ void main() {
         find.byKey(const ValueKey<String>('moe_wallpaper_blur')),
         blur > 0 ? findsOneWidget : findsNothing,
       );
-      expect(find.byType(ImageFiltered), findsNothing);
+      expect(
+        find.byType(ImageFiltered),
+        blur > 0 ? findsOneWidget : findsNothing,
+      );
     });
   }
 }

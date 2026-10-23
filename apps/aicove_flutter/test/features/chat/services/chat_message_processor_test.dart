@@ -6,6 +6,44 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_content.dart';
 
 void main() {
+  test('正文兜底去掉表情标签，保留成对标签内文与换行', () {
+    expect(
+      chatMessageProcessor.stripPluginTags(
+        '前\n<sticker tag="收到"/>中<sticker tag="收到">收到啦</sticker>后',
+      ),
+      '前\n中收到啦后',
+    );
+    expect(chatMessageProcessor.stripPluginTags('<sticker tag="晚安"/>'), '');
+    expect(
+      chatMessageProcessor.stripPluginTags('<tts>晚安<sticker tag="晚安"/></tts>'),
+      '晚安',
+    );
+  });
+
+  test('未经插件清理的显示副本也不显示表情标签', () {
+    final result = chatMessageProcessor.buildAssistantMessages(
+      replyText: '晚安<sticker tag="晚安"/>',
+      processedText: '晚安<sticker tag="晚安"/>',
+      pluginEvents: const [],
+    );
+    expect(result.messages.single.displayText, '晚安');
+  });
+
+  test('表情转换后正文按原位拆分，只生成一个表情块', () {
+    final result = chatMessageProcessor.buildAssistantMessages(
+      replyText: '晚安<sticker tag="晚安"/>好梦',
+      processedText: '晚安好梦',
+      pluginEvents: [PluginEvent(
+        pluginId: 'sticker', type: 'sticker_convert',
+        data: const {'tag': '晚安', 'stickerId': 'night', 'assetPath': '/tmp/night.png'},
+      )],
+    );
+    expect(result.messages, hasLength(3));
+    expect(result.messages.first.displayText, '晚安');
+    expect(result.messages[1].blocks!.single, isA<EmojiBlock>());
+    expect(result.messages.last.displayText, '好梦');
+  });
+
   test('draw_image 图片按占位符位置插回文本中间', () {
     final result = chatMessageProcessor.buildAssistantMessages(
       replyText: '先看这张<image></image>然后再看这张<image></image>结束',

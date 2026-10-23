@@ -118,6 +118,64 @@ void main() {
   });
 
   test(
+    'old imports outside the warm range are ignored; edits and new messages refresh only their room',
+    () async {
+      for (var i = 1; i <= 40; i++) {
+        await applyMessage(i);
+      }
+      await window();
+      expect(cache.isRawChangeInLoadedWindow('room', 'old', now), false);
+      expect(cache.isRawChangeInLoadedWindow('room', 'm30', 0), true);
+      expect(cache.isRawChangeInLoadedWindow('room', 'new', now + 41), true);
+      expect(
+        cache.isRawChangeInLoadedWindow('unopened', 'new', now + 41),
+        false,
+      );
+      final before = repository.reads;
+      controller.handleApplied({'messages'}, conversationIds: {'unopened'});
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(repository.reads, before);
+    },
+  );
+
+  test(
+    'a raw change during the first cold read is refreshed after that read finishes',
+    () async {
+      await applyMessage(1);
+      repository.entered = Completer<void>();
+      final gate = Completer<void>();
+      repository.release = gate;
+      final cold = window();
+      await repository.entered!.future;
+      final relevant = cache.isRawChangeInLoadedWindow('room', 'm2', now + 2);
+      await applyMessage(2);
+      controller.handleApplied({'messages'}, conversationIds: {'room'});
+      final next = cache
+          .watchWindow(conversationId: 'room', limit: 20)
+          .firstWhere((state) => state.messages.any((m) => m.id == 'm2'))
+          .timeout(const Duration(seconds: 3));
+      gate.complete();
+      await cold;
+      expect((await next).messages.map((m) => m.id), ['m1', 'm2']);
+      expect(relevant, true);
+    },
+  );
+
+  test(
+    'contact metadata alone does not repeatedly reload every warm history',
+    () async {
+      await applyMessage(1);
+      await window();
+      final before = repository.reads;
+      for (var i = 0; i < 3; i++) {
+        controller.handleApplied({'conversations'});
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+      expect(repository.reads, before);
+    },
+  );
+
+  test(
     'sync updates an already open timeline without reopening the page',
     () async {
       await applyMessage(1);

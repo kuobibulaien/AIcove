@@ -1,6 +1,6 @@
 # AIcove 开发者指南
 
-> 面向开发者与 AI agent：架构约束、契约规范、目录结构、开发命令与项目宪法。产品介绍见根 [README.md](README.md)；AI 协作的执行方式与授权边界见 [AGENTS.md](AGENTS.md)。
+> 面向开发者与 AI agent：架构约束、契约规范、目录结构、开发命令与项目宪法。产品介绍见根 [README.md](README.md)；AI 协作说明与资料位置见 [AGENTS.md](AGENTS.md)。
 
 ## 架构分层
 
@@ -87,13 +87,13 @@ AgentDefinition
 
 ```
 aicove/
-├── AGENTS.md                      # AI 协作规则唯一入口：执行方式、授权、文档地图
+├── AGENTS.md                      # AI 协作入口：资料位置、用户习惯、环境
 ├── CLAUDE.md / GEMINI.md          # 各 harness 入口，只指向 AGENTS.md
 ├── README.md                      # 产品介绍（给用户看）
 ├── DEVELOPMENT.md                 # 本文件：架构约束 + 项目宪法（验证流程唯一权威）
 ├── hooks/memory.py                # 会话钩子：自动注入项目记忆、追加需求日志
 ├── docs/项目记忆/                  # 所有 agent 共用的长期记忆
-│   ├── README.md                  #   当前状态与模块边界速查（hook 每次注入）
+│   ├── README.md                  #   当前状态（hook 每次注入）
 │   ├── 需求日志.md                 #   用户原话 + 一句话结果
 │   ├── 决策记录/                   #   架构级决定（ADR），一事一文件
 │   ├── 经验教训.md                 #   踩坑硬约束

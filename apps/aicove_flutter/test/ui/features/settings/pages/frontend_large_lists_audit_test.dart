@@ -1,3 +1,6 @@
+@Tags(['slow'])
+library;
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

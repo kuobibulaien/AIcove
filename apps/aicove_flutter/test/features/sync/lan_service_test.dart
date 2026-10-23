@@ -1,3 +1,6 @@
+@Tags(['slow'])
+library;
+
 import 'dart:io';
 import 'package:drift/drift.dart' show driftRuntimeOptions, Variable;
 import 'package:flutter_test/flutter_test.dart';

@@ -97,17 +97,29 @@ class _MoeSliderState extends State<MoeSlider> {
                   alpha: 0.08,
                 ),
               ),
-              child: Slider(
-                overlayColor: moeInteractionOverlay,
-                value: widget.value,
-                min: widget.min,
-                max: widget.max,
-                divisions: widget.divisions,
-                label: widget.label,
-                semanticFormatterCallback: widget.semanticFormatterCallback,
-                onChanged: widget.onChanged,
-                onChangeStart: _handleChangeStart,
-                onChangeEnd: _handleChangeEnd,
+              // Two Material Slider semantics bugs make macOS crash while
+              // accessibility is on (flutter#190357, flutter#193588):
+              // - In the app-wide Overlay, a route transition hides the slider
+              //   but not its value indicator, which then goes out as an
+              //   orphan semantics node. A local Overlay keeps them together.
+              // - Toggling enabled gives the slider a new semantics node and
+              //   moves the indicator under it without resending it. A fresh
+              //   subtree per state sends both as new nodes instead.
+              child: Overlay.wrap(
+                key: ValueKey<bool>(widget.onChanged != null),
+                clipBehavior: Clip.none,
+                child: Slider(
+                  overlayColor: moeInteractionOverlay,
+                  value: widget.value,
+                  min: widget.min,
+                  max: widget.max,
+                  divisions: widget.divisions,
+                  label: widget.label,
+                  semanticFormatterCallback: widget.semanticFormatterCallback,
+                  onChanged: widget.onChanged,
+                  onChangeStart: _handleChangeStart,
+                  onChangeEnd: _handleChangeEnd,
+                ),
               ),
             ),
           ),

@@ -17,6 +17,7 @@ import '../conversation_state/domain/mvu_content.dart';
 import '../plugins/tts/voice_request.dart';
 
 import 'dart:async';
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show KernelCancellation, KernelCancelledException;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -33,12 +34,14 @@ import 'application/standard_chat_agent.dart';
 import 'id_gen.dart' show genId;
 import 'chat_layer_providers.dart';
 import 'services/chat_history_store.dart';
+import 'services/chat_message_projection_codec.dart';
 import 'application/regenerate_guidance.dart';
 import 'services/chat_media_regeneration.dart';
 import 'services/chat_send_service.dart' show chatSendServiceProvider;
 import 'services/chat_types.dart'
     show
         ApiConfig,
+        ApiRunStatus,
         ApiCallResult,
         AssistantMessageBuildResult,
         isProviderRefreshTimingError;
@@ -75,6 +78,7 @@ import '../agent_context/providers/preset_recipe_provider.dart'
 import '../plugins/image/image_plugin.dart' show ImagePlugin;
 import '../plugins/domain/plugin.dart' show PluginEvent;
 import '../plugins/plugin_content_tags.dart';
+import '../stickers/sticker_tag.dart';
 import '../dialogue_options/domain/dialogue_options.dart';
 
 // 重新导出公共类型，保持向后兼容
@@ -225,6 +229,8 @@ class ChatActions {
     int roundIndex = 0,
     Map<String, dynamic>? meta,
     Map<String, dynamic>? payloadRef,
+    Object? error,
+    StackTrace? stackTrace,
   }) {
     if (context == null) return;
     final frontendStage = switch (stage) {
@@ -236,7 +242,8 @@ class ChatActions {
     final diagnosticContext = _diagnostics.forTurn(context.turnId);
     if (frontendStage != null &&
         diagnosticContext?.traceId == context.traceId) {
-      _diagnostics.record(diagnosticContext, frontendStage, once: true);
+      _diagnostics.record(diagnosticContext, frontendStage,
+          once: true, error: error, stackTrace: stackTrace);
     }
     unawaited(
       TraceStore.instance.record(
@@ -342,7 +349,8 @@ class ChatActions {
       formatConfig: settings.messageFormatConfig,
       globalStyle: settings.chatDisplayStyle,
       conversationStyle:
-          _ref.read(conversationSnapshotByIdProvider(convId))?.chatDisplayStyle,
+          _ref.read(conversationSnapshotByIdProvider(convId))
+              ?.effectiveDisplayStyle,
     ).effectiveFormatConfig;
   }
 
@@ -464,10 +472,22 @@ class ChatActions {
         );
   }
 
-  List<Message> _extractStreamCommittedMessages(List<Message> messages) {
+  static bool _isToolOnlyMessage(Message message) {
+    final blocks = message.blocks;
+    return blocks != null &&
+        blocks.isNotEmpty &&
+        blocks.every((block) => block is ToolBlock);
+  }
+
+  List<Message> _extractStreamCommittedMessages(
+    List<Message> messages, {
+    bool keepToolOnly = false,
+  }) {
     final committed = <Message>[];
     for (final message in messages) {
-      final committedMessage = _toStreamCommittedMessage(message);
+      final committedMessage = keepToolOnly && _isToolOnlyMessage(message)
+          ? message
+          : _toStreamCommittedMessage(message);
       if (committedMessage != null) {
         committed.add(committedMessage);
       }
@@ -543,6 +563,36 @@ class ChatActions {
         (block.text?.trim().isNotEmpty ?? false);
   }
 
+  Future<void> _savePartialStream({
+    required _StreamPlaceholderDelivery? delivery,
+    required String convId,
+    required String userMsgId,
+    required ApiRunStatus status,
+    required FutureOr<AppSettings> settings,
+  }) async {
+    final text = delivery?.takePartialText() ?? '';
+    await delivery?.removePlaceholders();
+    if (text.trim().isEmpty) return;
+    final built = _sendPort.buildAssistantMessages(
+      apiResult: ApiCallResult(
+        status: status,
+        replyText: text,
+        processedText: text,
+        pluginEvents: const [],
+        toolResults: const [],
+      ),
+      settings: await settings,
+    );
+    if (built.rawMessage == null) return;
+    await _historyPort.appendAssistantRawMessage(
+      conversationId: convId,
+      userMessageId: userMsgId,
+      rawMessage: built.rawMessage!,
+      projectedMessages: built.messages,
+      lastMessagePreview: built.lastMessageText,
+    );
+  }
+
   Future<void> _commitStreamDelivery({
     required _StreamPlaceholderDelivery streamDelivery,
     required String convId,
@@ -553,17 +603,30 @@ class ChatActions {
     required bool ttsEnabled,
     TraceLogger? trace,
   }) async {
+    // 调过工具的多轮回复：流式气泡把各轮话术连成一段，工具只能补在两头。
+    // 收尾改用按轮构建的消息，话术和工具按实际先后排，工具不再走后补。
+    final useToolRounds = !streamDelivery.hasAudioPlaceholders &&
+        buildResult.messages.any(_isToolOnlyMessage);
     final committedMessages = _extractStreamCommittedMessages(
       buildResult.messages,
+      keepToolOnly: useToolRounds,
     );
     final rawMessage = buildResult.rawMessage;
     if (rawMessage == null) {
       throw StateError('流式收尾缺少原始 assistant 消息');
     }
     streamDelivery.beginTtsCommit();
-    final finalTimelineMessages = streamDelivery.buildFinalTimelineMessages(
-      committedMessages: committedMessages,
-      sourceMessageId: rawMessage.id,
+    final finalTimelineMessages = ChatMessageProjectionCodec.applyRunStatus(
+      useToolRounds
+          ? [
+              for (final message in committedMessages)
+                message.copyWith(sourceMessageId: rawMessage.id),
+            ]
+          : streamDelivery.buildFinalTimelineMessages(
+              committedMessages: committedMessages,
+              sourceMessageId: rawMessage.id,
+            ),
+      rawMessage.rawPayload,
     );
     if (finalTimelineMessages.isEmpty) {
       throw StateError('流式收尾缺少可提交的前端时间线消息');
@@ -605,7 +668,22 @@ class ChatActions {
     await _ttsHandler.deliverSegmentedMessages(
       convId: convId,
       userMsgId: userMsgId,
-      buildResult: buildResult,
+      buildResult: useToolRounds
+          ? AssistantMessageBuildResult(
+              rawMessage: rawMessage,
+              messages: [
+                for (final message in buildResult.messages)
+                  message.copyWith(
+                    blocks: <MessageBlock>[
+                      for (final block
+                          in message.blocks ?? const <MessageBlock>[])
+                        if (block is! ToolBlock) block,
+                    ],
+                  ),
+              ],
+              lastMessageText: buildResult.lastMessageText,
+            )
+          : buildResult,
       replyText: replyText,
       pluginEvents: pluginEvents,
       ttsEnabled: ttsEnabled,
@@ -663,6 +741,7 @@ class ChatActions {
     _diagnostics.record(
         _diagnostics.forTurn(task.userMsgId), FrontendStage.turnCancelled,
         once: true);
+    task.cancellation.cancel();
     _activeGenerations.remove(targetConvId);
     final cleanup = _generationInterruptCleanups.remove(targetConvId);
     _setConversationSending(targetConvId, false);
@@ -672,8 +751,6 @@ class ChatActions {
     _ref.read(modelFailoverPromptProvider.notifier).dismiss(
           defaultDecision: ModelFailoverDecision.cancel,
         );
-    await _releaseGenerationKeepAlive(task.id, convId: targetConvId);
-
     if (cleanup != null) {
       try {
         await cleanup();
@@ -689,6 +766,7 @@ class ChatActions {
       }
     }
 
+    await _releaseGenerationKeepAlive(task.id, convId: targetConvId);
     await _restoreFrontendMessagesFromHistory(targetConvId);
     return true;
   }
@@ -976,6 +1054,8 @@ class ChatActions {
     var streamCommitted = false;
     var turnSucceeded = false;
     _setGenerationInterruptCleanup(convId, runId, () async {
+      await _savePartialStream(delivery: streamDelivery, convId: convId, userMsgId: userMsg.id,
+        status: ApiRunStatus.cancelled, settings: initialSettings);
       await streamDelivery?.removePlaceholders();
       streamDelivery?.dispose();
     });
@@ -1067,6 +1147,7 @@ class ChatActions {
                 await streamDelivery!.finalize(
                   finalText: streamFinalText,
                 );
+                if (!_isGenerationCurrent(convId, runId)) return;
                 await _commitStreamDelivery(
                   streamDelivery: streamDelivery!,
                   convId: convId,
@@ -1130,7 +1211,11 @@ class ChatActions {
           _recordTurnTrace(traceContext, TraceStage.turnCompleted);
         },
       );
-    } catch (e) {
+    } catch (e, stack) {
+      if (_isGenerationCurrent(convId, runId)) {
+        await _savePartialStream(delivery: streamDelivery, convId: convId, userMsgId: userMsg.id,
+          status: ApiRunStatus.failed, settings: initialSettings);
+      }
       await streamDelivery?.removePlaceholders();
       if (!_isGenerationCurrent(convId, runId)) return;
       trace.error('失败', metadata: {'error': e.toString()});
@@ -1139,6 +1224,8 @@ class ChatActions {
         traceContext,
         TraceStage.turnFailed,
         status: TraceEventStatus.failed,
+        error: e,
+        stackTrace: stack,
         meta: {'error': e.toString()},
       );
       await _sendPort.markUserMessageFailed(
@@ -1319,12 +1406,14 @@ class ChatActions {
           turnSucceeded = true;
         },
       );
-    } catch (e) {
+    } catch (e, stack) {
       if (!_isGenerationCurrent(convId, runId)) return;
       _recordTurnTrace(
         traceContext,
         TraceStage.turnFailed,
         status: TraceEventStatus.failed,
+        error: e,
+        stackTrace: stack,
         meta: {'error': e.toString()},
       );
       await _sendPort.markUserMessageFailed(
@@ -1476,12 +1565,14 @@ class ChatActions {
           turnSucceeded = true;
         },
       );
-    } catch (e) {
+    } catch (e, stack) {
       if (!_isGenerationCurrent(convId, runId)) return;
       _recordTurnTrace(
         traceContext,
         TraceStage.turnFailed,
         status: TraceEventStatus.failed,
+        error: e,
+        stackTrace: stack,
         meta: {'error': e.toString()},
       );
       await _sendPort.markUserMessageFailed(
@@ -1516,30 +1607,7 @@ class ChatActions {
       messages: messagesWithReminder,
     );
 
-    return ApiConfig(
-      settings: config.settings,
-      modelFullId: config.modelFullId,
-      providerApiBase: config.providerApiBase,
-      providerApiKey: config.providerApiKey,
-      providerId: config.providerId,
-      providerApiKeyItemId: config.providerApiKeyItemId,
-      providerApiKeyItemIndex: config.providerApiKeyItemIndex,
-      providerApiKeyStrategy: config.providerApiKeyStrategy,
-      customConfig: config.customConfig,
-      messages: normalizedMessages,
-      tools: config.tools,
-      boundTools: config.boundTools,
-      runtimeContext: config.runtimeContext,
-      enabledPluginIds: config.enabledPluginIds,
-      modelTemperature: config.modelTemperature,
-      modelTopP: config.modelTopP,
-      modelContextMessageLimit: config.modelContextMessageLimit,
-      traceContext: config.traceContext,
-      boundImageToolPresetName: config.boundImageToolPresetName,
-      boundImageArtistPresetName: config.boundImageArtistPresetName,
-      voiceRequest: config.voiceRequest,
-      responseProcessors: config.responseProcessors,
-    );
+    return config.copyWith(messages: normalizedMessages);
   }
 
   String _buildTriggerReminderContent(AutoReplyTrigger trigger) {
@@ -1569,13 +1637,18 @@ class ChatActions {
     required Future<ApiCallResult> Function(ApiConfig config) execute,
     required AppSettings settings,
   }) async {
+    final cancellation = _activeGenerations[convId]?.cancellation;
+    Future<ApiCallResult> executeControlled(ApiConfig config) {
+      cancellation?.throwIfCancelled();
+      return execute(config.copyWith(cancellation: cancellation));
+    }
     // 只有一个模型时，直接调用不做轮询
     if (modelsToTry.length <= 1) {
       final model = modelsToTry.isNotEmpty
           ? modelsToTry.first
           : settings.defaultModelName;
       final config = await buildConfig(model);
-      final result = await execute(config);
+      final result = await executeControlled(config);
       return (result, settings);
     }
 
@@ -1585,11 +1658,13 @@ class ChatActions {
       final model = modelsToTry[index];
       try {
         final config = await buildConfig(model);
-        final result = await execute(config);
+        final result = await executeControlled(config);
         // 成功，清除轮询通知
         _setConversationFailoverInfo(convId, null);
         return (result, settings);
       } catch (e, st) {
+        if (e is KernelCancelledException) rethrow;
+        cancellation?.throwIfCancelled();
         if (isProviderRefreshTimingError(e)) {
           AppLogger.info(
             'ChatActions',
@@ -1653,11 +1728,14 @@ class _GenerationTask {
   final String convId;
   final String? userMsgId;
 
-  const _GenerationTask({
+  final KernelCancellation cancellation;
+
+  _GenerationTask({
+    KernelCancellation? cancellation,
     required this.id,
     required this.convId,
     required this.userMsgId,
-  });
+  }) : cancellation = cancellation ?? KernelCancellation();
 }
 
 final chatActionsProvider = Provider((ref) => ChatActions(ref));

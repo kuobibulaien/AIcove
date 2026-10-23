@@ -84,7 +84,6 @@ class _FakeChatSendPort implements ChatSendPort {
     required String? userText,
     String? turnId,
     trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,

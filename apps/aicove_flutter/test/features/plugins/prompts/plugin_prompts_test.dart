@@ -19,7 +19,7 @@ ImageConfig _drawing(String inline) => const ImageConfig().copyWith(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('迁移取默认绘图／音色预设的值，与默认相同的不保存，旧键不动', () async {
+  test('迁移只收表情包与时间感知，与默认相同的不保存，旧键不动', () async {
     final catalog = DrawingPresetCatalog(
       presets: [
         DrawingPreset(id: 'a', name: '默认', config: _drawing('默认预设的画图说明')),
@@ -55,8 +55,9 @@ void main() {
 
     final prompts = await PreferencesPluginPromptStore().load();
 
-    expect(prompts.of(PluginPromptSlot.image), '默认预设的画图说明');
-    expect(prompts.of(PluginPromptSlot.tts), '默认音色的语音说明');
+    // 语音、绘图已迁到提示词包（ADR0092），不再进全局槽位。
+    expect(prompts.toJson().keys, isNot(contains('image')));
+    expect(prompts.toJson().keys, isNot(contains('tts')));
     expect(prompts.of(PluginPromptSlot.currentTime), '现在是{datetime}');
     expect(prompts.isDefault(PluginPromptSlot.sticker), isTrue);
     final prefs = await SharedPreferences.getInstance();

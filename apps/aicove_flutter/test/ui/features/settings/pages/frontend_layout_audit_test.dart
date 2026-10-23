@@ -1,3 +1,6 @@
+@Tags(['slow'])
+library;
+
 import 'dart:convert';
 import '../../../../helpers/release_source_preview.dart';
 import 'package:flutter/services.dart';

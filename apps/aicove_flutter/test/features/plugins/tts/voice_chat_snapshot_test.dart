@@ -28,7 +28,6 @@ class _Runner extends ChatSendApiRunner {
       List<AITool>? availableTools,
       String? turnId,
       TraceLogger? trace,
-      int maxRounds = 5,
       void Function(String)? onToolExecuting,
       bool enableStreaming = false,
       void Function(String)? onStreamTextDelta,

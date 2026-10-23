@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../chat/domain/persona_prompt_codec.dart';
+import '../prompts/prompt_pack.dart';
 import 'image_config.dart';
 
 /// 单个绘图预设。复用已有请求配置值对象，不再维护平行的参数模型。
@@ -9,23 +10,34 @@ class DrawingPreset {
   final String name;
   final ImageConfig config;
 
+  /// Prompt pack and preset-only sections (ADR0092); the role's own drawing
+  /// requirements live here as a preset section.
+  final PresetPromptBinding prompts;
+
   const DrawingPreset({
     required this.id,
     required this.name,
     required this.config,
+    this.prompts = const PresetPromptBinding(),
   });
 
-  DrawingPreset copyWith({String? id, String? name, ImageConfig? config}) =>
-      DrawingPreset(
-        id: id ?? this.id,
-        name: name ?? this.name,
-        config: config ?? this.config,
-      );
+  DrawingPreset copyWith({
+    String? id,
+    String? name,
+    ImageConfig? config,
+    PresetPromptBinding? prompts,
+  }) => DrawingPreset(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    config: config ?? this.config,
+    prompts: prompts ?? this.prompts,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
     'config': config.toJson(),
+    if (!prompts.isEmpty) 'prompts': prompts.toJson(),
   };
   factory DrawingPreset.fromJson(Map<String, dynamic> json) => DrawingPreset(
     id: json['id'] as String,
@@ -33,6 +45,7 @@ class DrawingPreset {
     config: ImageConfig.fromJson(
       Map<String, dynamic>.from(json['config'] as Map),
     ),
+    prompts: PresetPromptBinding.fromJson(json['prompts']),
   );
 
   /// 将旧的多个选择收成预设自身的值，不再跟随旧全局列表变化。
@@ -115,6 +128,8 @@ class DrawingPresetCatalog {
       );
     }
     for (final tool in old.systemPromptPresets) {
+      // The built-in tool description is what the default preset already has.
+      if (_isBuiltInTool(tool)) continue;
       catalog = catalog.upsert(
         catalog.resolve(
           PersonaPromptParts(
@@ -140,6 +155,61 @@ class DrawingPresetCatalog {
     return catalog;
   }
 
+  static bool _isBuiltInTool(DrawingPromptPreset tool) =>
+      tool.content == ImageConfig.defaultToolDescriptionPresetMarker;
+
+  /// Id of the preset made from an old tool/artist binding.
+  static String legacyIdOf(String? tool, String? artist) =>
+      'legacy_${base64Url.encode(utf8.encode(jsonEncode([tool, artist])))}';
+
+  /// Drops what the migrations made needlessly: the preset copied from the
+  /// built-in tool description (the default preset already has it), the
+  /// per-role copies holding a moved drawing requirement
+  /// ([roleCopyPrefix]), and the old 「旧配置 · 」 name prefix. Presets in
+  /// [referencedIds] stay; returns this catalog when nothing changes.
+  DrawingPresetCatalog tidied(Set<String> referencedIds) {
+    final builtInTool = legacyConfig.systemPromptPresets
+        .where(_isBuiltInTool)
+        .map((tool) => legacyIdOf(tool.name, null))
+        .toSet();
+    var changed = false;
+    final next = <DrawingPreset>[];
+    for (final preset in presets) {
+      final droppable =
+          (builtInTool.contains(preset.id) &&
+              preset.prompts.ownSections.isEmpty) ||
+          preset.id.startsWith(roleCopyPrefix);
+      if (droppable &&
+          preset.id != defaultPresetId &&
+          !referencedIds.contains(preset.id)) {
+        changed = true;
+        continue;
+      }
+      if (preset.name.startsWith(_legacyNamePrefix)) {
+        changed = true;
+        next.add(
+          preset.copyWith(
+            name: preset.name.substring(_legacyNamePrefix.length),
+          ),
+        );
+        continue;
+      }
+      next.add(preset);
+    }
+    if (!changed) return this;
+    return DrawingPresetCatalog(
+      presets: next,
+      defaultPresetId: defaultPresetId,
+      legacyConfig: legacyConfig,
+    );
+  }
+
+  static const _legacyNamePrefix = '旧配置 · ';
+
+  /// Id prefix of the copy made when a role's drawing requirement was moved
+  /// into its preset: `drawing_role_<roleId>_<sourcePresetId>`.
+  static const roleCopyPrefix = 'drawing_role_';
+
   DrawingPreset resolve(PersonaPromptParts parts) {
     final explicit = parts.drawingPresetId;
     if (explicit != null && explicit.isNotEmpty) return require(explicit);
@@ -148,8 +218,7 @@ class DrawingPresetCatalog {
     if ((tool == null || tool.isEmpty) && (artist == null || artist.isEmpty)) {
       return require(defaultPresetId);
     }
-    final id =
-        'legacy_${base64Url.encode(utf8.encode(jsonEncode([tool, artist])))}';
+    final id = legacyIdOf(tool, artist);
     final saved = presets.where((p) => p.id == id).firstOrNull;
     if (saved != null) return saved;
     if (tool != null &&
@@ -172,7 +241,7 @@ class DrawingPresetCatalog {
     ].join(' · ');
     return DrawingPreset(
       id: id,
-      name: '旧配置 · $name',
+      name: name,
       config: DrawingPreset.flatten(
         legacyConfig,
         toolName: tool,

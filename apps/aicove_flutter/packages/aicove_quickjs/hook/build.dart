@@ -8,6 +8,8 @@ const _assetName = 'src/bindings.dart';
 const _quickJsVersion = '2026-06-04';
 const _sources = [
   'src/bridge.c',
+  'src/async_bridge.c',
+  'src/process_bridge.c',
   'src/quickjs/quickjs.c',
   'src/quickjs/dtoa.c',
   'src/quickjs/libregexp.c',

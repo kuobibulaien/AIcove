@@ -428,7 +428,7 @@ AppSettings _buildStableFollowupSettings() {
     accentColor: 'FC96AA',
     hideUserAvatar: true,
     defaultChatModels: <String>[modelRef],
-    callFlowSettings: CallFlowSettings(mode: CallFlowMode.auto),
+    callFlowSettings: CallFlowSettings(mode: CallFlowMode.call),
   );
 }
 

@@ -114,6 +114,49 @@ void main() {
         'style A');
   });
 
+  test('fresh install gets only the default preset and the built-in artist',
+      () {
+    final catalog = DrawingPresetCatalog.migrate(const ImageConfig());
+    expect(catalog.presets.map((p) => p.name), ['默认绘图', '防冻液']);
+  });
+
+  test('tidy drops the unused built-in tool copy and the old name prefix', () {
+    final builtInToolId = DrawingPresetCatalog.legacyIdOf('默认', null);
+    final artistId = DrawingPresetCatalog.legacyIdOf(null, '防冻液');
+    final old = DrawingPresetCatalog(
+      presets: const [
+        DrawingPreset(id: 'drawing_default', name: '默认绘图', config: ImageConfig()),
+      ],
+      defaultPresetId: 'drawing_default',
+      legacyConfig: const ImageConfig(),
+    )
+        .upsert(DrawingPreset(
+            id: artistId, name: '旧配置 · 防冻液', config: const ImageConfig()))
+        .upsert(DrawingPreset(
+            id: builtInToolId, name: '旧配置 · 默认', config: const ImageConfig()));
+
+    final tidied = old.tidied(const {});
+    expect(tidied.presets.map((p) => p.name), ['默认绘图', '防冻液']);
+    expect(identical(tidied.tidied(const {}), tidied), isTrue);
+    // A role still on the copy keeps it.
+    expect(old.tidied({builtInToolId}).presets.map((p) => p.id),
+        contains(builtInToolId));
+  });
+
+  test('tidy drops role copies of moved drawing requirements once unbound', () {
+    const copyId = '${DrawingPresetCatalog.roleCopyPrefix}r1_drawing_default';
+    final catalog = DrawingPresetCatalog(
+      presets: const [
+        DrawingPreset(id: 'drawing_default', name: '默认绘图', config: ImageConfig()),
+        DrawingPreset(id: copyId, name: '纳西妲 · 默认绘图', config: ImageConfig()),
+      ],
+      defaultPresetId: 'drawing_default',
+      legacyConfig: const ImageConfig(),
+    );
+    expect(catalog.tidied({copyId}).presets.map((p) => p.id), contains(copyId));
+    expect(catalog.tidied(const {}).presets.map((p) => p.name), ['默认绘图']);
+  });
+
   test('preferences migration keeps old bytes and is idempotent after restart',
       () async {
     final oldBytes = jsonEncode(legacy.toJson());

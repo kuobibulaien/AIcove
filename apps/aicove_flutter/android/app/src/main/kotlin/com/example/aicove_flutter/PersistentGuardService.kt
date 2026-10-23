@@ -39,6 +39,9 @@ class PersistentGuardService : Service() {
         private var generationActive: Boolean = false
 
         @Volatile
+        private var webAppActive: Boolean = false
+
+        @Volatile
         private var instance: PersistentGuardService? = null
 
         fun start(context: Context): Boolean {
@@ -64,7 +67,7 @@ class PersistentGuardService : Service() {
         }
 
         fun stopIfIdle(context: Context) {
-            if (generationActive) {
+            if (generationActive || webAppActive) {
                 instance?.refreshForegroundState()
                 return
             }
@@ -87,11 +90,26 @@ class PersistentGuardService : Service() {
             }
 
             instance?.refreshForegroundState()
-            if (!KeepAliveConfig.isGuardEnabled(context)) {
+            if (!KeepAliveConfig.isGuardEnabled(context) && !webAppActive) {
                 stop(context)
             }
             return true
         }
+
+        fun setWebAppActive(context: Context, active: Boolean): Boolean {
+            webAppActive = active
+            val current = instance
+            if (current != null && foregroundActive) {
+                current.refreshForegroundState(updateGeneration = false)
+                return !active || foregroundActive
+            }
+            if (!active) return true
+            val started = start(context)
+            if (!started) webAppActive = false
+            return started
+        }
+
+        fun isWebAppActive(): Boolean = webAppActive
 
         fun isForegroundActive(): Boolean = foregroundActive
 
@@ -159,9 +177,9 @@ class PersistentGuardService : Service() {
         return refreshForegroundState()
     }
 
-    private fun refreshForegroundState(): Int {
+    private fun refreshForegroundState(updateGeneration: Boolean = true): Int {
         val persistentGuardEnabled = KeepAliveConfig.isGuardEnabled(this)
-        if (!persistentGuardEnabled && !generationActive) {
+        if (!persistentGuardEnabled && !generationActive && !webAppActive) {
             mainHandler.removeCallbacks(generationTimeoutRunnable)
             releaseGenerationWakeLock()
             stopForegroundCompat()
@@ -171,7 +189,7 @@ class PersistentGuardService : Service() {
 
         return try {
             startForegroundCompat()
-            updateGenerationWakeLock()
+            if (updateGeneration) updateGenerationWakeLock()
             running = true
             foregroundActive = true
             lastStartError = null
@@ -179,6 +197,7 @@ class PersistentGuardService : Service() {
         } catch (t: Throwable) {
             KeepAliveConfig.setGuardEnabled(this, false)
             generationActive = false
+            webAppActive = false
             mainHandler.removeCallbacks(generationTimeoutRunnable)
             releaseGenerationWakeLock()
             running = false
@@ -207,7 +226,11 @@ class PersistentGuardService : Service() {
 
     private fun buildNotification(): Notification {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(if (generationActive) "正在回复…" else "主动回复已开启")
+            .setContentTitle(when {
+                generationActive -> "正在回复…"
+                webAppActive -> "网页游戏运行中"
+                else -> "主动回复已开启"
+            })
             .setSmallIcon(R.drawable.ic_stat_aicove)
             .setShowWhen(false)
             .setSilent(true)

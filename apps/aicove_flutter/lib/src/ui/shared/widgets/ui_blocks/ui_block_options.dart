@@ -135,10 +135,6 @@ class UiOptionTile extends StatelessWidget {
 /// always answer in their own words instead of the listed options.
 const String kUiOtherLabel = '其他';
 
-/// Whether a choice set offers [kUiOtherLabel]; on unless the block or the
-/// item says `"other": false`.
-bool uiOffersOther(Object? itemFlag, Object? blockFlag) => itemFlag != false && blockFlag != false;
-
 /// The text field style shared by inputs in blocks.
 InputDecoration uiInputDecoration(UiBlockStyle style, {String? hint, bool error = false}) {
   OutlineInputBorder border(Color? color) => OutlineInputBorder(

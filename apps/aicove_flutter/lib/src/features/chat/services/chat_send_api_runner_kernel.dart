@@ -2,15 +2,14 @@ part of 'chat_send_api_runner.dart';
 
 /// [ApiRunner] backed by the agent kernel (ADR0064, batch 1).
 ///
-/// Equivalent extraction of [ChatSendApiRunner.executeApiCall]: every branch
-/// lives in a fixed kernel stage and reuses the same library helpers. The
-/// preset runtime is owned by a run scope released after result processing.
+/// Shared execution pipeline. Chat product policies are separate stage adapters;
+/// the preset runtime stays in the run scope until result processing completes.
 class KernelApiRunner implements ApiRunner {
   const KernelApiRunner()
     : _agentClientFactory = ChatSendApiRunner._defaultAgentClientFactory,
-      _legacy = const ChatSendApiRunner(),
       _scopeFactory = kernel.KernelScope.new,
-      _openPresetRuntime = null;
+      _openPresetRuntime = null,
+      _richToolOutput = true;
 
   /// [scopeFactory] and [openPresetRuntime] let tests observe when the run
   /// scope is released and whether the preset runtime is still open;
@@ -22,14 +21,18 @@ class KernelApiRunner implements ApiRunner {
   }) : _agentClientFactory = agentClientFactory,
        _scopeFactory = scopeFactory,
        _openPresetRuntime = openPresetRuntime,
-       _legacy = ChatSendApiRunner.withAgentClientFactory(
-         agentClientFactory: agentClientFactory,
-       );
+       _richToolOutput = true;
+
+  // Historical callers consume text-only tool projections, even with vision.
+  KernelApiRunner._persistentToolOutput(this._agentClientFactory)
+    : _scopeFactory = kernel.KernelScope.new,
+      _openPresetRuntime = null,
+      _richToolOutput = false;
 
   static const String _logTag = 'KernelApiRunner';
 
   final _AgentClientFactory _agentClientFactory;
-  final ChatSendApiRunner _legacy;
+  final bool _richToolOutput;
   final kernel.KernelScope Function() _scopeFactory;
   final PresetRuntimeOpener? _openPresetRuntime;
 
@@ -39,7 +42,7 @@ class KernelApiRunner implements ApiRunner {
     if (event is kernel.FinishReasonMismatch) {
       AppLogger.warning(
         _logTag,
-        '结束原因与工具调用不一致，工具照常执行',
+        '结束原因与工具调用不一致；截断调用不执行',
         metadata: {
           'round': event.round,
           'finishReason': event.finishReason.name,
@@ -48,10 +51,6 @@ class KernelApiRunner implements ApiRunner {
       );
     }
   }
-
-  /// A run with no rounds never reaches the kernel loop; the legacy runner
-  /// already defines that degenerate result.
-  static bool needsLegacyRunner({required int maxRounds}) => maxRounds < 1;
 
   @override
   Future<ApiCallResult> executeApiCall({
@@ -62,7 +61,6 @@ class KernelApiRunner implements ApiRunner {
     List<AITool>? availableTools,
     String? turnId,
     TraceLogger? trace,
-    int maxRounds = 5,
     void Function(String toolName)? onToolExecuting,
     bool enableStreaming = false,
     void Function(String delta)? onStreamTextDelta,
@@ -72,53 +70,62 @@ class KernelApiRunner implements ApiRunner {
     TraceContext? traceContext,
     kernel.KernelCancellation? cancellation,
   }) async {
-    if (needsLegacyRunner(maxRounds: maxRounds)) {
-      AppLogger.info(
-        _logTag,
-        '轮次上限小于 1，交由旧执行器',
-        metadata: {'maxRounds': maxRounds},
-      );
-      return _legacy.executeApiCall(
-        config: config,
-        sessionId: sessionId,
-        userText: userText,
-        responseProcessors: responseProcessors,
-        availableTools: availableTools,
-        turnId: turnId,
-        trace: trace,
-        maxRounds: maxRounds,
-        onToolExecuting: onToolExecuting,
-        enableStreaming: enableStreaming,
-        onStreamTextDelta: onStreamTextDelta,
-        onStreamTextReset: onStreamTextReset,
-        onStreamToolCallObserved: onStreamToolCallObserved,
-        onStreamingFallback: onStreamingFallback,
-        traceContext: traceContext,
-        cancellation: cancellation,
-      );
-    }
-
     final scope = _scopeFactory();
     try {
       // The preset runtime comes from the tavern compatibility plugin's
       // service, fixed into the config at prepare.
-      final openPresetRuntime = _openPresetRuntime ??
+      final openPresetRuntime =
+          _openPresetRuntime ??
           config.openPresetRuntime ??
           QuickJsPresetRuntime.open;
       final presetRuntime = config.presetScript == null
           ? null
           : await openPresetRuntime(config.presetScript!);
       if (presetRuntime != null) scope.addCloser(presetRuntime.close);
+      final results = config.toolResultStore ?? ToolResultStore.shared;
+      final owner = config.toolResultOwner ?? sessionId;
+      final reader = results.reader(owner);
+      final existingTools = availableTools ?? config.boundTools;
+      final hasTools = ToolResultStore.wantsReader([
+        ...?existingTools?.map((t) => t.name),
+        for (final s in config.tools ?? const <Map<String, dynamic>>[])
+          '${(s['function'] as Map?)?['name']}',
+      ]);
+      final tools = [
+        ...?existingTools,
+        if (hasTools &&
+            !(existingTools?.any(
+                  (t) => t.name == ToolResultStore.readToolName,
+                ) ??
+                false))
+          reader,
+      ];
+      final hasReaderSchema =
+          config.tools?.any(
+            (s) =>
+                (s['function'] as Map?)?['name'] ==
+                ToolResultStore.readToolName,
+          ) ??
+          false;
+      final readerIsDirect =
+          existingTools
+              ?.where((t) => t.name == ToolResultStore.readToolName)
+              .firstOrNull
+              ?.exposure !=
+          ToolExposure.codemode;
+      final effectiveConfig = hasTools && !hasReaderSchema && readerIsDirect
+          ? config.copyWith(tools: [...?config.tools, reader.toOpenAISchema()])
+          : config;
       final run = _KernelRun(
         presetRuntime: presetRuntime,
-        config: config,
+        richToolOutput: _richToolOutput,
+        config: effectiveConfig,
         sessionId: sessionId,
         userText: userText,
         responseProcessors: responseProcessors,
-        availableTools: availableTools ?? config.boundTools,
+        availableTools: tools,
         turnId: turnId,
         trace: trace,
-        maxRounds: maxRounds,
         onToolExecuting: onToolExecuting,
         enableStreaming: enableStreaming,
         onStreamTextDelta: onStreamTextDelta,
@@ -128,25 +135,35 @@ class KernelApiRunner implements ApiRunner {
         traceContext: traceContext,
         agentClientFactory: _agentClientFactory,
       );
+      final product = _ChatProductStages(run);
       final loop = kernel.AgentLoop(
         stages: kernel.StagePipeline(
           preparer: run,
           model: run,
-          unpacker: run,
-          resolver: run,
-          preTool: run,
-          tools: _gated(run, config.toolPolicy),
-          postTool: run,
+          unpacker: product,
+          resolver: const kernel.NativeToolCallResolver(),
+          preTool: product,
+          tools: _RecordedTools(
+            _gated(run, config.toolPolicy),
+            config,
+            results,
+            owner,
+          ),
+          postTool: product,
           encoder: run,
         ),
-        maxRounds: maxRounds,
         observers: const [_recordDiagnostics],
+        onTranscript: config.onTranscript,
       );
+      config.onRunReady?.call(loop.steer);
       final kernel.AgentLoopResult result;
       try {
         result = await loop.run(
           run.initialMessages,
-          cancellation: cancellation,
+          cancellation:
+              cancellation ??
+              config.cancellation ??
+              RequestControl.cancellation,
         );
       } on kernel.KernelContextOverflow catch (overflow, stack) {
         // Non-recoverable overflow: rethrow the provider error unchanged.
@@ -158,7 +175,15 @@ class KernelApiRunner implements ApiRunner {
       if (result.status == kernel.LoopStatus.cancelled) {
         throw const kernel.KernelCancelledException();
       }
-      return await run.finalize(_legacy);
+      return await run.finalize(
+        status: result.stopReason == kernel.KernelStopReason.waitingForUser
+            ? ApiRunStatus.waitingForUser
+            : result.lastTurn?.finishReason == kernel.FinishReason.length
+            ? ApiRunStatus.truncated
+            : ApiRunStatus.completed,
+        runningMessages: result.runningMessages,
+        stopReason: result.stopReason?.wireValue,
+      );
     } finally {
       // After result processing: plugins and the preset runtime stay usable
       // until the ApiCallResult is built.
@@ -167,35 +192,107 @@ class KernelApiRunner implements ApiRunner {
   }
 }
 
+/// Records each settled call before the next tool starts, including denials.
+/// Preservation runs outside redaction so stored output obeys the same policy.
+class _RecordedTools implements kernel.ToolBatchExecutor {
+  _RecordedTools(this.inner, this.config, this.store, this.owner);
+  final kernel.ToolBatchExecutor inner;
+  final ApiConfig config;
+  final ToolResultStore store;
+  final String owner;
+
+  @override
+  kernel.BatchMode modeFor(
+    List<kernel.KernelToolCall> calls,
+    kernel.TurnContext ctx,
+  ) => config.onToolStep != null
+      ? kernel.BatchMode.serial
+      : inner.modeFor(calls, ctx);
+
+  @override
+  Future<kernel.KernelToolResult> executeOne(
+    kernel.KernelToolCall call,
+    kernel.TurnContext ctx,
+  ) async {
+    final watch = Stopwatch()..start();
+    var result = await inner.executeOne(call, ctx);
+    // A denied/invalid script never reaches QuickJS, but its stored block
+    // still follows the same script-result contract as an executed script.
+    if (call.name == 'codemode' &&
+        !result.content.startsWith('Script completed') &&
+        !result.content.startsWith('Script failed')) {
+      final content =
+          'Script failed\nWall time ${(watch.elapsedMicroseconds / 1000000).toStringAsFixed(1)} seconds\nOutput:\nScript error:\n${result.content}';
+      result = kernel.KernelToolResult(
+        callId: result.callId,
+        name: result.name,
+        content: content,
+        isError: true,
+        payload: _ToolExecutionOutcome(
+          toolResult: ToolResult(
+            toolCallId: result.callId,
+            name: result.name,
+            result: content,
+            isError: true,
+            structured: const {'codemodeCalls': <Map<String, dynamic>>[]},
+          ),
+        ),
+      );
+    }
+    final text = call.name == 'codemode'
+        ? result.content
+        : await store.preserve(owner, result.content);
+    final preserved = kernel.KernelToolResult(
+      callId: result.callId,
+      name: result.name,
+      content: text,
+      isError: result.isError,
+      images: result.images,
+      payload: result.payload,
+      outputRewritten: result.outputRewritten,
+      terminationReason: result.terminationReason,
+    );
+    await config.onToolStep?.call(
+      call.origin! as ToolCall,
+      _KernelRun._outcomeOf(preserved).toolResult,
+    );
+    return preserved;
+  }
+}
+
 /// Applies the run's tool policy to ⑦: redaction inside, the gate outside, so
 /// a denied call never runs and an allowed one is redacted before the model
 /// sees it. Without a policy ⑦ is the run itself, as before.
 kernel.ToolBatchExecutor _gated(_KernelRun run, AgentToolPolicy? policy) {
-  if (policy == null) return run;
+  policy ??= const AgentToolPolicy(
+    authorization: AgentToolAuthorization.allowAll,
+  );
   final redactor = policy.redactor;
   return kernel.GatedToolExecutor(
     redactor == null ? run : kernel.RedactingToolExecutor(run, redactor),
     gate: policy.gate,
     effectOf: run.effectOf,
+    requiresHumanApprovalOf: (call) =>
+        run.availableTools?.any(
+          (tool) => tool.name == call.name && tool.requiresHumanApproval,
+        ) ??
+        false,
     approvals: policy.approvals,
     approvalTimeout: policy.approvalTimeout,
   );
 }
 
-/// Mutable state of one kernel run plus every stage implementation. Each
-/// method mirrors a section of [ChatSendApiRunner.executeApiCall].
+/// Request/tool adapters and single-owner state for one run. Product policies
+/// live in chat_run_product_stages.dart; only AgentLoop controls iteration.
 class _KernelRun
     implements
         kernel.RoundPreparer,
         kernel.ModelPort,
-        kernel.ResponseUnpacker,
-        kernel.ToolCallResolver,
-        kernel.PreToolDecision,
         kernel.ToolBatchExecutor,
-        kernel.PostToolDecision,
         kernel.ContinuationEncoder {
   _KernelRun({
     required this.presetRuntime,
+    required this.richToolOutput,
     required this.config,
     required this.sessionId,
     required this.userText,
@@ -203,7 +300,6 @@ class _KernelRun
     required List<AITool>? availableTools,
     required String? turnId,
     required TraceLogger? trace,
-    required this.maxRounds,
     required this.onToolExecuting,
     required bool enableStreaming,
     required this.onStreamTextDelta,
@@ -217,7 +313,14 @@ class _KernelRun
     if (preset != null && preset.businessTools.isNotEmpty) {
       availableTools = [...?availableTools];
     }
-    requestTools = [...?config.tools, ...?preset?.tools];
+    final nonDirect = {
+      for (final tool in availableTools ?? const <AITool>[])
+        if (tool.exposure != ToolExposure.direct) tool.name,
+    };
+    requestTools = [
+      for (final schema in [...?config.tools, ...?preset?.tools])
+        if (!nonDirect.contains((schema['function'] as Map)['name'])) schema,
+    ];
     final toolNames = <String>{};
     for (final schema in requestTools) {
       final name = (schema['function'] as Map)['name'] as String;
@@ -230,6 +333,9 @@ class _KernelRun
         AITool(
           name: name,
           description: definition['description'] as String,
+          inputSchema: Map<String, dynamic>.from(
+            definition['parameters'] as Map? ?? const {},
+          ),
           parameters: const {},
           handler: (args) => preset!.action(name, args),
         ),
@@ -270,10 +376,6 @@ class _KernelRun
         'history': config.messages.length,
         'mode': flowSettings.mode.value,
         'effectiveImageRoute': effectiveImageRoute.value,
-        'maxRounds': maxRounds,
-        'fastFollowupBudget': fastImageRouteEnabled
-            ? ChatSendApiRunner._maxFastFollowupRounds
-            : 0,
         'modelTimeoutSec': flowSettings.modelTimeoutSeconds,
         'toolTimeoutSec': flowSettings.toolTimeoutSeconds,
       },
@@ -292,15 +394,12 @@ class _KernelRun
       apiBaseUrl: config.providerApiBase,
     );
     shouldAttemptStreaming = config.presetStreamResponse ?? enableStreaming;
-    remainingFastFollowupRounds = fastImageRouteEnabled
-        ? ChatSendApiRunner._maxFastFollowupRounds
-        : 0;
   }
 
   static const String _logTag = ChatSendApiRunner._logTag;
-  static const bool _supportsTextToolFallback = true;
 
   final PresetScriptRuntime? presetRuntime;
+  final bool richToolOutput;
   final ApiConfig config;
   final String sessionId;
   final String? userText;
@@ -308,7 +407,6 @@ class _KernelRun
   late final List<AITool>? availableTools;
   late final ProviderChatRequestOptions? requestOptions;
   final TraceLogger? _trace;
-  final int maxRounds;
   final void Function(String toolName)? onToolExecuting;
   final void Function(String delta)? onStreamTextDelta;
   final void Function()? onStreamTextReset;
@@ -328,19 +426,21 @@ class _KernelRun
   late final ProviderAdapter adapter;
 
   late bool shouldAttemptStreaming;
-  late int remainingFastFollowupRounds;
   final allToolEvents = <PluginEvent>[];
   final allToolAudioResults = <ToolAudioResult>[];
   final allToolContents = <PluginContent>[];
   final allToolCalls = <ToolCall>[];
   final allRawToolResults = <ToolResult>[];
-  final executedFallbackCallSignatures = <String>{};
+
   final preToolNarrativeTexts = <String>[];
+  final toolRoundDrafts =
+      <({String narrative, String reasoning, List<String> toolCallIds})>[];
   var pendingStableReviewImages = <PluginImageContent>[];
   var executedAnyTool = false;
   var lastRoundIndex = 1;
   var runningLength = 0;
   SendMessageRichResult? lastRich;
+  final roundReasonings = <String>[];
   TraceLogger? roundTrace;
   TraceLogger? toolTrace;
   var useFastToolRoute = false;
@@ -438,13 +538,30 @@ class _KernelRun
     List<Map<String, dynamic>> running,
     kernel.PrepareMode mode,
     kernel.TurnContext ctx,
+  ) => RequestControl.run(ctx.cancellation, () => _prepare(running, mode, ctx));
+
+  Future<kernel.PreparedRound> _prepare(
+    List<Map<String, dynamic>> running,
+    kernel.PrepareMode mode,
+    kernel.TurnContext ctx,
   ) async {
     var current = running;
+    if (mode == kernel.PrepareMode.initial &&
+        drawImageStableReviewEnabled &&
+        pendingStableReviewImages.isNotEmpty) {
+      current = [
+        ...current,
+        ...await _buildStableDrawImageReviewMessages(pendingStableReviewImages),
+      ];
+    }
     if (mode == kernel.PrepareMode.recovery) {
       // 只重试当前模型请求；工具执行在这个循环之外。
       onStreamingFallback?.call();
       current = await config.runtimeContext!.prepare(current, force: true);
-      final request = await presetRuntime?.prepare(current) ?? current;
+      final budgeted = ToolMedia.wire(current, strip: false);
+      final request = ToolMedia.wire(
+        await presetRuntime?.prepare(budgeted) ?? budgeted,
+      );
       _transportSnapshot = null;
       _transportPreviewFingerprint = '';
       _streamRaw = '';
@@ -458,7 +575,10 @@ class _KernelRun
     }
     current = await resolveModelMedia(current);
     current = await config.runtimeContext?.prepare(current) ?? current;
-    final request = await presetRuntime?.prepare(current) ?? current;
+    final budgeted = ToolMedia.wire(current, strip: false);
+    final request = ToolMedia.wire(
+      await presetRuntime?.prepare(budgeted) ?? budgeted,
+    );
     _resetRoundOutputState();
     runningLength = current.length;
 
@@ -483,7 +603,23 @@ class _KernelRun
     kernel.TurnContext ctx,
   ) async {
     try {
-      final rich = await _attempt(prepared.request, ctx.round);
+      final rich = await retryModelRound(
+        cancellation: ctx.cancellation,
+        send: () => _attempt(prepared.request, ctx.round),
+        onRetry: (attempt, delay) {
+          onStreamTextReset?.call();
+          _resetRoundOutputState();
+          AppLogger.warning(
+            _logTag,
+            'Retrying current model round',
+            metadata: {
+              'round': ctx.round,
+              'attempt': attempt,
+              'delayMs': delay.inMilliseconds,
+            },
+          );
+        },
+      );
       return kernel.AssistantTurn(
         text: rich.text,
         toolCalls: [for (final call in rich.toolCalls) _toKernelCall(call)],
@@ -606,10 +742,14 @@ class _KernelRun
           ),
         );
       } catch (e) {
+        RequestControl.cancellation?.throwIfCancelled();
         _flushTransportPreview();
         await _pendingOutput;
         if (_outputError != null) throw _outputError!;
-        if (isContextOverflow(e)) rethrow;
+        if (e is kernel.KernelCancelledException ||
+            isTransientModelError(e) ||
+            isContextOverflow(e))
+          rethrow;
         shouldAttemptStreaming = false;
         onStreamingFallback?.call();
         final failureReason = StreamMonitorService.classifyError(e);
@@ -653,227 +793,6 @@ class _KernelRun
     return rich;
   }
 
-  // ③ ------------------------------------------------------------------
-
-  @override
-  Future<kernel.AssistantTurn> unpack(
-    kernel.AssistantTurn turn,
-    kernel.TurnContext ctx,
-  ) async {
-    var rich = turn.raw! as SendMessageRichResult;
-    var consumedPresetOutput = false;
-    final preset = presetRuntime;
-    if (preset != null) {
-      final response = await preset.response(rich.text, [
-        for (final call in rich.toolCalls)
-          {
-            'id': call.id,
-            'name': call.name,
-            'arguments': call.arguments,
-            if (call.rawArguments != null) 'rawArguments': call.rawArguments,
-          },
-      ]);
-      consumedPresetOutput = response.consumedIndexes.isNotEmpty;
-      if (shouldAttemptStreaming) _publishScriptOutput(response.text);
-      rich = SendMessageRichResult(
-        text: response.text,
-        toolResults: rich.toolResults,
-        toolCalls: [
-          for (var i = 0; i < rich.toolCalls.length; i++)
-            if (!response.consumedIndexes.contains(i)) rich.toolCalls[i],
-        ],
-        hiddenThoughtParts: rich.hiddenThoughtParts,
-        rawFinishReason: rich.rawFinishReason,
-      );
-    }
-    lastRich = rich;
-    roundTrace?.note(
-      '响应',
-      metadata: {
-        'textLength': rich.text.length,
-        'toolCalls': rich.toolCalls.length,
-      },
-    );
-    return kernel.AssistantTurn(
-      text: rich.text,
-      toolCalls: [for (final call in rich.toolCalls) _toKernelCall(call)],
-      hiddenThoughtParts: rich.hiddenThoughtParts,
-      raw: rich,
-      presetConsumed: consumedPresetOutput,
-      finishReason: rich.finishReason,
-    );
-  }
-
-  // ④ ------------------------------------------------------------------
-
-  @override
-  kernel.ResolvedToolCalls resolve(
-    kernel.AssistantTurn turn,
-    kernel.TurnContext ctx,
-  ) {
-    final rich = lastRich!;
-    var currentToolCalls = List<ToolCall>.from(rich.toolCalls);
-    var usesFallbackToolCalls = false;
-    if (currentToolCalls.isEmpty &&
-        _supportsTextToolFallback &&
-        !turn.presetConsumed) {
-      final fallbackToolCalls = _extractFallbackToolCalls(rich.text);
-      if (fallbackToolCalls.isNotEmpty) {
-        final deduped = <ToolCall>[];
-        for (final call in fallbackToolCalls) {
-          final signature = _buildToolCallSignature(call);
-          if (executedFallbackCallSignatures.contains(signature)) continue;
-          executedFallbackCallSignatures.add(signature);
-          deduped.add(call);
-        }
-        if (deduped.isNotEmpty) {
-          currentToolCalls = deduped;
-          usesFallbackToolCalls = true;
-          AppLogger.info(
-            _logTag,
-            'Parsed text tool call fallback',
-            metadata: {
-              'round': ctx.round,
-              'count': deduped.length,
-              'names': deduped.map((t) => t.name).toList(),
-            },
-          );
-        } else {
-          AppLogger.warning(
-            _logTag,
-            'Duplicate fallback tool call skipped',
-            metadata: {'round': ctx.round},
-          );
-        }
-      }
-    }
-    return kernel.ResolvedToolCalls([
-      for (final call in currentToolCalls) _toKernelCall(call),
-    ], usesFallback: usesFallbackToolCalls);
-  }
-
-  // ⑤ ------------------------------------------------------------------
-
-  @override
-  Future<void> beforeTools(
-    kernel.AssistantTurn turn,
-    kernel.ResolvedToolCalls calls,
-    kernel.TurnContext ctx,
-  ) async {
-    final round = ctx.round;
-    final currentToolCalls = _toolCallsOf(calls);
-    _applyStableReviewDecision(
-      assistantText: lastRich!.text,
-      toolCalls: currentToolCalls,
-      round: round,
-    );
-    if (currentToolCalls.isEmpty) {
-      if (traceContext != null) {
-        await TraceStore.instance.record(
-          traceId: traceContext!.traceId,
-          sessionId: traceContext!.sessionId,
-          turnId: traceContext!.turnId,
-          roundIndex: round,
-          stage: TraceStage.roundCompleted,
-          source: 'ChatSendApiRunner',
-          meta: {'toolCalls': 0, 'hasToolExecution': false},
-        );
-      }
-      roundTrace?.end(additionalMessage: 'no tool call, stop');
-      return;
-    }
-
-    if (traceContext != null) {
-      await TraceStore.instance.record(
-        traceId: traceContext!.traceId,
-        sessionId: traceContext!.sessionId,
-        turnId: traceContext!.turnId,
-        roundIndex: round,
-        stage: TraceStage.toolCallDetected,
-        source: 'ChatSendApiRunner',
-        meta: {
-          'count': currentToolCalls.length,
-          'names': currentToolCalls.map((t) => t.name).toList(),
-          'fallbackParsed': calls.usesFallback,
-        },
-      );
-    }
-
-    final roundNarrativeText = _normalizeRoundNarrativeText(lastRich!.text);
-    if (roundNarrativeText.isNotEmpty &&
-        !_looksLikeToolInstructionText(roundNarrativeText)) {
-      preToolNarrativeTexts.add(roundNarrativeText);
-    }
-
-    onStreamToolCallObserved?.call();
-
-    useFastToolRoute = _shouldUseFastToolRoute(
-      fastModeEnabled: fastImageRouteEnabled,
-      toolCalls: currentToolCalls,
-    );
-    if (fastImageRouteEnabled && !useFastToolRoute) {
-      AppLogger.info(
-        _logTag,
-        '快速生图路由回落常规工具串行执行',
-        metadata: {
-          'round': round,
-          'toolNames': currentToolCalls.map((t) => t.name).toList(),
-        },
-      );
-    }
-
-    toolTrace = roundTrace?.startChild('执行工具调用');
-    toolTrace?.note(
-      '工具',
-      metadata: {
-        'count': currentToolCalls.length,
-        'names': currentToolCalls.map((t) => t.name).toList(),
-        'parallel': useFastToolRoute,
-      },
-    );
-  }
-
-  void _applyStableReviewDecision({
-    required String assistantText,
-    required List<ToolCall> toolCalls,
-    required int round,
-  }) {
-    if (pendingStableReviewImages.isEmpty) return;
-
-    final wantsToSend = _containsImagePlaceholder(assistantText);
-    final requestsRedraw = toolCalls.any((call) => call.name == 'draw_image');
-
-    if (wantsToSend) {
-      allToolContents.addAll(pendingStableReviewImages);
-      AppLogger.info(
-        _logTag,
-        'Stable draw_image approved for delivery',
-        metadata: {'round': round, 'count': pendingStableReviewImages.length},
-      );
-      pendingStableReviewImages = <PluginImageContent>[];
-      return;
-    }
-
-    if (requestsRedraw) {
-      AppLogger.info(
-        _logTag,
-        'Stable draw_image rejected, regenerate',
-        metadata: {'round': round},
-      );
-      pendingStableReviewImages = <PluginImageContent>[];
-      return;
-    }
-
-    if (toolCalls.isEmpty) {
-      AppLogger.info(
-        _logTag,
-        'Stable draw_image not delivered by model',
-        metadata: {'round': round},
-      );
-      pendingStableReviewImages = <PluginImageContent>[];
-    }
-  }
-
   // ⑦ ------------------------------------------------------------------
 
   /// Declared effect of the tool a call names; unknown tools count as
@@ -889,13 +808,81 @@ class _KernelRun
   kernel.BatchMode modeFor(
     List<kernel.KernelToolCall> calls,
     kernel.TurnContext ctx,
-  ) => useFastToolRoute ? kernel.BatchMode.parallel : kernel.BatchMode.serial;
+  ) =>
+      calls.every((call) {
+        final tool = _findToolByName(call.name, availableTools);
+        return tool != null &&
+            tool.terminationReason == null &&
+            !tool.requiresHumanApproval &&
+            (tool.concurrent ||
+                tool.effect == kernel.ToolEffect.readDiagnostic ||
+                tool.effect == kernel.ToolEffect.readPrivate);
+      })
+      ? kernel.BatchMode.parallel
+      : kernel.BatchMode.serial;
 
   @override
   Future<kernel.KernelToolResult> executeOne(
     kernel.KernelToolCall call,
     kernel.TurnContext ctx,
-  ) async {
+  ) => _executeKernelTool(call, ctx, active: _nestedActive[call.id]);
+
+  int _scriptCallSequence = 0;
+  final _nestedActive = <String, bool Function()>{};
+
+  Future<ToolOutput> _scriptTool(
+    String name,
+    Map<String, dynamic> args,
+    bool Function() active,
+    kernel.TurnContext ctx, {
+    kernel.KernelCancellation? cancellation,
+    String? callId,
+  }) async {
+    if (!active() || ctx.cancellation.isCancelled)
+      throw StateError('Script invocation closed');
+    if (name == 'codemode')
+      throw StateError('Recursive codemode is not available');
+    if (!(availableTools?.any((t) => t.name == name) ?? false))
+      throw StateError('Tool unavailable: $name');
+    final id = callId ?? 'script_${ctx.round}_${++_scriptCallSequence}';
+    final call = kernel.KernelToolCall(
+      id: id,
+      name: name,
+      arguments: args,
+      origin: ToolCall(id: id, name: name, arguments: args),
+    );
+    final signal = cancellation ?? ctx.cancellation;
+    final nestedCtx = kernel.TurnContext(
+      round: ctx.round,
+      cancellation: signal,
+      emit: ctx.emit,
+    );
+    _nestedActive[id] = active;
+    try {
+      final result = await _gated(
+        this,
+        config.toolPolicy ??
+            const AgentToolPolicy(
+              authorization: AgentToolAuthorization.allowAll,
+            ),
+      ).executeOne(call, nestedCtx);
+      final output = _outcomeOf(result).toolResult;
+      return ToolOutput(
+        text: output.result,
+        isError: output.isError,
+        images: output.images,
+        structured: output.structured,
+      );
+    } finally {
+      _nestedActive.remove(id);
+    }
+  }
+
+  Future<kernel.KernelToolResult> _executeKernelTool(
+    kernel.KernelToolCall call,
+    kernel.TurnContext ctx, {
+    bool Function()? active,
+  }) async {
     final outcome = await _executeToolCall(
       toolCall: call.origin! as ToolCall,
       availableTools: availableTools,
@@ -911,12 +898,45 @@ class _KernelRun
       round: ctx.round,
       useFastToolRoute: useFastToolRoute,
       redactForLog: config.toolPolicy?.redactor?.redact ?? _unredacted,
+      cancellation: ctx.cancellation,
+      onProgress: (text) => config.onToolProgress?.call(
+        call.name,
+        config.toolPolicy?.redactor?.redact(text) ?? text,
+      ),
+      isCancelled: () =>
+          ctx.cancellation.isCancelled || !(active?.call() ?? true),
+      stateOwner: config.toolResultOwner ?? sessionId,
+      scriptTools: ScriptToolAccess(
+        List.unmodifiable(availableTools ?? const <AITool>[]),
+        (name, args, valid) => _scriptTool(
+          name,
+          args,
+          () => valid() && (active?.call() ?? true),
+          ctx,
+        ),
+        invokeControlled: (name, args, valid, signal, id) => _scriptTool(
+          name,
+          args,
+          () => valid() && (active?.call() ?? true),
+          ctx,
+          cancellation: signal,
+          callId: id,
+        ),
+      ),
+      invocationOwnsDeadline: active != null,
+      richOutput: richToolOutput,
+      supportsVision: supportsVision,
     );
     return kernel.KernelToolResult(
       callId: outcome.toolResult.toolCallId,
       name: outcome.toolResult.name,
       content: outcome.toolResult.result,
       payload: outcome,
+      images: outcome.toolResult.images,
+      isError: outcome.toolResult.isError,
+      terminationReason: outcome.toolResult.isError
+          ? null
+          : _findToolByName(call.name, availableTools)?.terminationReason,
     );
   }
 
@@ -929,181 +949,21 @@ class _KernelRun
       toolCallId: result.callId,
       name: result.name,
       result: result.content,
+      images: result.images,
+      isError: result.isError,
+      structured: payload is _ToolExecutionOutcome && !result.outputRewritten
+          ? payload.toolResult.structured
+          : null,
     );
     if (payload is! _ToolExecutionOutcome) {
       return _ToolExecutionOutcome(toolResult: toolResult);
     }
-    if (payload.toolResult.result == result.content) return payload;
     return _ToolExecutionOutcome(
       toolResult: toolResult,
       audioResult: payload.audioResult,
-      imageContents: payload.imageContents,
+      imageContents: result.outputRewritten ? const [] : payload.imageContents,
       isAsyncAcceptedDrawImage: payload.isAsyncAcceptedDrawImage,
     );
-  }
-
-  void _collectToolOutcome(_ToolExecutionOutcome outcome, List<ToolResult> to) {
-    to.add(outcome.toolResult);
-    if (outcome.audioResult != null) {
-      allToolAudioResults.add(outcome.audioResult!);
-    }
-    if (outcome.imageContents.isNotEmpty) {
-      if (drawImageStableReviewEnabled &&
-          !outcome.isAsyncAcceptedDrawImage &&
-          outcome.toolResult.name == 'draw_image') {
-        pendingStableReviewImages = _selectStableReviewImages(
-          outcome.imageContents,
-        );
-        AppLogger.info(
-          _logTag,
-          'Stable draw_image result held for review',
-          metadata: {'count': pendingStableReviewImages.length},
-        );
-      } else {
-        allToolContents.addAll(outcome.imageContents);
-      }
-    }
-  }
-
-  // ⑧ ------------------------------------------------------------------
-
-  List<ToolResult> _roundToolResults = const [];
-
-  @override
-  Future<kernel.TurnVerdict> afterTools(
-    kernel.AssistantTurn turn,
-    kernel.ResolvedToolCalls calls,
-    List<kernel.KernelToolResult> results,
-    kernel.TurnContext ctx,
-  ) async {
-    final round = ctx.round;
-    final currentToolCalls = _toolCallsOf(calls);
-    final toolOutcomes = [for (final result in results) _outcomeOf(result)];
-    final toolResults = <ToolResult>[];
-    for (final outcome in toolOutcomes) {
-      _collectToolOutcome(outcome, toolResults);
-    }
-    _roundToolResults = toolResults;
-    toolTrace?.end();
-    executedAnyTool = true;
-    allToolCalls.addAll(currentToolCalls);
-    allRawToolResults.addAll(toolResults);
-    final encodedToolCalls = _encodeToolCallsForLog(currentToolCalls);
-    final encodedToolResults = _encodeToolResultsForLog(toolResults);
-    Map<String, dynamic>? toolPayloadRef;
-    int? toolEventSeq;
-    if (traceContext != null) {
-      toolPayloadRef = await TraceStore.instance.writePayload(
-        traceId: traceContext!.traceId,
-        sessionId: traceContext!.sessionId,
-        turnId: traceContext!.turnId,
-        roundIndex: round,
-        stage: TraceStage.toolExecFinished.value,
-        source: 'ChatSendApiRunner',
-        payload: {
-          'rawToolCalls': encodedToolCalls,
-          'rawToolResults': encodedToolResults,
-        },
-      );
-      final toolTraceEvent = await TraceStore.instance.record(
-        traceId: traceContext!.traceId,
-        sessionId: traceContext!.sessionId,
-        turnId: traceContext!.turnId,
-        roundIndex: round,
-        stage: TraceStage.toolExecFinished,
-        source: 'ChatSendApiRunner',
-        payloadRef: toolPayloadRef,
-        meta: {
-          'toolCalls': currentToolCalls.length,
-          'toolResults': toolResults.length,
-          'aggregated': true,
-        },
-      );
-      toolEventSeq = toolTraceEvent.eventSeq;
-    }
-    ApiLogger.add(
-      ApiLogEntry(
-        time: DateTime.now(),
-        method: 'TOOL',
-        url: 'local://chat/tools',
-        status: 200,
-        durationMs: 0,
-        requestBody: '',
-        responseBody: '',
-        ok: true,
-        sessionId: sessionId,
-        turnId: effectiveTurnId,
-        roundIndex: round,
-        eventType: 'tool_execution',
-        rawToolCalls: encodedToolCalls,
-        rawToolResults: encodedToolResults,
-        stage: TraceStage.toolExecFinished.value,
-        stageStatus: TraceEventStatus.success.value,
-        source: 'ChatSendApiRunner',
-        eventSeq: toolEventSeq,
-        payloadRef: toolPayloadRef,
-      ),
-    );
-    if (traceContext != null) {
-      await TraceStore.instance.record(
-        traceId: traceContext!.traceId,
-        sessionId: traceContext!.sessionId,
-        turnId: traceContext!.turnId,
-        roundIndex: round,
-        stage: TraceStage.roundCompleted,
-        source: 'ChatSendApiRunner',
-        meta: {
-          'toolCalls': currentToolCalls.length,
-          'toolResults': toolResults.length,
-          'hasToolExecution': true,
-        },
-      );
-    }
-
-    final shouldContinueFastFollowup =
-        useFastToolRoute && toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
-
-    if (useFastToolRoute && !shouldContinueFastFollowup) {
-      AppLogger.info(_logTag, '快速生图路由停止后续模型轮次', metadata: {'round': round});
-      roundTrace?.end(additionalMessage: 'fast mode stop');
-      return const kernel.TurnVerdict.stop('fast mode stop');
-    }
-
-    if (round == maxRounds) {
-      if (useFastToolRoute && shouldContinueFastFollowup) {
-        AppLogger.info(
-          _logTag,
-          '快速生图路由达到补充轮次上限',
-          metadata: {'round': round, 'maxRounds': maxRounds},
-        );
-        roundTrace?.end(additionalMessage: 'fast follow-up max round');
-      } else {
-        AppLogger.warning(
-          _logTag,
-          '达到最大回合数',
-          metadata: {'maxRounds': maxRounds},
-        );
-        roundTrace?.end(additionalMessage: '达到最大回合数');
-      }
-      return const kernel.TurnVerdict.stop('maxRounds');
-    }
-
-    if (shouldContinueFastFollowup) {
-      if (remainingFastFollowupRounds <= 0) {
-        AppLogger.info(
-          _logTag,
-          '快速生图路由达到补充轮次上限',
-          metadata: {
-            'round': round,
-            'maxRounds': ChatSendApiRunner._maxFastFollowupRounds + 1,
-          },
-        );
-        roundTrace?.end(additionalMessage: 'fast follow-up max round');
-        return const kernel.TurnVerdict.stop('fast follow-up max round');
-      }
-      remainingFastFollowupRounds -= 1;
-    }
-    return const kernel.TurnVerdict.proceed();
   }
 
   // ⑨ ------------------------------------------------------------------
@@ -1115,15 +975,19 @@ class _KernelRun
     List<kernel.KernelToolResult> results,
     kernel.TurnContext ctx,
   ) async {
-    final assistantMessage = calls.usesFallback
-        ? _buildFallbackAssistantMessageForToolCalls(
-            _toolCallsOf(calls),
-            adapter.name,
-          )
-        : _buildAssistantMessageFromRich(lastRich!, adapter.name);
+    final assistantMessage = _buildAssistantMessageFromRich(
+      lastRich!,
+      adapter.name,
+    );
+    if (calls.isEmpty)
+      return [
+        {...assistantMessage, 'role': 'assistant'},
+      ];
     final toolResultMessages = adapter.buildToolResultMessages(
       assistantMessage: assistantMessage,
-      toolResults: _roundToolResults,
+      toolResults: [
+        for (final result in results) _outcomeOf(result).toolResult,
+      ],
     );
     final normalizedToolResultMessages = !supportsVision
         ? _sanitizeMessagesForNonVisionModel(toolResultMessages)
@@ -1142,14 +1006,6 @@ class _KernelRun
             message,
       ];
     }
-    if (drawImageStableReviewEnabled && pendingStableReviewImages.isNotEmpty) {
-      final reviewMessages = await _buildStableDrawImageReviewMessages(
-        pendingStableReviewImages,
-      );
-      if (reviewMessages.isNotEmpty) {
-        nextRoundMessages = [...nextRoundMessages, ...reviewMessages];
-      }
-    }
 
     roundTrace?.note(
       '追加工具结果',
@@ -1161,170 +1017,6 @@ class _KernelRun
     );
     roundTrace?.end(additionalMessage: 'continue next round');
     return nextRoundMessages;
-  }
-
-  // Result processing (outside the loop, inside the runner) ---------------
-
-  Future<ApiCallResult> finalize(ChatSendApiRunner legacy) async {
-    var rawAssistantText = lastRich?.text ?? '';
-    var finalAssistantText = rawAssistantText;
-    final normalizedFinalText = _normalizeRoundNarrativeText(
-      finalAssistantText,
-    );
-    if (preToolNarrativeTexts.isNotEmpty) {
-      final rawMergedTexts = <String>[...preToolNarrativeTexts];
-      final trimmedRawAssistantText = rawAssistantText.trim();
-      if (trimmedRawAssistantText.isNotEmpty &&
-          !_looksLikeToolInstructionText(trimmedRawAssistantText)) {
-        rawMergedTexts.add(rawAssistantText);
-      }
-      rawAssistantText = _mergeNarrativeTexts(rawMergedTexts);
-      final mergedTexts = <String>[...preToolNarrativeTexts];
-      if (normalizedFinalText.isNotEmpty &&
-          !_looksLikeToolInstructionText(normalizedFinalText)) {
-        mergedTexts.add(normalizedFinalText);
-      }
-      finalAssistantText = _mergeNarrativeTexts(mergedTexts);
-    } else {
-      finalAssistantText = normalizedFinalText;
-    }
-    final generatedImageCount = allToolContents
-        .whereType<PluginImageContent>()
-        .length;
-    if (executedAnyTool &&
-        (finalAssistantText.trim().isEmpty ||
-            _looksLikeToolInstructionText(finalAssistantText))) {
-      finalAssistantText = _buildToolCompletionSummary(
-        generatedImageCount: generatedImageCount,
-        hasAudio: allToolAudioResults.isNotEmpty,
-      );
-    }
-    finalAssistantText = _sanitizeAssistantText(finalAssistantText);
-    if (generatedImageCount > 0) {
-      finalAssistantText = _stripStandaloneImagePlaceholders(
-        finalAssistantText,
-      );
-    }
-    if (executedAnyTool && finalAssistantText.trim().isEmpty) {
-      finalAssistantText = _buildToolCompletionSummary(
-        generatedImageCount: generatedImageCount,
-        hasAudio: allToolAudioResults.isNotEmpty,
-      );
-    }
-    final presetRegexResult = await ChatSendApiRunner._presetRegexProcessor
-        .applyToDisplayText(
-          text: finalAssistantText,
-          scripts: config.presetRegexScripts,
-          authorized: config.presetRegexAuthorized,
-        );
-    finalAssistantText = presetRegexResult.text;
-    apiCallTrace?.note(
-      '完成',
-      metadata: {
-        'textLength': finalAssistantText.length,
-        'toolResults': lastRich?.toolResults.length ?? 0,
-      },
-    );
-    apiCallTrace?.end(additionalMessage: 'API调用成功');
-    final pluginTrace = _trace?.startChild('运行插件');
-    final pluginResult = await runResponseProcessors(
-      responseProcessors,
-      finalAssistantText,
-      logTag: ChatSendApiRunner._logTag,
-    );
-    pluginTrace?.note(
-      '插件处理',
-      metadata: {
-        'original': finalAssistantText.length,
-        'processed': pluginResult.processedText.length,
-        'events': pluginResult.events.length,
-      },
-    );
-    pluginTrace?.end();
-    Map<String, dynamic>? finalPayloadRef;
-    int? finalEventSeq;
-    if (traceContext != null) {
-      finalPayloadRef = await TraceStore.instance.writePayload(
-        traceId: traceContext!.traceId,
-        sessionId: traceContext!.sessionId,
-        turnId: traceContext!.turnId,
-        roundIndex: lastRoundIndex,
-        stage: TraceStage.finalReplyReady.value,
-        source: 'ChatSendApiRunner',
-        payload: {
-          'rawAiResponse': rawAssistantText,
-          'regexDisplayText': finalAssistantText,
-          'regex': <String, dynamic>{
-            'declared': config.presetRegexScripts.length,
-            'authorized': config.presetRegexAuthorized,
-            'warnings': presetRegexResult.warnings,
-            'trace': presetRegexResult.traces,
-          },
-          'finalReply': pluginResult.processedText,
-        },
-      );
-      final traceEvent = await TraceStore.instance.record(
-        traceId: traceContext!.traceId,
-        sessionId: traceContext!.sessionId,
-        turnId: traceContext!.turnId,
-        roundIndex: lastRoundIndex,
-        stage: TraceStage.finalReplyReady,
-        source: 'ChatSendApiRunner',
-        payloadRef: finalPayloadRef,
-        meta: {
-          'rawReplyLength': rawAssistantText.length,
-          'finalReplyLength': pluginResult.processedText.length,
-        },
-      );
-      finalEventSeq = traceEvent.eventSeq;
-    }
-    ApiLogger.add(
-      ApiLogEntry(
-        time: DateTime.now(),
-        method: 'DELIVER',
-        url: 'local://chat/final_reply',
-        status: 200,
-        durationMs: 0,
-        requestBody: '',
-        responseBody: '',
-        ok: true,
-        sessionId: sessionId,
-        turnId: effectiveTurnId,
-        roundIndex: lastRoundIndex,
-        eventType: 'final_response',
-        rawAiResponse: rawAssistantText,
-        finalReply: pluginResult.processedText,
-        stage: TraceStage.finalReplyReady.value,
-        stageStatus: TraceEventStatus.success.value,
-        source: 'ChatSendApiRunner',
-        eventSeq: finalEventSeq,
-        payloadRef: finalPayloadRef,
-      ),
-    );
-    final allEvents = [...allToolEvents, ...pluginResult.events];
-    final allContents = [...allToolContents, ...pluginResult.contents];
-    final displayCandidate = pluginResult.processedText.trim().isNotEmpty
-        ? pluginResult.processedText
-        : finalAssistantText;
-    final shouldSuppressStatusText = _shouldSuppressToolStatusText(
-      text: displayCandidate,
-      generatedImageCount: generatedImageCount,
-      hasAudio: allToolAudioResults.isNotEmpty,
-      toolCallCount: allToolCalls.length,
-    );
-
-    return ApiCallResult(
-      rawReplyText: rawAssistantText,
-      replyText: shouldSuppressStatusText ? '' : finalAssistantText,
-      processedText: shouldSuppressStatusText ? '' : pluginResult.processedText,
-      hiddenThoughtParts: lastRich?.hiddenThoughtParts ?? const [],
-      pluginEvents: allEvents,
-      pluginContents: allContents,
-      toolResults: lastRich?.toolResults ?? [],
-      toolAudioResults: allToolAudioResults,
-      toolCalls: allToolCalls,
-      rawToolResults: allRawToolResults,
-    );
   }
 
   static kernel.KernelToolCall _toKernelCall(ToolCall call) =>

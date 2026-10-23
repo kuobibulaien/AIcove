@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/media/media_store.dart';
+import '../../chat/services/conversation_short_window_store.dart';
 import '../../../core/storage/device_credential_storage.dart';
 import '../data/cloud_local_store.dart';
 import '../data/cloud_media_codec.dart';
@@ -33,6 +34,18 @@ final lanSyncPortProvider = FutureProvider<LanSyncPort>((ref) async {
     CloudLocalStore(db, preferences, documents, support),
     CloudMediaCodec(media, allowNetworkDownload: false),
     media.deviceId,
+    onMessageApplied: (conversationId, messageId, createdAt) {
+      final cache = ref.read(conversationTimelineCacheProvider);
+      if (cache.isRawChangeInLoadedWindow(
+        conversationId,
+        messageId,
+        createdAt,
+      )) {
+        ref
+            .read(cloudSyncProvider.notifier)
+            .handleApplied({'messages'}, conversationIds: {conversationId});
+      }
+    },
     onApplied: (kinds) =>
         ref.read(cloudSyncProvider.notifier).handleApplied(kinds),
   );

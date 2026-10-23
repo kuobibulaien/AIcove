@@ -34,7 +34,7 @@ class MemoryPlugin extends BasePlugin {
   AicovePlugin get agentPlugin => memoryAgentPlugin(this);
 
   /// The role's memory for this request; null without a request owner.
-  Future<String?> buildMemoryPrompt({
+  Future<InjectedMemory?> buildMemory({
     String? userMessage,
     String? conversationId,
     bool resumeBackgroundWork = true,

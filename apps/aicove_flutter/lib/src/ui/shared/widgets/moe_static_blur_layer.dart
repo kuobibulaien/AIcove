@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/utils/blurred_background_service.dart';
+import '../../theme/moe_wallpaper.dart';
 
 /// 静态模糊叠层：把预先生成的重度模糊图按 [blur] 换算的不透明度盖在原图上，
 /// 调节模糊时不跑实时滤镜。资源图优先用随包的 `_blur` 版本，其余来源后台生成并缓存。
@@ -17,7 +18,7 @@ class MoeStaticBlurLayer extends StatefulWidget {
   /// 原图来源：资源名、本机路径、网络地址或 data URI。
   final String source;
 
-  /// 模糊程度（0..30），0 时不绘制。
+  /// 模糊程度（0..[kMaxWallpaperBlur]），0 时不绘制。
   final double blur;
 
   /// 铺满裁切的对齐，须与下方原图一致，否则两层错位。
@@ -25,7 +26,9 @@ class MoeStaticBlurLayer extends StatefulWidget {
 
   static double opacityFor(double blur) {
     if (blur <= 0.1) return 0;
-    return Curves.easeOut.transform((blur / 30).clamp(0.0, 1.0));
+    return Curves.easeOut.transform(
+      (blur / kMaxWallpaperBlur).clamp(0.0, 1.0),
+    );
   }
 
   @override

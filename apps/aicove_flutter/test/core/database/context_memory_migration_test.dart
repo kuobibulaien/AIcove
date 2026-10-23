@@ -83,7 +83,7 @@ void main() {
 
   test('全新安装直接建齐新表，没有旧记忆表；关闭再打开仍正常', () async {
     var database = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(database), 24);
+    expect(await _version(database), 25);
     expect(await _tables(database), containsAll(_newTables));
     // v24 (ADR0088): errand task tables.
     expect(
@@ -102,7 +102,7 @@ void main() {
     );
     await database.close();
     database = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(database), 24);
+    expect(await _version(database), 25);
     await database.close();
   });
 
@@ -137,7 +137,7 @@ void main() {
     await File('${notebooks.path}/MEMORY.md').writeAsString('# 旧 MD');
 
     final database = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(database), 24);
+    expect(await _version(database), 25);
     final tables = await _tables(database);
     expect(tables, containsAll(_newTables));
     // v22 通话记录表随升级补建（ADR0074）。
@@ -192,7 +192,7 @@ void main() {
     await database.close();
 
     final reopened = db.AppDatabase.forTesting(NativeDatabase(dbFile()));
-    expect(await _version(reopened), 24);
+    expect(await _version(reopened), 25);
     expect(await _tables(reopened), containsAll(_newTables));
     await reopened.close();
   });
@@ -221,7 +221,7 @@ void main() {
   });
 
   test('同步载荷的表结构版本与整库版本解耦', () {
-    expect(kCloudRowSchema, 20);
+    expect(kCloudRowSchema, 21);
     expect(cloudTables.keys, isNot(contains('topic_handoffs')));
     expect(retiredCloudKinds, containsAll(['memories', 'contact_memory']));
   });

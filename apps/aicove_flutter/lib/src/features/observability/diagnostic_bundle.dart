@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -119,6 +120,26 @@ Map<String, Object?>? sanitizeDiagnosticEntry(Object? entry, String name) {
       safe['build'] = safeBuild;
     }
     result['metadata'] = safe;
+  } else if (meta is Map &&
+      const {'sync', 'backgroundDelivery'}.contains(meta['category'])) {
+    final safe = <String, Object?>{};
+    atoms(meta, safe, [
+      'category',
+      'event',
+      'entityId',
+      'messageId',
+      'conversationId',
+      'kind',
+      'phase',
+      'result',
+      'errorType',
+    ]);
+    for (final key in ['elapsedMs', 'pushed', 'pulled', 'failed']) {
+      if (_isNumber(meta[key])) safe[key] = meta[key];
+    }
+    if (meta['complete'] is bool) safe['complete'] = meta['complete'];
+    result['metadata'] = safe;
+    atoms(entry, result, ['source']);
   } else if (name.startsWith('trace')) {
     atoms(entry, result,
         ['traceId', 'sessionId', 'turnId', 'stage', 'status', 'source']);
@@ -143,13 +164,15 @@ Map<String, Object?>? sanitizeDiagnosticEntry(Object? entry, String name) {
 }
 
 /// 在工作 isolate 中执行。有界读取活动文件，缺失/截断如实写入 coverage。
-Future<Uint8List> createDiagnosticBundle(String logDirectory,
-    {DateTime? now,
-    int maxFile = 16 * 1024 * 1024,
-    int maxInput = 64 * 1024 * 1024,
-    int maxOutput = 12 * 1024 * 1024,
-    int maxLine = 512 * 1024,
-    int maxRecords = 20000}) async {
+Future<Uint8List> createDiagnosticBundle(
+  String logDirectory, {
+  DateTime? now,
+  int maxFile = 16 * 1024 * 1024,
+  int maxInput = 64 * 1024 * 1024,
+  int maxOutput = 12 * 1024 * 1024,
+  int maxLine = 512 * 1024,
+  int maxRecords = 20000,
+}) async {
   final collectedAt = now ?? DateTime.now();
   final earliest = collectedAt
       .subtract(const Duration(days: 7))
@@ -163,6 +186,13 @@ Future<Uint8List> createDiagnosticBundle(String logDirectory,
   var outputBytes = 0;
   var malformedLines = 0;
   var recordCount = 0;
+  var serial = 0;
+  final lanes = List.generate(
+    4,
+    (_) => ListQueue<(int, String, String, int)>(),
+  );
+  final laneBytes = List.filled(4, 0);
+  final readableNames = <String>[];
   if (await root.exists()) {
     for (final sub in ['', 'trace/']) {
       final dir = Directory('$logDirectory/$sub');
@@ -189,13 +219,11 @@ Future<Uint8List> createDiagnosticBundle(String logDirectory,
     return date != 0 ? date : a.compareTo(b);
   });
   for (final name in candidates) {
-    if (inputBytes >= maxInput ||
-        outputBytes >= maxOutput ||
-        recordCount >= maxRecords) {
+    if (inputBytes >= maxInput) {
       limits.add('bundle_budget_reached');
       break;
     }
-    final content = StringBuffer();
+
     try {
       final file = File('$logDirectory/$name');
       if (await FileSystemEntity.type(file.path, followLinks: false) !=
@@ -231,47 +259,113 @@ Future<Uint8List> createDiagnosticBundle(String logDirectory,
         }
         try {
           final entry = sanitizeDiagnosticEntry(
-              jsonDecode(
-                  utf8.decode(Uint8List.sublistView(bytes, lineStart, i))),
-              name);
+            jsonDecode(utf8.decode(Uint8List.sublistView(bytes, lineStart, i))),
+            name,
+          );
           if (entry == null) continue;
           final line = '${jsonEncode(entry)}\n';
           // Account for escaping in the outer JSON document as well.
           final size = utf8.encode(jsonEncode(line)).length;
-          if (outputBytes + size > maxOutput || recordCount >= maxRecords) {
-            limits.add('bundle_budget_reached');
-            outputBytes = maxOutput;
-            break;
+          final meta = entry['metadata'] as Map?;
+          final level = entry['level']?.toString().toUpperCase();
+          final category = meta?['category'];
+          final source = entry['source'];
+          final lane =
+              const {'ERROR', 'FATAL', 'CRITICAL'}.contains(level) ||
+                  meta?['phase'] == 'error'
+              ? 0
+              : category == 'backgroundDelivery' ||
+                    source == 'BackgroundMessageReprocessor'
+              ? 1
+              : category == 'sync' ||
+                    source == 'LanSync' ||
+                    source == 'CloudSync'
+              ? 2
+              : 3;
+          if (size > maxOutput || maxRecords < 1) {
+            limits.add('record_exceeds_output_budget');
+            continue;
           }
-          content.write(line);
-          outputBytes += size;
-          recordCount++;
+          lanes[lane].add((serial++, name, line, size));
+          laneBytes[lane] += size;
+          while (lanes[lane].length > maxRecords ||
+              laneBytes[lane] > maxOutput) {
+            laneBytes[lane] -= lanes[lane].removeFirst().$4;
+            limits.add('bundle_budget_reached');
+          }
         } on FormatException {
           malformedLines++;
         }
       }
       if (start < bytes.length) limits.add('$name:incomplete_or_unread_tail');
-      files[name] = content.toString();
+      readableNames.add(name);
     } on FileSystemException {
       limits.add('$name:read_failed');
     }
   }
-  return Uint8List.fromList(utf8.encode(jsonEncode({
-    'format': 'aicove-diagnostic-export',
-    'formatVersion': 1,
-    'collectedAt': collectedAt.toUtc().toIso8601String(),
-    'files': files,
-    'coverage': {
-      'inputBytes': inputBytes,
-      'malformedLines': malformedLines,
-      'recordCount': recordCount,
-      'limits': limits.toList()..sort(),
-      'snapshotAtomic': false,
-      'processMayStillBeWriting': true,
-      'candidateFiles': candidates,
-      'payloadPolicy': 'no_database_no_raw_payload_no_free_text',
-      'originPolicy': 'exported_lines_not_original_file_line_numbers',
-      'window': 'available_files_last_7_days',
-    },
-  })));
+  // Reserve a quarter for each lane before lending unused capacity. Selection
+  // happens after bounded input scanning, so later critical events survive a
+  // history flood. Each lane is independently bounded in memory as well.
+  final selected = <(int, String, String, int)>[];
+  final selectedIds = <int>{};
+  bool add((int, String, String, int) record) {
+    if (selected.length >= maxRecords || outputBytes + record.$4 > maxOutput) {
+      return false;
+    }
+    selected.add(record);
+    selectedIds.add(record.$1);
+    outputBytes += record.$4;
+    return true;
+  }
+
+  for (final lane in lanes) {
+    var bytes = 0, count = 0;
+    for (final record in lane) {
+      if (count >= maxRecords ~/ 4 || bytes + record.$4 > maxOutput ~/ 4) break;
+      if (add(record)) {
+        bytes += record.$4;
+        count++;
+      }
+    }
+  }
+  for (final lane in lanes) {
+    for (final record in lane) {
+      if (!selectedIds.contains(record.$1) && !add(record)) {
+        limits.add('bundle_budget_reached');
+      }
+    }
+  }
+  selected.sort((a, b) => a.$1.compareTo(b.$1));
+  final buffers = {for (final name in readableNames) name: StringBuffer()};
+  for (final record in selected) {
+    buffers[record.$2]!.write(record.$3);
+  }
+  for (final entry in buffers.entries) {
+    files[entry.key] = entry.value.toString();
+  }
+  recordCount = selected.length;
+  return Uint8List.fromList(
+    utf8.encode(
+      jsonEncode({
+        'format': 'aicove-diagnostic-export',
+        'formatVersion': 1,
+        'collectedAt': collectedAt.toUtc().toIso8601String(),
+        'files': files,
+        'coverage': {
+          'inputBytes': inputBytes,
+          'malformedLines': malformedLines,
+          'recordCount': recordCount,
+          'selectionPolicy':
+              'reserved_error_background_sync_normal_then_shared',
+          'limits': limits.toList()..sort(),
+          'snapshotAtomic': false,
+          'processMayStillBeWriting': true,
+          'candidateFiles': candidates,
+          'payloadPolicy': 'no_database_no_raw_payload_no_free_text',
+          'originPolicy': 'exported_lines_not_original_file_line_numbers',
+          'window': 'available_files_last_7_days',
+        },
+      }),
+    ),
+  );
 }

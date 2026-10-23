@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -24,30 +25,30 @@ const _writePreview = bool.fromEnvironment('WRITE_UI_BLOCK_PREVIEW');
 
 class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   @override
-  Future<AppSettings> build() async => AppSettings(
+  Future<AppSettings> build() async => const AppSettings(
         ttsEnabled: false,
         defaultModelName: 'm',
         defaultPersonaPrompt: '',
-        modelList: const ['m'],
-        allKnownModels: const ['m'],
-        modelDisplayNames: const {},
-        modelTypes: const {},
-        modelConfigs: const {},
+        modelList: ['m'],
+        allKnownModels: ['m'],
+        modelDisplayNames: {},
+        modelTypes: {},
+        modelConfigs: {},
         apiKey: '',
         apiBaseUrl: '',
         imageGenerationEnabled: false,
         maxFileUploadMB: 10,
         contextWindowTokens: 1000,
-        customModels: const [],
-        providers: const [],
-        modelProviderMap: const {},
+        customModels: [],
+        providers: [],
+        modelProviderMap: {},
         backendApiKey: '',
         messageChunkingEnabled: false,
-        messageFormatConfig: const MessageFormatConfig(),
+        messageFormatConfig: MessageFormatConfig(),
         textScaleFactor: 1.0,
         uiScaleFactor: 1.0,
         imagePreviewScale: 1.0,
-        autoReplySettings: const AutoReplySettings(),
+        autoReplySettings: AutoReplySettings(),
         globalBackgroundColor: GlobalBackgroundColor.white,
         chatBackgroundColor: ChatBackgroundColor.defaultColor,
         isDarkMode: false,
@@ -142,7 +143,7 @@ const _tree = '''
    {"id": "preset", "text": "绑定的预设关了函数调用吗？", "options": [{"label": "关了", "next": "fix-preset"}, {"label": "没关", "next": "ask"}]},
    {"id": "fix-plugin", "text": "到角色编辑页打开「绘图」插件就行"},
    {"id": "fix-preset", "text": "预设关了函数调用时，绘图只能走内联标签"},
-   {"id": "ask", "text": "把联系人上下文页的截图发给我"}]}''';
+   {"id": "ask", "text": "把角色完整上下文页的截图发给我"}]}''';
 
 const _steps = '''
 {"component": "steps", "id": "get-key", "title": "拿 DeepSeek Key",
@@ -334,6 +335,223 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  testWidgets('secret fields: required ones do not block, panel inputs are covered too', (tester) async {
+    final asked = <String>[];
+    await tester.pumpWidget(_host(_block('''
+{"component": "form", "id": "f", "fields": [
+  {"key": "name", "label": "名字"},
+  {"key": "auth", "label": "认证信息", "placeholder": "粘贴 API Key", "required": true},
+  {"key": "pass", "label": "暗号", "type": "password"},
+  {"key": "tokens", "label": "token 档位", "type": "select", "options": ["低", "高"]}]}'''), onAsk: asked.add));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.textContaining('是机密信息'), findsNWidgets(2));
+    expect(find.text('低'), findsOneWidget); // a choice is never a secret
+    await tester.enterText(find.byType(TextField), '小雪');
+    await tester.tap(find.text('填好了'));
+    await tester.pump();
+    expect(asked, ['名字：小雪']);
+
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "state": {"k": ""}, "children": [{"component": "input", "bind": "k", "label": "DeepSeek API Key"}]}''')));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+    expect(find.textContaining('不要填在这里'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('form picks up saved answers that load late, keeping what the user typed', (tester) async {
+    final c = container();
+    await tester.pumpWidget(_host(_block('''
+{"component": "form", "id": "late", "fields": [{"key": "a", "label": "甲"}, {"key": "b", "label": "乙"}]}'''), container: c));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '我改的');
+    await tester.pump();
+    c.read(uiBlockStateProvider(_conversation).notifier).write('m1/late', {
+      'values': {'a': '旧甲', 'b': '旧乙'},
+    });
+    await tester.pump();
+    expect(find.text('我改的'), findsOneWidget);
+    expect(find.text('旧乙'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('picking 其他 again keeps the text still in its field', (tester) async {
+    final asked = <String>[];
+    await tester.pumpWidget(_host(_block('''
+{"component": "form", "id": "o", "fields": [{"key": "g", "label": "性别", "type": "select", "options": ["女", "男"], "required": true}]}'''), onAsk: asked.add));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('其他'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '机器人');
+    await tester.tap(find.text('其他'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('其他'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('填好了'));
+    await tester.pump();
+    expect(asked, ['性别：机器人']);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('tabs holding the same component do not share its state; bad props do not throw', (tester) async {
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "children": [{"component": "tabs", "items": ["一", "二"], "children": [
+  {"component": "decision-tree", "nodes": [{"id": "a", "text": "甲问", "options": [{"label": "去甲结论", "next": "b"}]}, {"id": "b", "text": "甲结论"}]},
+  {"component": "decision-tree", "nodes": [{"id": "x", "text": "乙问", "options": "是"}]}]}]}''')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('去甲结论'));
+    await tester.pumpAndSettle();
+    expect(find.text('甲结论'), findsOneWidget);
+    await tester.tap(find.text('二'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('乙问'), findsOneWidget);
+  });
+
+  testWidgets('a set button updates a bound input', (tester) async {
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "state": {"n": 1}, "children": [
+  {"component": "input", "bind": "n", "label": "数量", "type": "number"},
+  {"component": "button", "label": "设成 2", "set": {"n": 2}}]}''')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, '1');
+    await tester.tap(find.text('设成 2'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, '2');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('screen, storage and set buttons agree on what the block accepts', (tester) async {
+    final c = container();
+    c.read(uiBlockStateProvider(_conversation).notifier).write('m1/clean', {'n': 'oops', 'gone': 1});
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "id": "clean", "state": {"n": 1}, "children": [
+  {"component": "text", "text": "n={n}"},
+  {"component": "button", "label": "坏值", "set": {"n": "oops"}},
+  {"component": "button", "label": "设 5", "set": {"n": 5}}]}'''), container: c));
+    await tester.pumpAndSettle();
+    expect(find.text('n=1'), findsOneWidget);
+    await tester.tap(find.text('坏值'));
+    await tester.pumpAndSettle();
+    expect(find.text('n=1'), findsOneWidget);
+    expect(c.read(uiBlockStateProvider(_conversation))['m1/clean'], isNull);
+    await tester.tap(find.text('设 5'));
+    await tester.pumpAndSettle();
+    expect(find.text('n=5'), findsOneWidget);
+    expect(c.read(uiBlockStateProvider(_conversation))['m1/clean']!.state, {'n': 5});
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a number input shows exactly the value it holds', (tester) async {
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "state": {"n": 1}, "children": [
+  {"component": "input", "bind": "n", "label": "数量", "type": "number"},
+  {"component": "button", "label": "很小", "set": {"n": 0.0000001}}]}''')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('很小'));
+    await tester.pumpAndSettle();
+    expect(num.parse(tester.widget<TextField>(find.byType(TextField)).controller!.text), 0.0000001);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a number field keeps only numbers as its answer', (tester) async {
+    final c = container();
+    await tester.pumpWidget(_host(_block('''
+{"component": "form", "id": "num", "fields": [{"key": "age", "label": "年龄", "type": "number"}]}'''), container: c));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'sk-abc');
+    await tester.pump();
+    expect(c.read(uiBlockStateProvider(_conversation))['m1/num'], isNull);
+    await tester.enterText(find.byType(TextField), '18');
+    await tester.pump();
+    expect(c.read(uiBlockStateProvider(_conversation))['m1/num']!.state, {'values': {'age': 18}});
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('form numbers: shown and sent exactly, non-finite input is not an answer', (tester) async {
+    final c = container();
+    final asked = <String>[];
+    c.read(uiBlockStateProvider(_conversation).notifier).write('m1/n2', {
+      'values': {'a': 12.345, 'b': 1000},
+    });
+    await tester.pumpWidget(_host(_block('''
+{"component": "form", "id": "n2", "fields": [{"key": "a", "label": "甲", "type": "number"}, {"key": "b", "label": "乙", "type": "number"},
+  {"key": "c", "label": "丙", "type": "number", "required": true}]}'''), container: c, onAsk: asked.add));
+    await tester.pumpAndSettle();
+    expect(find.text('12.345'), findsOneWidget);
+    expect(find.text('1000'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'NaN');
+    await tester.tap(find.text('填好了'));
+    await tester.pump();
+    expect(find.text('这一项要填'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, '1e999');
+    await tester.tap(find.text('填好了'));
+    await tester.pump();
+    expect(asked, isEmpty);
+    await tester.enterText(find.byType(TextField).last, '0.5');
+    await tester.tap(find.text('填好了'));
+    await tester.pump();
+    expect(asked, ['甲：12.345\n乙：1000\n丙：0.5']);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a slider with huge steps stores its end value without throwing', (tester) async {
+    final c = container();
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "id": "big", "state": {"n": 0}, "children": [{"component": "slider", "bind": "n", "label": "大", "min": 0, "max": 1e308, "step": 1e308}]}'''), container: c));
+    await tester.pumpAndSettle();
+    final slider = find.byType(Slider);
+    await tester.tapAt(tester.getTopRight(slider) + const Offset(-2, 10));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(c.read(uiBlockStateProvider(_conversation))['m1/big']!.state, {'n': 1e308});
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('broken bound formulas and infinite numbers render without throwing', (tester) async {
+    await tester.pumpWidget(_host(_block('''
+{"component": "panel", "computed": {"x": "missing"}, "children": [
+  {"component": "input", "bind": "x", "label": "坏"},
+  {"component": "input", "type": "number", "value": "{1/0}", "label": "无穷"}]}''')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(TextField), findsNWidgets(2));
+  });
+
+  testWidgets('an edited block with a new id starts from fresh answers', (tester) async {
+    const form = '{"component": "form", "id": "ID", "fields": [{"key": "a", "label": "甲"}]}';
+    await tester.pumpWidget(_host(_block(form.replaceFirst('ID', 'one'))));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '旧答案');
+    await tester.pump();
+    await tester.pumpWidget(_host(_block(form.replaceFirst('ID', 'two'))));
+    await tester.pumpAndSettle();
+    expect(find.text('旧答案'), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('blocks wait for stored answers before taking input', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      '${UiBlockStateNotifier.prefsPrefix}$_conversation': jsonEncode({
+        'm1/stored': {
+          'state': {'values': {'a': '旧甲', 'b': '旧乙'}},
+        },
+      }),
+    });
+    await tester.pumpWidget(_host(_block('''
+{"component": "form", "id": "stored", "fields": [{"key": "a", "label": "甲"}, {"key": "b", "label": "乙"}]}''')));
+    expect(find.byType(AbsorbPointer).evaluate().any((e) => (e.widget as AbsorbPointer).absorbing), isTrue);
+    // Keyboard focus is held off too, not only taps.
+    final editable = tester.widget<EditableText>(find.byType(EditableText).first);
+    editable.focusNode.requestFocus();
+    await tester.pump(Duration.zero);
+    expect(editable.focusNode.hasFocus, isFalse);
+    await tester.pumpAndSettle();
+    expect(find.text('旧甲'), findsOneWidget);
+    expect(find.text('旧乙'), findsOneWidget);
+  });
+
   testWidgets('long options get full rows instead of cut chips', (tester) async {
     await tester.pumpWidget(_host(_block('''
 {"component": "decision-tree", "nodes": [
@@ -358,7 +576,7 @@ void main() {
   testWidgets('open fence shows a placeholder; broken JSON falls back', (tester) async {
     await tester.pumpWidget(_host(Column(children: [
       _block('{"component": "checklist", "items": [', closed: false),
-      _block('{"component": "checklist", "items": ['),
+      _block('{"component": "checklist", "items": ["cut off'),
       _block('{"component": "rocket"}'),
     ])));
     await tester.pump();
@@ -368,6 +586,44 @@ void main() {
     await tester.tap(find.text('查看原文').first);
     await tester.pump();
     expect(find.byType(MoeCodeBlock), findsOneWidget);
+  });
+
+  testWidgets('raw fallback wraps to the card width', (tester) async {
+    tester.view.physicalSize = const Size(375, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final long = '{"component": "rocket", "text": "${'很长的一行原文' * 40}"}';
+    for (final document in [false, true]) {
+      await tester.pumpWidget(_host(
+        MessageBubble(
+          isMe: false,
+          message: Message(
+            id: 'raw-long-$document',
+            role: 'assistant',
+            content: '```aicove-ui\n$long\n```',
+            createdAt: DateTime(2026, 10, 21),
+          ),
+          documentStyle: document,
+        ),
+        width: 375,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('查看原文'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: 'document=$document');
+      final box = tester.getRect(find.byType(MoeCodeBlock));
+      expect(box.right, lessThanOrEqualTo(375), reason: 'document=$document');
+      final frame = tester.getRect(find.byType(UiBlockFrame));
+      expect(box.right, lessThanOrEqualTo(frame.right), reason: 'document=$document');
+      expect(
+        find.descendant(of: find.byType(MoeCodeBlock), matching: find.byType(SingleChildScrollView)),
+        findsNothing,
+        reason: 'document=$document',
+      );
+      final text = tester.getRect(find.descendant(of: find.byType(MoeCodeBlock), matching: find.byType(RichText)).last);
+      expect(text.right, lessThanOrEqualTo(box.right), reason: 'document=$document');
+      expect(text.height, greaterThan(100), reason: 'document=$document');
+    }
   });
 
   testWidgets('bubbles render blocks for the assistant, code for the user', (tester) async {

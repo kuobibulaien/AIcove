@@ -70,6 +70,10 @@ class ImageGenerationSnapshot {
     'comfyWorkflow',
     'comfyBindings',
     'comfyOutputNode',
+    'comfyLoraName',
+    'comfyLoraStrength',
+    'comfySampler',
+    'comfyScheduler',
   };
 
   static ImageGenerationSnapshot? tryRead(Object? value) {
@@ -80,10 +84,24 @@ class ImageGenerationSnapshot {
       );
       if (extra.keys.any((key) => !_parameterKeys.contains(key))) return null;
       if (value['requestProvider'] == 'comfyui') {
-        if (_containsCredentialField(extra['comfyWorkflow'])) {
-          return null;
+        if (ComfyUIWorkflow.hasCustomWorkflow(extra)) {
+          final graph = ComfyUIWorkflow.parse(extra['comfyWorkflow']);
+          if (_containsCredentialField(graph)) {
+            return null;
+          }
+          extra[ComfyUIWorkflow.workflowKey] = graph;
+          ComfyUIWorkflow.validate(extra);
+        } else {
+          final modelId = value['modelId']?.toString().trim() ?? '';
+          if (modelId.isEmpty || modelId == ComfyUIWorkflow.modelId) {
+            return null;
+          }
+          // Missing fields in legacy snapshots mean no LoRA / default strength,
+          // never inheritance from the channel at replay time.
+          extra[ComfyUIWorkflow.loraNameKey] =
+              extra[ComfyUIWorkflow.loraNameKey]?.toString().trim();
+          extra[ComfyUIWorkflow.loraStrengthKey] ??= 1.0;
         }
-        ComfyUIWorkflow.validate(extra);
       } else if (extra.keys.any((key) => key.startsWith('comfy'))) {
         return null;
       }

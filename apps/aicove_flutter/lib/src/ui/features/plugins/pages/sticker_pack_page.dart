@@ -9,7 +9,6 @@ import '../../../../ui/theme/tokens.dart';
 import 'sticker_settings_page.dart';
 
 /// 单个表情套组：启停、改名、删除，浏览／添加／批量删除表情。
-/// 内置套组只能启停。
 class StickerPackPage extends ConsumerStatefulWidget {
   const StickerPackPage({super.key, required this.packId});
 
@@ -56,7 +55,7 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
               enabled: selected.isNotEmpty,
               onTap: () => _deleteSelected(selected),
             )
-          else if (!pack.builtin) ...[
+          else ...[
             MoeIconButton(
               icon: Icons.add_rounded,
               semanticLabel: '添加表情',
@@ -78,19 +77,32 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
               child: Padding(
                 padding: moeUnderBarPadding(
                   context,
-                  const EdgeInsets.only(top: 8),
+                  const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 ),
                 child: MoeSettingsGroup(
                   children: [
                     MoeSettingsRow(
                       label: '让 AI 使用这个套组',
-                      subtitle: pack.builtin ? '内置套组只能启停，不能编辑' : null,
                       trailingType: MoeSettingsRowTrailing.switchControl,
                       switchValue: pack.enabled,
                       onSwitchChanged: (value) =>
                           _notifier.setPackEnabled(pack.id, value),
-                      showDivider: false,
+                      showDivider: pack.author.isNotEmpty,
                     ),
+                    if (pack.author.isNotEmpty)
+                      MoeSettingsRow(
+                        label: '原作者',
+                        // 只读信息：用自定义尾部避免文字模式自带的箭头
+                        trailingType: MoeSettingsRowTrailing.custom,
+                        trailing: Text(
+                          pack.author,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: context.moeColors.muted,
+                          ),
+                        ),
+                        showDivider: false,
+                      ),
                   ],
                 ),
               ),
@@ -101,17 +113,17 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
                 child: MoeEmptyState(
                   icon: Icons.emoji_emotions_outlined,
                   title: '这个套组还是空的',
-                  description: '点右上角 + 选择图片或 ZIP 导入。',
+                  description: '点右上角 + 导入图片或 ZIP',
                 ),
               ),
             if (untagged.isNotEmpty) ...[
               SliverToBoxAdapter(
                 child: StickerSectionHeader(
-                  title: '未标注（AI 不会使用）',
+                  title: '未标注',
                   count: untagged.length,
                 ),
               ),
-              _grid(untagged, pack),
+              _grid(untagged),
             ],
             if (tagged.isNotEmpty) ...[
               SliverToBoxAdapter(
@@ -120,7 +132,7 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
                   count: tagged.length,
                 ),
               ),
-              _grid(tagged, pack),
+              _grid(tagged),
             ],
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
           ],
@@ -129,7 +141,7 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
     );
   }
 
-  Widget _grid(List<Sticker> stickers, StickerPack pack) => StickerGrid(
+  Widget _grid(List<Sticker> stickers) => StickerGrid(
     stickers: stickers,
     selected: _selected,
     onTap: (sticker) {
@@ -140,7 +152,7 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
         });
         return;
       }
-      showStickerDetailSheet(context, ref, sticker, readOnly: pack.builtin);
+      showStickerDetailSheet(context, ref, sticker);
     },
   );
 
@@ -191,7 +203,7 @@ class _StickerPackPageState extends ConsumerState<StickerPackPage> {
     final confirmed = await showMeoTalkDialog(
       context: context,
       title: '删除套组「${pack.name}」？',
-      content: Text('将删除其中 ${pack.stickers.length} 张表情；已发出的表情在聊天记录里仍会保留。'),
+      content: Text('将删除其中 ${pack.stickers.length} 张表情。'),
       confirmText: '删除',
       isDanger: true,
     );

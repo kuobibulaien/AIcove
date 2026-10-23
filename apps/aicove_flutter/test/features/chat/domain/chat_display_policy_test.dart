@@ -1,5 +1,7 @@
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
+import 'package:aicove_flutter/src/features/assistant/domain/assistant_onboarding.dart';
 import 'package:aicove_flutter/src/features/chat/domain/chat_display_policy.dart';
+import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -62,5 +64,23 @@ void main() {
     expect(ChatDisplayStyle.fromValue('document'), ChatDisplayStyle.document);
     expect(ChatDisplayStyle.fromValue('weird'), isNull);
     expect(ChatDisplayStyle.fromValue(null), isNull);
+  });
+
+  test('AIcove assistant defaults to document unless overridden', () {
+    Conversation conv(String id, [ChatDisplayStyle? style]) => Conversation(
+          id: id,
+          title: id,
+          displayName: id,
+          createdAt: DateTime(2026),
+          updatedAt: DateTime(2026),
+          chatDisplayStyle: style,
+        );
+    expect(conv(kAicoveAssistantId).effectiveDisplayStyle,
+        ChatDisplayStyle.document);
+    expect(
+      conv(kAicoveAssistantId, ChatDisplayStyle.bubble).effectiveDisplayStyle,
+      ChatDisplayStyle.bubble,
+    );
+    expect(conv('someone').effectiveDisplayStyle, isNull);
   });
 }

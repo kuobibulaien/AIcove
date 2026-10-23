@@ -138,7 +138,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
           ChatWallpaperLayer(
             image: conv.chatBackgroundImage,
             fallbackColor: fallback,
-            style: chatWallpaperStyleOf(conv).copyWith(mask: 0),
+            style: resolveChatWallpaperStyle(context, conv).copyWith(mask: 0),
           ),
           DecoratedBox(
             decoration: BoxDecoration(

@@ -63,7 +63,7 @@ class McpConnectorsPage extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Text(
-                  '添加后需在角色的「管理开启的插件」里单独开启。',
+                  '添加后需在角色的「管理插件」里单独开启。',
                   style: TextStyle(
                     color: colors.textSecondary,
                     fontSize: 13,

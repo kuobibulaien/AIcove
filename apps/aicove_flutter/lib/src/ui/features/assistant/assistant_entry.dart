@@ -26,10 +26,14 @@ Future<void> openAssistantChat(
 
 /// First launch without a usable model: open the script once by itself.
 Future<void> maybeAutoOpenAssistant(BuildContext context, WidgetRef ref) async {
+  // `ref` belongs to the calling widget and throws once it is disposed, so
+  // check after every wait.
   final onboarding = await ref.read(assistantOnboardingProvider.future);
-  if (!onboarding.isPending || onboarding.autoOpened) return;
+  if (!onboarding.isPending || onboarding.autoOpened || !context.mounted) {
+    return;
+  }
   final settings = await ref.read(appSettingsProvider.future);
-  if (hasUsableChatModel(settings)) return;
+  if (hasUsableChatModel(settings) || !context.mounted) return;
   await ref.read(assistantOnboardingProvider.notifier).markAutoOpened();
   if (context.mounted) await openAssistantChat(context, ref);
 }

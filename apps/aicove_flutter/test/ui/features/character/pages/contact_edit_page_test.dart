@@ -61,7 +61,7 @@ void main() {
     expect(find.text('正在准备编辑界面'), findsNothing);
     expect(find.text('角色描述'), findsNothing);
     expect(find.text('壁纸'), findsNothing);
-    expect(find.text('已开启插件'), findsOneWidget);
+    expect(find.text('管理插件'), findsOneWidget);
   });
 
   testWidgets('角色编辑页命中持久快照后首帧直接显示完整表单', (tester) async {
@@ -91,12 +91,12 @@ void main() {
     expect(find.text('角色描述'), findsNothing);
     expect(_headerNameField(), findsOneWidget);
     expect(find.text('壁纸'), findsNothing);
-    expect(find.text('已开启插件'), findsOneWidget);
+    expect(find.text('管理插件'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('角色卡信息'));
-    await tester.tap(find.text('角色卡信息'));
-    await tester.pumpAndSettle();
-    expect(find.text('温柔，聪明，善于倾听。'), findsOneWidget);
+    // 角色提示词是单行入口，不显示内容摘要，也不再折叠。
+    await tester.ensureVisible(find.text('角色提示词'));
+    expect(find.text('角色卡信息'), findsNothing);
+    expect(find.text('温柔，聪明，善于倾听。'), findsNothing);
   });
 
   testWidgets('切换酒馆预设后无需确认即可自动保存', (tester) async {
@@ -127,11 +127,12 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.scrollUntilVisible(
-      find.text('跟随默认 · 空预设'),
+      find.byKey(const ValueKey('enabled-plugin-tavern')),
       500,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('跟随默认 · 空预设'));
+    // 跟随默认时行尾不写字，点整行打开选择。
+    await tester.tap(find.byKey(const ValueKey('enabled-plugin-tavern')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('酒馆测试预设'));
     await tester.pumpAndSettle();
@@ -175,11 +176,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('跟随默认 · 空预设'),
+      find.byKey(const ValueKey('enabled-plugin-tavern')),
       500,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.text('跟随默认 · 空预设'));
+    // 跟随默认时行尾不写字，点整行打开选择。
+    await tester.tap(find.byKey(const ValueKey('enabled-plugin-tavern')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('酒馆测试预设'));
     await tester.pump(const Duration(milliseconds: 500));

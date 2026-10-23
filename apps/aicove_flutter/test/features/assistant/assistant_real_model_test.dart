@@ -3,6 +3,9 @@
 // answering. T3: asked to change a role, it writes through the review gate,
 // and the reviewer turns down a rewrite nobody asked for. DeepSeek Flash;
 // skipped unless DEEPSEEK_API_KEY is set.
+@Tags(['real_model'])
+library;
+
 import 'dart:io';
 
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
@@ -11,7 +14,10 @@ import 'package:aicove_flutter/src/features/agent_plugins/tool_policy.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/agent_runtime_contracts.dart'
     show AgentToolAuthorization;
 import 'package:aicove_flutter/src/features/assistant/application/assistant_cards.dart';
+import 'package:aicove_flutter/src/features/assistant/application/assistant_provider_tools.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_review.dart';
+import 'package:aicove_flutter/src/features/assistant/application/assistant_role_tools.dart';
+import 'package:aicove_flutter/src/features/assistant/application/assistant_tool_group.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_settings_tools.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_write_tools.dart';
 
@@ -51,13 +57,12 @@ ApiConfig _deepSeek(
 );
 
 Future<String> _complete(List<Map<String, dynamic>> messages) async =>
-    (await createApiRunner(useKernel: true).executeApiCall(
+    (await createApiRunner().executeApiCall(
       config: _deepSeek(messages),
       sessionId: 'review',
       userText: null,
       turnId: 'review',
       responseProcessors: const [],
-      maxRounds: 1,
     )).replyText;
 
 class _Settings extends AppSettingsNotifier {
@@ -66,6 +71,9 @@ class _Settings extends AppSettingsNotifier {
 
   @override
   Future<AppSettings> build() async => initial;
+
+  @override
+  Future<AppSettings> readStored() async => state.requireValue;
 
   @override
   Future<void> setDarkModeAndSystemTheme({
@@ -121,6 +129,13 @@ class _Roles implements AssistantRoleStore {
             addressUser: fields.containsKey(RoleField.addressUser)
                 ? fields[RoleField.addressUser] as String?
                 : role.addressUser,
+            thinkingLevels: fields.containsKey(RoleField.thinkingLevels)
+                ? {
+                    for (final e
+                        in (fields[RoleField.thinkingLevels]! as Map).entries)
+                      '${e.key}': ThinkingLevel.values.byName('${e.value}'),
+                  }
+                : role.thinkingLevels,
             personaPrompt: fields.containsKey(RoleField.personaPrompt)
                 ? PersonaPromptCodec.compose(
                     userPrompt: fields[RoleField.personaPrompt]! as String,
@@ -185,7 +200,7 @@ void main() {
       final system =
           '$persona\n\n${await scope.prompt(const PluginRequestContext(userMessage: '', supportsToolCalling: true))}';
       const ask = '我的小雪怎么从来不给我画画？';
-      final result = await createApiRunner(useKernel: true).executeApiCall(
+      final result = await createApiRunner().executeApiCall(
         config: ApiConfig(
           settings: mapUiModelsToAppSettings({}),
           modelFullId: 'openai:deepseek-flash',
@@ -205,7 +220,6 @@ void main() {
         turnId: 'run1',
         responseProcessors: const [],
         availableTools: scope.tools(),
-        maxRounds: 6,
       );
       final reply = result.replyText.trim();
       // ignore: avoid_print
@@ -222,7 +236,7 @@ void main() {
   );
 
   test(
-    'asked to change a role, the assistant writes it through the reviewer',
+    'asked to change a role, the assistant writes without review or approval',
     () async {
       final dir = await Directory.systemTemp.createTemp('assistant_real_');
       addTearDown(() => dir.delete(recursive: true));
@@ -291,7 +305,7 @@ void main() {
       ).readAsStringSync();
       final system =
           '$persona\n\n${await scope.prompt(const PluginRequestContext(userMessage: '', supportsToolCalling: true))}';
-      final result = await createApiRunner(useKernel: true).executeApiCall(
+      final result = await createApiRunner().executeApiCall(
         config: _deepSeek(
           [
             {'role': 'system', 'content': system},
@@ -305,7 +319,6 @@ void main() {
         turnId: 'run2',
         responseProcessors: const [],
         availableTools: scope.tools(),
-        maxRounds: 6,
       );
       // ignore: avoid_print
       print(
@@ -316,7 +329,7 @@ void main() {
         result.toolCalls.map((c) => c.name),
         contains(AssistantWriteTools.updateRole),
       );
-      expect(reviewed, isNotEmpty);
+      expect(reviewed, isEmpty);
       expect(askedUser, isEmpty);
       expect(roles.roles.single.addressUser, '学长');
     },
@@ -377,7 +390,6 @@ void main() {
         file: () async => File('${dir.path}/journal.json'),
         appliers: {
           assistantSettingChangeKind: AssistantSettingApplier(
-            load: load,
             notifier: notifier,
           ),
         },
@@ -429,7 +441,7 @@ void main() {
       ).readAsStringSync();
       final system =
           '$persona\n\n${await scope.prompt(const PluginRequestContext(userMessage: '', supportsToolCalling: true))}';
-      final result = await createApiRunner(useKernel: true).executeApiCall(
+      final result = await createApiRunner().executeApiCall(
         config: _deepSeek(
           [
             {'role': 'system', 'content': system},
@@ -441,7 +453,7 @@ void main() {
             customGate: AssistantToolGate(riskOf),
             approvals: AssistantApprovalPort(
               riskOf: riskOf,
-              describe: (name, args) => settingsTools.describe(args),
+              describe: (name, args) => settingsTools.describe(name, args),
               toolDescription: (name) => name,
               userMessages: const [ask],
               review: AssistantReviewer(_complete).review,
@@ -457,7 +469,6 @@ void main() {
         turnId: 'run3',
         responseProcessors: const [],
         availableTools: scope.tools(),
-        maxRounds: 6,
       );
       final reply = result.replyText.trim();
       // ignore: avoid_print
@@ -475,6 +486,152 @@ void main() {
       );
       expect(askedUser, isEmpty);
       expect(reply, isNot(contains('sk-real')));
+    },
+    skip: _apiKey == null ? '需要 DEEPSEEK_API_KEY' : false,
+    timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  test(
+    'asked to connect a channel and tune a role, it uses the new tools',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('assistant_real_');
+      addTearDown(() => dir.delete(recursive: true));
+      final container = ProviderContainer(
+        overrides: [
+          appSettingsProvider.overrideWith(
+            () => _Settings(
+              settingsWith([
+                deepSeek(keys: const ['sk-real']),
+              ], 'deepseek:deepseek-flash'),
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await container.read(appSettingsProvider.future);
+      Future<AppSettings> load() => container.read(appSettingsProvider.future);
+      final roles = _Roles([
+        Conversation(
+          id: 'role_xue',
+          title: '小雪',
+          displayName: '小雪',
+          personaPrompt: PersonaPromptCodec.compose(userPrompt: '你是小雪。'),
+          createdAt: _now,
+          updatedAt: _now,
+        ),
+      ]);
+      final presets = SillyTavernPresetStore(
+        documentsDirectoryResolver: () async => dir,
+      );
+      final journal = FileChangeJournal(
+        file: () async => File('${dir.path}/journal.json'),
+        appliers: assistantChangeAppliers(roles: roles, presets: presets),
+      );
+      final writes = AssistantWriteTools(
+        roles: roles,
+        presets: presets,
+        journal: journal,
+      );
+      final cards = () => container.read(assistantCardsProvider.notifier);
+      final groups = <AssistantToolGroup>[
+        AssistantProviderTools(
+          current: () => container.read(appSettingsProvider).valueOrNull,
+          load: load,
+          notifier: () => container.read(appSettingsProvider.notifier),
+          journal: journal,
+          cards: cards,
+          primaryKey: (p) => p.apiKeys.firstOrNull ?? '',
+          testModel: (_, _) async => 'ok',
+        ),
+        AssistantRoleTools(
+          writes: writes,
+          roles: roles.load,
+          rolesNow: roles.snapshot,
+          settings: load,
+          voices: () => const [],
+          cards: cards,
+          deleteRole: (_) async {},
+          clearChat: (_) async {},
+        ),
+      ];
+      final toolset = AssistantToolset(
+        roles: roles.load,
+        presets: () async => const [],
+        previewContext: (_) => throw UnimplementedError(),
+        readDoc: (id) async =>
+            File('assets/aicove_docs/$id.md').readAsStringSync(),
+      );
+      final scope = AssistantRequestScope(
+        toolset,
+        writes: writes,
+        cards: AssistantCardTools(
+          settings: load,
+          cards: cards,
+          roleExists: (_) async => true,
+          presetExists: (_) async => false,
+        ),
+        groups: groups,
+        supportsTools: true,
+      );
+      final riskOf = AssistantRequestScope.riskOf(
+        toolset,
+        writes,
+        groups: groups,
+      );
+      final askedUser = <String>[];
+      const ask =
+          '帮我把硅基流动接上，地址是 https://api.siliconflow.cn/v1。'
+          '还有，小雪回复太敷衍了，把她的思考档位调到 high。';
+      final persona = File(
+        'assets/characters/prompts/aicove_assistant.md',
+      ).readAsStringSync();
+      final system =
+          '$persona\n\n${await scope.prompt(const PluginRequestContext(userMessage: '', supportsToolCalling: true))}';
+      final result = await createApiRunner().executeApiCall(
+        config: _deepSeek(
+          [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': ask},
+          ],
+          tools: scope.tools(),
+          policy: AgentToolPolicy(
+            authorization: AgentToolAuthorization.manual,
+            customGate: AssistantToolGate(riskOf),
+            approvals: AssistantApprovalPort(
+              riskOf: riskOf,
+              describe: (name, args) =>
+                  groups.ownerOf(name)?.describe(name, args) ??
+                  writes.describe(name, args),
+              toolDescription: (name) => name,
+              userMessages: const [ask],
+              review: AssistantReviewer(_complete).review,
+              askUser: (prompt, _) async {
+                askedUser.add(prompt.title);
+                return false;
+              },
+            ),
+          ),
+        ),
+        sessionId: 'assistant',
+        userText: ask,
+        turnId: 'run4',
+        responseProcessors: const [],
+        availableTools: scope.tools(),
+      );
+      final reply = result.replyText.trim();
+      // ignore: avoid_print
+      print('工具：${result.toolCalls.map((c) => c.name).toList()}\n回复：$reply');
+      final draft = container
+          .read(assistantCardsProvider)
+          .whereType<AssistantKeyRequest>()
+          .single
+          .draft;
+      expect(draft?.baseUrl, contains('siliconflow'));
+      expect(
+        roles.roles.single.thinkingLevels['deepseek:deepseek-flash'],
+        ThinkingLevel.high,
+      );
+      expect(askedUser, isEmpty);
     },
     skip: _apiKey == null ? '需要 DEEPSEEK_API_KEY' : false,
     timeout: const Timeout(Duration(minutes: 3)),

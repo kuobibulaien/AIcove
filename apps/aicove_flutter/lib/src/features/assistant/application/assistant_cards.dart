@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../settings/app_settings.dart';
 import '../domain/assistant_onboarding.dart' show providerHasApiKey;
+import 'assistant_provider_tools.dart' show ProviderDraft;
 
 /// A card the assistant puts above the composer of its chat, for the user to
 /// act on whenever they like (ADR0073, batch T3b). Tools that add one return
@@ -27,11 +28,41 @@ class AssistantPageLink extends AssistantCard {
 
 /// An API key input for one channel. The key goes from the field straight to
 /// the channel settings; the model only learns that the card was shown.
+/// With a [draft], saving creates that channel instead.
 class AssistantKeyRequest extends AssistantCard {
-  const AssistantKeyRequest(super.id, this.providerId, this.providerName);
+  const AssistantKeyRequest(
+    super.id,
+    this.providerId,
+    this.providerName, {
+    this.draft,
+  });
 
   final String providerId;
   final String providerName;
+  final ProviderDraft? draft;
+}
+
+/// A button that lets the user pick one of their own images for a role's
+/// [slot] (`avatar`, `portrait` or `wallpaper`).
+class AssistantImagePick extends AssistantCard {
+  const AssistantImagePick(super.id, this.roleId, this.roleName, this.slot);
+
+  final String roleId;
+  final String roleName;
+  final String slot;
+}
+
+/// A button to the new-role page that starts importing a character card,
+/// from [url] when given, else from a file the user picks.
+class AssistantRoleImport extends AssistantCard {
+  const AssistantRoleImport(super.id, {this.url});
+
+  final String? url;
+}
+
+/// A button that lets the user pick a tavern preset file to import.
+class AssistantPresetImport extends AssistantCard {
+  const AssistantPresetImport(super.id);
 }
 
 /// Pages the assistant can link to, with what the target id names.
@@ -43,8 +74,19 @@ const kAssistantPages = <String, ({String label, String? needs})>{
   'plugins': (label: '设置 · 插件', needs: null),
   'profile': (label: '个人资料', needs: null),
   'role_edit': (label: '角色编辑', needs: 'role'),
-  'role_context': (label: '联系人上下文', needs: 'role'),
+  'role_context': (label: '角色完整上下文', needs: 'role'),
   'preset': (label: '酒馆预设详情', needs: 'preset'),
+  'tavern': (label: '酒馆兼容', needs: null),
+  'voice': (label: '语音设置', needs: null),
+  'drawing': (label: '绘图设置', needs: null),
+  'stickers': (label: '表情包', needs: null),
+  'web_search': (label: '联网搜索', needs: null),
+  'time_awareness': (label: '时间感知', needs: null),
+  'mcp': (label: 'MCP 连接器', needs: null),
+  'auto_reply': (label: '主动关怀', needs: null),
+  'backup': (label: '同步与备份', needs: null),
+  'lan_sync': (label: '局域网同步', needs: null),
+  'account': (label: '账号', needs: null),
 };
 
 class AssistantCardsNotifier extends Notifier<List<AssistantCard>> {
@@ -72,6 +114,44 @@ class AssistantCardsNotifier extends Notifier<List<AssistantCard>> {
       for (final card in state)
         if (card is! AssistantKeyRequest || card.providerId != providerId) card,
       AssistantKeyRequest(_nextId(), providerId, providerName),
+    ];
+  }
+
+  void requestNewProvider(ProviderDraft draft) {
+    final name = draft.displayName ?? draft.baseUrl;
+    state = [
+      for (final card in state)
+        if (card is! AssistantKeyRequest ||
+            card.draft?.baseUrl != draft.baseUrl)
+          card,
+      AssistantKeyRequest(_nextId(), '', name, draft: draft),
+    ];
+  }
+
+  void pickRoleImage(String roleId, String roleName, String slot) {
+    state = [
+      for (final card in state)
+        if (card is! AssistantImagePick ||
+            card.roleId != roleId ||
+            card.slot != slot)
+          card,
+      AssistantImagePick(_nextId(), roleId, roleName, slot),
+    ];
+  }
+
+  void importRoleCard(String? url) {
+    state = [
+      for (final card in state)
+        if (card is! AssistantRoleImport) card,
+      AssistantRoleImport(_nextId(), url: url),
+    ];
+  }
+
+  void importPreset() {
+    state = [
+      for (final card in state)
+        if (card is! AssistantPresetImport) card,
+      AssistantPresetImport(_nextId()),
     ];
   }
 

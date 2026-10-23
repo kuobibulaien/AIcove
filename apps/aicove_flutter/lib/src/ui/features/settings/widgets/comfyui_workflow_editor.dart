@@ -6,22 +6,15 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../shared/widgets/index.dart';
-import '../../../theme/tokens.dart';
 
 Future<Map<String, dynamic>?> showComfyUIWorkflowEditor(
   BuildContext context,
   Map<String, dynamic> config,
 ) => showDialog<Map<String, dynamic>>(
   context: context,
-  builder: (context) => Dialog(
-    backgroundColor: Colors.transparent,
-    insetPadding: const EdgeInsets.all(16),
-    child: SizedBox(
-      width: 640,
-      height: MediaQuery.sizeOf(context).height * .85,
-      child: ComfyUIWorkflowEditor(config: config),
-    ),
-  ),
+  useRootNavigator: false,
+  barrierColor: Colors.transparent,
+  builder: (context) => ComfyUIWorkflowEditor(config: config),
 );
 
 class ComfyUIWorkflowEditor extends StatefulWidget {
@@ -63,14 +56,20 @@ class _ComfyUIWorkflowEditorState extends State<ComfyUIWorkflowEditor> {
     super.dispose();
   }
 
-  void _parse() {
+  void _parse({bool reInfer = false}) {
     try {
       final graph = ComfyUIWorkflow.parse(_json.text);
       final choices = ComfyUIWorkflow.inputChoices(graph);
       setState(() {
         _graph = graph;
-        _bindings.removeWhere((key, value) => !choices.containsKey(value));
-        if (!graph.containsKey(_output)) _output = '';
+        if (reInfer) {
+          final inferred = ComfyUIWorkflow.inferBindings(graph);
+          _bindings = Map<String, String>.from(inferred.bindings);
+          _output = inferred.outputNode;
+        } else {
+          _bindings.removeWhere((key, value) => !choices.containsKey(value));
+          if (!graph.containsKey(_output)) _output = '';
+        }
         _error = null;
       });
     } catch (error) {
@@ -93,16 +92,18 @@ class _ComfyUIWorkflowEditorState extends State<ComfyUIWorkflowEditor> {
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       if (!mounted) return;
       _json.text = utf8.decode(bytes);
-      _bindings.clear();
-      _output = '';
-      _parse();
+      _parse(reInfer: true);
     } catch (error) {
       if (mounted) setState(() => _error = '导入失败：$error');
     }
   }
 
   void _save() {
-    _parse();
+    if (_graph == null) {
+      _parse(reInfer: _bindings.isEmpty);
+    } else {
+      _parse();
+    }
     if (_graph == null) return;
     final config = <String, dynamic>{
       ComfyUIWorkflow.workflowKey: _graph,
@@ -119,140 +120,108 @@ class _ComfyUIWorkflowEditorState extends State<ComfyUIWorkflowEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
     final choices = _graph == null
         ? <String, String>{}
         : ComfyUIWorkflow.inputChoices(_graph!);
-    return MoeFloatingSurface(
-      radius: 20,
-      child: Column(
+    return MeoTalkDialog(
+      title: 'ComfyUI 工作流',
+      confirmText: '保存工作流',
+      onCancel: () => Navigator.of(context).pop(),
+      onConfirm: _save,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'ComfyUI 工作流',
-                    style: TextStyle(fontSize: 18, color: colors.text),
-                  ),
-                ),
-                IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
+          const Text(
+            '从 ComfyUI 导出 API 格式 JSON，导入后会自动识别各参数对应的节点。基础模型、采样器等绑定后跟随预设设置；未绑定的参数沿用工作流原值。',
           ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    '从 ComfyUI 导出 API 格式 JSON。选择接收提示词的节点输入；未绑定的参数沿用工作流原值。',
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      IntrinsicWidth(
-                        child: MoeSecondaryButton(
-                          label: '导入 JSON 文件',
-                          icon: Icons.file_open_outlined,
-                          size: MoeSecondaryButtonSize.sm,
-                          onPressed: _import,
-                        ),
-                      ),
-                      IntrinsicWidth(
-                        child: MoeSecondaryButton(
-                          label: '解析粘贴内容',
-                          size: MoeSecondaryButtonSize.sm,
-                          onPressed: _parse,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('comfy-workflow-json'),
-                    controller: _json,
-                    minLines: 4,
-                    maxLines: 7,
-                    decoration: const MoeInputDecoration(
-                      hintText: '在此粘贴 API 工作流 JSON',
-                    ),
-                    onChanged: (_) {
-                      if (_graph != null) setState(() => _graph = null);
-                    },
-                  ),
-                  if (_graph != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      '参数绑定 · ${_graph!.length} 个节点',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    for (final field in ComfyUIWorkflow.fieldLabels.entries)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: _dropdown(
-                          label: field.value,
-                          value: _bindings[field.key] ?? '',
-                          choices: choices,
-                          emptyLabel: field.key == 'prompt'
-                              ? '请选择（已使用 %prompt% 可留空）'
-                              : '沿用工作流',
-                          onChanged: (value) => setState(() {
-                            if (value.isEmpty) {
-                              _bindings.remove(field.key);
-                            } else {
-                              _bindings[field.key] = value;
-                            }
-                          }),
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    _dropdown(
-                      label: '图片输出节点',
-                      value: _output,
-                      choices: {
-                        for (final entry in _graph!.entries)
-                          entry.key:
-                              '${entry.key} · ${(entry.value as Map)['class_type']}',
-                      },
-                      emptyLabel: '自动读取保存的图片',
-                      onChanged: (value) => setState(() => _output = value),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      '也支持 %prompt%、%negative_prompt%、%seed%、%width%、%height% 等占位符。工作流需包含保存图片的输出节点。',
-                    ),
-                  ],
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ),
-                ],
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              IntrinsicWidth(
+                child: MoeSecondaryButton(
+                  label: '导入 JSON 文件',
+                  icon: Icons.file_open_outlined,
+                  size: MoeSecondaryButtonSize.sm,
+                  onPressed: _import,
+                ),
+              ),
+              IntrinsicWidth(
+                child: MoeSecondaryButton(
+                  label: '解析粘贴内容',
+                  size: MoeSecondaryButtonSize.sm,
+                  onPressed: () => _parse(reInfer: true),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('comfy-workflow-json'),
+            controller: _json,
+            minLines: 4,
+            maxLines: 7,
+            decoration: const MoeInputDecoration(
+              hintText: '在此粘贴 API 工作流 JSON',
+            ),
+            onChanged: (_) {
+              if (_graph != null) setState(() => _graph = null);
+            },
+          ),
+          if (_graph != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              '参数绑定 · ${_graph!.length} 个节点',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            for (final field in ComfyUIWorkflow.fieldLabels.entries)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _dropdown(
+                  label: field.value,
+                  value: _bindings[field.key] ?? '',
+                  choices: choices,
+                  emptyLabel: field.key == 'prompt'
+                      ? '请选择（已使用 %prompt% 可留空）'
+                      : '沿用工作流',
+                  onChanged: (value) => setState(() {
+                    if (value.isEmpty) {
+                      _bindings.remove(field.key);
+                    } else {
+                      _bindings[field.key] = value;
+                    }
+                  }),
+                ),
+              ),
+            const SizedBox(height: 12),
+            _dropdown(
+              label: '图片输出节点',
+              value: _output,
+              choices: {
+                for (final entry in _graph!.entries)
+                  entry.key:
+                      '${entry.key} · ${(entry.value as Map)['class_type']}',
+              },
+              emptyLabel: '自动读取保存的图片',
+              onChanged: (value) => setState(() => _output = value),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '也支持 %prompt%、%negative_prompt%、%seed%、%width%、%height%、%scheduler%、%model%（兼容 %MODEL_NAME%）等占位符（如 CLIPTextEncodeSDXL 双输入节点可在 text_g 与 text_l 中同时填写 %prompt%）。工作流需包含保存图片的输出节点。',
+            ),
+          ],
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                _error!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: MoePrimaryButton(
-              label: '保存工作流',
-              width: double.infinity,
-              onPressed: _save,
-            ),
-          ),
         ],
       ),
     );

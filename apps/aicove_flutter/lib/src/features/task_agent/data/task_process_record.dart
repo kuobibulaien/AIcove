@@ -25,6 +25,9 @@ class TaskProcessRecord {
       transcript: json['transcript'] as String,
       lastLog: json['last_log'] as String? ?? '',
       question: json['question'] as String?,
+      messages: (json['messages'] as List?)
+          ?.map((m) => Map<String, dynamic>.from(m as Map))
+          .toList(),
     );
   }
 
@@ -37,6 +40,7 @@ class TaskProcessRecord {
         'transcript': checkpoint.transcript,
         'last_log': checkpoint.lastLog,
         if (checkpoint.question != null) 'question': checkpoint.question,
+        if (checkpoint.messages != null) 'messages': checkpoint.messages,
       }),
       flush: true,
     );
@@ -64,6 +68,7 @@ class TaskCheckpoint {
     required this.transcript,
     this.lastLog = '',
     this.question,
+    this.messages,
   });
 
   /// What the next run receives as its brief.
@@ -74,4 +79,17 @@ class TaskCheckpoint {
 
   /// The open question, while waiting for the user.
   final String? question;
+
+  /// Full canonical execution transcript (assistant calls, tool results and user controls). Keeping
+  /// these as separate messages lets the shared runtime compress old steps
+  /// without treating the entire accumulated transcript as the latest input.
+  final List<Map<String, dynamic>>? messages;
+
+  /// Old checkpoints remain readable without a database or file migration.
+  List<Map<String, dynamic>> get contextMessages =>
+      messages ??
+      [
+        {'role': 'user', 'content': transcript},
+        if (lastLog.isNotEmpty) {'role': 'assistant', 'content': lastLog},
+      ];
 }

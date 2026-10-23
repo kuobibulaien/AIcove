@@ -109,6 +109,9 @@ void main() {
       expect(find.text('原语一览'), findsOneWidget);
       expect(find.text('正在生成交互组件…'), findsOneWidget);
       expect(find.textContaining('不认识的组件「rocket」'), findsOneWidget);
+      // Only the unknown rocket falls back; the line-syntax and legacy JSON
+      // samples all render.
+      expect(find.textContaining('组件没能显示'), findsOneWidget);
       expect(find.text('小雪 会用「温柔」的语气说话。'), findsOneWidget);
       await tester.tap(find.text('更多'));
       await tester.pump();

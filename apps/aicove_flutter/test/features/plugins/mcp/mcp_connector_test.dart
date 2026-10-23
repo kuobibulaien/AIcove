@@ -1,3 +1,4 @@
+import 'package:image/image.dart' as img;
 import 'dart:convert';
 import 'dart:io';
 
@@ -116,7 +117,7 @@ class _FakeMcpServer {
                 'type': 'text',
                 'text': '${(params['arguments'] as Map)['city']}：晴',
               },
-              {'type': 'image', 'data': 'AAAA', 'mimeType': 'image/png'},
+              {'type': 'image', 'data': base64Encode(img.encodePng(img.Image(width:1,height:1))), 'mimeType': 'image/png'},
             ],
           };
         } else {
@@ -178,6 +179,13 @@ McpConnector _connector(String url, {Set<String> disabled = const {}}) =>
     );
 
 void main() {
+  test('MCP outputSchema survives config serialization and tool assembly', () {
+    final info=McpToolInfo.fromJson({'name':'structured','inputSchema':{'type':'object'},'outputSchema':{'type':'object','properties':{'ok':{'type':'boolean'}}}});
+    expect(McpToolInfo.fromJson(info.toJson()).outputSchema,info.outputSchema);
+    final connector=McpConnector(id:'structured',url:'https://invalid.test',tools:[info]);
+    final plugin=McpConnectorPlugin(connector);
+    expect(plugin.getTools().single.outputSchema,info.outputSchema);
+  });
   group('McpHttpClient', () {
     for (final sse in [false, true]) {
       test('握手、翻页列举与调用工具（${sse ? 'SSE' : 'JSON'} 响应）', () async {
@@ -205,7 +213,8 @@ void main() {
 
         final result = await client.callTool('get_weather', {'city': '上海'});
         expect(result.isError, isFalse);
-        expect(result.text, '上海：晴\n[图片 image/png，未转给模型]');
+        expect(result.text, '上海：晴');
+        expect(result.output?.images, hasLength(1));
       });
     }
 
@@ -245,14 +254,14 @@ void main() {
       );
     });
 
-    test('结果过长时截断', () {
+    test('完整结果交由运行器保全，不在 MCP 层截断', () {
       final text = McpHttpClient.flattenToolResult({
         'content': [
           {'type': 'text', 'text': 'x' * (McpHttpClient.maxResultChars + 10)},
         ],
       });
-      expect(text.length, lessThan(McpHttpClient.maxResultChars + 20));
-      expect(text, endsWith('已截断）'));
+      expect(text.length, McpHttpClient.maxResultChars + 10);
+      expect(text, isNot(contains('已截断')));
     });
   });
 
@@ -393,7 +402,6 @@ void main() {
               useFastImageRoute: false,
               useStableImageRoute: true,
               supportsToolCalling: true,
-              customDrawingPrompt: '',
               reminders: const SystemReminderService(),
             ),
           )

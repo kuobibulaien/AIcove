@@ -48,7 +48,7 @@ enum GlobalWallpaperSlot { home, chat, page, empty }
 const double kDefaultCustomWallpaperMask = 0.35;
 
 /// 壁纸模糊的上限，与聊天背景的模糊滑块一致。
-const double kMaxWallpaperBlur = 30;
+const double kMaxWallpaperBlur = 100;
 
 /// 用户添加的一张自定义壁纸，图片存在本机。
 @immutable

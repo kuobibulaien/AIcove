@@ -7,6 +7,7 @@ import '../chat/domain/message.dart';
 import '../plugins/domain/handlers/ai_tool.dart';
 import '../plugins/image/image_config.dart';
 import '../plugins/prompts/plugin_prompts.dart';
+import '../plugins/prompts/prompt_pack.dart';
 import '../plugins/tts/voice_request.dart';
 import '../settings/app_settings.dart';
 import 'plugin_request_context.dart';
@@ -25,9 +26,11 @@ class PluginRequestInputs {
     required this.useFastImageRoute,
     required this.useStableImageRoute,
     required this.supportsToolCalling,
-    required this.customDrawingPrompt,
     required this.reminders,
     this.boundPreset,
+    this.voicePrompts,
+    this.imagePrompts,
+    this.rolePluginIds,
   });
 
   final Ref ref;
@@ -42,11 +45,19 @@ class PluginRequestInputs {
   final bool useFastImageRoute;
   final bool useStableImageRoute;
   final bool supportsToolCalling;
-  final String customDrawingPrompt;
   final SystemReminderService reminders;
+
+  /// Prompt packs resolved from this request's voice and drawing presets
+  /// (ADR0092); null when the plugin is off or its bound pack is missing.
+  final ResolvedPromptPack? voicePrompts;
+  final ResolvedPromptPack? imagePrompts;
 
   /// The preset bound for this request's owner, resolved once (ADR0042).
   final SillyTavernPreset? boundPreset;
+
+  /// The request owner's raw plugin list (null = all plugins), for plugins
+  /// that read per-role grants from it.
+  final Set<String>? rolePluginIds;
 }
 
 /// Output tag reminders the core knows how to phrase. Plugins declare which

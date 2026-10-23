@@ -34,6 +34,7 @@ class SillyTavernRegexMessagesResult {
 /// 在独立 isolate 中执行已授权的 SillyTavern regex。
 ///
 /// QuickJS 在后台 isolate 执行，以引擎中断和内存限额约束正则。
+/// 单条规则失败时保留该规则输入并继续；执行器中断时保留本批原文。
 class SillyTavernRegexProcessor {
   static const Duration executionTimeout = Duration(milliseconds: 1500);
   static const int maxInputCharacters = 512 * 1024;
@@ -436,7 +437,21 @@ Future<Map<String, dynamic>> _runRegexBatch(
                   )
                   as Map;
           if (value['error'] != null) {
-            throw FormatException(value['error'] as String);
+            final reason = switch (value['reason']) {
+              'output_too_large' => 'output_too_large',
+              'replacement_failed' => 'replacement_failed',
+              _ => 'invalid_regex',
+            };
+            traces.add(<String, dynamic>{
+              'key': item['key'],
+              'scriptId': script['id'],
+              'scriptName': script['name'],
+              'mode': mode,
+              'status': 'error',
+              'reason': reason,
+            });
+            warnings.add('${script['name']} 执行失败，已跳过并保留此前文本');
+            continue;
           }
           text = value['text'] as String;
           traces.add(<String, dynamic>{
@@ -492,7 +507,8 @@ const _jsReplace = r'''function(input) {
   }
   let re;
   try { re=new RegExp(pattern,flags); }
-  catch(e) { return JSON.stringify({error:String(e)}); }
+  catch(e) { return JSON.stringify({error:true,reason:'invalid_regex'}); }
+  try {
   const replacement=input.replacement.replace(/{{match}}/gi,'$0');
   const text=input.text.replace(re,(...args)=>{
     const groups=typeof args[args.length-1]==='object' ? args.pop() : {};
@@ -503,8 +519,9 @@ const _jsReplace = r'''function(input) {
       return value;
     });
   });
-  if(text.length>input.maxOutput) throw Error('Regex output limit exceeded');
+  if(text.length>input.maxOutput) return JSON.stringify({error:true,reason:'output_too_large'});
   return JSON.stringify({text});
+  } catch(e) { return JSON.stringify({error:true,reason:'replacement_failed'}); }
 }''';
 
 ({bool run, bool trace, String reason}) _regexDecision(

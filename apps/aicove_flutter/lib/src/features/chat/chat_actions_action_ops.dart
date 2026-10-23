@@ -204,6 +204,8 @@ extension ChatActionsActionOps on ChatActions {
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
     _setGenerationInterruptCleanup(convId, runId, () async {
+      await _savePartialStream(delivery: streamDelivery, convId: convId, userMsgId: failedMsg.id,
+        status: ApiRunStatus.cancelled, settings: _ref.read(appSettingsProvider.future));
       await streamDelivery?.removePlaceholders();
       streamDelivery?.dispose();
       await _restoreFrontendMessagesFromHistory(convId);
@@ -307,6 +309,7 @@ extension ChatActionsActionOps on ChatActions {
 
               if (shouldCommitStream) {
                 await streamDelivery!.finalize(finalText: streamFinalText);
+                if (!_isGenerationCurrent(convId, runId)) return;
                 await _commitStreamDelivery(
                   streamDelivery: streamDelivery!,
                   convId: convId,
@@ -531,6 +534,7 @@ extension ChatActionsActionOps on ChatActions {
       final lookupMs = readClock.elapsedMilliseconds - historyReadMs;
       final userText = userMsg.displayText;
       _activeGenerations[convId] = _GenerationTask(
+        cancellation: _activeGenerations[convId]?.cancellation,
         id: runId,
         convId: convId,
         userMsgId: userMsg.id,
@@ -543,6 +547,8 @@ extension ChatActionsActionOps on ChatActions {
       );
       if (!_isGenerationCurrent(convId, runId)) return;
       _setGenerationInterruptCleanup(convId, runId, () async {
+        await _savePartialStream(delivery: streamDelivery, convId: convId, userMsgId: userMsg.id,
+          status: ApiRunStatus.cancelled, settings: _ref.read(appSettingsProvider.future));
         await streamDelivery?.removePlaceholders();
         streamDelivery?.dispose();
         await _restoreFrontendMessagesFromHistory(convId);
@@ -639,6 +645,9 @@ extension ChatActionsActionOps on ChatActions {
                     rawReplyText: rawResult.replyText,
                   );
                   return ApiCallResult(
+                    status: rawResult.status,
+                    stopReason: rawResult.stopReason,
+                    lastModelText: rawResult.lastModelText,
                     rawReplyText: enhancedText,
                     replyText: enhancedText,
                     processedText: enhancedText,
@@ -648,6 +657,7 @@ extension ChatActionsActionOps on ChatActions {
                     toolAudioResults: rawResult.toolAudioResults,
                     toolCalls: rawResult.toolCalls,
                     rawToolResults: rawResult.rawToolResults,
+                    reasoning: rawResult.reasoning,
                   );
                 },
               );
@@ -705,6 +715,7 @@ extension ChatActionsActionOps on ChatActions {
 
               if (shouldCommitStream) {
                 await streamDelivery!.finalize(finalText: streamFinalText);
+                if (!_isGenerationCurrent(convId, runId)) return;
                 await _commitStreamDelivery(
                   streamDelivery: streamDelivery!,
                   convId: convId,

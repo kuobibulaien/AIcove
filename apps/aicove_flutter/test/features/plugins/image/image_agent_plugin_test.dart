@@ -4,7 +4,10 @@ import 'package:aicove_flutter/src/features/agent_plugins/plugin_request_scope.d
 import 'package:aicove_flutter/src/features/agent_plugins/plugin_runtime.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_plugin.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/builtin_prompt_packs.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/plugin_prompts.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack_migration.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/voice_request.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/features/settings/settings_models.dart';
@@ -22,17 +25,36 @@ void main() {
   });
   tearDown(() => container.dispose());
 
-  // Auto call flow: the snapshot itself offers draw_image; only the route
-  // decides whether it reaches the request.
+  // Auto call flow with a usable image channel: the snapshot itself offers
+  // draw_image; only the route decides whether it reaches the request.
   final settings = mapUiModelsToAppSettings(const {}).copyWith(
     imageGenerationEnabled: true,
-    callFlowSettings: const CallFlowSettings(mode: CallFlowMode.auto),
+    callFlowSettings: const CallFlowSettings(mode: CallFlowMode.call),
+    providers: const [
+      ProviderAuth(
+        id: 'nai',
+        apiKeys: ['test-key'],
+        apiBaseUrl: 'https://image.novelai.net',
+        models: ['nai-diffusion-4-5-full'],
+        visibleModels: ['nai-diffusion-4-5-full'],
+        capabilities: ['image'],
+        customConfig: {'requestFormat': 'novelai'},
+      ),
+    ],
+    modelTypes: const {'nai-diffusion-4-5-full': 'image'},
   );
 
   PluginRequestScope scope({
     required bool fast,
     String customDrawingPrompt = '',
   }) {
+    final library = PromptPackLibrary(builtins: kBuiltinPromptPacks);
+    var binding = const PresetPromptBinding();
+    if (customDrawingPrompt.isNotEmpty) {
+      for (final section in roleDrawingSections(customDrawingPrompt)) {
+        binding = binding.upsertSection(section);
+      }
+    }
     final runtime = PluginRuntime()
       ..install(ImagePlugin(const ImageConfig(), ref).agentPlugin);
     return runtime
@@ -50,8 +72,13 @@ void main() {
             useFastImageRoute: fast,
             useStableImageRoute: !fast,
             supportsToolCalling: true,
-            customDrawingPrompt: customDrawingPrompt,
             reminders: const SystemReminderService(),
+            imagePrompts: library.resolve(
+              'image',
+              binding,
+              format: 'novelai',
+              model: 'nai-diffusion-4-5-full',
+            ),
           ),
         )
         .single;
@@ -69,7 +96,7 @@ void main() {
     expect(scope(fast: true).tools(), isEmpty);
   });
 
-  test('the stable route adds the role drawing requirement to draw_image only',
+  test('the stable route carries the preset drawing section into draw_image only',
       () {
     final stable = scope(fast: false, customDrawingPrompt: '只画水彩');
     final schemas = [

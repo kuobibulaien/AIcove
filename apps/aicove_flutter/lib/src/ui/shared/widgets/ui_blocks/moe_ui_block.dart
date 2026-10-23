@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/ui_blocks/application/ui_block_state_store.dart';
 import '../../../../features/ui_blocks/domain/ui_block.dart';
 import '../../../../features/ui_blocks/domain/ui_block_catalog.dart';
+import '../../../../features/ui_blocks/domain/ui_saved_state.dart';
 import '../../../../features/ui_blocks/domain/ui_state_context.dart';
 import '../../effects/smooth_clip.dart';
 import '../moe_code_block.dart';
@@ -34,8 +35,7 @@ class MoeUiBlock extends ConsumerStatefulWidget {
   final Color? foregroundColor;
   final double fontSize;
 
-  static bool handles(String language) =>
-      language.trim().toLowerCase() == kUiBlockFenceLanguage;
+  static bool handles(String language) => uiIsBlockLanguage(language);
 
   @override
   ConsumerState<MoeUiBlock> createState() => _MoeUiBlockState();
@@ -62,6 +62,7 @@ class _MoeUiBlockState extends ConsumerState<MoeUiBlock> {
     if (block == null) return;
     final known = block.component == 'panel' ||
         kUiCatalogNames.contains(block.component) ||
+        kUiActionComponents.contains(block.component) ||
         kUiPrimitives.contains(block.component);
     if (!known) {
       _block = null;
@@ -101,6 +102,10 @@ class _MoeUiBlockState extends ConsumerState<MoeUiBlock> {
     final saved = storage == null
         ? null
         : ref.watch(uiBlockStateProvider(storage.conversationId))[storage.key];
+    // Saved values load asynchronously; until they are in, the block is shown
+    // but not editable, so an early edit never races the load.
+    final ready = storage == null || ref.read(uiBlockStateProvider(storage.conversationId).notifier).loaded;
+    final savedState = saved == null ? null : uiCleanSavedState(block, saved.state);
     void persist(Map<String, Object?> changes) {
       if (storage == null) return;
       ref
@@ -109,25 +114,51 @@ class _MoeUiBlockState extends ConsumerState<MoeUiBlock> {
     }
 
     final Widget body;
-    if (kUiCatalogNames.contains(block.component)) {
+    if (kUiActionComponents.contains(block.component)) {
+      final builder = scope?.actions?[block.component];
+      if (builder == null) {
+        return _UiBlockFallback(
+          code: widget.code,
+          reason: '这个面板只在 AIcove酱的聊天里能用',
+          style: style,
+        );
+      }
+      body = builder(
+        context,
+        UiActionPanelRequest(
+          node: program.resolve(const {}),
+          style: style,
+          saved: savedState ?? const {},
+          save: storage == null ? null : persist,
+          ask: scope?.onAsk,
+        ),
+      );
+    } else if (kUiCatalogNames.contains(block.component)) {
       final node = program.resolve(const {});
       body = UiCatalogView(
         node: node,
         style: style,
-        saved: saved?.state,
+        saved: savedState,
         onChanged: storage == null ? null : persist,
         ask: scope?.onAsk,
       );
     } else {
-      final values = uiRestoreState(
-        program.initialState,
-        {...?saved?.state, ..._local},
-      );
+      final values = uiRestoreState(program.initialState, {...?savedState, ..._local});
       final runtime = UiBlockRuntime(
         style: style,
         setValues: (changes) {
-          setState(() => _local.addAll(changes));
-          persist(uiStateDiff(program.initialState, {...values, ...changes}));
+          // Validate before anything is kept: what is shown, stored and
+          // reported is the same state.
+          // Read _local now: taps can land before the next build.
+          final next = uiRestoreState(program.initialState, {
+            ...?savedState,
+            ..._local,
+            ...uiJsonSafe(changes)! as Map<String, Object?>,
+          });
+          setState(() => _local
+            ..clear()
+            ..addAll(next));
+          persist(uiStateDiff(program.initialState, next));
         },
         ask: scope?.onAsk,
         copy: (text) async {
@@ -137,7 +168,17 @@ class _MoeUiBlockState extends ConsumerState<MoeUiBlock> {
       );
       body = buildUiNode(context, program.resolve(values), runtime, top: true);
     }
-    return UiBlockFrame(style: style, child: body);
+    return UiBlockFrame(
+      style: style,
+      child: AbsorbPointer(
+        absorbing: !ready,
+        child: ExcludeFocus(
+          excluding: !ready,
+        // A new block identity (an edited message) starts from fresh state.
+          child: KeyedSubtree(key: ValueKey('${storage?.key ?? block.key}/${block.component}'), child: body),
+        ),
+      ),
+    );
   }
 }
 
@@ -241,6 +282,7 @@ class _UiBlockFallbackState extends State<_UiBlockFallback> {
               language: 'json',
               foregroundColor: style.fg,
               fontSize: style.fontSize - 2,
+              wrap: true,
             ),
         ],
       ),

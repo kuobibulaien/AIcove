@@ -112,6 +112,14 @@ class AudioPlaybackCoordinator {
   AudioPlayerController? _activeController;
   AudioPlayerController? get activeController => _activeController;
 
+  final StreamController<String> _starts = StreamController<String>.broadcast();
+
+  /// 每次开始播放一条语音时发出它的地址（点播和自动连播都算）。
+  Stream<String> get playStarts => _starts.stream;
+
+  /// 本次运行里播放过的语音地址；回复落库晚于播放时据此补记已读。
+  final Set<String> heardUrls = <String>{};
+
   /// 请求播放 [controller]。
   /// 如果当前有其它控制器正在播放，会先打断该控制器。
   void requestPlay(AudioPlayerController controller) {
@@ -121,6 +129,8 @@ class AudioPlaybackCoordinator {
     if (previous != null) {
       unawaited(previous.interrupt());
     }
+    heardUrls.add(controller.audioUrl);
+    _starts.add(controller.audioUrl);
   }
 
   /// 释放活跃状态（当控制器暂停、播放完成或销毁时）
@@ -142,6 +152,7 @@ class AudioPlaybackCoordinator {
   /// 重置协调器状态（主要供测试使用）
   void reset() {
     _activeController = null;
+    heardUrls.clear();
   }
 
   void dispose() {
@@ -167,7 +178,9 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       <StreamSubscription<Object?>>[];
   bool _completed = false;
   bool _isReady = false; // 标记音频是否已准备就绪
-  bool _hasStartedPlayback = false;
+  Future<void>? _playbackCommands;
+  int _playbackGeneration = 0;
+  Completer<bool>? _playThrough;
 
   AudioPlayerController(
     this.audioUrl, {
@@ -205,6 +218,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           if (_coordinator.activeController == this) {
             _coordinator.release(this);
           }
+          _finishPlayThrough(true);
         }
         if (!mounted) return;
         state = state.copyWith(
@@ -246,6 +260,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           );
           _updateKeepAlive(false);
           _coordinator.release(this);
+          _finishPlayThrough(false);
           if (!mounted) return;
           state = state.copyWith(
             isPlaying: false,
@@ -428,7 +443,6 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       if (!mounted) return;
       state = state.copyWith(isLoading: true, error: null);
       _isReady = false;
-      _hasStartedPlayback = false;
 
       // 构建完整URL
       final resolved = await _resolvePlayableSource(audioUrl);
@@ -462,17 +476,37 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     await _loadAudio();
   }
 
-  Future<void> togglePlayPause() async {
+  Future<void> _enqueuePlayback(Future<void> Function() command) {
+    final previous = _playbackCommands;
+    final next = previous == null ? command() : previous.then((_) => command());
+    _playbackCommands = next;
+    return next.whenComplete(() {
+      if (identical(_playbackCommands, next)) _playbackCommands = null;
+    });
+  }
+
+  Future<void> togglePlayPause() {
+    final generation = _playbackGeneration;
+    return _enqueuePlayback(() => _togglePlayPause(generation));
+  }
+
+  Future<void> _togglePlayPause(int generation) async {
+    if (!mounted || generation != _playbackGeneration) return;
     try {
       if (state.error != null) {
         await _loadAudio();
-        if (state.error != null) return;
+        if (!mounted ||
+            generation != _playbackGeneration ||
+            state.error != null) {
+          return;
+        }
       }
 
       if (state.isPlaying) {
         await _player.pause();
         _updateKeepAlive(false);
         _coordinator.release(this);
+        _finishPlayThrough(false);
       } else {
         _coordinator.requestPlay(this);
         _updateKeepAlive(true);
@@ -480,6 +514,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         // 如果音频还没准备好，等待加载完成
         if (!_isReady) {
           await _loadAudio();
+          if (!mounted || generation != _playbackGeneration) return;
           if (!_isReady || state.error != null) {
             _updateKeepAlive(false);
             _coordinator.release(this);
@@ -487,36 +522,70 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           }
         }
 
-        // 首次播放或播放完成后重播，都从头开始
-        // 这样可以避免首次播放时因为缓冲导致的"吞字"问题
-        if (_completed ||
-            state.position >= state.duration &&
-                state.duration > Duration.zero) {
-          await _player.seek(Duration.zero);
-          _completed = false;
-        }
+        // just_audio 播完后仍可能保持 playing，先暂停，避免 seek 自动开播。
+        if (_completed) await _player.pause();
+        if (!mounted || generation != _playbackGeneration) return;
 
-        // 首次播放时，无条件归零一次。
-        // 实机上初始偏移可能只有几十毫秒，100ms 阈值会漏掉这种情况。
-        if (!_hasStartedPlayback) {
-          await _player.seek(Duration.zero);
-        }
+        // 每次点播放都从头开始，包括暂停或被其它语音打断之后。
+        await _player.seek(Duration.zero);
+        if (!mounted || generation != _playbackGeneration) return;
+        _completed = false;
+        state = state.copyWith(position: Duration.zero);
 
-        await _player.play();
-        _hasStartedPlayback = true;
+        // play 的 Future 到暂停/结束才返回，不能阻塞下一次播放操作。
+        unawaited(
+          _player.play().catchError((Object error) {
+            _reportPlaybackFailure(error, generation);
+          }),
+        );
       }
     } catch (e) {
-      _updateKeepAlive(false);
-      _coordinator.release(this);
-      state = state.copyWith(error: '播放失败: $e');
+      _reportPlaybackFailure(e, generation);
     }
   }
 
+  void _reportPlaybackFailure(Object error, int generation) {
+    if (!mounted || generation != _playbackGeneration) return;
+    _updateKeepAlive(false);
+    _coordinator.release(this);
+    _finishPlayThrough(false);
+    state = state.copyWith(
+      isPlaying: false,
+      isLoading: false,
+      error: '播放失败: $error',
+    );
+  }
+
+  /// 从头播放并等到结束：播完返回 true；被暂停、打断或出错返回 false。
+  /// 正在播放时只等它播完。
+  Future<bool> playToEnd() async {
+    final pending = _playThrough ??= Completer<bool>();
+    if (!state.isPlaying) {
+      await togglePlayPause();
+      if (state.error != null || !_isReady) _finishPlayThrough(false);
+    }
+    return pending.future;
+  }
+
+  void _finishPlayThrough(bool completed) {
+    final pending = _playThrough;
+    _playThrough = null;
+    if (pending != null && !pending.isCompleted) pending.complete(completed);
+  }
+
   /// 被下一条语音打断时调用
-  Future<void> interrupt() async {
+  Future<void> interrupt() {
+    // 立即取消尚在加载/归零的开播请求，再排队完成原生暂停与归零。
+    _playbackGeneration++;
+    return _enqueuePlayback(_interrupt);
+  }
+
+  Future<void> _interrupt() async {
+    if (!mounted) return;
     try {
-      unawaited(_player.pause());
-      unawaited(_player.seek(Duration.zero));
+      await _player.pause();
+      if (!mounted) return;
+      await _player.seek(Duration.zero);
     } catch (e) {
       AppLogger.warning(
         'AudioPlayer',
@@ -525,8 +594,9 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       );
     }
     _completed = false;
-    _hasStartedPlayback = false;
     _updateKeepAlive(false);
+    _coordinator.release(this);
+    _finishPlayThrough(false);
     if (mounted) {
       state = state.copyWith(
         isPlaying: false,
@@ -545,8 +615,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
   @override
   void dispose() {
+    _playbackGeneration++;
     _updateKeepAlive(false);
     _coordinator.release(this);
+    _finishPlayThrough(false);
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }

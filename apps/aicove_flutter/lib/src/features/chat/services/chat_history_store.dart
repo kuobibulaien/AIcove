@@ -12,6 +12,8 @@ import '../../../core/database/database.dart' as db;
 import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/models/message_block.dart';
+import '../../../core/media/embedded_media_store.dart';
+import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/models/block_status.dart';
 import '../../conversation_state/providers/conversation_state_providers.dart';
 import '../../plugins/domain/plugin_content.dart';
@@ -481,6 +483,7 @@ class ChatHistoryStore {
     required String lastMessagePreview,
     bool updateShortWindow = true,
   }) async {
+    messages = markNewVoicesUnread(messages);
     await _db.transaction(() async {
       final msgRepo = _ref.read(messageRepositoryProvider);
       if (userMessageId.trim().isNotEmpty) {
@@ -517,6 +520,78 @@ class ChatHistoryStore {
     }
   }
 
+  /// Publishes enrichment as one existing raw-message snapshot. The compare
+  /// prevents a slow plugin result from resurrecting or overwriting a synced edit.
+  Future<bool> completeBackgroundMessageSnapshot({
+    required db.Message original,
+    required Message processedRaw,
+    required List<Message> projectedMessages,
+  }) async {
+    if (projectedMessages.isEmpty) {
+      throw StateError('Empty background projection');
+    }
+    final projected = _normalizeProjectedMessagesForStorage(
+      rawMessageId: original.id,
+      rawCreatedAt: DateTime.fromMillisecondsSinceEpoch(original.createdAt),
+      messages: markNewVoicesUnread(projectedMessages),
+    );
+    final enriched = _rawWithFrontendMessages(processedRaw, projected);
+    final payload = ChatMessageProjectionCodec.copyWithProjectedMessages({
+      ...Map<String, dynamic>.from(
+        jsonDecode(original.rawPayload ?? '{}') as Map,
+      ),
+      ...?enriched.rawPayload,
+      'bg_reprocessed': true,
+    }, projected);
+    final encoded = await EmbeddedMediaStore.shared.compactJson(
+      jsonEncode(payload),
+    );
+    final committed = await cloudLocalWrite(
+      () => _db.transaction(() async {
+        final current = await _ref
+            .read(messageRepositoryProvider)
+            .getById(original.id);
+        if (current == null ||
+            current.deletedAt != null ||
+            current.replacedBy != null ||
+            current.rawPayload != original.rawPayload ||
+            current.content != original.content ||
+            current.createdAt != original.createdAt) {
+          return false;
+        }
+        await (_db.update(_db.messages)..where((m) => m.id.equals(original.id)))
+            .write(db.MessagesCompanion(rawPayload: Value(encoded)));
+        await _syncProjectionMappingsForRawMessage(
+          conversationId: original.conversationId,
+          rawMessageId: original.id,
+          projectedMessages: projected,
+        );
+        return true;
+      }),
+    );
+    if (committed) {
+      final cache = _ref.read(conversationTimelineCacheProvider);
+      if (cache.isRawChangeInLoadedWindow(
+        original.conversationId,
+        original.id,
+        original.createdAt,
+      )) {
+        final cached = await cache.loadCachedMessages(original.conversationId);
+        // Patch this raw only; an unrelated foreground send may have transient
+        // stream bubbles that a full database reload would discard.
+        await cache.replaceMessagesTransient(
+          conversationId: original.conversationId,
+          removeMessageIds: [
+            for (final message in cached)
+              if (message.sourceMessageIdOrSelf == original.id) message.id,
+          ],
+          messages: projected,
+        );
+      }
+    }
+    return committed;
+  }
+
   Future<void> appendAssistantRawMessage({
     required String conversationId,
     required String userMessageId,
@@ -525,6 +600,8 @@ class ChatHistoryStore {
     required String lastMessagePreview,
     bool updateShortWindow = true,
   }) async {
+    rawMessage = markNewVoicesUnread([rawMessage]).single;
+    projectedMessages = markNewVoicesUnread(projectedMessages);
     await _db.transaction(() async {
       final msgRepo = _ref.read(messageRepositoryProvider);
       if (userMessageId.trim().isNotEmpty) {
@@ -605,6 +682,7 @@ class ChatHistoryStore {
     required Message message,
     String? lastMessagePreview,
   }) async {
+    message = markNewVoicesUnread([message]).single;
     final projectedMessage =
         await _normalizeProjectedMessageForFrontendMutation(
       conversationId: conversationId,
@@ -2027,6 +2105,8 @@ class ChatHistoryStore {
       toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
       toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
       rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
+      reasoning: ChatMessageProjectionCodec.reasoning(payload),
+      replyRounds: ChatMessageProjectionCodec.replyRounds(payload),
     );
     return <Message>[
       for (final message in rebuilt.messages)
@@ -2169,6 +2249,7 @@ class ChatHistoryStore {
         forceAppendToTail: forceAppendToTail,
         audioUrl: audioUrl,
         text: block.text?.trim(),
+        unread: block.unread,
       );
     }
     return null;
@@ -2277,3 +2358,26 @@ int resolveSupplementInsertSlot({
 final chatHistoryStoreProvider = Provider<ChatHistoryStore>(
   ChatHistoryStore.new,
 );
+
+/// 新回复落库时把已就绪的语音标为未读。只在追加新消息时调用：
+/// 历史投影重建不经过这里，旧语音不会被误标。
+List<Message> markNewVoicesUnread(List<Message> messages) => [
+      for (final message in messages)
+        if (message.role == 'assistant' &&
+            (message.blocks?.any(_isFreshVoice) ?? false))
+          message.copyWith(blocks: [
+            for (final block in message.blocks!)
+              if (_isFreshVoice(block))
+                (block as AudioBlock).withUnread(true)
+              else
+                block,
+          ])
+        else
+          message,
+    ];
+
+bool _isFreshVoice(MessageBlock block) =>
+    block is AudioBlock &&
+    !block.unread &&
+    block.url.trim().isNotEmpty &&
+    block.status == BlockStatus.success;

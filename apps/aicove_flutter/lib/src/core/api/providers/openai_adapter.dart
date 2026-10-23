@@ -1,6 +1,7 @@
 /// OpenAI API adapter
 library;
 
+import '../tool_media.dart';
 import 'dart:convert';
 
 import 'provider_adapter.dart';
@@ -163,6 +164,7 @@ class OpenAIAdapter implements ProviderAdapter {
   @override
   ApiCallResult parseResponse(Map<String, dynamic> response) {
     String text = '';
+    String reasoning = '';
     final toolCalls = <ToolCall>[];
     String? rawFinishReason;
 
@@ -173,6 +175,7 @@ class OpenAIAdapter implements ProviderAdapter {
       final msg = (first['message'] as Map<String, dynamic>?) ??
           const <String, dynamic>{};
       text = _extractText(msg['content']);
+      reasoning = _extractText(msg['reasoning_content'] ?? msg['reasoning']);
 
       final rawToolCalls = msg['tool_calls'] as List?;
       if (rawToolCalls != null) {
@@ -203,6 +206,7 @@ class OpenAIAdapter implements ProviderAdapter {
       toolCalls: toolCalls,
       rawResponse: response,
       rawFinishReason: rawFinishReason,
+      reasoning: reasoning,
     );
   }
 
@@ -222,9 +226,10 @@ class OpenAIAdapter implements ProviderAdapter {
         messages.add({
           'role': 'function',
           'name': result.name,
-          'content': result.result,
+          'content': result.result.isEmpty && result.images.isNotEmpty ? '（图片见下一条消息）' : result.result,
         });
       }
+      messages.addAll(toolImageMessages(toolResults.expand((r) => r.images).toList()));
       return messages;
     }
 
@@ -233,17 +238,18 @@ class OpenAIAdapter implements ProviderAdapter {
         messages.add({
           'role': 'tool',
           'tool_call_id': result.toolCallId,
-          'content': result.result,
+          'content': result.result.isEmpty && result.images.isNotEmpty ? '（图片见下一条消息）' : result.result,
         });
       } else {
         messages.add({
           'role': 'function',
           'name': result.name,
-          'content': result.result,
+          'content': result.result.isEmpty && result.images.isNotEmpty ? '（图片见下一条消息）' : result.result,
         });
       }
     }
 
+    messages.addAll(toolImageMessages(toolResults.expand((r) => r.images).toList()));
     return messages;
   }
 

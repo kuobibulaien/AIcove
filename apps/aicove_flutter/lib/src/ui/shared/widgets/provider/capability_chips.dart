@@ -243,7 +243,8 @@ class CapabilityChip extends StatelessWidget {
 enum ModelFeature {
   vision('vision', '视觉', Icons.visibility_outlined),
   tools('tools', '工具', Icons.build_outlined),
-  reasoning('reasoning', '思考', Icons.psychology_outlined);
+  reasoning('reasoning', '思考', Icons.psychology_outlined),
+  web('web', '联网', Icons.language_outlined);
 
   const ModelFeature(this.value, this.label, this.icon);
 

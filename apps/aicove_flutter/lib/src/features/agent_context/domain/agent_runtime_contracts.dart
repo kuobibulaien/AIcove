@@ -460,7 +460,6 @@ class AgentDefinition {
   final AgentTraceKind traceKind;
   final String? modelRef;
   final double? temperature;
-  final int maxRounds;
 
   /// How tool calls of this agent are authorized (batch 2 plan §3.4).
   final AgentToolAuthorization toolPolicy;
@@ -479,7 +478,6 @@ class AgentDefinition {
     this.traceKind = AgentTraceKind.foreground,
     this.modelRef,
     this.temperature,
-    this.maxRounds = 5,
     this.toolPolicy = AgentToolAuthorization.allowAll,
   });
 
@@ -500,7 +498,6 @@ class AgentDefinition {
     bool clearModelRef = false,
     double? temperature,
     bool clearTemperature = false,
-    int? maxRounds,
     AgentToolAuthorization? toolPolicy,
   }) {
     return AgentDefinition(
@@ -519,7 +516,6 @@ class AgentDefinition {
       traceKind: traceKind ?? this.traceKind,
       modelRef: clearModelRef ? null : (modelRef ?? this.modelRef),
       temperature: clearTemperature ? null : (temperature ?? this.temperature),
-      maxRounds: maxRounds ?? this.maxRounds,
       toolPolicy: toolPolicy ?? this.toolPolicy,
     );
   }

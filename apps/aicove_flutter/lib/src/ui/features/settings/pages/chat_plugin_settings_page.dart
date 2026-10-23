@@ -1,7 +1,7 @@
 /// 聊天插件设置页面
 ///
 /// 整合所有聊天相关插件的入口：
-/// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、MCP 连接器、酒馆相关
+/// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、MCP 连接器、扩展包、酒馆相关
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -18,6 +18,7 @@ import '../../plugins/pages/tavern_plugin_detail_page.dart';
 import '../../plugins/pages/plugin_prompts_page.dart';
 import '../../plugins/pages/web_search_plugin_detail_page.dart';
 import '../../plugins/pages/mcp_connectors_page.dart';
+import '../../plugins/pages/extension_packages_page.dart';
 import '../../auto_reply/pages/auto_reply_settings_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
 
@@ -90,6 +91,14 @@ const chatPluginItems = [
     subtitle: '接入外部工具服务',
     icon: Icons.hub_outlined,
     // 每个连接器在角色里单独开关（id 为 mcp:<连接器id>），这里只是管理入口。
+    conversationSelectable: false,
+  ),
+  ChatPluginItem(
+    id: 'packages',
+    name: ExtensionPackagesPage.title,
+    subtitle: '技能包与脚本插件',
+    icon: Icons.extension_outlined,
+    // 每个包在角色里单独开关（id 为 pkg:<包id>），这里只是管理入口。
     conversationSelectable: false,
   ),
   ChatPluginItem(
@@ -232,6 +241,9 @@ class ChatPluginSettingsPage extends StatelessWidget {
         break;
       case 'mcp':
         page = const McpConnectorsPage();
+        break;
+      case 'packages':
+        page = const ExtensionPackagesPage();
         break;
     }
 

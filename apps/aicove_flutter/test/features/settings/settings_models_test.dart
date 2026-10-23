@@ -22,30 +22,24 @@ void main() {
   });
 
   group('inferChatModelCapabilities', () {
-    test('unrecognized model defaults to vision, tools and reasoning', () {
-      expect(inferChatModelCapabilities('my-custom-model'), [
+    test('every chat model defaults to vision, tools, reasoning and web', () {
+      const all = [
         ChatModelCapability.vision,
         ChatModelCapability.tools,
         ChatModelCapability.reasoning,
-      ]);
+        ChatModelCapability.web,
+      ];
+      expect(inferChatModelCapabilities('my-custom-model'), all);
+      expect(inferChatModelCapabilities('deepseek-flash'), all);
+      expect(inferChatModelCapabilities('sonar-pro'), all);
     });
 
-    test('recognized model keeps inferred capabilities only', () {
-      expect(inferChatModelCapabilities('deepseek-flash'),
-          [ChatModelCapability.tools]);
-    });
-
-    test('web capability no longer exists and stored values are dropped', () {
-      expect(ChatModelCapability.fromValue('web'), isNull);
+    test('web capability is parsed and stored values are kept', () {
+      expect(ChatModelCapability.fromValue('web'), ChatModelCapability.web);
       expect(
         ChatModelCapability.normalizeValues(<String>['vision', 'web']),
-        <String>['vision'],
+        <String>['vision', 'web'],
       );
-      expect(inferChatModelCapabilities('sonar-pro'), [
-        ChatModelCapability.vision,
-        ChatModelCapability.tools,
-        ChatModelCapability.reasoning,
-      ]);
     });
   });
 

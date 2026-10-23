@@ -4,6 +4,7 @@
 /// - 2026-01-27: 添加 buildToolResultMessages 支持两回合工具调用
 library;
 
+import '../tool_media.dart';
 import 'dart:convert';
 import 'dart:math';
 
@@ -97,7 +98,8 @@ class ClaudeAdapter implements ProviderAdapter {
       'model': model,
       'messages': mergedChatMessages,
       if (systemMessages.isNotEmpty) 'system': systemMessages.join('\n\n'),
-      'max_tokens': customConfig?['max_tokens'] ?? 4096,
+      // Claude 必须带 max_tokens；32000 是当前 Claude 4.x 各模型都接受的输出上限。
+      'max_tokens': customConfig?['max_tokens'] ?? 32000,
       if (temperature != null) 'temperature': temperature,
       if (topP != null) 'top_p': topP,
       if (anthropicTools != null) 'tools': anthropicTools,
@@ -132,7 +134,10 @@ class ClaudeAdapter implements ProviderAdapter {
         } else if (currentContent != null) {
           parts.add(currentContent);
         }
-        merged.last['content'] = parts;
+        bool isResult(dynamic p) => p is Map && p['type'] == 'tool_result';
+        merged.last['content'] = [
+          ...parts.where(isResult), ...parts.where((p) => !isResult(p)),
+        ];
       }
     }
     return merged;
@@ -206,6 +211,7 @@ class ClaudeAdapter implements ProviderAdapter {
   @override
   ApiCallResult parseResponse(Map<String, dynamic> response) {
     String text = '';
+    final reasoning = StringBuffer();
     final toolCalls = <ToolCall>[];
     final content = (response['content'] as List?) ?? const [];
 
@@ -214,6 +220,8 @@ class ClaudeAdapter implements ProviderAdapter {
         final type = block['type'] as String?;
         if (type == 'text') {
           text += (block['text'] ?? '').toString();
+        } else if (type == 'thinking') {
+          reasoning.write((block['thinking'] ?? '').toString());
         } else if (type == 'tool_use') {
           // Anthropic 格式的工具调用
           toolCalls.add(ToolCall(
@@ -231,6 +239,7 @@ class ClaudeAdapter implements ProviderAdapter {
       toolCalls: toolCalls,
       rawResponse: response,
       rawFinishReason: response['stop_reason']?.toString(),
+      reasoning: reasoning.toString(),
     );
   }
 
@@ -268,13 +277,18 @@ class ClaudeAdapter implements ProviderAdapter {
       toolResultBlocks.add({
         'type': 'tool_result',
         'tool_use_id': result.toolCallId,
-        'content': result.result,
+         'content': result.images.isEmpty ? result.result : [
+          if (result.result.isNotEmpty) {'type': 'text', 'text': result.result},
+          for (final image in result.images) toolImagePart(image, claude: true),
+        ],
+        if (result.isError) 'is_error': true,
       });
     }
 
     messages.add({
       'role': 'user',
       'content': toolResultBlocks,
+      toolStepMarker: true,
     });
 
     return messages;

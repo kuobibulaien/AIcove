@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../features/ui_blocks/domain/ui_block.dart';
 import '../../../../features/ui_blocks/domain/ui_expression.dart';
+import '../../../../features/ui_blocks/domain/ui_saved_state.dart';
 import '../buttons/moe_choice_chip.dart';
 import '../form/moe_checkbox.dart';
 import 'ui_block_options.dart';
@@ -60,6 +61,11 @@ class UiCatalogView extends StatelessWidget {
 Map<String, Object?>? _asMap(Object? value) =>
     value is Map ? {for (final e in value.entries) '${e.key}': e.value} : null;
 
+/// Props and saved state are untrusted: a wrong type reads as empty.
+List<Object?> _asList(Object? value) => value is List ? value : const [];
+
+int? _asInt(Object? value) => value is num && value.isFinite ? value.toInt() : null;
+
 /// A field of a list item; a plain string item is its own main text
 /// ([primary]) and has no other fields.
 String _itemText(Object? item, [String key = 'text', bool primary = true]) =>
@@ -87,7 +93,7 @@ class _ChecklistState extends State<_Checklist> {
         {
           if (saved is List)
             for (final i in saved)
-              if (i is num) i.toInt(),
+              if (_asInt(i) case final i?) i,
         };
   }
 
@@ -178,7 +184,7 @@ class _StepsState extends State<_Steps> {
     final items = widget.node.list('items');
     if (items.isEmpty) return const SizedBox.shrink();
     final saved = widget.saved?['step'];
-    final current = (_step ?? (saved is num ? saved.toInt() : 0)).clamp(0, items.length - 1);
+    final current = (_step ?? _asInt(saved) ?? 0).clamp(0, items.length - 1);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -291,31 +297,9 @@ class _DecisionTreeState extends State<_DecisionTree> {
     super.dispose();
   }
 
-  Map<String, Map<String, Object?>> get _nodes => {
-        for (final raw in widget.node.list('nodes'))
-          if (_asMap(raw) case final node? when uiStringify(node['id']).isNotEmpty) uiStringify(node['id']): node,
-      };
+  Map<String, Map<String, Object?>> get _nodes => uiTreeNodes(widget.node);
 
-  String? get _start {
-    final start = widget.node.text('start');
-    final nodes = _nodes;
-    if (start != null && nodes.containsKey(start)) return start;
-    return nodes.keys.firstOrNull;
-  }
-
-  List<String> get path {
-    if (_path != null) return _path!;
-    final nodes = _nodes;
-    final saved = widget.saved?['path'];
-    final restored = [
-      if (saved is List)
-        for (final id in saved)
-          if (nodes.containsKey(uiStringify(id))) uiStringify(id),
-    ];
-    final start = _start;
-    if (start == null) return const [];
-    return restored.isNotEmpty && restored.first == start ? restored : [start];
-  }
+  List<String> get path => uiTreePath(widget.node, _path ?? _asList(widget.saved?['path']));
 
   void _set(List<String> next) {
     setState(() {
@@ -348,7 +332,7 @@ class _DecisionTreeState extends State<_DecisionTree> {
     final trail = path;
     if (trail.isEmpty) return Text('（决策树没有节点）', style: style.caption);
     final current = nodes[trail.last]!;
-    final options = [for (final o in (current['options'] as List?) ?? const []) ?_asMap(o)];
+    final options = [for (final o in _asList(current['options'])) ?_asMap(o)];
     final detail = uiStringify(current['detail']);
     final isConclusion = options.isEmpty;
     final offersOther = widget.ask != null && uiOffersOther(current['other'], widget.node.props['other']);
@@ -437,7 +421,7 @@ class _DecisionTreeState extends State<_DecisionTree> {
   }
 
   String _chosenLabel(Map<String, Object?> node, String next) {
-    for (final raw in (node['options'] as List?) ?? const []) {
+    for (final raw in _asList(node['options'])) {
       final option = _asMap(raw);
       if (option != null && uiStringify(option['next']) == next) return uiStringify(option['label']);
     }
@@ -467,7 +451,7 @@ class _QuizState extends State<_Quiz> {
     return {
       if (saved != null)
         for (final e in saved.entries)
-          if (int.tryParse(e.key) case final q? when e.value is num) q: (e.value as num).toInt(),
+          if ((int.tryParse(e.key), _asInt(e.value)) case (final q?, final a?)) q: a,
     };
   }
 
@@ -482,15 +466,15 @@ class _QuizState extends State<_Quiz> {
   @override
   Widget build(BuildContext context) {
     final style = widget.style;
-    final questions = [for (final q in widget.node.list('questions')) ?_asMap(q)];
+    final questions = uiQuizQuestions(widget.node);
     final picked = answers;
     var scored = 0;
     var correct = 0;
     final children = <Widget>[];
     for (var q = 0; q < questions.length; q++) {
       final question = questions[q];
-      final options = (question['options'] as List?) ?? const [];
-      final answer = question['answer'] is num ? (question['answer'] as num).toInt() : null;
+      final options = _asList(question['options']);
+      final answer = _asInt(question['answer']);
       final choice = picked[q];
       if (answer != null && choice != null) {
         scored += 1;
@@ -557,10 +541,6 @@ class _QuizState extends State<_Quiz> {
 
 // ---- form ----
 
-/// Labels that ask for a secret; such fields are never shown as inputs,
-/// since what the form collects is sent as a chat message.
-final _secretField = RegExp(r'api[ _-]?key|密钥|密码|口令|password|passwd|secret', caseSensitive: false);
-
 class _Form extends StatefulWidget {
   const _Form({required this.node, required this.style, required this.saved, required this.onChanged, required this.ask});
   final UiNode node;
@@ -584,10 +564,26 @@ class _FormState extends State<_Form> {
   final Set<String> _missing = {};
   bool _sent = false;
 
-  List<Map<String, Object?>> get _fields => [
-        for (final raw in widget.node.list('fields').take(8))
-          if (_asMap(raw) case final field? when uiStringify(field['key']).isNotEmpty) field,
-      ];
+  /// Fields the user changed here; a saved answer arriving later (storage
+  /// loads asynchronously) only fills the others.
+  final Set<String> _touched = {};
+
+  @override
+  void didUpdateWidget(_Form oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.saved, widget.saved)) return;
+    final values = _asMap(widget.saved?['values']) ?? const {};
+    final others = _asMap(widget.saved?['other']) ?? const {};
+    for (final key in {...values.keys, ...others.keys}) {
+      if (_touched.contains(key)) continue;
+      if (values.containsKey(key)) _values[key] = values[key];
+      if (others.containsKey(key)) _others[key] = uiStringify(others[key]);
+      _controllers[key]?.text = _isEmpty(values[key]) ? '' : uiEditText(values[key]);
+      _controllers['$key\u0000other']?.text = _others[key] ?? '';
+    }
+  }
+
+  List<Map<String, Object?>> get _fields => uiFormFields(widget.node);
 
   @override
   void dispose() {
@@ -609,6 +605,7 @@ class _FormState extends State<_Form> {
       }, key);
 
   void _update(VoidCallback change, String key) {
+    _touched.add(key);
     setState(() {
       change();
       _missing.remove(key);
@@ -633,6 +630,8 @@ class _FormState extends State<_Form> {
     return other;
   }
 
+  static num? _finite(num? value) => value != null && value.isFinite ? value : null;
+
   static bool _isEmpty(Object? value) =>
       value == null || (value is String && value.trim().isEmpty) || (value is List && value.isEmpty);
 
@@ -641,7 +640,8 @@ class _FormState extends State<_Form> {
     if (ask == null) return;
     final missing = {
       for (final field in _fields)
-        if (uiTruthy(field['required']) && _isEmpty(_answer(uiStringify(field['key'])))) uiStringify(field['key']),
+        if (uiTruthy(field['required']) && !_isSecret(field) && _isEmpty(_answer(uiStringify(field['key']))))
+          uiStringify(field['key']),
     };
     if (missing.isNotEmpty) {
       setState(() => _missing
@@ -660,10 +660,9 @@ class _FormState extends State<_Form> {
     setState(() => _sent = true);
   }
 
-  static String _display(Object? value) => value is List ? value.map(uiStringify).join('、') : uiStringify(value);
+  static String _display(Object? value) => value is List ? value.map(uiEditText).join('、') : uiEditText(value);
 
-  static bool _isSecret(Map<String, Object?> field) =>
-      _secretField.hasMatch('${field['key']} ${field['label']}');
+  static bool _isSecret(Map<String, Object?> field) => uiFormFieldIsSecret(field);
 
   @override
   Widget build(BuildContext context) {
@@ -679,7 +678,7 @@ class _FormState extends State<_Form> {
       if (_isSecret(field)) {
         input = UiCallout(
           title: '',
-          text: '「$label」是机密信息，不要发在聊天里。需要 Key 时请让助手给你一张 Key 输入卡片。',
+          text: '「$label」是机密信息，不要发在聊天里。需要 Key 时请让 AIcove酱给你一张 Key 输入卡片。',
           tone: 'warning',
           style: style,
         );
@@ -687,7 +686,7 @@ class _FormState extends State<_Form> {
         final options = uiOptions(field['options']);
         final current = _values[key];
         final multiple = type == 'multiselect';
-        final offersOther = uiOffersOther(field['other'], widget.node.props['other']);
+        final offersOther = widget.ask != null && uiFieldOffersOther(field, widget.node);
         final otherPicked = offersOther && _others.containsKey(key);
         final picked = <int>{
           for (var i = 0; i < options.length; i++)
@@ -707,7 +706,8 @@ class _FormState extends State<_Form> {
                 _setOther(key, null);
               } else {
                 if (!multiple) _values.remove(key);
-                _setOther(key, '');
+                // Picking 其他 again brings back what the field still shows.
+                _setOther(key, _controllers['$key\u0000other']?.text ?? '');
               }
               return;
             }
@@ -747,7 +747,7 @@ class _FormState extends State<_Form> {
       } else {
         final controller = _controllers.putIfAbsent(
           key,
-          () => TextEditingController(text: _isEmpty(_values[key]) ? '' : uiStringify(_values[key])),
+          () => TextEditingController(text: _isEmpty(_values[key]) ? '' : uiEditText(_values[key])),
         );
         final number = type == 'number';
         input = TextField(
@@ -757,7 +757,9 @@ class _FormState extends State<_Form> {
           keyboardType: number ? const TextInputType.numberWithOptions(decimal: true, signed: true) : null,
           style: style.small,
           decoration: uiInputDecoration(style, hint: uiStringify(field['placeholder']), error: _missing.contains(key)),
-          onChanged: (text) => _set(key, number ? (num.tryParse(text.trim()) ?? text) : text),
+          // A number field keeps only numbers: other text stays a draft in
+          // the box and never reaches the answer or <ui_state>.
+          onChanged: (text) => _set(key, number ? _finite(num.tryParse(text.trim())) : text),
         );
       }
       children.add(Column(

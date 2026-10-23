@@ -563,12 +563,13 @@ Widget _buildHost(
   GlobalKey<_ChatListHarnessState> harnessKey, {
   ValueChanged<String>? onDebugAutoScrollRequested,
   ValueChanged<int>? onDebugListItemCountChanged,
+  AppSettings? settings,
 }) {
-  final settings = _buildSettings();
+  final resolvedSettings = settings ?? _buildSettings();
   return ProviderScope(
     overrides: [
       appSettingsProvider
-          .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+          .overrideWith(() => _FakeAppSettingsNotifier(resolvedSettings)),
     ],
     child: SkinScope(
       skin: const MoeTalkSkin(),
@@ -1488,7 +1489,9 @@ void main() {
     );
   });
 
-  testWidgets('贴底状态下，AI 新消息不应自动请求回底', (tester) async {
+  for (final followAi in [true, false]) {
+    testWidgets('贴底状态下，AI 新消息不发显式回底请求（自动回底=$followAi）',
+        (tester) async {
     final harnessKey = GlobalKey<_ChatListHarnessState>();
     final autoScrollReasons = <String>[];
 
@@ -1496,6 +1499,7 @@ void main() {
       _buildHost(
         harnessKey,
         onDebugAutoScrollRequested: autoScrollReasons.add,
+        settings: _buildSettings().copyWith(autoScrollOnAiReply: followAi),
       ),
     );
     await tester.pumpAndSettle();
@@ -1509,16 +1513,21 @@ void main() {
     await tester.pumpAndSettle();
 
     final controller = tester.widget<CustomScrollView>(listFinder).controller!;
-    expect(
-      _distanceToBottom(controller),
-      greaterThan(40),
-      reason: 'AI 新消息到达后，视口不应继续由程序维持在底部',
-    );
+    if (followAi) {
+      expect(_distanceToBottom(controller), closeTo(0, 0.5),
+          reason: '停在底部时跟着 AI 的新消息，由布局期同帧贴底');
+    } else {
+      expect(harnessKey.currentState!._viewportController.isDetached, isTrue,
+          reason: '关闭自动回底时，AI 新消息到达后不再跟随');
+    }
     expect(autoScrollReasons, isEmpty);
-  });
+    });
+  }
 
-  testWidgets('贴底状态下，临时流式消息变化不应自动请求回底', (tester) async {
-    final settings = _buildSettings();
+  for (final followAi in [true, false]) {
+    testWidgets('贴底状态下，临时流式消息出现不发显式回底请求（自动回底=$followAi）',
+        (tester) async {
+    final settings = _buildSettings().copyWith(autoScrollOnAiReply: followAi);
     final autoScrollReasons = <String>[];
     final viewportController = ChatViewportController();
     final baseMessages = _buildInitialMessages(40);
@@ -1555,14 +1564,17 @@ void main() {
 
     final listFinder = find.byType(CustomScrollView);
     final controller = tester.widget<CustomScrollView>(listFinder).controller!;
-    expect(
-      _distanceToBottom(controller),
-      greaterThan(40),
-      reason: '临时流式消息出现后，也不应由程序继续贴底',
-    );
+    if (followAi) {
+      expect(_distanceToBottom(controller), closeTo(0, 0.5),
+          reason: '停在底部时跟着临时流式消息，由布局期同帧贴底');
+    } else {
+      expect(viewportController.isDetached, isTrue,
+          reason: '关闭自动回底时，临时流式消息出现后不再跟随');
+    }
     expect(autoScrollReasons, isEmpty);
     viewportController.dispose();
-  });
+    });
+  }
 
   testWidgets('贴底状态下，输入区高度变化不应自动请求回底', (tester) async {
     final harnessKey = GlobalKey<_ChatListHarnessState>();

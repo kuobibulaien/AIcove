@@ -82,8 +82,10 @@ class UiTemplate {
     return -1;
   }
 
-  /// A single hole throws on error; mixed text prints "—" for that hole.
-  Object? evaluate(UiScope scope, UiBudget budget) {
+  /// A single hole throws on error; mixed text prints "—" for that hole,
+  /// unless [strict], where any failing hole throws (for checks that must
+  /// not mistake "—" for a real value).
+  Object? evaluate(UiScope scope, UiBudget budget, {bool strict = false}) {
     if (raw) return (_segments.single as UiExpression).evaluate(scope, budget);
     final out = StringBuffer();
     for (final segment in _segments) {
@@ -94,12 +96,17 @@ class UiTemplate {
       try {
         out.write(uiStringify((segment as UiExpression).evaluate(scope, budget)));
       } on UiExpressionError {
+        if (strict) rethrow;
         out.write('—');
       }
     }
     return out.toString();
   }
 }
+
+/// Plain prop text with its doubled braces undone: `{{x}}` shows as `{x}`.
+/// Only for text [UiTemplate.compile] found no holes in.
+String uiTemplateLiteral(String source) => source.replaceAll('{{', '{').replaceAll('}}', '}');
 
 /// A formula written with or without its braces: `"{a > 1}"` or `"a > 1"`.
 String unwrapUiFormula(String source) {

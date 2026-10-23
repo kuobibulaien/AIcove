@@ -11,6 +11,9 @@ import '../../agent_context/domain/preset_script_runtime.dart';
 import '../../context/domain/context_summary.dart' show RuntimeContextPort;
 
 import 'dart:async';
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
+    show KernelCancellation;
+import '../../plugins/data/tool_result_store.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../../agent_plugins/plugin_response.dart';
@@ -78,8 +81,14 @@ class ToolAudioResult {
   const ToolAudioResult({required this.audioUrl, required this.text});
 }
 
+enum ApiRunStatus { completed, truncated, waitingForUser, cancelled, failed }
+
 /// API 调用结果
 class ApiCallResult {
+  final ApiRunStatus status;
+  final String? stopReason;
+  final String? lastModelText;
+  final List<Map<String,dynamic>> runningMessages;
   final String rawReplyText;
   final String replyText;
   final String processedText;
@@ -91,7 +100,18 @@ class ApiCallResult {
   final List<ToolCall> toolCalls;
   final List<ToolResult> rawToolResults;
 
+  /// 本次回复各轮的模型原生思考，按顺序拼好；只用于展示，不进上下文。
+  final String reasoning;
+
+  /// 调过工具的回复按轮拆开的展示结构（最后一轮是正文），供列表按真实先后
+  /// 穿插话术与工具调用；没调工具或旧 runner 时为空，按合并文字展示。
+  final List<ReplyRound> replyRounds;
+
   const ApiCallResult({
+    this.status = ApiRunStatus.completed,
+    this.stopReason,
+    this.lastModelText,
+    this.runningMessages = const [],
     String? rawReplyText,
     required this.replyText,
     required this.processedText,
@@ -102,13 +122,49 @@ class ApiCallResult {
     this.toolAudioResults = const [],
     this.toolCalls = const [],
     this.rawToolResults = const [],
+    this.reasoning = '',
+    this.replyRounds = const [],
   }) : rawReplyText = rawReplyText ?? replyText;
 
   bool get hasToolAudio => toolAudioResults.isNotEmpty;
 }
 
+/// 工具循环里的一轮：这一轮的思考、话术（已过正则与插件）和调用的工具。
+/// 最后一轮是正文，不带工具；工具产出的图片、语音归最后一轮。
+class ReplyRound {
+  const ReplyRound({
+    required this.replyText,
+    required this.processedText,
+    this.pluginEvents = const [],
+    this.pluginContents = const [],
+    this.reasoning = '',
+    this.toolCallIds = const [],
+  });
+
+  final String replyText;
+  final String processedText;
+  final List<PluginEvent> pluginEvents;
+  final List<PluginContent> pluginContents;
+  final String reasoning;
+  final List<String> toolCallIds;
+}
+
+/// 多轮工具循环里每轮的原生思考按顺序拼成一段，轮与轮之间用分隔线隔开。
+String joinRoundReasonings(List<String> rounds) => rounds
+    .map((round) => round.trim())
+    .where((round) => round.isNotEmpty)
+    .join('\n\n---\n\n');
+
 /// API 配置参数
 class ApiConfig {
+  final KernelCancellation? cancellation;
+  final ToolResultStore? toolResultStore;
+  final String? toolResultOwner;
+  final String? Function()? currentWorkspaceId;
+  final void Function(bool Function(String) steer)? onRunReady;
+  final Future<void> Function(ToolCall call, ToolResult result)? onToolStep;
+  final Future<void> Function(List<Map<String,dynamic>> messages)? onTranscript;
+  final void Function(String toolName, String progress)? onToolProgress;
   final PresetScriptSnapshot? presetScript;
 
   /// The preset runtime service from the tavern compatibility plugin; null
@@ -158,6 +214,14 @@ class ApiConfig {
   final String Function(DateTime requestTime)? reminders;
 
   const ApiConfig({
+    this.cancellation,
+    this.toolResultStore,
+    this.toolResultOwner,
+    this.currentWorkspaceId,
+    this.onRunReady,
+    this.onToolStep,
+    this.onTranscript,
+    this.onToolProgress,
     this.presetScript,
     this.openPresetRuntime,
     this.requestInputTokenLimit,
@@ -196,6 +260,7 @@ class ApiConfig {
 
   /// 在装配结果上换掉消息、工具或请求选项，其余字段原样保留。
   ApiConfig copyWith({
+    KernelCancellation? cancellation,
     List<Map<String, dynamic>>? messages,
     bool clearTools = false,
     List<Map<String, dynamic>>? tools,
@@ -203,8 +268,18 @@ class ApiConfig {
     ProviderChatRequestOptions? providerRequestOptions,
     bool? presetStreamResponse,
     AgentToolPolicy? toolPolicy,
+    TraceContext? traceContext,
   }) => ApiConfig(
+    cancellation: cancellation ?? this.cancellation,
+    toolResultStore: toolResultStore,
+    toolResultOwner: toolResultOwner,
+    currentWorkspaceId: currentWorkspaceId,
+    onRunReady: onRunReady,
+    onToolStep: onToolStep,
+    onTranscript: onTranscript,
+    onToolProgress: onToolProgress,
     presetScript: presetScript,
+    openPresetRuntime: openPresetRuntime,
     requestInputTokenLimit: requestInputTokenLimit,
     runtimeContext: runtimeContext,
     settings: settings,
@@ -228,7 +303,7 @@ class ApiConfig {
     presetRegexScripts: presetRegexScripts,
     presetRegexAuthorized: presetRegexAuthorized,
     presetStreamResponse: presetStreamResponse ?? this.presetStreamResponse,
-    traceContext: traceContext,
+    traceContext: traceContext ?? this.traceContext,
     boundImageToolPresetName: boundImageToolPresetName,
     boundImageArtistPresetName: boundImageArtistPresetName,
     drawingConfig: drawingConfig,
@@ -236,6 +311,7 @@ class ApiConfig {
     // A copy must never lose the run's tool gate.
     toolPolicy: toolPolicy ?? this.toolPolicy,
     reminders: reminders,
+    responseProcessors: responseProcessors,
   );
 }
 

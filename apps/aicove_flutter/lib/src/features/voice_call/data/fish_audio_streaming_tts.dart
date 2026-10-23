@@ -5,14 +5,6 @@ import 'dart:typed_data';
 import '../domain/voice_call_ports.dart';
 import 'msgpack.dart';
 
-/// 通话里给模型的 Fish Audio 语气控制说明：方括号标签直接写在台词里，由合成读成
-/// 语气而不念出来；字幕和通话记录显示时去掉（[CallTurn.spokenText]）。
-const String kFishAudioCallSpeechGuide = '''你的声音由 Fish Audio 合成，可以在台词里用方括号写语气和声音表演，方括号里的内容不会被念出来：
-- 情绪与说话方式写在受影响的话前面，比如 [笑着说]、[小声嘀咕]、[委屈巴巴]、[兴奋地抢着说]、[懒洋洋]，按人设和当下情绪自己写，描述要具体、有表演感，不要只写“开心”“难过”这种平淡词。
-- 呼吸、笑声、停顿等声音可以穿插在词句之间，比如 [轻笑]、[叹气]、[吸了口气]、[哭腔]、[短停顿]、[噗嗤一声笑出来]。
-- 每句话都尽量带上标签，情绪变化处可以叠用，比如“[愣了一下]诶？[忍不住笑]你认真的啊[短停顿]那我可不客气啦”。
-- 标签后面必须紧跟要说的话，只用方括号，不要用圆括号或其它符号。''';
-
 typedef WebSocketConnector =
     Future<WebSocket> Function(Uri uri, Map<String, String> headers);
 

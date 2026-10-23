@@ -1,6 +1,7 @@
 # AIcove 助手与新手教程
 
-- 状态：方向已确认（2026-10-17）；T1～T4 已实现（2026-10-17，离线测试与真实 DeepSeek 通过，Codex 验收，实机未验）
+- 状态：方向已确认（2026-10-17）；T1～T4 已实现（2026-10-17，离线测试与真实 DeepSeek 通过，Codex 验收，实机未验）；10-19 改名 AIcove酱并扩到全权限（ADR0093）
+- 10-21 起：恒为工具模式（ADR0097），直接用插件和内置 aicove 空间，不再派活；剧本台词改用文档模式消息渲染，选项与 Key 输入放进跟随材质的交互组件卡片（仍是本机界面状态，不写消息表）；界面类设置（皮肤颜色、壁纸、分段、工具提示词、会话样式）全部开放给她改，另有「恢复默认界面设置」（通用设置·高级、设置加载失败页、她的工具三处）。
 - 关联：ADR0073（引导 Agent，本方案定稿其授权与形态）、ADR0087 第 6 条（AIcove 默认空间）、ADR0064（内核与内置插件）、ADR0066（本地隐私优先）
 
 ## 目标
@@ -103,7 +104,7 @@ AIcove 的取舍：设置项数量有限、每项都能事先标风险，所以*
 
 ## 回复里的交互组件
 
-助手回复可以带能点、能改的组件（清单、步骤、决策树、测验、指标、数据表、联动计算面板），用户的操作下一轮回传给模型。格式、组件、分批见 [交互组件方案](交互组件方案.md)（ADR0091）。
+助手回复可以带能点、能改的组件（清单、步骤、决策树、测验、指标、数据表、联动计算面板），用户的操作下一轮回传给模型。格式、组件、分批见 [交互组件方案](交互组件方案.md)（ADR0091）。她还能放出「快捷面板」（角色、绘图预设、音色预设、设置、渠道列表），用户点选后打开编辑页或直接改，见 [快捷面板方案](快捷面板方案.md)（ADR0094）。
 
 ## 分批
 
@@ -179,6 +180,23 @@ AIcove 的取舍：设置项数量有限、每项都能事先标风险，所以*
 - 体检：`application/assistant_checkup.dart`，只读、无正文：默认模型不可用、启用却没 Key 的聊天渠道、绑定预设丢失、预设关了函数调用却开了绘图／联网搜索、预设正则未授权、一个插件都没开、开了语音却打不了电话（复用 `VoiceCallFactory.unavailableReason`，只查配置不建连；全局语音插件关着时不查）；隐私空间角色跳过。
 - 「修改前每次问我」：助手聊天页「更多」菜单切换，存本机 `assistant_always_ask_v1`；开着时可撤销档也要确认，需审核档不走审核模型直接问用户；助手没有工具能改它。
 - 测试：`test/features/assistant/assistant_checkup_test.dart`、`assistant_review_test.dart` 的 always-ask 与超长参数用例。
+
+## 全权限（ADR0093，2026-10-19）
+
+改名 AIcove酱，工作范围扩到几乎整个软件。新范围都实现 `application/assistant_tool_group.dart` 的 `AssistantToolGroup`（工具＋风险＋确认文案），由 `assistantToolGroupsProvider` 装进助手会话、审批闸门和确认卡片。
+
+| 工具组 | 文件 | 工具 | 风险 |
+|---|---|---|---|
+| 设置 | `assistant_settings.dart` 白名单 | 原 13 项＋压缩／记忆模型、材质模糊与底色、内置壁纸、图片预览、句末标点、Windows 窗口行为、主动关怀各项 | 可撤销；跨渠道换模型重大 |
+| 模型渠道 | `assistant_provider_tools.dart` | add（Key 卡片带草稿，粘贴后才建渠道）、update、list_remote_models、set_provider_models、test、delete | 改名启停选模型可撤销；停用需审核；改地址、删除重大 |
+| 角色 | `assistant_role_tools.dart` | set_role_look（内置图／其他角色的图）、pick_role_image（选图卡片）、voice、thinking、flags、delete、clear_chat、import_role_card（按钮打开新建页并自动导入） | 可撤销（走角色撤销日志）；删除、清空重大 |
+| 酒馆预设 | `assistant_preset_tools.dart` | import_preset（链接直接导、无链接给按钮）、add_preset_regex、add_world_book（她自己写或下载的 JSON）、set_preset_options、set_default_preset、delete_preset | 需审核；删除重大 |
+| 插件选项 | `assistant_plugin_option_tools.dart` | 时间感知两项、联网搜索三项 | 可撤销 |
+| 读正文 | `assistant_private_read_tools.dart` | read_role_chat、read_role_memory、revoke_read | 未授权角色重大，同意后本机记住；隐私空间永不可读 |
+
+页面按钮（aicove_open_page）补了酒馆、语音、绘图、表情包、联网搜索、时间感知、MCP、主动关怀、同步与备份、局域网同步、账号。暂不覆盖的范围见 ADR0093「代价」。
+
+测试：`test/features/assistant/assistant_{provider,role,preset,private_read,plugin_option}_tools_test.dart`、`assistant_settings_test.dart` 嵌套设置用例、`assistant_real_model_test.dart`「channel and tune a role」真实 DeepSeek 用例。
 
 ## 调研来源
 

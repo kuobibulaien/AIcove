@@ -77,3 +77,32 @@ SecretRedactor redactorForCredentials({
   }
   return redactor;
 }
+
+/// Channel keys as shell variables of the AIcove assistant (ADR0109 补充二):
+/// `AICOVE_KEY_<ID>` and `AICOVE_URL_<ID>` per channel with a key, where ID is
+/// the channel id upper-cased with other characters as `_`, plus
+/// `AICOVE_KEYS` listing `ID:name` pairs. Output still goes through the
+/// redactor, so the agent writes keys with the variables, never sees them.
+Map<String, String> channelKeyEnvironment(AppSettings settings) {
+  final env = <String, String>{};
+  final listed = <String>[];
+  for (final provider in settings.providers) {
+    final key = provider.apiKeys
+        .map((key) => key.trim())
+        .firstWhere((key) => key.isNotEmpty, orElse: () => '');
+    final id = provider.id
+        .toUpperCase()
+        .replaceAll(RegExp(r'[^A-Z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    if (key.isEmpty || id.isEmpty || env.containsKey('AICOVE_KEY_$id')) {
+      continue;
+    }
+    env['AICOVE_KEY_$id'] = key;
+    final url = provider.apiBaseUrl.trim();
+    if (url.isNotEmpty) env['AICOVE_URL_$id'] = url;
+    final name = (provider.displayName ?? provider.id).replaceAll(',', ' ');
+    listed.add('$id:$name');
+  }
+  if (listed.isNotEmpty) env['AICOVE_KEYS'] = listed.join(',');
+  return env;
+}

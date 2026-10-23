@@ -1,6 +1,7 @@
 import '../content_tags/domain/content_tag_registry.dart';
 import '../content_tags/domain/content_tag_scanner.dart';
 import '../content_tags/domain/content_tag_spec.dart';
+import '../stickers/sticker_tag.dart';
 import '../task_agent/application/delegate_task_plugin.dart';
 import 'image/image_plugin.dart';
 import 'tts/tts_plugin.dart';
@@ -11,6 +12,7 @@ const List<ContentTagProvider> firstPartyContentTagProviders = [
   TtsPlugin.contentTags,
   ImagePlugin.contentTags,
   WebSearchPlugin.contentTags,
+  StickerTag.contentTags,
   delegateTaskContentTags,
 ];
 

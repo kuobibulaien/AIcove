@@ -2,7 +2,7 @@
   "messages": [
     {
       "role": "system",
-      "content": "你是测试角色。\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n- 历史消息里形如 [YYYY-MM-DD HH:mm] 的前缀表示该条消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。\n\n## 派活\n你自己不能上网、不能查资料、不能读写文件。需要查询、搜索、整理文件这类事时，调用 delegate_task（action=start）交给后台助手去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n收到「杂活回执」之前，只能说在处理，绝不能编造结果。回执里有问题时，用你的口吻转问用户；用户回答后用 action=reply 把回答交回去。用户说不用了，用 action=cancel 取消。"
+      "content": "你是测试角色。\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n- 历史消息里形如 [YYYY-MM-DD HH:mm] 的前缀表示该条消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。\n\n## 派活\n你工具列表里有的工具（比如表情包链接导入）直接用，不用派活。你没有上网搜索和读写文件的工具；这类事交给后台助手，调用 delegate_task（action=start）去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n收到「杂活回执」之前，只能说在处理，绝不能编造结果。回执里有问题时，用你的口吻转问用户；用户回答后用 action=reply 把回答交回去。用户说不用了，用 action=cancel 取消。"
     },
     {
       "role": "user",
@@ -26,7 +26,7 @@
       "type": "function",
       "function": {
         "name": "delegate_task",
-        "description": "把需要上网、查资料、读写文件的事交给后台助手。start 派活（写清楚要做什么）；reply 回答助手的提问；cancel 取消任务。只返回受理结果，不等任务完成；结果之后以「杂活回执」送达。",
+        "description": "把你没有工具、需要上网搜索或读写文件的事交给后台助手。start 派活（写清楚要做什么）；reply 回答助手的提问；cancel 取消任务。只返回受理结果，不等任务完成；结果之后以「杂活回执」送达。",
         "parameters": {
           "type": "object",
           "properties": {
@@ -56,12 +56,37 @@
           ]
         }
       }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "steer_task",
+        "description": "给已派出的任务追加要求或纠正方向，不新建任务。运行中会在下一模型轮接收；排队或等回答的任务下次执行时接收。不会代替回答提问，也不会重做已完成的操作。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "task_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "instruction": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "task_id",
+            "instruction"
+          ]
+        }
+      }
     }
   ],
   "toolChoice": null,
   "disableBuiltinWebSearch": true,
   "boundTools": [
-    "delegate_task"
+    "delegate_task",
+    "steer_task"
   ],
   "enabledPluginIds": [
     "mcp:notes",

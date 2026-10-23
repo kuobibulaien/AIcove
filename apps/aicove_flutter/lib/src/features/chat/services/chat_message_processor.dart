@@ -20,6 +20,8 @@ import '../../content_tags/domain/content_tag_scanner.dart';
 import '../../plugins/image/image_plugin.dart';
 import '../../plugins/plugin_content_tags.dart';
 import '../../plugins/tts/tts_parser.dart';
+import '../../stickers/sticker_tag.dart';
+import '../../../core/models/block_status.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/api/providers/provider_adapter.dart'
     show ToolCall, ToolResult;
@@ -86,8 +88,18 @@ class ChatMessageProcessor {
     List<ToolAudioResult> toolAudioResults = const [],
     List<ToolCall> toolCalls = const [],
     List<ToolResult> rawToolResults = const [],
+    String reasoning = '',
+    List<ReplyRound> replyRounds = const [],
   }) {
-    final aiMessages = <Message>[];
+    if (replyRounds.length > 1) {
+      return _buildRoundMessages(
+        replyRounds,
+        toolAudioResults: toolAudioResults,
+        toolCalls: toolCalls,
+        rawToolResults: rawToolResults,
+      );
+    }
+    var aiMessages = <Message>[];
     final normalizedContents = contents ?? const <PluginContent>[];
     final imageContents = normalizedContents
         .whereType<PluginImageContent>()
@@ -260,61 +272,41 @@ class ChatMessageProcessor {
 
     // 注意：表情包已在上面的多模态拆分中按位置处理，不再单独追加
 
-    // 附加 ToolBlocks，将 AI 调用的工具和结果记录入库
+    // 附加 ToolBlocks，将 AI 调用的工具和结果记录入库。工具在正文生成前就已
+    // 执行，挂在这次回复的第一条消息最前；第一条不是纯文字（语音、图片等）或
+    // 回复为空时，单独成一条只含工具块的消息放在最前。
     if (toolCalls.isNotEmpty) {
-      final toolBlocks = <ToolBlock>[];
-      for (final call in toolCalls) {
-        final result = rawToolResults.firstWhere((r) => r.toolCallId == call.id,
-            orElse: () => ToolResult(
-                toolCallId: call.id,
-                name: call.name,
-                result: '{"error": "no result"}'));
-        toolBlocks.add(ToolBlock(
-          messageId: 'tmp',
-          toolCallId: call.id,
-          toolName: call.name,
-          arguments: call.arguments,
-          result: {'content': result.result},
-        ));
-      }
-
-      if (aiMessages.isNotEmpty) {
-        final lastMsg = aiMessages.last;
-        final newBlocks = List<MessageBlock>.from(lastMsg.blocks ?? []);
-        if (lastMsg.content.isNotEmpty && newBlocks.isEmpty) {
-          newBlocks
-              .add(TextBlock(messageId: lastMsg.id, content: lastMsg.content));
-        }
-        for (final tb in toolBlocks) {
-          newBlocks.add(ToolBlock(
-              messageId: lastMsg.id,
-              toolCallId: tb.toolCallId,
-              toolName: tb.toolName,
-              arguments: tb.arguments,
-              result: tb.result));
-        }
-        aiMessages[aiMessages.length - 1] = lastMsg.copyWith(
+      final first = aiMessages.isEmpty ? null : aiMessages.first;
+      final firstBlocks = first?.blocks;
+      final firstIsText = first != null &&
+          (firstBlocks == null || firstBlocks.isEmpty
+              ? first.content.trim().isNotEmpty
+              : firstBlocks.every((block) => block is TextBlock));
+      if (firstIsText) {
+        aiMessages[0] = first.copyWith(
           content: '',
-          blocks: newBlocks,
+          blocks: <MessageBlock>[
+            ..._toolBlocks(first.id, toolCalls, rawToolResults),
+            ...(firstBlocks == null || firstBlocks.isEmpty
+                ? <MessageBlock>[
+                    TextBlock(messageId: first.id, content: first.content),
+                  ]
+                : firstBlocks),
+          ],
         );
       } else {
-        final msgId = genId('msg');
-        aiMessages.add(Message.fromBlocks(
-          id: msgId,
-          role: 'assistant',
-          blocks: toolBlocks
-              .map((b) => ToolBlock(
-                  messageId: msgId,
-                  toolCallId: b.toolCallId,
-                  toolName: b.toolName,
-                  arguments: b.arguments,
-                  result: b.result))
-              .toList(),
-          createdAt: DateTime.now(),
-          status: 'sent',
-        ));
+        aiMessages.insert(
+          0,
+          _toolMessage(
+            toolCalls,
+            rawToolResults,
+            createdAt: first?.createdAt ?? DateTime.now(),
+          ),
+        );
       }
     }
+
+    aiMessages = attachModelThinking(aiMessages, reasoning);
 
     // 计算最后一条消息预览
     final lastMessageText =
@@ -324,6 +316,143 @@ class ChatMessageProcessor {
       messages: aiMessages,
       lastMessageText: lastMessageText,
     );
+  }
+
+  /// 调过工具的回复逐轮展开：每轮依次是思考 → 话术 → 这轮的工具调用，
+  /// 最后一轮是正文（带工具产出的语音）。工具单独成一条消息，避免列表把
+  /// 同一条里的过程折叠段提到话术前面。
+  AssistantMessageBuildResult _buildRoundMessages(
+    List<ReplyRound> rounds, {
+    required List<ToolAudioResult> toolAudioResults,
+    required List<ToolCall> toolCalls,
+    required List<ToolResult> rawToolResults,
+  }) {
+    final claimed = {for (final round in rounds) ...round.toolCallIds};
+    final messages = <Message>[];
+    for (final (index, round) in rounds.indexed) {
+      final isFinal = index == rounds.length - 1;
+      messages.addAll(
+        buildAssistantMessages(
+          replyText: round.replyText,
+          displayReplyText: round.replyText,
+          processedText: round.processedText,
+          pluginEvents: round.pluginEvents,
+          contents: round.pluginContents,
+          toolAudioResults: isFinal ? toolAudioResults : const [],
+          reasoning: round.reasoning,
+        ).messages,
+      );
+      final ids = round.toolCallIds.toSet();
+      final roundCalls = [
+        for (final call in toolCalls)
+          if (ids.contains(call.id) || (index == 0 && !claimed.contains(call.id)))
+            call,
+      ];
+      if (roundCalls.isNotEmpty) {
+        messages.add(
+          _toolMessage(roundCalls, rawToolResults, createdAt: DateTime.now()),
+        );
+      }
+    }
+    return AssistantMessageBuildResult(
+      messages: messages,
+      lastMessageText: messages.isNotEmpty ? messages.last.displayText : '',
+    );
+  }
+
+  static List<ToolBlock> _toolBlocks(
+    String messageId,
+    List<ToolCall> toolCalls,
+    List<ToolResult> rawToolResults,
+  ) =>
+      [
+        for (final call in toolCalls)
+          ToolBlock(
+            messageId: messageId,
+            toolCallId: call.id,
+            toolName: call.name,
+            arguments: call.arguments,
+            result: {
+              if(call.name=='codemode') 'codemodeCalls': (rawToolResults.where((r)=>r.toolCallId==call.id).firstOrNull?.structured as Map?)?['codemodeCalls'] ?? const [],
+              'content': rawToolResults
+                  .firstWhere(
+                    (r) => r.toolCallId == call.id,
+                    orElse: () => ToolResult(
+                      toolCallId: call.id,
+                      name: call.name,
+                      result: '{"error": "no result"}',
+                    ),
+                  )
+                  .result,
+            },
+          ),
+      ];
+
+  static Message _toolMessage(
+    List<ToolCall> toolCalls,
+    List<ToolResult> rawToolResults, {
+    required DateTime createdAt,
+  }) {
+    final id = genId('msg');
+    return Message.fromBlocks(
+      id: id,
+      role: 'assistant',
+      blocks: _toolBlocks(id, toolCalls, rawToolResults),
+      createdAt: createdAt,
+      status: 'sent',
+    );
+  }
+
+  /// 模型原生思考的折叠标题，列表据此把它排在工具调用和标签思维链之前。
+  static const String modelThinkingTitle = '模型思考';
+
+  /// 模型原生思考挂在这次回复的第一条消息最前；第一条不是纯文字（语音、
+  /// 图片等）或回复为空时，单独成一条只含思考块的消息放在最前。
+  static List<Message> attachModelThinking(
+    List<Message> messages,
+    String reasoning,
+  ) {
+    final content = reasoning.trim();
+    if (content.isEmpty) return messages;
+    ThinkingBlock thinking(String messageId) => ThinkingBlock(
+          messageId: messageId,
+          content: content,
+          title: modelThinkingTitle,
+          status: BlockStatus.success,
+        );
+    final first = messages.isEmpty ? null : messages.first;
+    final firstBlocks = first?.blocks;
+    final firstIsText = first != null &&
+        (firstBlocks == null || firstBlocks.isEmpty
+            ? first.content.trim().isNotEmpty
+            : firstBlocks
+                .every((block) => block is TextBlock || block is ToolBlock));
+    if (firstIsText) {
+      return [
+        first.copyWith(
+          blocks: <MessageBlock>[
+            thinking(first.id),
+            ...(firstBlocks == null || firstBlocks.isEmpty
+                ? <MessageBlock>[
+                    TextBlock(messageId: first.id, content: first.content),
+                  ]
+                : firstBlocks),
+          ],
+        ),
+        ...messages.skip(1),
+      ];
+    }
+    final id = genId('msg');
+    return [
+      Message.fromBlocks(
+        id: id,
+        role: 'assistant',
+        blocks: [thinking(id)],
+        createdAt: first?.createdAt ?? DateTime.now(),
+        status: 'sent',
+      ),
+      ...messages,
+    ];
   }
 
   /// 解析多模态标签，返回按原文位置排列的片段列表
@@ -349,14 +478,14 @@ class ChatMessageProcessor {
         .toList();
   }
 
-  /// 解析文本中的多模态标签（<tts> 和 [表情包]），按位置拆分成片段
+  /// 解析文本中的多模态标签（<tts> 和 <sticker tag="…"/>），按位置拆分成片段
   ///
-  /// 输入: "早安呀~ [早安] <tts>今天天气很好</tts> 出去走走吧"
+  /// 输入: "早安呀~ <sticker tag=\"早安\"/> <tts>今天天气很好</tts> 出去走走吧"
   /// 输出: [text("早安呀~"), sticker("早安"), tts("今天天气很好"), text("出去走走吧")]
   ///
   /// 注意：
-  /// - [tag] 只有匹配到实际表情包事件时才作为 sticker 段
-  /// - 嵌套在 <tts> 内部的 [tag] 会被忽略（属于语音内容的一部分）
+  /// - 表情标签只有匹配到实际表情包事件时才作为 sticker 段
+  /// - 嵌套在 <tts> 内部的表情标签会被忽略（属于语音内容的一部分，语音正文里去掉）
   List<_Seg> _parseMultimodalSegments(
     String text,
     List<PluginEvent> pluginEvents,
@@ -364,12 +493,12 @@ class ChatMessageProcessor {
     // 先移除非多模态的插件标签（如 trigger），保留 TTS 和 sticker 标签
     final cleanedText = _stripNonTtsTags(text);
 
-    // 收集已匹配的表情包标签
-    final stickerDataByTag = <String, Map<String, dynamic>>{};
+    // 表情事件按标签分队列，与正文里顶层表情标签的出现顺序一一对应
+    final stickerEventsByTag = <String, List<Map<String, dynamic>>>{};
     for (final event in pluginEvents) {
       if (event.type == 'sticker_convert') {
         final tag = event.data['tag'] as String?;
-        if (tag != null) stickerDataByTag[tag] = event.data;
+        if (tag != null) (stickerEventsByTag[tag] ??= []).add(event.data);
       }
     }
 
@@ -387,25 +516,17 @@ class ChatMessageProcessor {
       if (trimmed.isNotEmpty) segments.add(_Seg(_SegType.text, trimmed));
     }
 
-    // 表情包只在标签外的文本里识别；语音、图片正文里的 [tag] 属于其内容
     void flushText() {
-      final chunk = pendingText.toString();
+      addText(pendingText.toString());
       pendingText.clear();
-      var cursor = 0;
-      for (final match in _stickerTagRegex.allMatches(chunk)) {
-        final tag = match.group(1)?.trim() ?? '';
-        final data = stickerDataByTag[tag];
-        if (data == null) continue;
-        addText(chunk.substring(cursor, match.start));
-        segments.add(_Seg(_SegType.sticker, tag, data: data));
-        cursor = match.end;
-      }
-      addText(chunk.substring(cursor));
     }
 
     for (final segment in firstPartyContentTagScanner.scan(cleanedText)) {
       if (TtsParser.isSpeechElement(segment)) {
-        final content = (segment as ContentTagElement).inner.trim();
+        final content = StickerTag.removeFrom(
+          firstPartyContentTagScanner,
+          (segment as ContentTagElement).inner,
+        ).trim();
         if (content.isNotEmpty) {
           flushText();
           segments.add(_Seg(_SegType.tts, content));
@@ -425,13 +546,23 @@ class ChatMessageProcessor {
           continue;
         }
       }
+      if (StickerTag.isElement(segment)) {
+        final element = segment as ContentTagElement;
+        final tag = StickerTag.tagOf(element);
+        final queue = stickerEventsByTag[tag];
+        if (queue != null && queue.isNotEmpty) {
+          flushText();
+          segments.add(_Seg(_SegType.sticker, tag, data: queue.removeAt(0)));
+        }
+        // 与插件一致：成对写法的正文保留为文字，标签本身不显示
+        if (!element.selfClosing) pendingText.write(element.inner);
+        continue;
+      }
       pendingText.write(segment.raw);
     }
     flushText();
     return segments;
   }
-
-  static final RegExp _stickerTagRegex = RegExp(r'\[([^\[\]]+)\]');
 
   static bool _isInlineImageElement(ContentTagSegment segment) =>
       segment is ContentTagElement &&
@@ -649,7 +780,7 @@ class ChatMessageProcessor {
   }) {
     final trimmedProcessed = processedText.trim();
     if (processedTextProvided || trimmedProcessed.isNotEmpty) {
-      return trimmedProcessed;
+      return StickerTag.removeFrom(firstPartyContentTagScanner, trimmedProcessed);
     }
 
     // 如果检测到 TTS 事件，说明这轮回复应以语音为主
@@ -668,7 +799,8 @@ class ChatMessageProcessor {
     if (text.isEmpty) return text;
     final ttsMatches = <String>[];
     final kept = StringBuffer();
-    for (final segment in firstPartyContentTagScanner.scan(text)) {
+    final visibleText = StickerTag.removeFrom(firstPartyContentTagScanner, text);
+    for (final segment in firstPartyContentTagScanner.scan(visibleText)) {
       if (TtsParser.isSpeechElement(segment)) {
         // 移除 <tts>...</tts> 标签，但保留内容（清理 MiniMax 专有标签后）
         final content = (segment as ContentTagElement).inner.trim();

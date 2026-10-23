@@ -114,6 +114,7 @@ flutter:
   uses-material-design: true
 
   assets:
+    - assets/webapp/
     - assets/preset_runtime/
     - assets/agent_context_defaults.json
     - assets/prompt_defaults.json
@@ -125,5 +126,11 @@ flutter:
     - assets/wallpapers/
     - assets/emoji/
     - assets/stickers/nahida/
+    - assets/stickers/builtin/
+    - assets/stickers/builtin/daimao_shuxiong/
+    - assets/stickers/builtin/xiaokumao/
+    - assets/stickers/builtin/yomee/
+    - assets/stickers/builtin/yushaoge/
+    - assets/stickers/builtin/zhegou/
     - assets/icons/providers/
     - assets/icons/tray/

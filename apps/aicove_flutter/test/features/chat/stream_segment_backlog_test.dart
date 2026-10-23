@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
+import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
 import 'package:flutter/services.dart';
 
 import '../../../tool/chat_segmented_fixture.dart';
@@ -26,21 +28,49 @@ void main() {
     );
     addTearDown(fixture.dispose);
     await fixture.start();
-    fixture.add(List.filled(20, '尚未显示完毕的正文段落。').join());
+    final segments = List.generate(20, (index) => '第 $index 段尚未显示完毕的正文。');
+    fixture.add(segments.join());
     final finishing = fixture.finish();
-    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await fixture.waitUntil(() => fixture.bubbles.isNotEmpty);
+    final visible = fixture.bubbles.map((m) => m.displayText).toList();
+    expect(visible.length, lessThan(segments.length));
+    expect(visible, segments.take(visible.length).toList());
+    final actions = fixture.container.read(chatActionsProvider);
     expect(
-      await fixture.container
-          .read(chatActionsProvider)
-          .interruptCurrentGeneration(convId: fixture.conversation.id),
+      await actions.interruptCurrentGeneration(convId: fixture.conversation.id),
       isTrue,
     );
-    await finishing.timeout(const Duration(seconds: 5));
-    await Future<void>.delayed(const Duration(milliseconds: 150));
     expect(
-      fixture.timeline.value.where((message) => message.role == 'assistant'),
+      await actions.interruptCurrentGeneration(convId: fixture.conversation.id),
+      isFalse,
+    );
+    final history = fixture.container.read(chatHistoryStoreProvider);
+    final saved = (await history.loadAllRawMessages(
+      fixture.conversation.id,
+    )).where((m) => m.role == 'assistant').single;
+    expect(saved.content, visible.join());
+    expect(saved.rawPayload?['runStatus'], 'cancelled');
+    final savedIds = fixture.bubbles.map((m) => m.id).toList();
+    await finishing.timeout(const Duration(seconds: 5));
+    // Wait beyond every remaining reveal slot and the 180ms flush interval.
+    await Future<void>.delayed(const Duration(milliseconds: 1200));
+    final reloaded = (await history.loadAllRawMessages(
+      fixture.conversation.id,
+    )).where((m) => m.role == 'assistant').toList();
+    expect(reloaded.map((m) => m.id), [saved.id]);
+    expect(reloaded.single.content, visible.join());
+    expect(fixture.bubbles.map((m) => m.displayText).join(), visible.join());
+    expect(fixture.bubbles.map((m) => m.id), savedIds);
+    expect(fixture.bubbles.last.rawPayload?['runStatus'], 'cancelled');
+    expect(
+      fixture.timeline.value.where(
+        (m) =>
+            m.role == 'assistant' &&
+            (m.status == 'sending' || m.displayText == '生成中...'),
+      ),
       isEmpty,
     );
+    expect(fixture.container.read(activeStreamProjectionsProvider), isEmpty);
   });
 
   for (final tail in ['', '这是没有结束标点的最后一段']) {

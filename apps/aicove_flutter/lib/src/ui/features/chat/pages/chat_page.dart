@@ -1,5 +1,6 @@
 import '../../../theme/moe_interaction_theme.dart';
 import 'chat_image_export_page.dart';
+import '../widgets/voice_autoplay_prompt.dart';
 import '../widgets/chat_share_sheet.dart';
 import '../../plugins/widgets/drawing_preset_picker_sheet.dart';
 import '../widgets/chat_message_selection.dart';
@@ -41,7 +42,7 @@ import '../../../../features/chat/presentation/widgets/composer.dart';
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/plugins/plugin_providers.dart'
-    show ttsPluginConfigProvider;
+    show timeAwarenessPluginConfigProvider, ttsPluginConfigProvider;
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -301,7 +302,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       chatSize: chatSize,
       showBackButton: MoeWorkspace.showsBackButton(context),
       documentStyle: ref
-              .read(chatDisplayPolicyProvider(conv.chatDisplayStyle))
+              .read(chatDisplayPolicyProvider(conv.effectiveDisplayStyle))
               .style ==
           ChatDisplayStyle.document,
     ));
@@ -441,7 +442,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               if (mounted) {
                 MoeToast.brief(
                   context,
-                  next ? '之后助手的每次修改都会先问你' : '可撤销的修改将直接执行',
+                  next ? '之后 AIcove酱的每次修改都会先问你' : '可撤销的修改将直接执行',
                 );
               }
             },
@@ -1695,7 +1696,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               key: ValueKey(conv.id),
                               conversationId: conv.id,
                               recipeId: conv.recipeId,
-                              chatDisplayStyle: conv.chatDisplayStyle,
+                              chatDisplayStyle: conv.effectiveDisplayStyle,
+                              showTimeDividers: ref
+                                      .watch(timeAwarenessPluginConfigProvider)
+                                      .enabled &&
+                                  (conv.enabledPlugins
+                                          ?.contains('time_awareness') ??
+                                      true),
                               selection: _selection,
                               messages: messages,
                               isInitialLoading:
@@ -1827,6 +1834,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   ],
                 ),
               ),
+              if (conv != null && !_selection.active)
+                Positioned(
+                  right: 16,
+                  bottom: _composerOverlayHeight + _assistantPanelHeight + 12,
+                  child: VoiceAutoplayPrompt(
+                    conversationId: conv.id,
+                    messages: messages,
+                  ),
+                ),
               if (typingCall != null &&
                   !windowCall &&
                   typingCall.minimized &&

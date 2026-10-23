@@ -56,6 +56,9 @@ class ToolCallScope {
 
   /// How the call got through; set before the tool runs.
   GateOutcome? outcome;
+
+  /// Set only by a human approval channel, never by an automatic reviewer.
+  bool humanApproved = false;
 }
 
 class ApprovalRequest {
@@ -66,9 +69,11 @@ class ApprovalRequest {
     required this.reason,
     required this.withdrawn,
     this.callId,
+    this.requiresHumanApproval = false,
   });
 
   final String toolName;
+  final bool requiresHumanApproval;
 
   /// The call being approved, so a port can tie its answer to this call.
   final String? callId;
@@ -91,9 +96,7 @@ abstract interface class ApprovalPort {
 /// An approval with the reason for a rejection, which goes back to the model
 /// so it can pick a safer route instead of retrying the same call.
 class ApprovalAnswer {
-  const ApprovalAnswer.approved()
-      : approved = true,
-        reason = null;
+  const ApprovalAnswer.approved() : approved = true, reason = null;
 
   const ApprovalAnswer.rejected([this.reason]) : approved = false;
 
@@ -117,30 +120,40 @@ class GatedToolExecutor implements ToolBatchExecutor {
     required ToolGate gate,
     required ToolEffect Function(KernelToolCall call) effectOf,
     ApprovalPort? approvals,
+    bool Function(KernelToolCall call)? requiresHumanApprovalOf,
     this.approvalTimeout = const Duration(minutes: 2),
-  })  : _gate = gate,
-        _effectOf = effectOf,
-        _approvals = approvals;
+  }) : _gate = gate,
+       _effectOf = effectOf,
+       _requiresHumanApprovalOf = requiresHumanApprovalOf,
+       _approvals = approvals;
 
   final ToolBatchExecutor _inner;
   final ToolGate _gate;
   final ToolEffect Function(KernelToolCall call) _effectOf;
   final ApprovalPort? _approvals;
+  final bool Function(KernelToolCall call)? _requiresHumanApprovalOf;
+  bool _human(KernelToolCall call) =>
+      _requiresHumanApprovalOf?.call(call) ?? false;
+
+  GateVerdict _verdict(KernelToolCall call, ToolEffect effect) {
+    final verdict = _gate.check(call, effect);
+    return _human(call) && verdict.decision != GateDecision.deny
+        ? const GateVerdict.ask('运行命令')
+        : verdict;
+  }
+
   final Duration approvalTimeout;
 
   @override
   BatchMode modeFor(List<KernelToolCall> calls, TurnContext ctx) {
     final asks = calls.any(
-      (call) => _gate.check(call, _effectOf(call)).decision == GateDecision.ask,
+      (call) => _verdict(call, _effectOf(call)).decision == GateDecision.ask,
     );
     return asks ? BatchMode.serial : _inner.modeFor(calls, ctx);
   }
 
   @override
-  Future<KernelToolResult> executeOne(
-    KernelToolCall call,
-    TurnContext ctx,
-  ) {
+  Future<KernelToolResult> executeOne(KernelToolCall call, TurnContext ctx) {
     final scope = ToolCallScope();
     return scope.run(() => _executeOne(call, ctx, scope));
   }
@@ -151,29 +164,36 @@ class GatedToolExecutor implements ToolBatchExecutor {
     ToolCallScope scope,
   ) async {
     final effect = _effectOf(call);
-    final verdict = _gate.check(call, effect);
+    final verdict = _verdict(call, effect);
     String? rejection;
     var outcome = switch (verdict.decision) {
       GateDecision.allow => GateOutcome.allowed,
       GateDecision.deny => GateOutcome.denied,
       GateDecision.ask => await _ask(
-          call,
-          effect,
-          verdict.reason ?? '',
-          ctx,
-          (reason) => rejection = reason,
-        ),
+        call,
+        effect,
+        verdict.reason ?? '',
+        ctx,
+        (reason) => rejection = reason,
+      ),
     };
+    if (_human(call) &&
+        outcome == GateOutcome.approved &&
+        !scope.humanApproved) {
+      outcome = GateOutcome.rejected;
+    }
     if (_runs(outcome) && ctx.cancellation.isCancelled) {
       outcome = GateOutcome.cancelled;
     }
-    Future<void> emit(GateOutcome outcome) => ctx.emit(ToolGated(
-          ctx.round,
-          callId: call.id,
-          toolName: call.name,
-          effect: effect.name,
-          outcome: outcome,
-        ));
+    Future<void> emit(GateOutcome outcome) => ctx.emit(
+      ToolGated(
+        ctx.round,
+        callId: call.id,
+        toolName: call.name,
+        effect: effect.name,
+        outcome: outcome,
+      ),
+    );
     await emit(outcome);
     // Cancellation may arrive while the event is being observed; a call that
     // has not started must not start after that. A second event for the same
@@ -226,21 +246,28 @@ class GatedToolExecutor implements ToolBatchExecutor {
         arguments: call.arguments,
         reason: reason,
         withdrawn: withdrawn.future,
+        requiresHumanApproval: _human(call),
       );
-      final answer = (approvals is ExplainingApprovalPort
-              ? approvals.answer(request)
-              : approvals.request(request).then((ok) => ok
-                  ? const ApprovalAnswer.approved()
-                  : const ApprovalAnswer.rejected()))
-          .then((answer) {
-            answered = true;
-            if (answer.approved) return GateOutcome.approved;
-            if (answer.reason case final reason?) onRejected(reason);
-            return GateOutcome.rejected;
-          })
-          .timeout(approvalTimeout, onTimeout: () => GateOutcome.timedOut);
-      final cancelled =
-          ctx.cancellation.whenCancelled.then((_) => GateOutcome.cancelled);
+      final answer =
+          (approvals is ExplainingApprovalPort
+                  ? approvals.answer(request)
+                  : approvals
+                        .request(request)
+                        .then(
+                          (ok) => ok
+                              ? const ApprovalAnswer.approved()
+                              : const ApprovalAnswer.rejected(),
+                        ))
+              .then((answer) {
+                answered = true;
+                if (answer.approved) return GateOutcome.approved;
+                if (answer.reason case final reason?) onRejected(reason);
+                return GateOutcome.rejected;
+              })
+              .timeout(approvalTimeout, onTimeout: () => GateOutcome.timedOut);
+      final cancelled = ctx.cancellation.whenCancelled.then(
+        (_) => GateOutcome.cancelled,
+      );
       return await Future.any([answer, cancelled]);
     } catch (_) {
       return GateOutcome.rejected;

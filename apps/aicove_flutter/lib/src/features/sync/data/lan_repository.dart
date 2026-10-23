@@ -13,13 +13,116 @@ import 'cloud_media_codec.dart';
 const lanRelayDelay = Duration(hours: 24);
 
 class LanRepository {
-  LanRepository(this.local, this.codec, this.deviceId, {this.onApplied});
+  LanRepository(
+    this.local,
+    this.codec,
+    this.deviceId, {
+    this.onApplied,
+    this.onMessageApplied,
+  });
   final CloudLocalStore local;
   final CloudMediaCodec codec;
   final String deviceId;
   final void Function(Set<String>)? onApplied;
+  final void Function(String conversationId, String messageId, int createdAt)?
+  onMessageApplied;
   Future<void> _tail = Future.value();
   bool _seeded = false;
+  static const recentLimit = 128;
+  final String _recentRun = DateTime.now().microsecondsSinceEpoch.toString();
+  int _recentRevision = 0;
+  final _recent = <String, (String, String, int)>{};
+
+  /// A bounded acceleration lane backed by the existing dirty journal. Full
+  /// manifests remain the recovery path after eviction or process restart.
+  Future<Map<String, dynamic>> recentChanges() => _serial(() async {
+    final dirty = await local.rows('''SELECT d.* FROM lan_dirty d
+      LEFT JOIN messages m ON d.kind='messages' AND m.id=d.entity_id
+      WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE d.kind='messages'
+        AND m.id=d.entity_id AND m.status='sending')
+      ORDER BY (d.revision>0) DESC,
+        CASE WHEN d.revision=0 AND d.kind='messages'
+          THEN MAX(m.created_at,COALESCE(m.deleted_at,0)) ELSE 0 END DESC,
+        d.rowid DESC LIMIT 32''');
+    for (final row in dirty) {
+      final kind = row['kind'] as String, id = row['entity_id'] as String;
+      final clock = Stopwatch()..start();
+      try {
+        if (kind == 'messages') {
+          final message = await local.read(kind, id, includeRelated: false);
+          final convId = (message?.payload['row'] as Map?)?['conversation_id'];
+          if (convId is String) {
+            await _capture(kind: 'conversations', id: convId, seed: false);
+          }
+        }
+        await _capture(kind: kind, id: id, seed: false);
+      } catch (e) {
+        AppLogger.warning(
+          'LanSync',
+          'Recent capture failed',
+          metadata: {
+            'category': 'sync',
+            'event': 'lanEntity',
+            'entityId': id,
+            'kind': kind,
+            'phase': 'capture',
+            'result': 'failed',
+            'errorType': e.runtimeType.toString(),
+            'elapsedMs': clock.elapsedMilliseconds,
+          },
+        );
+      }
+    }
+    final items = <Map<String, dynamic>>[];
+    for (final (kind, id, _) in _recent.values) {
+      final known = await _entity(kind, id);
+      if (known == null) continue;
+      final heads = await _readableHeads(known);
+      if (heads == null) continue;
+      final hashes = heads
+          .where(
+            (r) =>
+                r.deleted ||
+                !CloudLocalDocument(r.kind, r.id, r.payload).isSendingMessage,
+          )
+          .map((r) => r.hash)
+          .toList();
+      if (hashes.isNotEmpty) {
+        items.add({'kind': kind, 'entity_id': id, 'hashes': hashes});
+      }
+    }
+    // Parent entities precede new messages even if they were captured long ago.
+    final parents = <String>{};
+    for (final item in List.of(items)) {
+      if (item['kind'] != 'messages') continue;
+      final doc = await local.read(
+        'messages',
+        item['entity_id'] as String,
+        includeRelated: false,
+      );
+      final convId = (doc?.payload['row'] as Map?)?['conversation_id'];
+      if (convId is String) parents.add(convId);
+    }
+    for (final id in parents) {
+      final known = await _entity('conversations', id);
+      if (known != null &&
+          !items.any(
+            (i) => i['kind'] == 'conversations' && i['entity_id'] == id,
+          )) {
+        items.add({
+          'kind': 'conversations',
+          'entity_id': id,
+          'hashes': jsonDecode(known['heads_json'] as String),
+        });
+      }
+    }
+    items.sort(
+      (a, b) => (a['kind'] == 'conversations' ? 0 : 1).compareTo(
+        b['kind'] == 'conversations' ? 0 : 1,
+      ),
+    );
+    return {'items': items, 'token': '$_recentRun:$_recentRevision'};
+  });
 
   Future<T> _serial<T>(Future<T> Function() operation) {
     final result = Completer<T>();
@@ -39,6 +142,7 @@ class LanRepository {
     String? kind,
     String? id,
     bool scanExternal = true,
+    bool seed = true,
   }) async {
     final state = (await local.rows(
       'SELECT * FROM lan_state WHERE id=1',
@@ -49,11 +153,14 @@ class LanRepository {
     await local.execute('UPDATE lan_state SET device_id=? WHERE id=1', [
       deviceId,
     ]);
-    if (!_seeded) {
+    if (seed && !_seeded) {
+      // Revision zero is a baseline candidate, not a real write. INSERT OR
+      // IGNORE preserves preexisting WorkManager dirties; tracking triggers
+      // promote any subsequent edit to revision >= 1. No schema change.
       for (final kind in ['conversations', 'providers', 'messages']) {
         await local.execute(
-          '''INSERT OR IGNORE INTO lan_dirty(kind,entity_id)
-          SELECT ?,id FROM "$kind"''',
+          '''INSERT OR IGNORE INTO lan_dirty(kind,entity_id,revision)
+          SELECT ?,id,0 FROM "$kind"''',
           [kind],
         );
       }
@@ -157,6 +264,20 @@ class LanRepository {
               LanRevision.fromJson(revision.toJson());
               await _save(revision);
               await _setEntity(kind, id, [revision], fingerprint);
+              final row = current?.payload['row'] as Map?;
+              final created = (row?['created_at'] as num?)?.toInt() ?? 0;
+              final deleted = (row?['deleted_at'] as num?)?.toInt() ?? 0;
+              final priority = known != null || kind != 'messages'
+                  ? DateTime.now().millisecondsSinceEpoch
+                  : (created > deleted ? created : deleted);
+              _recent['$kind/$id'] = (kind, id, priority);
+              _recentRevision++;
+              while (_recent.length > recentLimit) {
+                final oldest = _recent.keys.reduce(
+                  (a, b) => _recent[a]!.$3 <= _recent[b]!.$3 ? a : b,
+                );
+                _recent.remove(oldest);
+              }
             }
           }
           await local.execute(
@@ -361,6 +482,7 @@ class LanRepository {
     }
     await _capture(kind: incoming.kind, id: incoming.id);
     final applied = <String>{};
+    (String, String, int)? messageApplied;
     await cloudLocalWrite(
       () => local.db.transaction(() async {
         final known = await _entity(incoming.kind, incoming.id);
@@ -407,7 +529,24 @@ class LanRepository {
           try {
             // A missing/tombstoned conversation with retained messages can be
             // restored by an explicit choice, never a stale disconnected edit.
-            await local.apply(chosen.kind, chosen.id, payload, chosen.deleted);
+            final unchangedMessage =
+                chosen.kind == 'messages' &&
+                !chosen.deleted &&
+                current != null &&
+                fingerprint ==
+                    await _fingerprint(
+                      CloudLocalDocument(chosen.kind, chosen.id, payload),
+                      chosen.kind,
+                      chosen.id,
+                    );
+            if (!unchangedMessage) {
+              await local.apply(
+                chosen.kind,
+                chosen.id,
+                payload,
+                chosen.deleted,
+              );
+            }
             if ((await local.state())['enabled'] == 1) {
               await local.markRelay(
                 chosen.kind,
@@ -415,7 +554,18 @@ class LanRepository {
                 DateTime.now().add(lanRelayDelay).millisecondsSinceEpoch,
               );
             }
-            applied.add(chosen.kind);
+            if (!unchangedMessage) {
+              if (chosen.kind == 'messages' && onMessageApplied != null) {
+                final row = payload['row'] as Map;
+                messageApplied = (
+                  row['conversation_id'] as String,
+                  chosen.id,
+                  (row['created_at'] as num).toInt(),
+                );
+              } else {
+                applied.add(chosen.kind);
+              }
+            }
           } finally {
             await local.execute('UPDATE lan_state SET suspended=0 WHERE id=1');
             await local.execute(
@@ -433,6 +583,10 @@ class LanRepository {
       }),
     );
     if (applied.isNotEmpty) onApplied?.call(applied);
+    final message = messageApplied;
+    if (message != null) {
+      onMessageApplied?.call(message.$1, message.$2, message.$3);
+    }
   });
 
   Future<List<List<LanRevision>>> conflicts() => _serial(() async {

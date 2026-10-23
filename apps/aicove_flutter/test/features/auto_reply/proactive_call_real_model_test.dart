@@ -2,6 +2,9 @@
 // Flash gets the `call_user` tool while writing ahead for a playful role and
 // either calls or writes a message; the request must be accepted and the
 // draft non-empty. Skipped unless DEEPSEEK_API_KEY is set.
+@Tags(['real_model'])
+library;
+
 import 'dart:io';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
@@ -93,6 +96,9 @@ Future<void> _writeAhead(String label, String persona) async {
   );
   addTearDown(() async {
     await database.close();
+    // The executor's trace writes land in root after the reply returns.
+    await Future<void>.delayed(Duration.zero);
+    await TraceStore.instance.waitForPendingWrites();
     PathProviderPlatform.instance = oldPaths;
     await root.delete(recursive: true);
   });

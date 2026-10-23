@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../domain/ui_block.dart';
 import '../domain/ui_state_context.dart';
 
 /// What the user changed in the interactive blocks of one conversation
@@ -23,6 +24,13 @@ class UiBlockStateNotifier
 
   Timer? _saveTimer;
   bool _loaded = false;
+
+  /// Whether stored values have been read.
+  bool get loaded => _loaded;
+
+  /// Keys written or cleared before the load finished; they win over what
+  /// was stored, clears included.
+  final Set<String> _touchedBeforeLoad = {};
 
   @override
   Map<String, UiSavedBlock> build(String conversationId) {
@@ -50,14 +58,17 @@ class UiBlockStateNotifier
     }
     _loaded = true;
     // Writes made before the load win over what was stored.
+    loaded.removeWhere((key, _) => _touchedBeforeLoad.contains(key));
+    _touchedBeforeLoad.clear();
     state = _trim(LinkedHashMap.of({...loaded, ...state}));
   }
 
   /// [changes] empty clears the block (the user is back at the defaults).
   void write(String key, Map<String, Object?> changes, {String title = ''}) {
+    if (!_loaded) _touchedBeforeLoad.add(key);
     final next = LinkedHashMap.of(state)..remove(key);
     if (changes.isNotEmpty) {
-      next[key] = UiSavedBlock(state: changes, title: title);
+      next[key] = UiSavedBlock(state: uiJsonSafe(changes)! as Map<String, Object?>, title: title);
     }
     state = _trim(next);
     _saveTimer?.cancel();

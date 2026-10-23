@@ -18,8 +18,9 @@ class AssistantOnboardingController extends AsyncNotifier<OnboardingState> {
   /// Opening line written once the key works; the next reply comes from the
   /// real model.
   static const completionGreeting =
-      '接好啦！从现在起我就能真正思考和回答了。\n'
-      '关于 AIcove 的任何问题都可以直接问我，比如「怎么导入角色卡」「怎么给角色换声音」。';
+      '接好啦！从现在起 AIcove酱就能真正动脑子啦～\n'
+      '角色卡、预设、模型渠道和各种设置我都能直接帮你改，大部分改动随时能撤销。'
+      '有什么问题直接找我，比如「帮我写一个角色卡」「为什么这个插件没生效」。';
 
   @override
   Future<OnboardingState> build() async {
