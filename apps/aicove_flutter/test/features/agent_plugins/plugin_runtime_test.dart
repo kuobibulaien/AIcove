@@ -69,6 +69,7 @@ class _SpyMemoryPlugin extends MemoryPlugin {
   Future<InjectedMemory?> buildMemory({
     String? userMessage,
     String? conversationId,
+    List<Message> rawHistory = const [],
     bool resumeBackgroundWork = true,
   }) async {
     lastConversationId = conversationId;
@@ -143,7 +144,7 @@ void main() {
   });
   tearDown(() => container.dispose());
 
-  List<PluginRequestScope> scopesOf(
+  Iterable<PluginRequestScope> scopesOf(
     PluginRuntime runtime, {
     Set<String>? role,
   }) =>

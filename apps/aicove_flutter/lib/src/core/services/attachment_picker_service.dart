@@ -138,25 +138,38 @@ class AttachmentPickerService {
         return AttachmentPickError('读取文件路径失败');
       }
 
-      final sizeBytes = file.size;
-      if (sizeBytes > maxMb * 1024 * 1024) {
-        return AttachmentFileTooLarge(maxMb);
-      }
-
-      final ext = (file.extension ?? p.extension(path).replaceFirst('.', ''))
-          .toLowerCase();
-      final type = attachmentTypeForExtension(ext);
-      if (type == null) return AttachmentUnsupportedType(ext);
-
-      return AttachmentPickSuccess(SelectedAttachment(
+      return classifyFile(
         path: path,
         name: file.name,
-        sizeBytes: sizeBytes,
-        type: type,
-      ));
+        sizeBytes: file.size,
+        maxMb: maxMb,
+      );
     } catch (e) {
       return AttachmentPickError('选择文件失败：$e');
     }
+  }
+
+  /// 按大小和扩展名把一个本地文件归成附件；选文件与粘贴文件共用。
+  static AttachmentPickResult classifyFile({
+    required String path,
+    required String name,
+    required int sizeBytes,
+    required int maxMb,
+  }) {
+    if (sizeBytes > maxMb * 1024 * 1024) {
+      return AttachmentFileTooLarge(maxMb);
+    }
+
+    final ext = p.extension(path).replaceFirst('.', '').toLowerCase();
+    final type = attachmentTypeForExtension(ext);
+    if (type == null) return AttachmentUnsupportedType(ext);
+
+    return AttachmentPickSuccess(SelectedAttachment(
+      path: path,
+      name: name,
+      sizeBytes: sizeBytes,
+      type: type,
+    ));
   }
 
   /// Extensionless files keep the previous plain-text file behavior.

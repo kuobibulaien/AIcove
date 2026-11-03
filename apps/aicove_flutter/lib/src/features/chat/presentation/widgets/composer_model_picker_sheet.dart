@@ -1,6 +1,5 @@
 library;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,93 +7,104 @@ import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
-Future<String?> showComposerModelPickerSheet(BuildContext context) {
-  return showMoeBottomSheet<String>(
+/// 模型选择结果；[modelRef] 为 null 表示本会话跟随默认模型。
+class ComposerModelSelection {
+  const ComposerModelSelection(this.modelRef);
+
+  final String? modelRef;
+}
+
+/// 按渠道分组的可见聊天模型。
+class ComposerProviderModelGroup {
+  const ComposerProviderModelGroup({
+    required this.providerId,
+    required this.providerName,
+    required this.models,
+  });
+
+  final String providerId;
+  final String providerName;
+  final List<String> models;
+}
+
+/// [sessionModel] 是本会话持久化的模型引用（含可能已隐藏或停用的旧值），
+/// null 或空串表示正在跟随默认模型。
+Future<ComposerModelSelection?> showComposerModelPickerSheet(
+  BuildContext context, {
+  String? sessionModel,
+}) {
+  return showMoeBottomSheet<ComposerModelSelection>(
     context: context,
     title: '选择模型',
     useRootNavigator: true,
-    builder: (_) => const _ComposerModelPickerSheet(),
+    builder: (_) => _ComposerModelPickerSheet(sessionModel: sessionModel),
   );
 }
 
 @visibleForTesting
-List<String> composerResolveDefaultChatQueue(AppSettings settings) {
+String? composerResolvePrimaryDefaultModel(AppSettings settings) {
   final visibleModels = settings.modelList.toSet();
-  final queue = <String>[];
-
-  void append(String? modelRef) {
-    final normalized = modelRef?.trim() ?? '';
-    if (normalized.isEmpty ||
-        !visibleModels.contains(normalized) ||
-        queue.contains(normalized)) {
-      return;
-    }
-    queue.add(normalized);
-  }
-
   for (final modelRef in settings.defaultChatModels) {
-    append(modelRef);
+    final normalized = modelRef.trim();
+    if (normalized.isNotEmpty && visibleModels.contains(normalized)) {
+      return normalized;
+    }
   }
-  append(settings.defaultModelName);
-
-  if (queue.isEmpty && settings.modelList.isNotEmpty) {
-    queue.add(settings.modelList.first);
+  final fallback = settings.defaultModelName.trim();
+  if (fallback.isNotEmpty && visibleModels.contains(fallback)) {
+    return fallback;
   }
-
-  return queue;
+  return settings.modelList.isNotEmpty ? settings.modelList.first : null;
 }
 
 @visibleForTesting
-List<String> composerResolveOtherModels(
+List<ComposerProviderModelGroup> composerGroupModelsByProvider(
   AppSettings settings,
-  Iterable<String> queuedModels,
 ) {
-  final queueSet = queuedModels.toSet();
-  return settings.modelList
-      .where((modelRef) => !queueSet.contains(modelRef))
+  final grouped = <String, List<String>>{};
+  for (final rawRef in settings.modelList) {
+    final modelRef = rawRef.trim();
+    if (modelRef.isEmpty) continue;
+    final providerId = settings.getModelProviderId(modelRef) ?? '';
+    final list = grouped.putIfAbsent(providerId, () => <String>[]);
+    if (!list.contains(modelRef)) {
+      list.add(modelRef);
+    }
+  }
+
+  return grouped.entries
+      .map(
+        (entry) => ComposerProviderModelGroup(
+          providerId: entry.key,
+          providerName: entry.key.isEmpty
+              ? '可选模型'
+              : settings.getProviderDisplayName(entry.key),
+          models: List<String>.unmodifiable(entry.value),
+        ),
+      )
       .toList(growable: false);
 }
 
-@visibleForTesting
-List<String> composerReorderModelQueue(
-  List<String> modelQueue,
-  int oldIndex,
-  int newIndex,
-) {
-  if (oldIndex < 0 || oldIndex >= modelQueue.length) {
-    return List<String>.from(modelQueue);
+String _formatModelWithProvider(AppSettings settings, String modelRef) {
+  final modelName = settings.getModelDisplayName(modelRef);
+  final providerId = settings.getModelProviderId(modelRef);
+  if (providerId == null || providerId.isEmpty) {
+    return modelName;
   }
-
-  final reordered = List<String>.from(modelQueue);
-  var targetIndex = newIndex.clamp(0, reordered.length);
-  if (oldIndex < targetIndex) {
-    targetIndex -= 1;
+  final providerName = settings.getProviderDisplayName(providerId);
+  if (providerName.isEmpty) {
+    return modelName;
   }
-  if (targetIndex == oldIndex) {
-    return reordered;
-  }
-
-  final moved = reordered.removeAt(oldIndex);
-  reordered.insert(targetIndex.clamp(0, reordered.length), moved);
-  return reordered;
+  return '$modelName（$providerName）';
 }
 
-class _ComposerModelPickerSheet extends ConsumerStatefulWidget {
-  const _ComposerModelPickerSheet();
+class _ComposerModelPickerSheet extends ConsumerWidget {
+  const _ComposerModelPickerSheet({this.sessionModel});
+
+  final String? sessionModel;
 
   @override
-  ConsumerState<_ComposerModelPickerSheet> createState() =>
-      _ComposerModelPickerSheetState();
-}
-
-class _ComposerModelPickerSheetState
-    extends ConsumerState<_ComposerModelPickerSheet> {
-  List<String>? _queuedModels;
-  String? _sourceSignature;
-  bool _savingQueue = false;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(appSettingsProvider);
 
     return settingsAsync.when(
@@ -104,22 +114,12 @@ class _ComposerModelPickerSheetState
         title: '加载失败',
         description: '$error',
       ),
-      data: _buildContent,
+      data: (settings) => _buildContent(context, settings),
     );
   }
 
-  Widget _buildContent(AppSettings settings) {
+  Widget _buildContent(BuildContext context, AppSettings settings) {
     final colors = context.moeColors;
-    final currentSourceSignature = _buildSourceSignature(settings);
-    final resolvedQueue = composerResolveDefaultChatQueue(settings);
-
-    if (_queuedModels == null || _sourceSignature != currentSourceSignature) {
-      _queuedModels = resolvedQueue;
-      _sourceSignature = currentSourceSignature;
-    }
-
-    final queuedModels = _queuedModels ?? resolvedQueue;
-    final otherModels = composerResolveOtherModels(settings, queuedModels);
 
     if (settings.modelList.isEmpty) {
       return const MoeEmptyState(
@@ -129,270 +129,103 @@ class _ComposerModelPickerSheetState
       );
     }
 
+    final rawSessionModel = sessionModel?.trim() ?? '';
+    final isStaleSessionModel =
+        rawSessionModel.isNotEmpty && !settings.modelList.contains(rawSessionModel);
+    final activeSessionModel =
+        !isStaleSessionModel && rawSessionModel.isNotEmpty
+            ? rawSessionModel
+            : null;
+    final followingDefault = rawSessionModel.isEmpty;
+    final primaryDefault = composerResolvePrimaryDefaultModel(settings);
+    final groups = composerGroupModelsByProvider(settings);
+
     return ListView(
+      shrinkWrap: true,
       padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
       children: [
-        _buildSectionHeader(colors, '默认队列', '长按拖动调整顺序'),
-        const SizedBox(height: 8),
         MoeSettingsGroup(
           margin: const EdgeInsets.symmetric(horizontal: 16),
           padding: EdgeInsets.zero,
           children: [
-            ReorderableListView.builder(
-              shrinkWrap: true,
-              padding: EdgeInsets.zero,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: queuedModels.length,
-              onReorder: _savingQueue
-                  ? (_, __) {}
-                  : (oldIndex, newIndex) =>
-                      _onReorderQueue(settings, oldIndex, newIndex),
-              buildDefaultDragHandles: false,
-              itemBuilder: (context, index) {
-                final modelRef = queuedModels[index];
-                return ReorderableDelayedDragStartListener(
-                  key: ValueKey<String>('queue_$modelRef'),
-                  index: index,
-                  child: _ModelPickerTile(
-                    modelRef: modelRef,
-                    settings: settings,
-                    selected: modelRef == settings.defaultModelName,
-                    leading: _QueueOrderBadge(index: index + 1),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (modelRef == settings.defaultModelName)
-                          Icon(
-                            Icons.check_circle,
-                            color: colors.primary,
-                            size: 18,
-                          ),
-                        if (modelRef == settings.defaultModelName)
-                          const SizedBox(width: 8),
-                        Icon(
-                          Icons.drag_handle_rounded,
-                          color: colors.muted,
-                          size: 20,
-                        ),
-                      ],
-                    ),
-                    subtitleSuffix: '优先级 ${index + 1}',
-                    onTap: () => Navigator.of(context).pop(modelRef),
-                  ),
-                );
-              },
+            MoeSettingsRow(
+              key: const ValueKey<String>('follow_default_queue'),
+              icon: followingDefault
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              iconColor: followingDefault ? colors.primary : colors.muted,
+              label: '跟随默认模型',
+              subtitle: primaryDefault == null
+                  ? null
+                  : '当前默认：${_formatModelWithProvider(settings, primaryDefault)}',
+              trailingType: followingDefault
+                  ? MoeSettingsRowTrailing.custom
+                  : MoeSettingsRowTrailing.none,
+              trailing: followingDefault
+                  ? Icon(Icons.check, color: colors.primary, size: 18)
+                  : null,
+              backgroundColor: followingDefault
+                  ? colors.focus.withValues(alpha: 0.12)
+                  : null,
+              onTap: () => Navigator.of(context)
+                  .pop(const ComposerModelSelection(null)),
             ),
+            if (isStaleSessionModel)
+              MoeSettingsRow(
+                key: const ValueKey<String>('stale_session_model'),
+                icon: Icons.info_outline_rounded,
+                iconColor: colors.muted,
+                label:
+                    '原选模型：${_formatModelWithProvider(settings, rawSessionModel)}',
+                subtitle: '该模型已隐藏或渠道已关闭，当前暂按默认模型回复',
+                trailingType: MoeSettingsRowTrailing.none,
+              ),
           ],
         ),
-        if (otherModels.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          _buildSectionHeader(colors, '其他可用模型', '点击后切换为当前默认并加入队首'),
-          const SizedBox(height: 8),
+        for (final group in groups)
           MoeSettingsGroup(
+            title: group.providerName,
             margin: const EdgeInsets.symmetric(horizontal: 16),
             padding: EdgeInsets.zero,
             children: [
-              for (var index = 0; index < otherModels.length; index++)
-                _ModelPickerTile(
-                  key: ValueKey<String>('other_${otherModels[index]}'),
-                  modelRef: otherModels[index],
+              for (final modelRef in group.models)
+                _buildModelRow(
+                  context,
+                  colors: colors,
                   settings: settings,
-                  selected: otherModels[index] == settings.defaultModelName,
-                  leading: Icon(
-                    otherModels[index] == settings.defaultModelName
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    color: otherModels[index] == settings.defaultModelName
-                        ? colors.primary
-                        : colors.muted,
-                    size: 20,
-                  ),
-                  trailing: otherModels[index] == settings.defaultModelName
-                      ? Icon(Icons.check, color: colors.primary, size: 18)
-                      : null,
-                  onTap: () => Navigator.of(context).pop(otherModels[index]),
-                  showDivider: index != otherModels.length - 1,
+                  modelRef: modelRef,
+                  selected: modelRef == activeSessionModel,
                 ),
             ],
           ),
-        ],
       ],
     );
   }
 
-  Widget _buildSectionHeader(
-    MoeColors colors,
-    String title,
-    String description,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: MoeFontWeights.emphasis,
-              color: colors.text,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            description,
-            style: TextStyle(
-              fontSize: 12,
-              color: colors.muted,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _onReorderQueue(
-    AppSettings settings,
-    int oldIndex,
-    int newIndex,
-  ) async {
-    final currentQueue = List<String>.from(
-      _queuedModels ?? composerResolveDefaultChatQueue(settings),
-    );
-    final nextQueue = composerReorderModelQueue(
-      currentQueue,
-      oldIndex,
-      newIndex,
-    );
-    if (listEquals(currentQueue, nextQueue)) {
-      return;
-    }
-
-    setState(() {
-      _queuedModels = nextQueue;
-      _savingQueue = true;
-    });
-
-    try {
-      await ref
-          .read(appSettingsProvider.notifier)
-          .setDefaultChatModels(nextQueue);
-      if (!mounted) return;
-      MoeToast.brief(context, '已更新默认模型顺序');
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _queuedModels = null;
-        _sourceSignature = null;
-      });
-      MoeToast.error(context, '更新模型顺序失败: $error');
-    } finally {
-      if (!mounted) return;
-      setState(() => _savingQueue = false);
-    }
-  }
-
-  String _buildSourceSignature(AppSettings settings) {
-    return <String>[
-      settings.defaultModelName,
-      ...settings.defaultChatModels,
-      '---',
-      ...settings.modelList,
-    ].join('\n');
-  }
-}
-
-class _ModelPickerTile extends StatelessWidget {
-  const _ModelPickerTile({
-    super.key,
-    required this.modelRef,
-    required this.settings,
-    required this.selected,
-    this.leading,
-    this.trailing,
-    this.subtitleSuffix,
-    this.showDivider = true,
-    this.onTap,
-  });
-
-  final String modelRef;
-  final AppSettings settings;
-  final bool selected;
-  final Widget? leading;
-  final Widget? trailing;
-  final String? subtitleSuffix;
-  final bool showDivider;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.moeColors;
-    final modelId = settings.getRawModelId(modelRef);
-    final displayName = settings.getModelDisplayName(modelRef);
-    final providerId = settings.getModelProviderId(modelRef);
-    final providerLabel = providerId != null
-        ? settings.providers
-                .where((provider) => provider.id == providerId)
-                .map((provider) => provider.displayName ?? provider.id)
-                .firstOrNull ??
-            providerId
-        : null;
-
-    final subtitleParts = <String>[
-      if (providerLabel != null && providerLabel.isNotEmpty) providerLabel,
-      if (displayName != modelId) modelId,
-      if (subtitleSuffix != null && subtitleSuffix!.isNotEmpty) subtitleSuffix!,
-    ];
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: showDivider
-            ? Border(
-                bottom: BorderSide(
-                  color: colors.borderLight,
-                  width: borderWidth,
-                ),
-              )
-            : null,
-      ),
-      child: MoeListTile(
-        leading: leading,
-        minLeadingWidth: 32,
-        title: Text(displayName),
-        subtitle:
-            subtitleParts.isEmpty ? null : Text(subtitleParts.join(' / ')),
-        trailing: trailing,
-        selected: selected,
-        onTap: onTap,
-      ),
-    );
-  }
-}
-
-class _QueueOrderBadge extends StatelessWidget {
-  const _QueueOrderBadge({required this.index});
-
-  final int index;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.moeColors;
-    return Container(
-      width: 24,
-      height: 24,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: colors.primary.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        '$index',
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: MoeFontWeights.emphasis,
-          color: colors.primary,
-        ),
-      ),
+  MoeSettingsRow _buildModelRow(
+    BuildContext context, {
+    required MoeColors colors,
+    required AppSettings settings,
+    required String modelRef,
+    required bool selected,
+  }) {
+    return MoeSettingsRow(
+      key: ValueKey<String>('model_$modelRef'),
+      icon: selected
+          ? Icons.radio_button_checked
+          : Icons.radio_button_unchecked,
+      iconColor: selected ? colors.primary : colors.muted,
+      label: settings.getModelDisplayName(modelRef),
+      trailingType: selected
+          ? MoeSettingsRowTrailing.custom
+          : MoeSettingsRowTrailing.none,
+      trailing: selected
+          ? Icon(Icons.check, color: colors.primary, size: 18)
+          : null,
+      backgroundColor:
+          selected ? colors.focus.withValues(alpha: 0.12) : null,
+      onTap: () =>
+          Navigator.of(context).pop(ComposerModelSelection(modelRef)),
     );
   }
 }

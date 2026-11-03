@@ -274,15 +274,46 @@ class SillyTavernPresetParser {
       functionCalling: body['function_calling'] is bool
           ? body['function_calling'] as bool
           : null,
-      useSystemPrompt: body['use_sysprompt'] != false,
+      useSystemPrompt: body['use_sysprompt'] is bool
+          ? body['use_sysprompt'] as bool
+          : body['use_makersuite_sysprompt'] != false &&
+                body['claude_use_sysprompt'] != false,
       squashSystemMessages: body['squash_system_messages'] == true,
       reasoningEffort: _string(body['reasoning_effort']),
       streamResponse: body['stream_openai'] == true,
       warnings: List.unmodifiable(warnings),
       rawPreset: Map.unmodifiable(raw),
-      compatibilityData: Map.unmodifiable(compatibilityData),
+      compatibilityData: Map.unmodifiable({
+        ...compatibilityData,
+        'extractedArtistPresets': _extractArtistPresets(prompts),
+      }),
       worldBooks: List.unmodifiable(worldBooks),
     );
+  }
+
+  List<Map<String, String>> _extractArtistPresets(
+    List<SillyTavernPrompt> prompts,
+  ) {
+    final result = <Map<String, String>>[];
+    final prefix = RegExp(r'^画风[-:：]');
+    for (final prompt in prompts) {
+      if (!prefix.hasMatch(prompt.name)) continue;
+      final name = prompt.name.replaceFirst(prefix, '').trim();
+      final positive = prompt.content.indexOf('[正面]');
+      if (name.isEmpty || positive < 0) continue;
+      final start = positive + '[正面]'.length;
+      final negative = prompt.content.indexOf('[负面]', start);
+      result.add({
+        'name': name,
+        'content': prompt.content
+            .substring(start, negative < 0 ? null : negative)
+            .trim(),
+        'negativeContent': negative < 0
+            ? ''
+            : prompt.content.substring(negative + '[负面]'.length).trim(),
+      });
+    }
+    return result;
   }
 
   List<SillyTavernPromptOrderGroup> _parseOrderGroups(
@@ -583,6 +614,24 @@ class SillyTavernPresetParser {
     final result = <SillyTavernParameterCompatibility>[];
     for (final field
         in body.keys.map((key) => key.toString()).toList()..sort()) {
+      if (field == 'claude_use_sysprompt' ||
+          field == 'use_makersuite_sysprompt') {
+        final unified = body['use_sysprompt'] is bool;
+        if (unified || body[field] is bool) {
+          result.add(
+            SillyTavernParameterCompatibility(
+              field: field,
+              status: unified
+                  ? SillyTavernParameterStatus.notApplicable
+                  : SillyTavernParameterStatus.applied,
+              reason: unified
+                  ? '已被新版 use_sysprompt 覆盖'
+                  : '已作为旧版系统提示词开关用于 Claude/Gemini system 渲染策略',
+            ),
+          );
+          continue;
+        }
+      }
       if (applied.containsKey(field)) {
         final noOpReason = _supportedNoOpReason(field, body[field]);
         result.add(

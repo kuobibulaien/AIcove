@@ -15,7 +15,6 @@ import 'package:aicove_flutter/src/features/plugins/tts/voice_request.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_builder.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_plugin_context_policy.dart';
 import 'package:aicove_flutter/src/features/plugins/mcp/mcp_connector.dart';
 import 'package:aicove_flutter/src/features/plugins/mcp/mcp_connector_plugin.dart';
@@ -355,24 +354,17 @@ void main() {
         PluginManager()
           ..register(McpConnectorPlugin(_connector('https://x.example/mcp')));
 
-    test('角色「全部插件」不包含连接器，显式开启才生效', () {
-      const builder = ChatPluginContextBuilder();
-      expect(
-        builder.getEffectivePlugins(
-          pluginManager: manager(),
-          enabledPluginIds: null,
-        ),
-        isEmpty,
-      );
-      expect(
-        builder
-            .getEffectivePlugins(
-              pluginManager: manager(),
-              enabledPluginIds: {'mcp:abc123'},
-            )
-            .map((p) => p.id),
-        ['mcp:abc123'],
-      );
+    test('角色「全部插件」不包含连接器，显式开启才生效', () async {
+      final runtime = PluginRuntime.fromPlugins(manager().getAllPlugins());
+      try {
+        expect(runtime.selectForRole(null), isEmpty);
+        expect(runtime.selectForRole({'mcp:abc123'}), ['mcp:abc123']);
+        expect(runtime.selectForRole({'mcp:other'}), isEmpty);
+        runtime.setEnabled('mcp:abc123', false);
+        expect(runtime.selectForRole({'mcp:abc123'}), isEmpty);
+      } finally {
+        await runtime.scope.dispose();
+      }
     });
 
     test('v2 原生安装：只声明请求能力、须显式开启、不处理回复', () {

@@ -82,6 +82,42 @@ abstract final class MoeFrostedMaterial {
   static double saturationAmount(double fill) =>
       (fill / recommendedFill).clamp(0.0, 1.0);
 
+  /// Evaluates the saturation matrix of [surfaceFilter] on a uniform [backdrop]
+  /// color. Blurring a uniform opaque surface is an identity operation, so the
+  /// filtered backdrop equals this constant color at every pixel.
+  static Color saturateColor(
+    Brightness brightness,
+    Color backdrop, {
+    double fill = 1,
+  }) {
+    final amount = saturationAmount(fill);
+    if (amount == 0) return backdrop;
+    final target = brightness == Brightness.dark
+        ? _darkSaturationMatrix
+        : _lightSaturationMatrix;
+    final r = backdrop.r * 255.0;
+    final g = backdrop.g * 255.0;
+    final b = backdrop.b * 255.0;
+    final a = backdrop.a * 255.0;
+    int channel(int row) {
+      final base = row * 5;
+      double m(int col) =>
+          _identityMatrix[base + col] +
+          (target[base + col] - _identityMatrix[base + col]) * amount;
+      return (m(0) * r + m(1) * g + m(2) * b + m(3) * a + m(4)).round().clamp(
+        0,
+        255,
+      );
+    }
+
+    return Color.fromARGB(
+      channel(3),
+      channel(0),
+      channel(1),
+      channel(2),
+    );
+  }
+
   static ui.ImageFilter surfaceFilter(
     Brightness brightness, {
     double sigma = surfaceSigma,
@@ -160,4 +196,136 @@ abstract final class MoeFrostedMaterial {
     1.00,
     0.00,
   ];
+}
+
+/// Declares that the backdrop directly behind [child] is a uniform opaque
+/// [color] with no wallpaper or intermediate scrolling content.
+///
+/// Content cards and resting controls inside this scope can evaluate their
+/// material tint against [color] directly instead of scheduling a per-frame
+/// GPU backdrop blur over a flat solid color.
+class MoeSolidBackdropScope extends StatefulWidget {
+  const MoeSolidBackdropScope({
+    super.key,
+    required this.color,
+    required this.child,
+    this.waitForRouteTransition = false,
+  });
+
+  const MoeSolidBackdropScope.none({
+    super.key,
+    required this.child,
+  }) : color = null,
+       waitForRouteTransition = false;
+
+  final Color? color;
+  final Widget child;
+
+  /// When true (wide-screen detail panes whose background is hoisted to the
+  /// workspace shell after a post-frame callback), withholds [color] while the
+  /// enclosing route is animating or before its background registration frame.
+  final bool waitForRouteTransition;
+
+  static Color? colorOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_SolidBackdropInherited>()
+      ?.color;
+
+  @override
+  State<MoeSolidBackdropScope> createState() => _MoeSolidBackdropScopeState();
+}
+
+class _MoeSolidBackdropScopeState extends State<MoeSolidBackdropScope> {
+  Animation<double>? _primary;
+  Animation<double>? _secondary;
+  bool _postFrameReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedulePostFrameIfNeeded();
+  }
+
+  @override
+  void didUpdateWidget(MoeSolidBackdropScope oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.waitForRouteTransition && !oldWidget.waitForRouteTransition) {
+      _postFrameReady = false;
+      _schedulePostFrameIfNeeded();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bindRouteAnimations();
+  }
+
+  void _schedulePostFrameIfNeeded() {
+    if (!widget.waitForRouteTransition) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_postFrameReady) {
+        setState(() => _postFrameReady = true);
+      }
+    });
+  }
+
+  void _bindRouteAnimations() {
+    _primary?.removeStatusListener(_onAnimationStatus);
+    _secondary?.removeStatusListener(_onAnimationStatus);
+    if (!widget.waitForRouteTransition) {
+      _primary = null;
+      _secondary = null;
+      return;
+    }
+    final route = ModalRoute.of(context);
+    _primary = route?.animation;
+    _secondary = route?.secondaryAnimation;
+    _primary?.addStatusListener(_onAnimationStatus);
+    _secondary?.addStatusListener(_onAnimationStatus);
+  }
+
+  void _onAnimationStatus(AnimationStatus _) {
+    if (mounted) setState(() {});
+  }
+
+  bool get _isRouteSettled {
+    if (!widget.waitForRouteTransition) return true;
+    if (!_postFrameReady) return false;
+    final primaryOk =
+        _primary == null || _primary!.status == AnimationStatus.completed;
+    final secondaryOk =
+        _secondary == null || _secondary!.status == AnimationStatus.dismissed;
+    return primaryOk && secondaryOk;
+  }
+
+  @override
+  void dispose() {
+    _primary?.removeStatusListener(_onAnimationStatus);
+    _secondary?.removeStatusListener(_onAnimationStatus);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.color;
+    final effectiveColor =
+        (c != null && c.a >= 1.0 && _isRouteSettled) ? c : null;
+    return _SolidBackdropInherited(
+      color: effectiveColor,
+      child: widget.child,
+    );
+  }
+}
+
+class _SolidBackdropInherited extends InheritedWidget {
+  const _SolidBackdropInherited({
+    required this.color,
+    required super.child,
+  });
+
+  final Color? color;
+
+  @override
+  bool updateShouldNotify(_SolidBackdropInherited oldWidget) =>
+      oldWidget.color != color;
 }

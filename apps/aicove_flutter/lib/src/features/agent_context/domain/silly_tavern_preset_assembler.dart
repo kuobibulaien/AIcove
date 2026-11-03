@@ -15,6 +15,8 @@ class SillyTavernAssemblyContext {
   final String scenario;
   final String original;
   final String runtimeSystemContent;
+  final String drawingPromptContent;
+  final bool fallbackDrawingPrompt;
   final List<Map<String, dynamic>> protectedRuntimeMessages;
   final Map<String, String> initialVariables;
   final List<String> initialWarnings;
@@ -30,6 +32,8 @@ class SillyTavernAssemblyContext {
     required this.scenario,
     this.original = '',
     this.runtimeSystemContent = '',
+    this.drawingPromptContent = '',
+    this.fallbackDrawingPrompt = true,
     this.protectedRuntimeMessages = const <Map<String, dynamic>>[],
     this.initialVariables = const <String, String>{},
     this.initialWarnings = const <String>[],
@@ -44,6 +48,7 @@ class SillyTavernAssemblyEntry {
   final String label;
   final bool isHistory;
   final bool protectedFromTruncation;
+  final bool hasDrawingPrompt;
 
   const SillyTavernAssemblyEntry({
     required this.message,
@@ -51,6 +56,7 @@ class SillyTavernAssemblyEntry {
     required this.label,
     required this.isHistory,
     required this.protectedFromTruncation,
+    this.hasDrawingPrompt = false,
   });
 
   Map<String, dynamic> toTraceJson(int order) => <String, dynamic>{
@@ -74,6 +80,8 @@ class SillyTavernAssemblyResult {
   final Map<String, String> variables;
   final Set<String> appliedMacros;
   final Set<String> unknownMacros;
+  final String drawingPromptFallbackContent;
+  final bool squashSystemMessages;
 
   const SillyTavernAssemblyResult({
     required this.messages,
@@ -85,6 +93,8 @@ class SillyTavernAssemblyResult {
     required this.variables,
     required this.appliedMacros,
     required this.unknownMacros,
+    this.drawingPromptFallbackContent = '',
+    this.squashSystemMessages = false,
   });
 
   int get droppedHistoryCount => originalHistoryCount - keptHistoryCount;
@@ -171,7 +181,18 @@ class SillyTavernPresetAssembler {
     SillyTavernRandomIndexPicker? randomIndexPicker,
   }) {
     final warnings = <String>[...preset.warnings, ...context.initialWarnings];
-    final variables = Map<String, String>.from(context.initialVariables);
+    final drawingPromptContent = context.drawingPromptContent.trim();
+    // Keep the drawing text opaque throughout every macro pass, including
+    // values stored by setvar and later read by getvar.
+    final drawingPlaceholder = drawingPromptContent.isEmpty
+        ? ''
+        : '\uE000aicove-drawing-${Random().nextInt(1 << 32)}\uE001';
+    final variables = <String, String>{
+      for (final entry in context.initialVariables.entries)
+        entry.key: drawingPromptContent.isEmpty
+            ? entry.value
+            : entry.value.replaceAll(drawingPromptContent, drawingPlaceholder),
+    };
     final appliedMacros = <String>{};
     final unknownMacros = <String>{};
     final random = Random();
@@ -204,6 +225,7 @@ class SillyTavernPresetAssembler {
         unknownMacros: unknownMacros,
         randomIndexPicker: effectiveRandomIndexPicker,
         lastUserMessage: lastUserMessage,
+        drawingPlaceholder: drawingPlaceholder,
       );
       renderedByPrompt[prompt.identifier] = content;
       if (prompt.hasAttachment && content.trim().isNotEmpty) {
@@ -236,7 +258,7 @@ class SillyTavernPresetAssembler {
       final result = _macroEvaluator.evaluate(
         world.content,
         promptId: 'world.${world.id}',
-        values: _buildMacroValues(context, lastUserMessage),
+        values: _buildMacroValues(context, lastUserMessage, drawingPlaceholder),
         variables: variables,
         randomIndexPicker: effectiveRandomIndexPicker,
         warnings: warnings,
@@ -295,6 +317,7 @@ class SillyTavernPresetAssembler {
             unknownMacros: unknownMacros,
             randomIndexPicker: effectiveRandomIndexPicker,
             lastUserMessage: lastUserMessage,
+            drawingPlaceholder: drawingPlaceholder,
           );
       if (content.trim().isEmpty) continue;
       assembled.add(
@@ -351,7 +374,7 @@ class SillyTavernPresetAssembler {
     final prefillResult = _macroEvaluator.evaluate(
       preset.assistantPrefill,
       promptId: 'assistant_prefill',
-      values: _buildMacroValues(context, lastUserMessage),
+      values: _buildMacroValues(context, lastUserMessage, drawingPlaceholder),
       variables: variables,
       randomIndexPicker: effectiveRandomIndexPicker,
       warnings: warnings,
@@ -367,30 +390,215 @@ class SillyTavernPresetAssembler {
       );
     }
 
+    final drawingFallbackContent = context.fallbackDrawingPrompt
+        ? drawingPromptContent
+        : '';
+    final restored = _restoreDrawingPrompt(
+      messagesBeforePrefill,
+      placeholder: drawingPlaceholder,
+      content: drawingPromptContent,
+    );
+    final withDrawingFallback = _applyDrawingPromptFallback(
+      restored,
+      drawingFallbackContent,
+      squashSystemMessages: preset.squashSystemMessages,
+    );
     final trimmed = !truncateHistory
-        ? messagesBeforePrefill
+        ? withDrawingFallback
         : _truncatePreservingOrder(
-            messagesBeforePrefill,
+            withDrawingFallback,
             maxContextTokens: maxContextTokens,
             reserveTokens: reserveTokens,
             warnings: warnings,
           );
-    final keptHistoryCount = trimmed.where((entry) => entry.isHistory).length;
+    final restoredFallback = _applyDrawingPromptFallback(
+      trimmed,
+      drawingFallbackContent,
+      squashSystemMessages: preset.squashSystemMessages,
+    );
+    final completed = truncateHistory && !identical(restoredFallback, trimmed)
+        ? _truncatePreservingOrder(
+            restoredFallback,
+            maxContextTokens: maxContextTokens,
+            reserveTokens: reserveTokens,
+            warnings: warnings,
+          )
+        : restoredFallback;
+    final keptHistoryCount = completed.where((entry) => entry.isHistory).length;
     return SillyTavernAssemblyResult(
       messages: List.unmodifiable(
-        trimmed
+        completed
             .map((entry) => Map<String, dynamic>.from(entry.message))
             .toList(),
       ),
-      entries: List.unmodifiable(trimmed),
+      entries: List.unmodifiable(completed),
       warnings: List.unmodifiable(_deduplicate(warnings)),
       originalHistoryCount: historyMessages.length,
       keptHistoryCount: keptHistoryCount,
       historyIncluded: historyIncluded,
-      variables: Map.unmodifiable(variables),
+      variables: Map.unmodifiable({
+        for (final entry in variables.entries)
+          entry.key: drawingPlaceholder.isEmpty
+              ? entry.value
+              : entry.value.replaceAll(
+                  drawingPlaceholder,
+                  drawingPromptContent,
+                ),
+      }),
       appliedMacros: Set.unmodifiable(appliedMacros),
       unknownMacros: Set.unmodifiable(unknownMacros),
+      drawingPromptFallbackContent: drawingFallbackContent,
+      squashSystemMessages: preset.squashSystemMessages,
     );
+  }
+
+  /// 对已经组装的完整结果执行预设滑窗，保留变量和追踪信息。
+  SillyTavernAssemblyResult truncateAssembly(
+    SillyTavernAssemblyResult result, {
+    required int inputBudget,
+    required int Function(List<Map<String, dynamic>>) estimateTokens,
+    bool outputExceedsWindow = false,
+  }) {
+    final warnings = <String>[...result.warnings];
+    if (outputExceedsWindow) {
+      warnings.add('预设最大输出超过预设上下文上限，已按预设上下文的一半保留输入预算');
+    }
+    final trimmed = _truncatePreservingOrder(
+      result.entries,
+      maxContextTokens: inputBudget,
+      reserveTokens: 0,
+      warnings: warnings,
+      estimateTokens: estimateTokens,
+    );
+    final restoredFallback = _applyDrawingPromptFallback(
+      trimmed,
+      result.drawingPromptFallbackContent,
+      squashSystemMessages: result.squashSystemMessages,
+    );
+    final entries = identical(restoredFallback, trimmed)
+        ? trimmed
+        : _truncatePreservingOrder(
+            restoredFallback,
+            maxContextTokens: inputBudget,
+            reserveTokens: 0,
+            warnings: warnings,
+            estimateTokens: estimateTokens,
+          );
+    return SillyTavernAssemblyResult(
+      messages: List.unmodifiable(
+        entries.map((e) => Map<String, dynamic>.from(e.message)),
+      ),
+      entries: List.unmodifiable(entries),
+      warnings: List.unmodifiable(_deduplicate(warnings)),
+      originalHistoryCount: result.originalHistoryCount,
+      keptHistoryCount: entries.where((e) => e.isHistory).length,
+      historyIncluded: result.historyIncluded,
+      variables: result.variables,
+      appliedMacros: result.appliedMacros,
+      unknownMacros: result.unknownMacros,
+      drawingPromptFallbackContent: result.drawingPromptFallbackContent,
+      squashSystemMessages: result.squashSystemMessages,
+    );
+  }
+
+  List<SillyTavernAssemblyEntry> _restoreDrawingPrompt(
+    List<SillyTavernAssemblyEntry> entries, {
+    required String placeholder,
+    required String content,
+  }) {
+    if (placeholder.isEmpty) return entries;
+    return [
+      for (final entry in entries)
+        if (_contentContains(entry.message['content'], placeholder))
+          SillyTavernAssemblyEntry(
+            message: {
+              ...entry.message,
+              'content': _replaceContent(
+                entry.message['content'],
+                placeholder,
+                content,
+              ),
+            },
+            source: entry.source,
+            label: entry.label,
+            isHistory: entry.isHistory,
+            protectedFromTruncation: entry.protectedFromTruncation,
+            hasDrawingPrompt: true,
+          )
+        else
+          entry,
+    ];
+  }
+
+  bool _contentContains(dynamic content, String value) {
+    if (content is String) return content.contains(value);
+    if (content is List) {
+      return content.any(
+        (part) =>
+            part is Map &&
+            part['type'] == 'text' &&
+            _contentContains(part['text'], value),
+      );
+    }
+    return false;
+  }
+
+  dynamic _replaceContent(dynamic content, String from, String to) {
+    if (content is String) return content.replaceAll(from, to);
+    if (content is List) {
+      return [
+        for (final part in content)
+          if (part is Map && part['type'] == 'text')
+            {...part, 'text': _replaceContent(part['text'], from, to)}
+          else
+            part,
+      ];
+    }
+    return content;
+  }
+
+  List<SillyTavernAssemblyEntry> _applyDrawingPromptFallback(
+    List<SillyTavernAssemblyEntry> entries,
+    String content, {
+    required bool squashSystemMessages,
+  }) {
+    if (content.trim().isEmpty ||
+        entries.any(
+          (entry) =>
+              entry.hasDrawingPrompt ||
+              entry.source.contains('runtime.drawingPrompt'),
+        )) {
+      return entries;
+    }
+    final result = List<SillyTavernAssemblyEntry>.of(entries);
+    final runtimeIndex = result.indexWhere(
+      (entry) => entry.source.contains('runtime.system'),
+    );
+    final firstRuntimeOrHistory = result.indexWhere(
+      (entry) =>
+          entry.isHistory ||
+          entry.source.startsWith('preset.injection.') ||
+          entry.source.startsWith('runtime.message.') ||
+          entry.source.contains('preset.assistantPrefill'),
+    );
+    final insertAt = runtimeIndex >= 0
+        ? runtimeIndex + 1
+        : firstRuntimeOrHistory >= 0
+        ? firstRuntimeOrHistory
+        : result.length;
+    result.insert(
+      insertAt,
+      SillyTavernAssemblyEntry(
+        message: {'role': 'system', 'content': content.trim()},
+        source: 'runtime.drawingPrompt',
+        label: '绘图提示词',
+        isHistory: false,
+        protectedFromTruncation: true,
+      ),
+    );
+    return squashSystemMessages
+        ? _squashConsecutiveSystemEntries(result)
+        : result;
   }
 
   List<SillyTavernAssemblyEntry> _buildHistoryBlock({
@@ -475,6 +683,7 @@ class SillyTavernPresetAssembler {
     required Set<String> unknownMacros,
     required SillyTavernRandomIndexPicker randomIndexPicker,
     required String lastUserMessage,
+    required String drawingPlaceholder,
   }) {
     String content;
     switch (prompt.identifier) {
@@ -504,7 +713,11 @@ class SillyTavernPresetAssembler {
       warnings.add('${prompt.name} 是 MVU 变量专用内容，本会话未启用 MVU 变量，已跳过');
       return '';
     }
-    final values = _buildMacroValues(context, lastUserMessage);
+    final values = _buildMacroValues(
+      context,
+      lastUserMessage,
+      drawingPlaceholder,
+    );
     final result = _macroEvaluator.evaluate(
       content,
       promptId: prompt.identifier,
@@ -522,7 +735,10 @@ class SillyTavernPresetAssembler {
   Map<String, String> _buildMacroValues(
     SillyTavernAssemblyContext context,
     String lastUserMessage,
+    String drawingPlaceholder,
   ) => <String, String>{
+    'drawing_prompt_pack': drawingPlaceholder,
+    'image_prompt_pack': drawingPlaceholder,
     'char': context.characterName,
     'user': context.userName,
     'description': context.characterDescription,
@@ -589,6 +805,7 @@ class SillyTavernPresetAssembler {
         label: '${original.label} + 酒馆附着节点',
         isHistory: original.isHistory,
         protectedFromTruncation: original.protectedFromTruncation,
+        hasDrawingPrompt: original.hasDrawingPrompt,
       );
     }
   }
@@ -662,6 +879,8 @@ class SillyTavernPresetAssembler {
             source: '${previous.source}+${entry.source}',
             label: '${previous.label} + ${entry.label}',
             isHistory: previous.isHistory && entry.isHistory,
+            hasDrawingPrompt:
+                previous.hasDrawingPrompt || entry.hasDrawingPrompt,
             protectedFromTruncation:
                 previous.protectedFromTruncation ||
                 entry.protectedFromTruncation,
@@ -692,6 +911,7 @@ class SillyTavernPresetAssembler {
           message: message,
           source: '${previous.source}+preset.assistantPrefill',
           label: '${previous.label} + Assistant Prefill',
+          hasDrawingPrompt: previous.hasDrawingPrompt,
           isHistory: previous.isHistory,
           protectedFromTruncation: true,
         );
@@ -741,11 +961,16 @@ class SillyTavernPresetAssembler {
     required int maxContextTokens,
     required int reserveTokens,
     required List<String> warnings,
+    int Function(List<Map<String, dynamic>>)? estimateTokens,
   }) {
     final availableTokens = maxContextTokens - reserveTokens;
     if (source.isEmpty || availableTokens <= 0) return List.of(source);
     final kept = List<SillyTavernAssemblyEntry>.of(source);
-    var usedTokens = _estimateEntries(kept);
+    int estimate(List<SillyTavernAssemblyEntry> entries) =>
+        estimateTokens == null
+        ? _estimateEntries(entries)
+        : estimateTokens(entries.map((e) => e.message).toList());
+    var usedTokens = estimate(kept);
     SillyTavernAssemblyEntry? latestUser;
     for (final entry in kept.reversed) {
       if (entry.isHistory && entry.message['role'] == 'user') {
@@ -762,16 +987,16 @@ class SillyTavernPresetAssembler {
             !identical(entry, latestUser),
       );
       if (removableIndex < 0) break;
-      usedTokens -= estimateMessageTokens(kept[removableIndex].message);
       kept.removeAt(removableIndex);
+      usedTokens = estimate(kept);
       droppedCount++;
     }
     final withoutOrphanTools = _dropOrphanToolEntries(kept);
     droppedCount += kept.length - withoutOrphanTools.length;
     if (droppedCount > 0) {
-      warnings.add('上下文超出预算，已按原顺序移除 $droppedCount 条最旧历史消息');
+      warnings.add('已按预设上限省略较早的 $droppedCount 条消息（聊天记录中仍保留）');
     }
-    if (_estimateEntries(withoutOrphanTools) > availableTokens) {
+    if (estimate(withoutOrphanTools) > availableTokens) {
       warnings.add('预设与最新用户消息已超过上下文预算，仍保留关键节点交给供应商处理');
     }
     return withoutOrphanTools;

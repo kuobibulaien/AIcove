@@ -38,15 +38,28 @@ bool lanDominates(Map<String, int> a, Map<String, int> b) =>
     b.entries.every((entry) => (a[entry.key] ?? 0) >= entry.value) &&
     a.entries.any((entry) => entry.value > (b[entry.key] ?? 0));
 
+Object? _freezeLanJson(Object? value) {
+  if (value is Map) {
+    return Map<String, dynamic>.unmodifiable({
+      for (final entry in value.entries)
+        entry.key as String: _freezeLanJson(entry.value),
+    });
+  }
+  if (value is List) return List.unmodifiable(value.map(_freezeLanJson));
+  return value;
+}
+
 class LanRevision {
   LanRevision({
     required this.kind,
     required this.id,
-    required this.vector,
-    required this.payload,
+    required Map<String, int> vector,
+    required Map<String, dynamic> payload,
     this.deleted = false,
     List<String> mediaIds = const [],
-  }) : mediaIds = mediaIds.toSet().toList()..sort();
+  }) : vector = Map.unmodifiable(vector),
+       payload = _freezeLanJson(payload) as Map<String, dynamic>,
+       mediaIds = List.unmodifiable(mediaIds.toSet().toList()..sort());
   final String kind, id;
   final Map<String, int> vector;
   final Map<String, dynamic> payload;
@@ -62,7 +75,7 @@ class LanRevision {
     'deleted': deleted,
     'media_ids': mediaIds,
   };
-  String get hash => cloudObjectId(canonicalJson(body));
+  late final String hash = cloudObjectId(canonicalJson(body));
   Map<String, dynamic> toJson() => {...body, 'hash': hash};
 
   factory LanRevision.fromJson(Map<String, dynamic> json) {
@@ -147,7 +160,8 @@ class LanRevision {
 
 Map<String, dynamic> _content(Map<String, dynamic> payload) => Map.of(payload)
   ..remove('setting_times_version')
-  ..remove('setting_times');
+  ..remove('setting_times')
+  ..remove('client_schema');
 
 Set<String> lanMediaReferences(Object? value) {
   final result = <String>{};
@@ -295,7 +309,15 @@ List<LanRevision> reduceLanHeads(Iterable<LanRevision> input) {
       kind: joined.kind,
       id: joined.id,
       vector: joinLanVectors([joined.vector, other.vector]),
-      payload: payload,
+      payload: {
+        ...payload,
+        if (joined.payload['client_schema'] is int ||
+            other.payload['client_schema'] is int)
+          'client_schema': [
+            joined.payload['client_schema'],
+            other.payload['client_schema'],
+          ].whereType<int>().reduce((a, b) => a > b ? a : b),
+      },
       deleted: joined.deleted,
       mediaIds: lanMediaReferences(payload).intersection(allowed).toList(),
     );

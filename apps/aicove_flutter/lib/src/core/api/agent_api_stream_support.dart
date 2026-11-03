@@ -88,9 +88,8 @@ class _AgentApiStreamSupport {
     final requestUri = preparedRequest.requestUri;
     final endpointForLogs = preparedRequest.endpointForLogs;
     final chatMessages = preparedRequest.chatMessages;
-    final requestBodyJson = preparedRequest.requestBodyJson;
-    final logRequestBodyJson = ToolMedia.logJson(requestBodyJson);
-    final logContextJson = jsonEncode(ToolMedia.log(chatMessages));
+    final logRequestBodyJson = preparedRequest.logRequestBodyJson;
+    final logContextJson = preparedRequest.logContextJson;
     final headers = preparedRequest.headers;
     final requestDiagnostics = preparedRequest.requestDiagnostics;
     final round = roundIndex ?? 0;
@@ -117,7 +116,7 @@ class _AgentApiStreamSupport {
     final sw = Stopwatch()..start();
     final request = RequestControl.request('POST', requestUri);
     request.headers.addAll(headers);
-    request.body = requestBodyJson;
+    request.bodyBytes = preparedRequest.requestBodyBytes;
     final requestSentAt = await _owner._recordModelRequestSent(
       traceId: traceId,
       sessionId: sessionId,
@@ -131,9 +130,13 @@ class _AgentApiStreamSupport {
     var traceResponseRecorded = false;
     var apiLogRecorded = false;
     try {
-      final response = await _client.send(request).timeout(timeout);
+      final response = await modelTransportRequest(
+        () => _client.send(request).timeout(timeout));
+      final responseBytes = http.ByteStream(modelTransportStream(response.stream.timeout(timeout)));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final errBody = utf8.decode(await response.stream.toBytes());
+        final errBody = utf8.decode(
+          await modelTransportRequest(() => responseBytes.toBytes().timeout(timeout)),
+        );
         sw.stop();
         final payloadRef = await _owner._buildApiPayloadRef(
           sessionId: sessionId,
@@ -177,7 +180,7 @@ class _AgentApiStreamSupport {
           url: endpoint,
           status: response.statusCode,
           durationMs: sw.elapsedMilliseconds,
-          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
+          requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(errBody),
           ok: false,
           rawContext: logContextJson,
@@ -199,8 +202,8 @@ class _AgentApiStreamSupport {
           'responseBody': ApiLogger.safeSnippet(errBody, max: 2000),
           ...requestDiagnostics,
         });
-        throw ModelHttpException(response.statusCode, errBody,
-          retryAfter: ModelHttpException.parseRetryAfter(response.headers['retry-after']));
+        throw modelRequestFailure(ModelHttpException(response.statusCode, errBody,
+          retryAfter: ModelHttpException.parseRetryAfter(response.headers['retry-after'])));
       }
 
       final responseContentType =
@@ -308,7 +311,7 @@ class _AgentApiStreamSupport {
                     rootError.cast<String, dynamic>(),
                   ))
               : rootError.toString();
-          throw Exception('SSE error: $message');
+          throw modelRequestFailure(Exception('SSE error: $message'));
         }
 
         if (isClaudeStream) {
@@ -347,7 +350,7 @@ class _AgentApiStreamSupport {
             final message = error is Map
                 ? error['message']?.toString() ?? 'unknown stream error'
                 : 'unknown stream error';
-            throw Exception('SSE error: $message');
+            throw modelRequestFailure(Exception('SSE error: $message'));
           } else if (eventType == 'message_stop') {
             done = true;
           }
@@ -552,10 +555,12 @@ class _AgentApiStreamSupport {
       }
 
       if (usesGeminiJsonBody) {
-        final rawBody = utf8.decode(await response.stream.toBytes());
+        final rawBody = utf8.decode(
+          await modelTransportRequest(() => responseBytes.toBytes().timeout(timeout)),
+        );
         handleEventPayload(rawBody);
       } else {
-        await for (final line in response.stream
+        await for (final line in responseBytes
             .transform(utf8.decoder)
             .transform(const LineSplitter())) {
           if (done) break;
@@ -657,7 +662,7 @@ class _AgentApiStreamSupport {
         url: endpoint,
         status: response.statusCode,
         durationMs: sw.elapsedMilliseconds,
-        requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
+        requestBody: preparedRequest.requestBodySnippet,
         responseBody: '[stream]',
         ok: true,
         rawContext: logContextJson,
@@ -748,7 +753,7 @@ class _AgentApiStreamSupport {
           url: endpoint,
           status: null,
           durationMs: sw.elapsedMilliseconds,
-          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
+          requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(e.toString()),
           ok: false,
           rawContext: logContextJson,
@@ -967,11 +972,13 @@ class _StreamingToolCallAggregator {
 }
 
 class _StreamingToolCallState {
+  String? _thoughtSignature;
   String _id = '';
   String _name = '';
   final StringBuffer _arguments = StringBuffer();
 
   void consume(Map<String, dynamic> rawCall) {
+    _thoughtSignature ??= ToolCall.readThoughtSignature(rawCall);
     final id = rawCall['id']?.toString().trim() ?? '';
     if (id.isNotEmpty) _id = id;
 
@@ -1020,6 +1027,7 @@ class _StreamingToolCallState {
       name: _name,
       arguments: _parseArguments(_arguments.toString()),
       rawArguments: _arguments.toString(),
+      thoughtSignature: _thoughtSignature,
     );
   }
 

@@ -19,7 +19,9 @@ class PromptBuiltinDefaults {
 最近的聊天：
 {transcript}''';
 
-  static const String autoReplyDecisionChatFallback = r'''你在帮一个聊天应用拿主意：用户有一阵子没说话了，AI 角色「{assistant_name}」要不要主动找他、什么时候找。你只做判断，不用写要发的话。
+  static const String autoReplyDecisionChatFallback = r'''你在帮一个聊天应用拿主意：用户有一阵子没说话了，AI 角色「{assistant_name}」要不要主动找他、什么时候找、定几个提醒。你只做判断，不用写要发的话。
+
+用户把这个角色的回复频率设成了「默认」，希望自然、适度地联系。拿不准就选 stay_silent，少打扰一次没关系，打扰错了用户会烦；平时一般定一个提醒就够，只有在聊天里确实适合分时段联系时才定多个。
 
 {state}
 
@@ -27,9 +29,20 @@ class PromptBuiltinDefaults {
 
 {questions}
 
-拿不准就选 stay_silent。少打扰一次没关系，打扰错了用户会烦。
+只回一行 JSON，别的什么都不要写（定一个直接回对象，定多个用 {"triggers": [...]}）：
+{answer_format}''';
 
-只回一行 JSON，别的什么都不要写：
+  static const String autoReplyDecisionChatFallbackFrequent = r'''你在帮一个聊天应用拿主意：用户有一阵子没说话了，AI 角色「{assistant_name}」要不要主动找他、什么时候找、定几个提醒。你只做判断，不用写要发的话。
+
+用户把这个角色的回复频率设成了「频繁」，希望「{assistant_name}」多主动找自己、联系更紧密。只要聊天的气氛合适，不用怕打扰，可以积极安排主动联系；如果适合分几个时间点连续关心或分享日常（比如一会儿接着聊、几小时后再问候、或者晚上与明天再找他），可以在 triggers 里一次安排多个不同时间段的提醒。
+
+{state}
+
+每个提醒都需要回答下面几个问题：
+
+{questions}
+
+只回一行 JSON，别的什么都不要写（定一个直接回对象，定多个用 {"triggers": [{answer_format}]}）：
 {answer_format}''';
 
   static const String autoReplyReachOutReminder = r'''（这条不是用户发的。）
@@ -40,6 +53,8 @@ class PromptBuiltinDefaults {
 {current_role_persona}''';
 
   static const String autoReplyReachOutCallHint = r'''这次也可以用 call_user 直接打电话。电话比消息更打扰人：只有按你的性格，这会儿真的会忍不住直接打过去，才打；不确定就照常写消息。''';
+
+  static const String autoReplyReachOutImageHint = r'''如果按你的性格和这会儿正在做的事，刚好想给对方看一眼自己（比如发张自拍）或手边看到的画面，也可以顺手带上 <image>...</image>；不用每次都发，自然就好。''';
 
   static const String autoReplyToolCallUser = r'''直接给对方打电话。对方接起来以后，你说的第一句话就是 opening_line。打不打完全看你的性格：爱打电话、黏人的会常打，文静、怕打扰人的多半只发消息。''';
 
@@ -254,9 +269,11 @@ Rules:
   static const List<String> ids = <String>[
     'auto_reply.decision.state',
     'auto_reply.decision.chat_fallback',
+    'auto_reply.decision.chat_fallback_frequent',
     'auto_reply.reach_out.reminder',
     'auto_reply.decision.call_welcome',
     'auto_reply.reach_out.call_hint',
+    'auto_reply.reach_out.image_hint',
     'auto_reply.tool.call_user',
     'auto_reply.tool.call_user.opening_line',
     'enhanced_dialogue.system.default',
@@ -288,12 +305,16 @@ Rules:
         return autoReplyDecisionState;
       case 'auto_reply.decision.chat_fallback':
         return autoReplyDecisionChatFallback;
+      case 'auto_reply.decision.chat_fallback_frequent':
+        return autoReplyDecisionChatFallbackFrequent;
       case 'auto_reply.reach_out.reminder':
         return autoReplyReachOutReminder;
       case 'auto_reply.decision.call_welcome':
         return autoReplyDecisionCallWelcome;
       case 'auto_reply.reach_out.call_hint':
         return autoReplyReachOutCallHint;
+      case 'auto_reply.reach_out.image_hint':
+        return autoReplyReachOutImageHint;
       case 'auto_reply.tool.call_user':
         return autoReplyToolCallUser;
       case 'auto_reply.tool.call_user.opening_line':

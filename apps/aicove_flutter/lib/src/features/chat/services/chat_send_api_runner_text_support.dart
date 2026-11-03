@@ -1,37 +1,6 @@
 part of 'chat_send_api_runner.dart';
 
-String _sanitizeAssistantText(String text) {
-  var cleaned = text;
-  if (cleaned.trim().isEmpty) return cleaned.trim();
-
-  cleaned = cleaned.replaceAll(
-    RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
-    '',
-  );
-  cleaned = cleaned.replaceAll(RegExp(r'</?think>', caseSensitive: false), '');
-
-  cleaned = cleaned.replaceAllMapped(
-    RegExp(r'\[(图片|image)\s*:\s*[^\]]*?\]', caseSensitive: false),
-    (_) => '<image></image>',
-  );
-  cleaned = cleaned.replaceAllMapped(
-    RegExp(r'<image>\s*</image>', caseSensitive: false),
-    (_) => '<image></image>',
-  );
-
-  // 注意：不要在这里剥离 <image source="history">...</image>。
-  // 该标签是内部图片上下文记录，可能出现在模型回显中；展示层 / stripPluginTags
-  // 仅移除无属性的 inline 生图标签，带属性标签必须原样保留。
-  cleaned = cleaned.replaceAll(
-    RegExp(
-      '${RegExp.escape(ChatSendApiRunner._stableDrawImageReviewPrefix)}[^\\r\\n]*(?:\\r?\\n)?',
-    ),
-    '',
-  );
-  cleaned = cleaned.replaceAll(RegExp(r'\n{3,}'), '\n\n');
-
-  return cleaned.trim();
-}
+String _sanitizeAssistantText(String text) => normalizeAssistantReplyText(text);
 
 String _stripStandaloneImagePlaceholders(String text) {
   var cleaned = text;
@@ -107,14 +76,13 @@ List<String> _replyRoundTexts({
   return texts;
 }
 
-/// 每轮文字单独过预设正则；只有一轮时就是原来的整段处理。
-Future<List<SillyTavernRegexApplyResult>> _applyRoundRegex(
+/// Each tool round keeps its own semantic source and display stages.
+Future<List<AssistantReplyDisplayProjection>> _projectReplyRounds(
   List<String> texts,
   ApiConfig config,
 ) async => [
   for (final text in texts)
-    await ChatSendApiRunner._presetRegexProcessor.applyToDisplayText(
-      text: text,
+    await AssistantReplyDisplaySource(text).project(
       scripts: config.presetRegexScripts,
       authorized: config.presetRegexAuthorized,
     ),
@@ -129,22 +97,6 @@ SillyTavernRegexApplyResult _joinRegexResults(
         warnings: [for (final r in rounds) ...r.warnings],
         traces: [for (final r in rounds) ...r.traces],
       );
-
-/// 每轮文字单独过插件（插件只处理各自的标签，标签落在哪轮就在哪轮处理）；
-/// 多轮时空轮不跑。
-Future<List<PluginProcessResult>> _runRoundProcessors(
-  List<SillyTavernRegexApplyResult> rounds,
-  List<PluginResponseProcessor> processors,
-) async => [
-  for (final round in rounds)
-    rounds.length > 1 && round.text.trim().isEmpty
-        ? PluginProcessResult(processedText: '', events: const [])
-        : await runResponseProcessors(
-            processors,
-            round.text,
-            logTag: ChatSendApiRunner._logTag,
-          ),
-];
 
 PluginProcessResult _joinPluginResults(List<PluginProcessResult> rounds) =>
     rounds.length == 1

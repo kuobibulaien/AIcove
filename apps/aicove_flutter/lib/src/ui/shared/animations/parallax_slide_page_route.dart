@@ -6,14 +6,19 @@ import '../widgets/moe_adaptive_shell.dart';
 class ParallaxSlidePageRoute<T> extends CupertinoPageRoute<T>
     with MoeWorkspaceRouteTransition<T> {
   final bool dimPreviousPage;
+  final Widget _content;
 
   @override
   Color? get barrierColor => dimPreviousPage && !_isWideWorkspace(navigator)
       ? super.barrierColor
       : null;
 
+  @override
+  Type get contentType => _content.runtimeType;
+
   ParallaxSlidePageRoute({required Widget page, this.dimPreviousPage = true})
-    : super(builder: (_) => page);
+    : _content = page,
+      super(builder: (_) => page);
 }
 
 /// Cupertino page with the workspace background policy and live Page settings.
@@ -52,6 +57,8 @@ class _ParallaxPageRoute<T> extends PageRoute<T>
       ? super.barrierColor
       : null;
   @override
+  Type get contentType => _page.child.runtimeType;
+  @override
   Widget buildContent(BuildContext context) => _page.child;
   @override
   String? get title => _page.title;
@@ -66,6 +73,9 @@ class _ParallaxPageRoute<T> extends PageRoute<T>
 
 /// Lets the shared workspace finish sibling transitions in the same frame.
 mixin MoeWorkspaceRouteTransition<T> on PageRoute<T> {
+  /// The page widget's type, used to name the page in diagnostics.
+  Type get contentType;
+
   void finishWorkspaceTransition({required bool entering}) {
     controller?.value = entering ? 1 : 0;
   }

@@ -30,11 +30,36 @@ class TaskRunningBar extends ConsumerStatefulWidget {
 
 class _TaskRunningBarState extends ConsumerState<TaskRunningBar> {
   Timer? _timer;
+  bool _settled = false;
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(_pollInterval, (_) => _poll());
+    _syncTimer(tickerEnabled: true);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncTimer(tickerEnabled: TickerMode.valuesOf(context).enabled);
+  }
+
+  @override
+  void didUpdateWidget(TaskRunningBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.taskId != widget.taskId) {
+      _settled = false;
+      _syncTimer(tickerEnabled: TickerMode.valuesOf(context).enabled);
+    }
+  }
+
+  void _syncTimer({required bool tickerEnabled}) {
+    if (!tickerEnabled || _settled) {
+      _timer?.cancel();
+      _timer = null;
+      return;
+    }
+    _timer ??= Timer.periodic(_pollInterval, (_) => _poll());
   }
 
   @override
@@ -45,11 +70,15 @@ class _TaskRunningBarState extends ConsumerState<TaskRunningBar> {
 
   /// Re-reads the task while it is still pending; stops once it settles.
   void _poll() {
-    final status = ref.read(agentTaskByIdProvider(widget.taskId)).valueOrNull?.status;
-    if (status == null || _isPending(status)) {
+    final asyncTask = ref.read(agentTaskByIdProvider(widget.taskId));
+    if (asyncTask.isLoading) return;
+    final status = asyncTask.valueOrNull?.status;
+    if (status != null && _isPending(status)) {
       ref.invalidate(agentTaskByIdProvider(widget.taskId));
     } else {
+      _settled = true;
       _timer?.cancel();
+      _timer = null;
     }
   }
 

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:aicove_flutter/src/features/plugins/data/tool_result_store.dart';
+import 'package:aicove_flutter/src/features/workspace/application/codemode_declarations.dart';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart'
@@ -205,6 +207,44 @@ void main() {
       expect(calls.every((c) => c['status'] == 'cancelled'), true);
     },
   );
+  test(
+    'codemode-only atomic tools and truncated-result reader stay callable',
+    () async {
+      final results = ToolResultStore(
+        () async => Directory('${root.path}/results'),
+      );
+      final full = 'large output ' * 1000;
+      final inline = await results.preserve('conversation', full);
+      final reference = RegExp(
+        r'reference=([a-f0-9]+)',
+      ).firstMatch(inline)!.group(1)!;
+      final tools = assembleCodemodeTools([
+        results.reader('conversation'),
+        AITool(
+          name: 'aicove_list_roles',
+          description: '列角色',
+          parameters: const {},
+          handler: (_) async => 'atomic roles',
+        ),
+      ]);
+      expect(directToolSchemas(tools), isEmpty);
+      final access = ScriptToolAccess(
+        tools,
+        (name, args, _) =>
+            tools.singleWhere((t) => t.name == name).invoke(args),
+      );
+      final output = await script(tools: access).run(
+        'text(await describeTool("read_tool_result")); '
+        'text(await tools.aicove_list_roles({})); '
+        'text(await tools.read_tool_result({reference: "$reference", offset: 4096, limit: 100}));',
+      );
+      expect(output.isError, isFalse, reason: output.text);
+      expect(output.text, contains('atomic roles'));
+      expect(output.text, contains(full.substring(4096, 4196)));
+      expect(output.text, contains('reference: string'));
+    },
+  );
+
   test(
     'manual nested gate waits for rejection and rejects Error without executing side effect',
     () async {

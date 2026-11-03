@@ -5,39 +5,141 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
 import '../sticker/sticker_config.dart';
 import '../time_awareness/time_awareness_config.dart';
+import '../trigger/trigger_plugin.dart';
+import '../web_search/web_search_plugin.dart';
 
-/// 插件提示词：所有角色共用的一份标签说明（ADR0054）。
-///
-/// 语音、绘图已改为按模型的提示词包，由预设绑定（ADR0092）；这里只剩
-/// 尚未改造的插件，全部迁走后整页退役。
+/// 所有角色共用的插件提示词；语音和绘图使用独立提示词包。
 enum PluginPromptSlot {
   sticker(
+    pluginId: 'sticker',
     plugin: '表情包',
     title: '表情包说明',
-    hint: '可用占位符：{tags}',
+    subtitle: '告诉角色怎么在回复里挑表情包、多久发一次',
+    hint: '可用占位符：{tags}（当前开启的表情包标签列表）',
     defaultText: StickerConfig.defaultSystemPromptTemplate,
   ),
   currentTime(
+    pluginId: 'time_awareness',
     plugin: '时间感知',
     title: '当前时间提醒',
-    hint: '可用占位符：{datetime}',
+    subtitle: '告诉角色现在几点、星期几的文字格式',
+    hint: '可用占位符：{datetime}（当前本地时间）',
     defaultText: TimeAwarenessConfig.defaultCurrentTimePromptTemplate,
+  ),
+  timeContextGuide(
+    pluginId: 'time_awareness',
+    plugin: '时间感知',
+    title: '时间背景说明',
+    subtitle: '告诉角色怎么理解消息时间和上次说话隔了多久',
+    hint:
+        '可用占位符：{current_time_explanation}、{previous_user_message_explanation}',
+    defaultText: TimeAwarenessConfig.defaultSystemGuidePromptTemplate,
+  ),
+  webSearchTool(
+    pluginId: 'web_search',
+    plugin: '联网搜索',
+    title: '搜索网页说明',
+    subtitle: '告诉角色什么时候去搜网页、怎么写搜索词',
+    hint: '告诉角色在什么情况下应该去搜索网页，以及怎么组织搜索词',
+    defaultText: WebSearchPlugin.defaultSearchToolDescription,
+  ),
+  webFetchTool(
+    pluginId: 'web_search',
+    plugin: '联网搜索',
+    title: '读取网页说明',
+    subtitle: '告诉角色什么时候点开链接读网页正文',
+    hint: '告诉角色什么时候需要打开链接阅读网页全文',
+    defaultText: WebSearchPlugin.defaultFetchToolDescription,
+  ),
+  createReminderTool(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '创建定时提醒说明',
+    subtitle: '告诉角色什么时候帮你定闹钟或定时提醒',
+    hint: '告诉角色在什么情况下为你设置闹钟或定时提醒',
+    defaultText: TriggerPlugin.defaultCreateReminderDescription,
+  ),
+  deleteReminderTool(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '取消定时提醒说明',
+    subtitle: '告诉角色怎么帮你取消定好的提醒',
+    hint: '告诉角色怎么帮你取消已经定好的提醒',
+    defaultText: TriggerPlugin.defaultDeleteReminderDescription,
+  ),
+  listRemindersTool(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '查看提醒列表说明',
+    subtitle: '告诉角色什么时候列出当前的提醒和待办',
+    hint: '告诉角色什么时候为你列出当前的提醒和待办',
+    defaultText: TriggerPlugin.defaultListRemindersDescription,
+  ),
+  searchRemindersTool(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '搜索提醒说明',
+    subtitle: '告诉角色怎么按关键词查找已有提醒',
+    hint: '告诉角色怎么按关键词查找已有的提醒',
+    defaultText: TriggerPlugin.defaultSearchRemindersDescription,
+  ),
+  proactiveReachOutReminder(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '主动发消息引导',
+    subtitle: '角色主动找你说话时的开场引导语',
+    hint: '可用占位符：{fire_time}（发送时间）、{gap}（距上次说话间隔）、{kind_hint}（开口方式提示）',
+    defaultText: PromptBuiltinDefaults.autoReplyReachOutReminder,
+  ),
+  proactiveCallHint(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '主动打电话引导',
+    subtitle: '允许主动来电时，告诉角色什么时候可以打语音电话',
+    hint: '允许主动来电时，引导角色决定是发消息还是直接打电话',
+    defaultText: PromptBuiltinDefaults.autoReplyReachOutCallHint,
+  ),
+  proactiveCallTool(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '拨打电话工具说明',
+    subtitle: '告诉角色拨打语音电话时的性格表现与第一句话要求',
+    hint: '告诉角色主动打语音电话时的性格表现和接通后第一句话的要求',
+    defaultText: PromptBuiltinDefaults.autoReplyToolCallUser,
+  ),
+  proactiveImageHint(
+    pluginId: 'auto_reply',
+    plugin: '主动回复与提醒',
+    title: '主动发自拍引导',
+    subtitle: '开启绘图时，引导角色主动发消息可以顺手带照片',
+    hint: '开启绘图时，引导角色主动发消息时自然顺手带上照片',
+    defaultText: PromptBuiltinDefaults.autoReplyReachOutImageHint,
   );
 
   const PluginPromptSlot({
+    required this.pluginId,
     required this.plugin,
     required this.title,
+    required this.subtitle,
     required this.hint,
     required this.defaultText,
   });
 
+  final String pluginId;
   final String plugin;
   final String title;
+  final String subtitle;
   final String hint;
   final String defaultText;
+
+  static List<PluginPromptSlot> forPlugin(String pluginId) => [
+    for (final s in values)
+      if (s.pluginId == pluginId) s,
+  ];
 }
 
 class PluginPrompts {
@@ -62,12 +164,18 @@ class PluginPrompts {
 
   Map<String, String> toJson() => overrides;
 
-  factory PluginPrompts.fromJson(Map<String, dynamic> json) => PluginPrompts(
-    Map.unmodifiable({
-      for (final slot in PluginPromptSlot.values)
-        if (json[slot.name] is String) slot.name: json[slot.name] as String,
-    }),
-  );
+  factory PluginPrompts.fromJson(Map<String, dynamic> json) {
+    final slots = {for (final slot in PluginPromptSlot.values) slot.name: slot};
+    final overrides = <String, String>{};
+    for (final entry in json.entries) {
+      final value = entry.value;
+      if (value is! String || value.trim().isEmpty) continue;
+      final slot = slots[entry.key];
+      if (slot != null && value.trim() == slot.defaultText.trim()) continue;
+      overrides[entry.key] = value;
+    }
+    return PluginPrompts(Map.unmodifiable(overrides));
+  }
 }
 
 abstract interface class PluginPromptStore {
@@ -170,11 +278,7 @@ class PluginPromptsNotifier extends AsyncNotifier<PluginPrompts> {
 
   /// [setText] only while [slot] still reads [expected], checked in the same
   /// turn of the write queue; false when it does not.
-  Future<bool> setTextIf(
-    PluginPromptSlot slot,
-    String expected,
-    String text,
-  ) {
+  Future<bool> setTextIf(PluginPromptSlot slot, String expected, String text) {
     final operation = _writes.then((_) async {
       final current = await future;
       if (current.of(slot) != expected) return false;

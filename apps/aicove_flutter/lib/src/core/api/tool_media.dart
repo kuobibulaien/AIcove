@@ -54,6 +54,17 @@ List<Map<String, dynamic>> buildToolImageMessages(
 /// Immutable projections for the wire, logs and preset host. Runtime objects
 /// keep their image payloads; only each outgoing copy is budgeted.
 abstract final class ToolMedia {
+  // Decode at most 64 KiB for log metadata, on a complete base64 quartet.
+  static const _logImageBase64Limit = (64 * 1024 ~/ 3) * 4;
+
+  static int _base64ByteLength(String data) =>
+      data.length * 3 ~/ 4 -
+      (data.endsWith('==')
+          ? 2
+          : data.endsWith('=')
+          ? 1
+          : 0);
+
   static bool _isImage(Map value) =>
       value['type'] == 'image_url' ||
       value['type'] == 'image' ||
@@ -109,7 +120,12 @@ abstract final class ToolMedia {
     Object? dimensions = v[toolImageInfo];
     if (dimensions == null && data != null) {
       try {
-        final bytes = base64Decode(data.$2);
+        final encoded = data.$2;
+        final bytes = base64Decode(
+          encoded.length > _logImageBase64Limit
+              ? encoded.substring(0, _logImageBase64Limit)
+              : encoded,
+        );
         final info = img.findDecoderForData(bytes)?.startDecode(bytes);
         if (info != null) {
           dimensions = {'width': info.width, 'height': info.height};
@@ -121,14 +137,7 @@ abstract final class ToolMedia {
     return {
       'type': 'image_metadata',
       'mimeType': data?.$1,
-      'bytes': data == null
-          ? null
-          : (data.$2.length * 3 ~/ 4) -
-                (data.$2.endsWith('==')
-                    ? 2
-                    : data.$2.endsWith('=')
-                    ? 1
-                    : 0),
+      'bytes': data == null ? null : _base64ByteLength(data.$2),
       'source': v[toolImageSource],
       'dimensions': dimensions,
     };
@@ -150,7 +159,7 @@ abstract final class ToolMedia {
     final sizes = <int>[];
     _walk(messages, (v) {
       final d = _data(v);
-      final size = d == null ? 0 : base64Decode(d.$2).length;
+      final size = d == null ? 0 : _base64ByteLength(d.$2);
       sizes.add(size);
       count++;
       bytes += size;

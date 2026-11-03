@@ -11,6 +11,7 @@ const int kImageDimensionProbeDefaultByteLimit = 32 * 1024 * 1024;
 
 /// 探测命中的来源类型。
 enum ImageDimensionProbeSource {
+  bytes,
   localPath,
   fileUrl,
   base64,

@@ -4,6 +4,7 @@ import '../../core/app_logger.dart';
 import '../plugins/domain/plugin.dart';
 import '../plugins/domain/plugin_content.dart';
 import '../plugins/image/image_config.dart';
+import '../plugins/prompts/prompt_pack.dart';
 import '../plugins/tts/voice_request.dart';
 import '../settings/app_settings.dart';
 
@@ -15,6 +16,7 @@ class PluginResponseInputs {
     required this.ref,
     required this.voiceRequest,
     this.drawingConfig,
+    this.imagePrompts,
     this.settings,
     this.rolePluginIds,
   });
@@ -28,6 +30,8 @@ class PluginResponseInputs {
 
   /// Image configuration fixed at prepare; null for cached replies.
   final ImageConfig? drawingConfig;
+
+  final ResolvedPromptPack? imagePrompts;
 
   /// Settings fixed at prepare, used with [drawingConfig].
   final AppSettings? settings;
@@ -73,9 +77,8 @@ class ResponseFunction extends PluginResponseProcessor {
   Future<PluginProcessResult> process(String text) => _process(text);
 }
 
-typedef PluginResponseProcessorFactory = PluginResponseProcessor Function(
-  PluginResponseInputs inputs,
-);
+typedef PluginResponseProcessorFactory =
+    PluginResponseProcessor Function(PluginResponseInputs inputs);
 
 /// The single traversal both reply paths use: processors run in [order]
 /// (ties in plugin order), each on the previous one's text. A processor that
@@ -89,12 +92,12 @@ Future<PluginProcessResult> runResponseProcessors(
   if (processors.isEmpty) {
     return PluginProcessResult(processedText: text, events: const []);
   }
-  final ordered = [
-    for (final (index, processor) in processors.indexed) (index, processor),
-  ]..sort((a, b) {
-      final byOrder = a.$2.order.compareTo(b.$2.order);
-      return byOrder != 0 ? byOrder : a.$1.compareTo(b.$1);
-    });
+  final ordered =
+      [for (final (index, processor) in processors.indexed) (index, processor)]
+        ..sort((a, b) {
+          final byOrder = a.$2.order.compareTo(b.$2.order);
+          return byOrder != 0 ? byOrder : a.$1.compareTo(b.$1);
+        });
 
   var currentText = text;
   final events = <PluginEvent>[];

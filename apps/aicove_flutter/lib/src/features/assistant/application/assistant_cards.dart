@@ -83,7 +83,7 @@ const kAssistantPages = <String, ({String label, String? needs})>{
   'web_search': (label: '联网搜索', needs: null),
   'time_awareness': (label: '时间感知', needs: null),
   'mcp': (label: 'MCP 连接器', needs: null),
-  'auto_reply': (label: '主动关怀', needs: null),
+  'auto_reply': (label: '主动回复', needs: null),
   'backup': (label: '同步与备份', needs: null),
   'lan_sync': (label: '局域网同步', needs: null),
   'account': (label: '账号', needs: null),

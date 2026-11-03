@@ -24,7 +24,7 @@ class _Generator implements ChatMediaGenerationPort {
   final Future<GeneratedChatMedia> Function(String, String) callback;
   @override
   Future<GeneratedChatMedia> generate(String owner, String input,
-          {ImageGenerationSnapshot? imageSnapshot}) =>
+          {ImageGenerationSnapshot? imageSnapshot, String? customPrompt}) =>
       callback(owner, input);
 }
 
@@ -103,8 +103,7 @@ void main() {
                 createdAt: msg.createdAt,
                 rawPayload:
                     ChatMessageProjectionCodec.copyWithProjectedMessages({
-                  'rawReplyText': '保留原文',
-                  'processedText': '保留原文'
+                  'rawReplyText': '保留原文'
                 }, [
                   msg.copyWith(sourceMessageId: 'raw'),
                   Message(

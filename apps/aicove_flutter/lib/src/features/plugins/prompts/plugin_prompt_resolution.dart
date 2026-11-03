@@ -5,6 +5,7 @@ import '../tts/tts_config.dart';
 import '../tts/tts_request_format.dart';
 import '../tts/tts_service.dart';
 import 'prompt_pack.dart';
+import 'prompt_pack_migration.dart' show roleDrawingSections;
 
 /// Picks the voice pack of a request's preset snapshot (ADR0092). Matching
 /// uses only the channel's request format and the model id.
@@ -44,7 +45,20 @@ ResolvedPromptPack resolveDrawingPrompts(
   DrawingPreset preset, {
   required String format,
   required String model,
-}) => library.resolve('image', preset.prompts, format: format, model: model);
+  String? rolePromptPackId,
+  String? roleDrawingPrompt,
+}) {
+  var binding = preset.prompts;
+  final packId = rolePromptPackId?.trim() ?? '';
+  if (packId.isNotEmpty) binding = binding.withPack(packId);
+  final drawing = roleDrawingPrompt?.trim() ?? '';
+  if (drawing.isNotEmpty) {
+    for (final section in roleDrawingSections(drawing)) {
+      binding = binding.upsertSection(section);
+    }
+  }
+  return library.resolve('image', binding, format: format, model: model);
+}
 
 Map<String, Object?> imagePromptVariables(ImageConfig config) => {
   'default_width': config.defaultWidth,

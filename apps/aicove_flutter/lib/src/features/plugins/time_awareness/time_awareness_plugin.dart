@@ -14,8 +14,7 @@ import 'time_awareness_config.dart';
 ///
 /// 让 AI 感知现实世界的时间：
 /// 1. 通过系统提醒向模型注入当前时间和上一条用户消息时间
-/// 2. 为历史消息添加时间戳前缀（通过配置控制 toHistoryJson 行为）
-/// 3. 只负责提供时间数据，具体提醒注入交给公共 SystemReminderService
+/// 2. 只负责提供时间数据，具体提醒注入交给公共 SystemReminderService
 class TimeAwarenessPlugin extends BasePlugin {
   static const String currentDateTimeFieldName = 'current_datetime';
   static const String previousUserMessageDateTimeFieldName =
@@ -34,18 +33,6 @@ class TimeAwarenessPlugin extends BasePlugin {
         label: '启用插件',
         defaultValue: true,
       ),
-      'includeMessageTimestamp': ConfigField(
-        type: ConfigFieldType.boolean,
-        label: '消息时间戳',
-        description: '在每条消息前添加发送时间',
-        defaultValue: true,
-      ),
-      'includeCurrentTime': ConfigField(
-        type: ConfigFieldType.boolean,
-        label: '当前时间提示',
-        description: '在系统提示词中告知AI当前时间',
-        defaultValue: true,
-      ),
     },
   );
 
@@ -60,9 +47,6 @@ class TimeAwarenessPlugin extends BasePlugin {
 
   @override
   AicovePlugin get agentPlugin => timeAwarenessAgentPlugin(this);
-
-  /// 是否需要为消息添加时间戳
-  bool get shouldIncludeTimestamp => enabled && _config.includeMessageTimestamp;
 
   SystemReminderPayload? buildSystemReminderPayload({
     required DateTime currentTime,
@@ -104,7 +88,9 @@ class TimeAwarenessPlugin extends BasePlugin {
     }
 
     return PromptTemplateRenderer.renderTrimmed(
-      PromptBuiltinDefaults.requireTemplate('time_awareness.system.default'),
+      _config.systemGuidePromptTemplate.trim().isEmpty
+          ? TimeAwarenessConfig.defaultSystemGuidePromptTemplate
+          : _config.systemGuidePromptTemplate,
       <String, Object?>{
         'current_time_explanation': _config.includeCurrentTime
             ? _lineWithTrailingBreak(
@@ -114,11 +100,8 @@ class TimeAwarenessPlugin extends BasePlugin {
         'previous_user_message_explanation': _lineWithTrailingBreak(
           '- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。',
         ),
-        'message_timestamp_explanation': _config.includeMessageTimestamp
-            ? _lineWithTrailingBreak(
-                '- 历史消息里形如 [YYYY-MM-DD HH:mm] 的前缀表示该条消息的发送时间。',
-              )
-            : '',
+        // Saved custom templates may still contain this placeholder.
+        'message_timestamp_explanation': '',
       },
       collapseExtraBlankLines: true,
     );

@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/services/android_keep_alive_manager.dart';
 import '../../chat/conversation_providers.dart';
-import '../../sync/providers/lan_sync_provider.dart';
 import 'analyzer_scheduler.dart';
 import 'auto_reply_dispatch_service.dart';
 import 'background_message_reprocessor.dart';
@@ -26,7 +25,7 @@ final autoReplyServiceProvider = Provider((ref) {
   return service;
 });
 
-/// 是否有联系人启用了主动关怀插件；主动关怀没有全局开关，由角色卡逐个勾选。
+/// 是否有联系人启用了主动回复插件；主动回复没有全局开关，由角色卡逐个勾选。
 final proactiveCareInUseProvider = Provider<bool>((ref) {
   return ref.watch(
     conversationsProvider.select(
@@ -39,9 +38,9 @@ final proactiveCareInUseProvider = Provider<bool>((ref) {
   );
 });
 
-/// Android 常驻守护：主动关怀在用，或局域网同步已有配对设备时开启。
+/// Android 常驻守护仅用于主动回复。
 final androidGuardNeededProvider = Provider<bool>(
-  (ref) => ref.watch(proactiveCareInUseProvider) || ref.watch(lanKeepsAliveProvider),
+  (ref) => ref.watch(proactiveCareInUseProvider),
 );
 
 /// 串行事件队列：按入队顺序逐个 await 处理，避免并发处理触发器事件
@@ -58,11 +57,12 @@ class SerialEventQueue<T> {
   Future<void> _tail = Future<void>.value();
 
   void add(T event) {
-    _tail = _tail.then((_) => _handler(event)).catchError(
-      (Object error, StackTrace stackTrace) {
-        _onError?.call(error, stackTrace);
-      },
-    );
+    _tail = _tail.then((_) => _handler(event)).catchError((
+      Object error,
+      StackTrace stackTrace,
+    ) {
+      _onError?.call(error, stackTrace);
+    });
   }
 
   /// 等待当前已入队的事件全部处理完成（测试用）。
@@ -83,10 +83,39 @@ class AutoReplyService {
       },
     );
     _listenToEvents();
+    _ref.listen(conversationsProvider, (previous, next) {
+      final before = {
+        for (final conversation in previous?.valueOrNull ?? const [])
+          conversation.id: conversation.allowsPlugin('trigger'),
+      };
+      for (final conversation in next.valueOrNull ?? const []) {
+        if (before[conversation.id] == conversation.allowsPlugin('trigger')) {
+          continue;
+        }
+        unawaited(
+          _ref
+              .read(analyzerSchedulerProvider)
+              .syncConversationActivation(conversation)
+              .catchError((Object error) {
+                AppLogger.warning(
+                  'AutoReplyService',
+                  '主动回复启用状态同步失败',
+                  metadata: {
+                    'conversationId': conversation.id,
+                    'errorType': error.runtimeType.toString(),
+                  },
+                );
+              }),
+        );
+      }
+    }, fireImmediately: true);
+
     // 启动时补渲染：后台投递期间积累的多模态消息在前台补跑插件链
-    unawaited(_ref
-        .read(backgroundMessageReprocessorProvider)
-        .reprocessRecentBackgroundMessages());
+    unawaited(
+      _ref
+          .read(backgroundMessageReprocessorProvider)
+          .reprocessRecentBackgroundMessages(),
+    );
   }
 
   final Ref _ref;
@@ -114,7 +143,9 @@ class AutoReplyService {
       case AutoReplyTriggerEventType.deleted:
       case AutoReplyTriggerEventType.expired:
       case AutoReplyTriggerEventType.paused:
-        await _ref.read(analyzerSchedulerProvider).onAutoTriggerCleared(
+        await _ref
+            .read(analyzerSchedulerProvider)
+            .onAutoTriggerCleared(
               conversationId: event.conversationId,
               triggerId: event.triggerId,
             );
@@ -155,12 +186,12 @@ class AutoReplyService {
     );
 
     try {
-      final result =
-          await _ref.read(autoReplyDispatchServiceProvider).dispatchTrigger(
-                trigger,
-                claimToken: event.claimToken,
-              );
-      await _ref.read(autoReplyTriggersProvider.notifier).completeTriggeredSend(
+      final result = await _ref
+          .read(autoReplyDispatchServiceProvider)
+          .dispatchTrigger(trigger, claimToken: event.claimToken);
+      await _ref
+          .read(autoReplyTriggersProvider.notifier)
+          .completeTriggeredSend(
             triggerId: trigger.id,
             firedAt: event.timestamp,
             success: result.success,
@@ -168,7 +199,9 @@ class AutoReplyService {
             reason: result.reason,
             claimToken: event.claimToken,
           );
-      await _ref.read(analyzerSchedulerProvider).onAutoTriggerSendCompleted(
+      await _ref
+          .read(analyzerSchedulerProvider)
+          .onAutoTriggerSendCompleted(
             trigger: trigger,
             success: result.success,
             retryable: result.retryable,
@@ -178,10 +211,7 @@ class AutoReplyService {
       AppLogger.error(
         'AutoReplyService',
         'Failed to process fired trigger',
-        metadata: {
-          'triggerId': trigger.id,
-          'error': e.toString(),
-        },
+        metadata: {'triggerId': trigger.id, 'error': e.toString()},
       );
       // 派发本身抛异常也要收尾：释放认领并按可重试处理，免得等满租约。
       try {
@@ -199,10 +229,7 @@ class AutoReplyService {
         AppLogger.error(
           'AutoReplyService',
           'Failed to finish fired trigger after error',
-          metadata: {
-            'triggerId': trigger.id,
-            'error': finishError.toString(),
-          },
+          metadata: {'triggerId': trigger.id, 'error': finishError.toString()},
         );
       }
     }

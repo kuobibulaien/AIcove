@@ -7,9 +7,11 @@ import '../../agent_context/domain/agent_runtime_contracts.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../background_agent/domain/background_agent_definition.dart';
 import '../../chat/domain/conversation.dart';
+import '../../chat/domain/persona_prompt_codec.dart';
 import '../../chat/domain/message.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../settings/app_settings.dart';
+import '../../plugins/prompts/plugin_prompts.dart';
 import '../domain/proactive_decision.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
@@ -89,9 +91,9 @@ class ContextAnalyzer {
       metadata: {'decider': port.kind, 'recentMessageCount': recent.length},
     );
 
-    Map<String, ProactiveAnswer> answers;
+    List<Map<String, ProactiveAnswer>> answerList;
     try {
-      answers = await port.answer(state: state, questions: questions);
+      answerList = await port.answerAll(state: state, questions: questions);
     } on FormatException catch (e) {
       // An unreadable fallback answer counts as "stay quiet" (plan §6.4).
       await _appendHistoryLog(
@@ -105,12 +107,63 @@ class ContextAnalyzer {
       return _silentDecision(recent, 'decision_unreadable');
     }
 
-    final answerSummary = <String, Object?>{
-      for (final entry in answers.entries)
-        entry.key: entry.value.choice ?? entry.value.yes,
-    };
-    final silence = ProactivePlanner.silenceReason(answers);
-    if (silence != null) {
+    final contactSettings = settings.autoReplySettings.forContact(
+      conversation.id,
+    );
+    final quietHours = QuietHours.parse(
+      enabled: contactSettings.quietHoursEnabled,
+      start: contactSettings.quietHoursStart,
+      end: contactSettings.quietHoursEnd,
+    );
+    final lastUserAt = proactiveState.lastUserAt ?? _lastUserAt(recent);
+    final pluginPrompts = await _ref.read(pluginPromptsProvider.future);
+    final triggerPlans = <ContextAnalysisTriggerPlan>[];
+    final seenSlots = <ProactiveTimeSlot>{};
+    ProactiveSilenceReason? firstSilence;
+    Map<String, Object?>? firstAnswerSummary;
+
+    for (final answers in answerList) {
+      final answerSummary = <String, Object?>{
+        for (final entry in answers.entries)
+          entry.key: entry.value.choice ?? entry.value.yes,
+      };
+      firstAnswerSummary ??= answerSummary;
+      final silence = ProactivePlanner.silenceReason(answers);
+      if (silence != null) {
+        firstSilence ??= silence;
+        continue;
+      }
+      final plan = _planner.plan(
+        answers: answers,
+        now: now,
+        quietHours: quietHours,
+      );
+      if (!seenSlots.add(plan.slot)) {
+        continue;
+      }
+      final reminder = buildReachOutReminder(
+        kind: plan.kind,
+        fireAt: plan.fireAt,
+        lastUserAt: lastUserAt,
+        reminderTemplate: pluginPrompts.of(
+          PluginPromptSlot.proactiveReachOutReminder,
+        ),
+      );
+      triggerPlans.add(
+        ContextAnalysisTriggerPlan(
+          kind: plan.kind,
+          title: defaultTitleFor(plan.kind),
+          fireAt: plan.fireAt,
+          allowNight: plan.allowNight,
+          priority: plan.priority,
+          systemReminder: reminder,
+          allowCall: allowCall,
+        ),
+      );
+    }
+
+    if (triggerPlans.isEmpty) {
+      final silence = firstSilence ?? ProactiveSilenceReason.staySilent;
       await _appendHistoryLog(
         event: 'decision_silent',
         message: '判断完成：这次先不打扰',
@@ -119,29 +172,14 @@ class ContextAnalyzer {
         metadata: {
           'decider': port.kind,
           'reason': silence.name,
-          'answers': answerSummary,
+          'answers': firstAnswerSummary ?? const <String, Object?>{},
         },
       );
       return _silentDecision(recent, silence.name);
     }
 
-    final settingsForQuiet = settings.autoReplySettings;
-    final plan = _planner.plan(
-      answers: answers,
-      now: now,
-      quietHours: QuietHours.parse(
-        enabled: settingsForQuiet.quietHoursEnabled,
-        start: settingsForQuiet.quietHoursStart,
-        end: settingsForQuiet.quietHoursEnd,
-      ),
-    );
-    final lastUserAt = proactiveState.lastUserAt ?? _lastUserAt(recent);
-    final reminder = buildReachOutReminder(
-      kind: plan.kind,
-      fireAt: plan.fireAt,
-      lastUserAt: lastUserAt,
-    );
-
+    triggerPlans.sort((a, b) => a.fireAt.compareTo(b.fireAt));
+    final firstPlan = triggerPlans.first;
     await _appendHistoryLog(
       event: 'decision_reach_out',
       message: '判断完成：准备主动联系',
@@ -149,25 +187,18 @@ class ContextAnalyzer {
       success: true,
       metadata: {
         'decider': port.kind,
-        'answers': answerSummary,
-        'slot': plan.slot.label,
-        'fireAt': plan.fireAt.toIso8601String(),
-        'priority': plan.priority.name,
+        'frequency': contactSettings.frequency.value,
+        'answers': firstAnswerSummary ?? const <String, Object?>{},
+        'plannedCount': triggerPlans.length,
+        'fireAt': firstPlan.fireAt.toIso8601String(),
+        'priority': firstPlan.priority.name,
         'callBlocked': callBlocked,
       },
     );
 
     return ContextAnalysisDecision(
       contextMessages: recent,
-      triggerPlan: ContextAnalysisTriggerPlan(
-        kind: plan.kind,
-        title: defaultTitleFor(plan.kind),
-        fireAt: plan.fireAt,
-        allowNight: plan.allowNight,
-        priority: plan.priority,
-        systemReminder: reminder,
-        allowCall: allowCall,
-      ),
+      triggerPlans: triggerPlans,
     );
   }
 
@@ -220,10 +251,9 @@ class ContextAnalyzer {
   static const int callWelcomePersonaMaxChars = 300;
 
   static String callWelcomePersonaOf(Conversation conversation) {
-    final persona = conversation.personaPrompt.trim().replaceAll(
-      RegExp(r'\s+'),
-      ' ',
-    );
+    final persona = PersonaPromptCodec.parse(
+      conversation.personaPrompt,
+    ).rolePrompt.trim().replaceAll(RegExp(r'\s+'), ' ');
     if (persona.isEmpty) return '（没有写人设）';
     return persona.length <= callWelcomePersonaMaxChars
         ? persona
@@ -236,9 +266,11 @@ class ContextAnalyzer {
     required ProactiveReachOutKind kind,
     required DateTime fireAt,
     required DateTime? lastUserAt,
+    String? reminderTemplate,
   }) {
     return PromptTemplateRenderer.renderTrimmed(
-      PromptBuiltinDefaults.requireTemplate('auto_reply.reach_out.reminder'),
+      reminderTemplate ??
+          PromptBuiltinDefaults.requireTemplate('auto_reply.reach_out.reminder'),
       <String, Object?>{
         'fire_time': ProactiveTimeText.clock(fireAt),
         'gap': lastUserAt == null
@@ -383,8 +415,12 @@ ProactiveDecisionPort _defaultDecisionPort(
   Conversation conversation,
 ) {
   final modelRef = resolveJudgmentModelRef(settings);
+  final contactSettings = settings.autoReplySettings.forContact(
+    conversation.id,
+  );
   return ChatModelDecisionAdapter(
     assistantName: conversation.title,
+    frequency: contactSettings.frequency,
     run: (prompt) async {
       final result = await ref
           .read(backgroundAgentServiceProvider)
@@ -433,13 +469,26 @@ class ContextAnalysisDecision {
   const ContextAnalysisDecision({
     required this.contextMessages,
     this.sessionPatch,
-    this.triggerPlan,
-  });
+    ContextAnalysisTriggerPlan? triggerPlan,
+    List<ContextAnalysisTriggerPlan>? triggerPlans,
+  }) : _singlePlan = triggerPlan,
+       _triggerPlans = triggerPlans;
 
   final List<Message> contextMessages;
 
   final ContextAnalysisSessionPatch? sessionPatch;
-  final ContextAnalysisTriggerPlan? triggerPlan;
+  final ContextAnalysisTriggerPlan? _singlePlan;
+  final List<ContextAnalysisTriggerPlan>? _triggerPlans;
+
+  List<ContextAnalysisTriggerPlan> get triggerPlans =>
+      _triggerPlans ??
+      (_singlePlan != null
+          ? <ContextAnalysisTriggerPlan>[_singlePlan]
+          : const <ContextAnalysisTriggerPlan>[]);
+
+  ContextAnalysisTriggerPlan? get triggerPlan => _triggerPlans != null
+      ? (_triggerPlans.isEmpty ? null : _triggerPlans.first)
+      : _singlePlan;
 }
 
 class ContextAnalysisSessionPatch {

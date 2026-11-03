@@ -16,6 +16,7 @@ import 'package:aicove_flutter/src/features/assistant/application/assistant_writ
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
+import 'package:aicove_flutter/src/features/plugins/data/tool_result_store.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/features/workspace/application/workspace_toolset.dart';
 import 'package:aicove_flutter/src/features/workspace/data/workspace_store.dart';
@@ -124,6 +125,9 @@ void main() {
   ) => KernelApiRunner.withAgentClientFactory(agentClientFactory: (_) => client)
       .executeApiCall(
         config: ApiConfig(
+          toolResultStore: ToolResultStore(
+            () async => Directory('${root.path}/results'),
+          ),
           settings:
               mapUiModelsToAppSettings({
                 'model_configs': {
@@ -341,6 +345,96 @@ void main() {
     runId: 'shell',
     enableShell: true,
   ).tools().firstWhere((t) => t.name == 'bash');
+
+  test(
+    'read keeps its complete page and continuation metadata above 8K',
+    () async {
+      final content = List.generate(
+        1000,
+        (i) => 'line $i ${'字' * 20}\n',
+      ).join();
+      await store.write(
+        workspace,
+        'large.txt',
+        utf8.encode(content),
+        runId: 'seed',
+      );
+      final read = WorkspaceToolset(
+        store: store,
+        workspaceIds: {workspace},
+        runId: 'read',
+      ).tools().firstWhere((t) => t.name == 'read');
+      final expected = await read.invoke({'path': 'large.txt'});
+      expect(expected.text.length, greaterThan(8192));
+      expect(expected.text, contains('下次 offset:'));
+      final client = _Client(
+        const ToolCall(
+          id: 'read-page',
+          name: 'read',
+          arguments: {'path': 'large.txt'},
+        ),
+      );
+      final result = await execute(
+        client,
+        [read],
+        const AgentToolPolicy(authorization: AgentToolAuthorization.allowAll),
+      );
+      expect(result.rawToolResults.single.result, expected.text);
+      expect(client.sent.last.last['content'], expected.text);
+      final next = int.parse(
+        RegExp(r'下次 offset: (\d+)').firstMatch(expected.text)!.group(1)!,
+      );
+      final tail = await read.invoke({'path': 'large.txt', 'offset': next});
+      expect(
+        '${expected.text.split('\nrevision:').first}'
+        '${tail.text.split('\nrevision:').first}',
+        content,
+      );
+    },
+  );
+
+  for (final lines in [400, 3000]) {
+    test(
+      'bash keeps its own bounded output and artifact link ($lines lines)',
+      () async {
+        final client = _Client(
+          ToolCall(
+            id: 'shell-page',
+            name: 'bash',
+            arguments: {
+              'command':
+                  r'i=0; while [ "$i" -lt '
+                  '$lines'
+                  r' ]; do '
+                  r'printf "line-%04d-abcdefghijklmnopqrstuvwxyz\n" "$i"; '
+                  r'i=$((i+1)); done',
+            },
+          ),
+        );
+        final result = await execute(
+          client,
+          [shellTool()],
+          const AgentToolPolicy(authorization: AgentToolAuthorization.allowAll),
+        );
+        final output = result.rawToolResults.single;
+        expect(output.isError, isFalse);
+        expect(output.result.length, greaterThan(8192));
+        expect(output.result, isNot(contains('reference=')));
+        expect(
+          output.result,
+          contains('line-${(lines - 1).toString().padLeft(4, '0')}'),
+        );
+        expect(client.sent.last.last['content'], output.result);
+        if (lines == 3000) {
+          expect(output.result, contains('Output truncated;'));
+          expect(output.result, contains('full output: .aicove/outputs/'));
+        } else {
+          expect(output.result, contains('line-0000-'));
+          expect(output.result, isNot(contains('Output truncated;')));
+        }
+      },
+    );
+  }
 
   test(
     'default assistant policy executes shell without an approval channel',

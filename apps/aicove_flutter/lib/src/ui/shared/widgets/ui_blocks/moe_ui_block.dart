@@ -119,7 +119,7 @@ class _MoeUiBlockState extends ConsumerState<MoeUiBlock> {
       if (builder == null) {
         return _UiBlockFallback(
           code: widget.code,
-          reason: '这个面板只在 AIcove酱的聊天里能用',
+          reason: '这个面板只在 Agent 模式的聊天里能用',
           style: style,
         );
       }

@@ -489,6 +489,8 @@ void main() {
             .generationSnapshot!
             .toJson(),
         snapshot.toJson());
+    expect(ImageGenerationSnapshot.tryRead({...snapshot.toJson(), 'guidanceScale': 15})?.guidanceScale, 15);
+    expect(ImageGenerationSnapshot.tryRead({...snapshot.toJson(), 'guidanceScale': 21}), isNull);
     expect(
         ImageGenerationSnapshot.tryRead({...snapshot.toJson(), 'version': 2}),
         isNull);

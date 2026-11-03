@@ -64,14 +64,53 @@ class GeminiAdapter implements ProviderAdapter {
       }
       reachedChat = true;
 
-      final normalizedRole =
-          (role == 'assistant' || role == 'model') ? 'model' : 'user';
+      final normalizedRole = (role == 'assistant' || role == 'model')
+          ? 'model'
+          : 'user';
+      if (role == 'tool') {
+        contents.add({
+          'role': 'user',
+          'parts': [
+            {
+              'functionResponse': {
+                if ((msg['tool_call_id'] ?? '').toString().isNotEmpty)
+                  'id': msg['tool_call_id'],
+                'name': msg['name'],
+                'response': {'result': msg['content'] ?? ''},
+              },
+            },
+          ],
+        });
+        continue;
+      }
+      final calls = msg['tool_calls'] as List? ?? const [];
       final existingParts = _extractParts(msg);
-      if (existingParts != null && existingParts.isNotEmpty) {
+      if (calls.isNotEmpty) {
+        final content = msg['content'];
         contents.add({
           'role': normalizedRole,
-          'parts': existingParts,
+          'parts': [
+            if (existingParts != null)
+              ...existingParts
+            else if (content is String && content.isNotEmpty)
+              {'text': content},
+            for (final call in calls)
+              {
+                'functionCall': {
+                  if ((call['id'] ?? '').toString().isNotEmpty)
+                    'id': call['id'],
+                  'name': call['function']['name'],
+                  'args': _parseArguments(call['function']['arguments']),
+                },
+                if (ToolCall.readThoughtSignature(call) case final signature?)
+                  'thoughtSignature': signature,
+              },
+          ],
         });
+        continue;
+      }
+      if (existingParts != null && existingParts.isNotEmpty) {
+        contents.add({'role': normalizedRole, 'parts': existingParts});
         continue;
       }
 
@@ -79,10 +118,7 @@ class GeminiAdapter implements ProviderAdapter {
       if (content is List) {
         final converted = _convertOpenAiPartsToGeminiParts(content);
         if (converted.isNotEmpty) {
-          contents.add({
-            'role': normalizedRole,
-            'parts': converted,
-          });
+          contents.add({'role': normalizedRole, 'parts': converted});
           continue;
         }
       }
@@ -90,7 +126,7 @@ class GeminiAdapter implements ProviderAdapter {
       contents.add({
         'role': normalizedRole,
         'parts': [
-          {'text': content is String ? content : content.toString()}
+          {'text': content is String ? content : content.toString()},
         ],
       });
     }
@@ -119,7 +155,7 @@ class GeminiAdapter implements ProviderAdapter {
     };
     _applyRequestOptions(generationConfig, requestOptions);
     final body = <String, dynamic>{
-      'contents': contents,
+      'contents': _mergeConsecutiveRoles(contents),
       if (systemInstructions.isNotEmpty)
         'systemInstruction': {
           'parts': [
@@ -138,6 +174,29 @@ class GeminiAdapter implements ProviderAdapter {
     };
 
     return body;
+  }
+
+  List<Map<String, dynamic>> _mergeConsecutiveRoles(
+    List<Map<String, dynamic>> contents,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    for (final content in contents) {
+      // Gemini accepts adjacent ordinary user nodes. Only coalesce tool
+      // responses (including parallel calls) with the following user input.
+      bool hasResponse(Map<String, dynamic> node) => (node['parts'] as List)
+          .any((p) => p is Map && p.containsKey('functionResponse'));
+      if (merged.isNotEmpty &&
+          merged.last['role'] == content['role'] &&
+          (hasResponse(merged.last) || hasResponse(content))) {
+        merged.last['parts'] = [
+          ...merged.last['parts'] as List,
+          ...content['parts'] as List,
+        ];
+      } else {
+        merged.add(Map<String, dynamic>.from(content));
+      }
+    }
+    return merged;
   }
 
   void _applyRequestOptions(
@@ -283,6 +342,7 @@ class GeminiAdapter implements ProviderAdapter {
     for (final result in toolResults) {
       responseParts.add({
         'functionResponse': {
+          if (result.toolCallId.isNotEmpty) 'id': result.toolCallId,
           'name': result.name,
           'response': {
             'result': result.result,

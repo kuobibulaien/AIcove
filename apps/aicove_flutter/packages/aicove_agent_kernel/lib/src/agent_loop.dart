@@ -30,6 +30,7 @@ class AgentLoop {
   final KernelMessage Function(String text) _steeringMessage;
 
   final List<String> _steering = [];
+  bool _yieldRequested = false;
   bool _started = false;
   bool _closed = false;
 
@@ -38,6 +39,17 @@ class AgentLoop {
   bool steer(String text) {
     if (_closed) return false;
     _steering.add(text);
+    return true;
+  }
+
+  /// Ends the run before its next model request, after the current tool
+  /// batch settles, with [KernelStopReason.steered]. The caller then starts a
+  /// new run with the user's message. A run whose model stops calling tools
+  /// finishes normally. `enabled: false` withdraws an earlier request.
+  /// Returns false once the run has ended.
+  bool yieldAtBoundary({bool enabled = true}) {
+    if (_closed) return false;
+    _yieldRequested = enabled;
     return true;
   }
 
@@ -112,6 +124,9 @@ class AgentLoop {
       // Like Pi, the loop runs until the model stops calling tools.
       for (round = 1; ; round++) {
         cancel.throwIfCancelled();
+        if (round > 1 && _yieldRequested) {
+          return finish(LoopStatus.completed, KernelStopReason.steered);
+        }
         final ctx = TurnContext(
           round: round,
           cancellation: cancel,
@@ -135,6 +150,11 @@ class AgentLoop {
         AssistantTurn raw;
         for (var recovery = 0; ; recovery++) {
           cancel.throwIfCancelled();
+          // Preparation, including overflow recovery, can suspend
+          // (compaction); a yield requested meanwhile skips this request.
+          if (round > 1 && _yieldRequested) {
+            return finish(LoopStatus.completed, KernelStopReason.steered);
+          }
           try {
             stage = 'modelPort';
             raw = await stages.model.send(prepared, ctx);

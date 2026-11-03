@@ -37,8 +37,12 @@ class ToolResultStore {
     ),
   );
 
-  Future<String> preserve(String owner, String text) async {
-    if (text.length <= maxInlineChars) return text;
+  Future<String> preserve(
+    String owner,
+    String text, {
+    bool alreadyLimited = false,
+  }) async {
+    if (alreadyLimited || text.length <= maxInlineChars) return text;
     final root = await _owner(owner);
     await root.create(recursive: true);
     final random = Random.secure();

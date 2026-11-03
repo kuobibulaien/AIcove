@@ -45,6 +45,20 @@ void main() {
     );
   });
 
+  test('undoing a whole run keeps every pending entry until it is undone',
+      () async {
+    final entries = [
+      for (var i = 0; i < 30; i++)
+        await journal().append('write$i', _change('w$i')),
+    ];
+
+    final failures = await journal().undoAll([
+      for (final entry in entries.reversed) entry.id,
+    ]);
+
+    expect(failures, isEmpty);
+  });
+
   test('an undo racing an append keeps both', () async {
     final first = await journal().append('write', _change('a'));
     await Future.wait([

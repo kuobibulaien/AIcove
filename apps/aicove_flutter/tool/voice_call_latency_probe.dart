@@ -9,7 +9,7 @@
 //   --runs <n>        Number of rounds (default 3).
 //   --latency <m>     Fish latency mode: balanced | normal (default balanced).
 //   --voice <id>      Fish reference_id (default: first Fish voice preset).
-//   --model <id>      Chat model (default deepseek-flash).
+//   --model <id>      Chat model (default deepseek/deepseek-v4.1-flash-1017).
 //   --min-chars <n>   Minimum chars before a comma-level cut (default 6).
 //   --baseline        Also run the naive path: full LLM text, then one-shot
 //                     HTTP TTS, measuring time until the full audio arrives.
@@ -41,12 +41,14 @@ import 'dart:typed_data';
 
 import 'package:aicove_flutter/src/features/voice_call/data/msgpack.dart';
 
-const _prefsPath =
-    'Library/Containers/com.example.aicoveFlutter/Data/Library/Preferences/'
-    'com.example.aicoveFlutter.plist';
+const _prefsPaths = [
+  'Library/Preferences/com.example.aicoveFlutter.plist',
+  'Library/Containers/com.example.aicoveFlutter/Data/Library/Preferences/'
+      'com.example.aicoveFlutter.plist',
+];
 const _fishWsUrl = 'wss://api.fish.audio/v1/tts/live';
 const _fishHttpUrl = 'https://api.fish.audio/v1/tts';
-const _deepseekUrl = 'https://api.deepseek.com/chat/completions';
+const _deepseekUrl = 'https://api-gateway.merge.dev/v1/openai/chat/completions';
 const _aliyunAsrUrl = 'wss://dashscope.aliyuncs.com/api-ws/v1/inference';
 const _sampleRate = 24000;
 const _bytesPerSecond = _sampleRate * 2; // 16-bit mono PCM
@@ -721,7 +723,13 @@ class _Credentials {
   final String? aliyunKey;
 
   static Future<_Credentials> load(String? voiceOverride) async {
-    final plist = '${Platform.environment['HOME']}/$_prefsPath';
+    final home = Platform.environment['HOME'];
+    final plist = _prefsPaths
+        .map((p) => '$home/$p')
+        .firstWhere(
+          (p) => File(p).existsSync(),
+          orElse: () => '$home/${_prefsPaths.first}',
+        );
     final prefs = await _plistPrefs(plist);
     Map? pref(String key) =>
         prefs[key] is String ? jsonDecode(prefs[key] as String) as Map? : null;
@@ -780,7 +788,7 @@ class _Args {
   int runs = 3;
   String latency = 'balanced';
   String? voice;
-  String model = 'deepseek-flash';
+  String model = 'deepseek/deepseek-v4.1-flash-1017';
   int minChars = 6;
   bool baseline = false;
   String? outDir;

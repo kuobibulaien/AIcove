@@ -43,13 +43,13 @@ String _state({required List<(String, String)> lines, required DateTime now}) {
 
 Future<String> _deepseek(String prompt) async {
   final response = await http.post(
-    Uri.parse('https://api.deepseek.com/chat/completions'),
+    Uri.parse('https://api-gateway.merge.dev/v1/openai/chat/completions'),
     headers: {
       'Authorization': 'Bearer $_deepseekKey',
       'Content-Type': 'application/json',
     },
     body: jsonEncode({
-      'model': 'deepseek-flash',
+      'model': 'deepseek/deepseek-v4.1-flash-1017',
       'temperature': 0.2,
       'messages': [
         {'role': 'system', 'content': '你只做判断，只回一行 JSON。'},

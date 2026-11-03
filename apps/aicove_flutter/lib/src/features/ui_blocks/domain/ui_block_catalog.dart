@@ -76,7 +76,7 @@ const kUiCatalog = [
 Set<String> get kUiCatalogNames => {for (final c in kUiCatalog) c.name};
 
 /// Action components (ADR0094): panels that list the user's own data and
-/// change it. Only the assistant chat renders them; their props and prompt
+/// change it. Only tool-mode chats render them (ADR0111); their props and prompt
 /// live with the assistant. Named here so every renderer and the saved
 /// state know them.
 const kUiActionComponents = {

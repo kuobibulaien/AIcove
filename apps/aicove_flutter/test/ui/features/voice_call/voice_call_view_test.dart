@@ -343,6 +343,96 @@ void main() {
     expect(find.text('此角色没有可用的音色'), findsOneWidget);
   });
 
+  testWidgets(
+    'opaque call buttons skip BackdropFilter and translucent controls share one BackdropKey',
+    (tester) async {
+      await mount(tester, () async => session);
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+
+      // Hang-up button is opaque red: no BackdropFilter inside it.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice-call-hang-up')),
+          matching: find.byType(BackdropFilter),
+        ),
+        findsNothing,
+      );
+
+      // Collapse, speaker (inactive), and mute (inactive) are translucent and share one BackdropKey.
+      final collapseFilter = tester.widget<BackdropFilter>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('voice-call-collapse')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      final speakerFilter = tester.widget<BackdropFilter>(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice-call-speaker')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      final muteFilter = tester.widget<BackdropFilter>(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice-call-mute')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      expect(collapseFilter.backdropGroupKey, isNotNull);
+      expect(
+        speakerFilter.backdropGroupKey,
+        same(collapseFilter.backdropGroupKey),
+      );
+      expect(
+        muteFilter.backdropGroupKey,
+        same(collapseFilter.backdropGroupKey),
+      );
+
+      // Tapping speaker makes it opaque white (no BackdropFilter) and reveals the translucent notice pill.
+      await tester.tap(find.byKey(const ValueKey('voice-call-speaker')));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice-call-speaker')),
+          matching: find.byType(BackdropFilter),
+        ),
+        findsNothing,
+      );
+      final latestCollapseFilter = tester.widget<BackdropFilter>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('voice-call-collapse')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      final latestMuteFilter = tester.widget<BackdropFilter>(
+        find.descendant(
+          of: find.byKey(const ValueKey('voice-call-mute')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      final noticeFilter = tester.widget<BackdropFilter>(
+        find.ancestor(
+          of: find.byKey(const ValueKey('voice-call-notice')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      expect(latestCollapseFilter.backdropGroupKey, isNotNull);
+      expect(
+        latestMuteFilter.backdropGroupKey,
+        same(latestCollapseFilter.backdropGroupKey),
+      );
+      expect(
+        noticeFilter.backdropGroupKey,
+        same(latestCollapseFilter.backdropGroupKey),
+      );
+
+      unawaited(call.hangUp());
+      await settleHangUp(tester);
+    },
+  );
+
   Future<void> loadPreviewFonts(WidgetTester tester) async {
     await tester.runAsync(() async {
       final loader = FontLoader('Preview')

@@ -76,6 +76,7 @@ class _RecordingStore extends ChatHistoryStore {
     required String conversationId,
     required Message message,
     String? lastMessagePreview,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     updates.add(message);
   }

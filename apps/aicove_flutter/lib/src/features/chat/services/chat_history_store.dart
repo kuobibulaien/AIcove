@@ -17,12 +17,9 @@ import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/models/block_status.dart';
 import '../../conversation_state/providers/conversation_state_providers.dart';
 import '../../plugins/domain/plugin_content.dart';
-import '../../plugins/plugin_content_tags.dart';
-import '../../plugins/tts/tts_parser.dart';
 import '../domain/message.dart';
 import '../domain/conversation_context_window.dart';
 import 'chat_frontend_message_projection_service.dart';
-import 'chat_message_processor.dart';
 import 'chat_message_projection_codec.dart';
 import 'chat_types.dart';
 import 'conversation_short_window_store.dart';
@@ -535,14 +532,39 @@ class ChatHistoryStore {
       rawCreatedAt: DateTime.fromMillisecondsSinceEpoch(original.createdAt),
       messages: markNewVoicesUnread(projectedMessages),
     );
-    final enriched = _rawWithFrontendMessages(processedRaw, projected);
-    final payload = ChatMessageProjectionCodec.copyWithProjectedMessages({
+    // Preparation is complete: persist its resolved display text (including
+    // failed-media text fallbacks), while rawReplyText remains model history.
+    // Ready media positions are captured by the existing supplement insert ops.
+    final displayText = StringBuffer();
+    for (final message in projected) {
+      final blocks = message.blocks;
+      if (blocks == null || blocks.isEmpty) {
+        displayText.write(message.content);
+      } else {
+        for (final block in blocks) {
+          if (block is TextBlock) displayText.write(block.content);
+          if (block is EmojiBlock) {
+            final tag = block.matchedTag;
+            if (tag != null && tag.isNotEmpty) {
+              displayText.write('<sticker tag="${const HtmlEscape(HtmlEscapeMode.attribute).convert(tag)}"/>');
+            }
+          }
+        }
+      }
+    }
+    final resolvedRaw = processedRaw.copyWith(rawPayload: {
+      ...?processedRaw.rawPayload,
+      'displayReplyText': displayText.toString(),
+      'processedText': displayText.toString(),
+    });
+    final enriched = _rawWithFrontendMessages(resolvedRaw, projected);
+    final payload = ChatMessageProjectionCodec.removeProjectedMessages({
       ...Map<String, dynamic>.from(
         jsonDecode(original.rawPayload ?? '{}') as Map,
       ),
       ...?enriched.rawPayload,
       'bg_reprocessed': true,
-    }, projected);
+    });
     final encoded = await EmbeddedMediaStore.shared.compactJson(
       jsonEncode(payload),
     );
@@ -599,14 +621,20 @@ class ChatHistoryStore {
     required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
+    bool updateSummary = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     rawMessage = markNewVoicesUnread([rawMessage]).single;
     projectedMessages = markNewVoicesUnread(projectedMessages);
-    await _db.transaction(() async {
+    Future<bool> commit() => _db.transaction(() async {
+      if (shouldCommit != null && !await shouldCommit()) return false;
       final msgRepo = _ref.read(messageRepositoryProvider);
       if (userMessageId.trim().isNotEmpty) {
         await msgRepo.updateStatus(userMessageId, 'sent');
       }
+      // The generation lives in memory; a stop during the await above is not
+      // serialized by this transaction.
+      if (shouldCommit != null && !await shouldCommit()) return false;
       await _upsertSingleMessage(
         conversationId,
         rawMessage.copyWith(
@@ -615,12 +643,16 @@ class ChatHistoryStore {
           ),
         ),
       );
+      if (!updateSummary) return true;
       await _ref.read(conversationRepositoryProvider).updateSummary(
             conversationId,
             lastMessagePreview,
             rawMessage.createdAt.millisecondsSinceEpoch,
           );
+      return true;
     });
+    final committed = await cloudLocalWrite(commit);
+    if (!committed) return;
     // 原文提交之后把会话状态算到链尾（ADR0071）；失败只记日志，下次读取自愈。
     unawaited(
       _ref.read(conversationStatePortProvider).refresh(conversationId),
@@ -631,6 +663,7 @@ class ChatHistoryStore {
         conversationId: conversationId,
         rawMessageId: rawMessage.id,
         projectedMessages: projectedMessages,
+        shouldCommit: shouldCommit,
       );
     }
 
@@ -665,6 +698,7 @@ class ChatHistoryStore {
         ...updatedUserMessages,
         ...projectedMessages,
       ];
+      if (shouldCommit != null && !await shouldCommit()) return;
       await timelineCache.replaceMessages(
         conversationId: conversationId,
         removeMessageIds: staleIds,
@@ -681,6 +715,7 @@ class ChatHistoryStore {
     required String conversationId,
     required Message message,
     String? lastMessagePreview,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     message = markNewVoicesUnread([message]).single;
     final projectedMessage =
@@ -688,11 +723,21 @@ class ChatHistoryStore {
       conversationId: conversationId,
       message: message,
     );
+    if (_isPendingImagePlaceholder(projectedMessage ?? message)) {
+      if (shouldCommit != null && !await shouldCommit()) return;
+      await _ref.read(conversationTimelineCacheProvider).replaceMessagesTransient(
+        conversationId: conversationId, messages: [projectedMessage ?? message]);
+      return;
+    }
     if (projectedMessage != null) {
+      if (shouldCommit != null && !await shouldCommit()) return;
       await _ref.read(conversationTimelineCacheProvider).upsertMessage(
             conversationId: conversationId,
             message: projectedMessage,
           );
+      // A clear may land while the cache write is queued; it does not clear
+      // the summary again afterwards.
+      if (shouldCommit != null && !await shouldCommit()) return;
       if (lastMessagePreview != null) {
         await _ref.read(conversationRepositoryProvider).updateSummary(
               conversationId,
@@ -708,6 +753,7 @@ class ChatHistoryStore {
     }
 
     await _upsertMessages(
+      shouldCommit: shouldCommit,
       conversationId: conversationId,
       messages: [message],
       previewText: lastMessagePreview ?? message.displayText,
@@ -719,6 +765,7 @@ class ChatHistoryStore {
     required String conversationId,
     required List<String> anchorIds,
     required List<ConversationSupplementInsertOp> insertOps,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     if (insertOps.isEmpty) return;
     final timelineCache = _ref.read(conversationTimelineCacheProvider);
@@ -793,7 +840,8 @@ class ChatHistoryStore {
         slotBuckets[currentSlot].add(message);
       }
       rebuilt.addAll(slotBuckets[0]);
-      rebuilt.addAll(slotMessages[0] ?? const <Message>[]);
+      rebuilt.addAll((slotMessages[0] ?? const <Message>[]).map((message) =>
+        _atPendingImageAnchor(message, anchorMessages.first.createdAt)));
       for (var i = 0; i < existingAnchorIds.length; i++) {
         final anchorMessage = messageById[existingAnchorIds[i]];
         if (anchorMessage == null) {
@@ -806,11 +854,15 @@ class ChatHistoryStore {
           anchorSourceIds: anchorSourceIds,
         );
         rebuilt.addAll(bucket.take(leadingRelatedCount));
-        rebuilt.addAll(slotMessages[i + 1] ?? const <Message>[]);
+        final imageTime = leadingRelatedCount > 0
+            ? bucket[leadingRelatedCount - 1].createdAt : anchorMessage.createdAt;
+        rebuilt.addAll((slotMessages[i + 1] ?? const <Message>[]).map((message) =>
+          _atPendingImageAnchor(message, imageTime)));
         rebuilt.addAll(bucket.skip(leadingRelatedCount));
       }
     }
 
+    if (shouldCommit != null && !await shouldCommit()) return;
     await timelineCache.replaceMessages(
       conversationId: conversationId,
       removeMessageIds: [
@@ -923,8 +975,6 @@ class ChatHistoryStore {
     required MediaRegenerationTarget target,
     required GeneratedChatMedia result,
   }) async {
-    result
-        .replace(target.block); // Validate type and metadata before any write.
     late Message replacement;
     await _db.transaction(() async {
       final current = await loadMediaRegenerationTarget(
@@ -935,9 +985,12 @@ class ChatHistoryStore {
           !MediaRegenerationTarget.sameSource(current.block, target.block)) {
         throw StateError('原消息已改变，未覆盖现有媒体');
       }
+      final generated = result.replace(current.block);
+      MessageBlock replaceBlock(MessageBlock original) =>
+          _preserveMediaBlockIdentity(original, generated);
       replacement = current.message.copyWith(blocks: [
         for (final block in current.message.blocks!)
-          if (block.id == current.block.id) result.replace(block) else block,
+          if (block.id == current.block.id) replaceBlock(block) else block,
       ]);
       final rawId = current.message.sourceMessageIdOrSelf;
       final raw = (await loadMessageById(rawId,
@@ -951,12 +1004,18 @@ class ChatHistoryStore {
         }
         final next = [
           for (final sibling in siblings)
-            if (sibling.id == current.message.id) replacement else sibling
+            sibling.copyWith(blocks: [
+              for (final block in sibling.blocks ?? const <MessageBlock>[])
+                if (block.id == current.block.id && MediaRegenerationTarget.sameSource(block, current.block))
+                  replaceBlock(block)
+                else block,
+            ]),
         ];
         final updatedRaw =
-            _replaceRawMediaAttachment(raw, siblings, current, result);
+            _replaceRawMediaAttachment(
+              raw, siblings, current.message, current.block, replaceBlock);
         await _upsertSingleMessage(
-            conversationId, _rawWithFrontendMessages(updatedRaw, next));
+            conversationId, _rawWithReplacedMedia(updatedRaw, next));
       } else {
         await _upsertSingleMessage(
             conversationId, raw.copyWith(blocks: replacement.blocks));
@@ -965,6 +1024,111 @@ class ChatHistoryStore {
     await _ref
         .read(conversationTimelineCacheProvider)
         .upsertMessage(conversationId: conversationId, message: replacement);
+  }
+
+  /// Persist the selected page version before publishing it to the timeline.
+  Future<void> selectImageVersion({
+    required String conversationId,
+    required String messageId,
+    required String blockId,
+    required int versionIndex,
+  }) async {
+    late Message replacement;
+    await _db.transaction(() async {
+      final candidate = await loadFrontendMessageById(
+        messageId,
+        conversationId: conversationId,
+      );
+      if (candidate == null ||
+          candidate.id != messageId ||
+          !await isRawMessageActive(
+            conversationId: conversationId,
+            messageId: candidate.sourceMessageIdOrSelf,
+          )) {
+        throw StateError('原消息已失效，无法切换图片版本');
+      }
+      final raw = (await loadMessageById(
+        candidate.sourceMessageIdOrSelf,
+        conversationId: conversationId,
+        preferProjection: false,
+      ))!;
+      // The viewport can be stale or incomplete. Resolve the page and all its
+      // siblings from the current persisted raw inside the same transaction.
+      final siblings = _projectRawMessagesForFrontendSurface([raw]);
+      final message = siblings.where((m) => m.id == messageId).firstOrNull;
+      final block = message?.blocks?.where((b) => b.id == blockId).firstOrNull;
+      if (message == null ||
+          message.role != 'assistant' ||
+          message.status == 'sending' ||
+          block is! ImageBlock ||
+          _ref
+              .read(conversationTimelineCacheProvider)
+              .isMessageHidden(conversationId, message)) {
+        throw StateError('原图片已失效，无法切换图片版本');
+      }
+      final selected = block.withActiveVersion(versionIndex);
+      replacement = message.copyWith(blocks: [
+        for (final current in message.blocks!)
+          if (current.id == blockId) selected else current,
+      ]);
+      if (_isProjectedFrontendMessage(message)) {
+        final updatedRaw = _replaceRawMediaAttachment(
+          raw,
+          siblings,
+          message,
+          block,
+          (current) => _preserveMediaBlockIdentity(current, selected),
+        );
+        final next = [
+          for (final sibling in siblings)
+            if (sibling.id == messageId) replacement else sibling,
+        ];
+        await _upsertSingleMessage(
+          conversationId,
+          _rawWithReplacedMedia(updatedRaw, next),
+        );
+      } else {
+        await _upsertSingleMessage(
+          conversationId,
+          raw.copyWith(blocks: replacement.blocks),
+        );
+      }
+    });
+    if (await isRawMessageActive(
+      conversationId: conversationId,
+      messageId: replacement.sourceMessageIdOrSelf,
+    )) {
+      await _ref.read(conversationTimelineCacheProvider).upsertMessage(
+        conversationId: conversationId,
+        message: replacement,
+      );
+    }
+  }
+
+  MessageBlock _preserveMediaBlockIdentity(
+    MessageBlock original,
+    MessageBlock replacement,
+  ) =>
+      MessageBlock.fromJson({
+        ...replacement.toJson(),
+        'id': original.id,
+        'messageId': original.messageId,
+        'createdAt': original.createdAt.toIso8601String(),
+      });
+
+  Message _rawWithReplacedMedia(Message raw, List<Message> siblings) {
+    if (ChatMessageProjectionCodec.hasProjectionSemantics(raw.rawPayload)) {
+      return _rawWithFrontendMessages(raw, siblings);
+    }
+    // Legacy snapshots may group text, several images and audio in one bubble.
+    // Keep that shape and its IDs instead of migrating it into single-media
+    // supplement ops. Mixed raw blocks need no display-payload conversion.
+    return raw.rawPayload?['projectedMessages'] is List
+        ? raw.copyWith(
+            rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
+              raw.rawPayload, siblings),
+          )
+        : raw;
   }
 
   /// 把挂断后整理好的摘要补进通话气泡（ADR0074 决定 4）。
@@ -1021,21 +1185,22 @@ class ChatHistoryStore {
   }
 
   Message _replaceRawMediaAttachment(Message raw, List<Message> siblings,
-      MediaRegenerationTarget target, GeneratedChatMedia result) {
+      Message targetMessage, MessageBlock targetBlock,
+      MessageBlock Function(MessageBlock) replace) {
     bool matches(MessageBlock block) =>
-        MediaRegenerationTarget.sameSource(block, target.block);
+        MediaRegenerationTarget.sameSource(block, targetBlock);
     final candidates = (raw.blocks ?? <MessageBlock>[]).where(matches).toList();
     if (candidates.isEmpty) return raw;
 
     // Repeated uses of one source are distinct media occurrences.
     var occurrence = 0;
     for (final sibling in siblings) {
-      final blocks = (sibling.id == target.message.id
-              ? target.message.blocks
+      final blocks = (sibling.id == targetMessage.id
+              ? targetMessage.blocks
               : sibling.blocks) ??
           <MessageBlock>[];
       for (final block in blocks) {
-        if (sibling.id == target.message.id && block.id == target.block.id) {
+        if (sibling.id == targetMessage.id && block.id == targetBlock.id) {
           if (occurrence >= candidates.length) {
             throw StateError('原媒体来源已改变，未覆盖现有媒体');
           }
@@ -1043,7 +1208,7 @@ class ChatHistoryStore {
           return raw.copyWith(blocks: [
             for (final rawBlock in raw.blocks!)
               if (rawBlock.id == original.id)
-                result.replace(rawBlock)
+                replace(rawBlock)
               else
                 rawBlock,
           ]);
@@ -1058,17 +1223,28 @@ class ChatHistoryStore {
     required String conversationId,
     required Message message,
     String? lastMessagePreview,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     final projectedMessage =
         await _normalizeProjectedMessageForFrontendMutation(
       conversationId: conversationId,
       message: message,
     );
+    if (_isPendingImagePlaceholder(projectedMessage ?? message)) {
+      if (shouldCommit != null && !await shouldCommit()) return;
+      await _ref.read(conversationTimelineCacheProvider).replaceMessagesTransient(
+        conversationId: conversationId, messages: [projectedMessage ?? message]);
+      return;
+    }
     if (projectedMessage != null) {
+      if (shouldCommit != null && !await shouldCommit()) return;
       await _ref.read(conversationTimelineCacheProvider).upsertMessage(
             conversationId: conversationId,
             message: projectedMessage,
           );
+      // A clear may land while the cache write is queued; it does not clear
+      // the summary again afterwards.
+      if (shouldCommit != null && !await shouldCommit()) return;
       if (lastMessagePreview != null) {
         await _ref.read(conversationRepositoryProvider).updateSummary(
               conversationId,
@@ -1079,11 +1255,13 @@ class ChatHistoryStore {
       await _syncRawSupplementsFromTimeline(
         conversationId: conversationId,
         rawMessageIds: {projectedMessage.sourceMessageId!},
+        textReplacement: projectedMessage,
       );
       return;
     }
 
-    await _db.transaction(() async {
+    final committed = await _db.transaction(() async {
+      if (shouldCommit != null && !await shouldCommit()) return false;
       await _upsertSingleMessage(conversationId, message);
       final frontendMessages =
           _projectRawMessagesForFrontendSurface(<Message>[message]);
@@ -1096,7 +1274,9 @@ class ChatHistoryStore {
               effectiveTailMessage.createdAt.millisecondsSinceEpoch,
             );
       }
+      return true;
     });
+    if (!committed || (shouldCommit != null && !await shouldCommit())) return;
     final frontendMessages =
         _projectRawMessagesForFrontendSurface(<Message>[message]);
     await _ref.read(conversationTimelineCacheProvider).upsertMessages(
@@ -1105,6 +1285,194 @@ class ChatHistoryStore {
               ? frontendMessages
               : <Message>[message],
         );
+  }
+
+  /// Edits only an active raw text message. Rich replies must keep using
+  /// their dedicated editors so semantic payloads and display cannot diverge.
+  Future<Message> updateRawMessageText({
+    required String conversationId,
+    required String messageId,
+    String? content,
+    String? oldText,
+    String? newText,
+    FutureOr<void> Function()? ensureWritable,
+  }) async {
+    final updated = await _db.transaction(() async {
+      await ensureWritable?.call();
+      final owner = await _ref
+          .read(conversationRepositoryProvider)
+          .getById(conversationId);
+      final row = await _ref.read(messageRepositoryProvider).getById(messageId);
+      if (owner == null ||
+          owner.deletedAt != null ||
+          owner.isHidden ||
+          row == null ||
+          row.conversationId != conversationId ||
+          row.deletedAt != null ||
+          row.replacedBy != null ||
+          row.status == 'sending') {
+        throw StateError('消息不存在、不属于这个角色或正在生成，未修改');
+      }
+      final raw = await _buildRawMessageFromDbMessage(row);
+      final storedBlocks = await _ref
+          .read(messageBlockRepositoryProvider)
+          .getByMessage(messageId);
+      if (raw == null ||
+          storedBlocks.length != (raw.blocks?.length ?? 0) ||
+          (raw.role != 'user' && raw.role != 'assistant') ||
+          (raw.blocks?.length ?? 0) > 1 ||
+          (raw.blocks?.isNotEmpty == true &&
+              (raw.blocks!.single.runtimeType != TextBlock ||
+                  (raw.blocks!.single as TextBlock).content != raw.content))) {
+        throw StateError('这条消息包含附件、工具步骤或复杂显示内容，不能直接修改正文');
+      }
+      // Ordinary assistant replies carry this payload too. Keep their raw,
+      // processed and display copies aligned instead of rejecting all replies.
+      final payload = raw.rawPayload;
+      Map<String, dynamic>? nextPayload;
+      const textFields = {'rawReplyText', 'displayReplyText', 'processedText'};
+      const emptyFields = {
+        'pluginEvents',
+        'pluginContents',
+        'toolAudioResults',
+        'toolCalls',
+        'rawToolResults',
+        'projectedMessages',
+        'supplementInsertOps',
+      };
+      const metadataFields = {
+        'version',
+        'runStatus',
+        'stopReason',
+        'reasoning',
+        'hiddenThoughtParts',
+      };
+      bool empty(Object? value) =>
+          value == null || (value is List && value.isEmpty);
+      if (payload?.isNotEmpty == true) {
+        if (raw.role != 'assistant' ||
+            payload!.keys.any(
+              (key) =>
+                  !textFields.contains(key) &&
+                  !emptyFields.contains(key) &&
+                  !metadataFields.contains(key) &&
+                  key != 'replyRounds',
+            ) ||
+            textFields.any(
+              (key) => payload.containsKey(key) && payload[key] != raw.content,
+            ) ||
+            emptyFields.any((key) => !empty(payload[key]))) {
+          throw StateError('这条回复包含工具、附件或与原文不同的显示内容，不能直接修改正文');
+        }
+        final rounds = payload['replyRounds'];
+        if (rounds != null &&
+            (rounds is! List ||
+                rounds.length > 1 ||
+                rounds.any(
+                  (round) =>
+                      round is! Map ||
+                      round.keys.any(
+                        (key) => !const {
+                          'replyText',
+                          'rawText',
+                          'processedText',
+                          'reasoning',
+                          'pluginEvents',
+                          'pluginContents',
+                          'toolCallIds',
+                        }.contains(key),
+                      ) ||
+                      const ['replyText', 'rawText', 'processedText'].any(
+                        (key) =>
+                            round.containsKey(key) && round[key] != raw.content,
+                      ) ||
+                      const [
+                        'pluginEvents',
+                        'pluginContents',
+                        'toolCallIds',
+                      ].any((key) => !empty(round[key])),
+                ))) {
+          throw StateError('这条回复包含多轮或复杂显示内容，不能直接修改正文');
+        }
+        nextPayload = Map<String, dynamic>.from(payload);
+      }
+      String text;
+      if (content != null && oldText == null && newText == null) {
+        text = content;
+      } else if (content == null &&
+          oldText != null &&
+          oldText.isNotEmpty &&
+          newText != null) {
+        final index = raw.content.indexOf(oldText);
+        if (index < 0 || raw.content.indexOf(oldText, index + 1) >= 0) {
+          throw StateError('要替换的原文必须精确出现一次，未修改');
+        }
+        text = raw.content.replaceFirst(oldText, newText);
+      } else {
+        throw ArgumentError('请提供完整 content，或同时提供 old_text 和 new_text');
+      }
+      if (text.trim().isEmpty) throw ArgumentError('消息正文不能为空');
+      if (nextPayload != null) {
+        for (final key in textFields) {
+          if (nextPayload.containsKey(key)) nextPayload[key] = text;
+        }
+        if (nextPayload['replyRounds'] is List) {
+          nextPayload['replyRounds'] = [
+            for (final round in nextPayload['replyRounds'] as List)
+              {
+                ...Map<String, dynamic>.from(round as Map),
+                for (final key in const [
+                  'replyText',
+                  'rawText',
+                  'processedText',
+                ])
+                  if (round.containsKey(key)) key: text,
+              },
+          ];
+        }
+      }
+      await ensureWritable?.call();
+      final next = raw.copyWith(
+        content: text,
+        rawPayload: nextPayload,
+        blocks: raw.blocks
+            ?.map((block) => (block as TextBlock).copyWith(content: text))
+            .toList(),
+      );
+      await (_db.update(
+        _db.messages,
+      )..where((m) => m.id.equals(messageId))).write(
+        db.MessagesCompanion(
+          content: Value(text),
+          rawPayload: Value(
+            next.rawPayload == null ? null : jsonEncode(next.rawPayload),
+          ),
+        ),
+      );
+      for (final block in storedBlocks) {
+        final data = Map<String, dynamic>.from(jsonDecode(block.data) as Map);
+        data['content'] = text;
+        await (_db.update(_db.messageBlocks)..where(
+              (b) => b.id.equals(block.id) & b.messageId.equals(messageId),
+            ))
+            .write(db.MessageBlocksCompanion(data: Value(jsonEncode(data))));
+      }
+      // An edit to an old message must not become the conversation preview.
+      await _refreshSummary(conversationId);
+      return next;
+    });
+    await _removeMessagesFromShortWindowByRawIds(
+      conversationId: conversationId,
+      rawMessageIds: {messageId},
+    );
+    final projected = _projectRawMessagesForFrontendSurface([updated]);
+    await _ref
+        .read(conversationTimelineCacheProvider)
+        .upsertMessages(
+          conversationId: conversationId,
+          messages: projected.isEmpty ? [updated] : projected,
+        );
+    return updated;
   }
 
   Future<void> hideMessagesInFrontendTimeline(
@@ -1226,6 +1594,18 @@ class ChatHistoryStore {
       });
     }
     if (projectedOnlyIds.isNotEmpty) {
+      final hiddenTextIds = [
+        for (final message in projectedMessages)
+          if (rawMessageIdsToResync.contains(message.sourceMessageId) &&
+              !(message.blocks?.any((block) => block is ImageBlock || block is AudioBlock || block is EmojiBlock) ?? false))
+            message.id,
+      ];
+      if (hiddenTextIds.isNotEmpty) {
+        await timelineCache.hideMessages(
+          conversationId: conversationId,
+          projectedMessageIds: hiddenTextIds,
+        );
+      }
       await timelineCache.replaceMessages(
         conversationId: conversationId,
         removeMessageIds: projectedOnlyIds,
@@ -1296,23 +1676,39 @@ class ChatHistoryStore {
     required String conversationId,
     required String anchorMessageId,
   }) async {
+    final commit = await prepareTruncateAfterMessage(
+      conversationId: conversationId,
+      anchorMessageId: anchorMessageId,
+    );
+    await commit();
+  }
+
+  /// 先记下锚点之后的消息，调用返回的回调才真正删除。
+  ///
+  /// 删除范围在准备时就固定，之后写入时间线的流式占位不会被一起删掉。
+  Future<Future<void> Function()> prepareTruncateAfterMessage({
+    required String conversationId,
+    required String anchorMessageId,
+  }) async {
     final lookup = await _loadFrontendMessagesForRangeLookup(
       conversationId: conversationId,
       anchorMessageId: anchorMessageId,
     );
     final range = lookup.range;
-    if (range == null) return;
+    if (range == null) return () async {};
     final anchorMessages = List<Message>.unmodifiable(
       lookup.messages.sublist(range.$1, range.$2 + 1),
     );
     final ids = [
       for (final message in lookup.messages.skip(range.$2 + 1)) message.id,
     ];
-    await softDeleteMessages(conversationId, ids);
-    await _restoreShortWindowMessagesIfMissing(
-      conversationId: conversationId,
-      messages: anchorMessages,
-    );
+    return () async {
+      await softDeleteMessages(conversationId, ids);
+      await _restoreShortWindowMessagesIfMissing(
+        conversationId: conversationId,
+        messages: anchorMessages,
+      );
+    };
   }
 
   Future<void> replaceConversationMessages({
@@ -1331,6 +1727,7 @@ class ChatHistoryStore {
     required String previewText,
     required DateTime previewTime,
     bool updatePreview = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     if (messages.isEmpty) return;
     final frontendMessages = _projectRawMessagesForFrontendSurface(messages);
@@ -1339,11 +1736,12 @@ class ChatHistoryStore {
     final effectivePreviewTime = frontendMessages.isNotEmpty
         ? effectiveTailMessage.createdAt
         : previewTime;
-    await _db.transaction(() async {
+    final committed = await _db.transaction(() async {
+      if (shouldCommit != null && !await shouldCommit()) return false;
       for (final message in messages) {
         await _upsertSingleMessage(conversationId, message);
       }
-      if (!updatePreview) return;
+      if (!updatePreview) return true;
       await _ref.read(conversationRepositoryProvider).updateSummary(
             conversationId,
             effectiveTailMessage.displayText.isNotEmpty
@@ -1351,7 +1749,9 @@ class ChatHistoryStore {
                 : previewText,
             effectivePreviewTime.millisecondsSinceEpoch,
           );
+      return true;
     });
+    if (!committed || (shouldCommit != null && !await shouldCommit())) return;
     await _ref.read(conversationTimelineCacheProvider).upsertMessages(
           conversationId: conversationId,
           messages: frontendMessages.isNotEmpty ? frontendMessages : messages,
@@ -1361,17 +1761,17 @@ class ChatHistoryStore {
   Future<void> _clearStaleShortWindowIfConversationEmpty(
     String conversationId,
   ) async {
+    final timelineCache = _ref.read(conversationTimelineCacheProvider);
+    final staleMessages =
+        await timelineCache.loadCachedMessages(conversationId);
+    if (staleMessages.isEmpty) {
+      return;
+    }
     final messageCount =
         await _ref.read(messageRepositoryProvider).countByConversation(
               conversationId,
             );
     if (messageCount > 0) {
-      return;
-    }
-    final timelineCache = _ref.read(conversationTimelineCacheProvider);
-    final staleMessages =
-        await timelineCache.loadCachedMessages(conversationId);
-    if (staleMessages.isEmpty) {
       return;
     }
     await timelineCache.replaceMessages(
@@ -1555,17 +1955,8 @@ class ChatHistoryStore {
     return _projectRawMessages(rawMessages);
   }
 
-  List<Message> _projectRawMessages(List<Message> rawMessages) {
-    final projectionService =
-        _ref.read(chatFrontendMessageProjectionServiceProvider);
-    return <Message>[
-      for (final rawMessage in rawMessages)
-        ..._projectRawMessageForPersistedHistory(
-          rawMessage,
-          projectionService: projectionService,
-        ),
-    ];
-  }
+  List<Message> _projectRawMessages(List<Message> rawMessages) =>
+      _projectRawMessagesForFrontendSurface(rawMessages);
 
   List<Message> _projectRawMessagesForFrontendSurface(
       List<Message> rawMessages) {
@@ -1720,99 +2111,194 @@ class ChatHistoryStore {
   Future<void> _syncRawSupplementsFromTimeline({
     required String conversationId,
     required Set<String> rawMessageIds,
+    Message? textReplacement,
   }) async {
     if (rawMessageIds.isEmpty) {
       return;
     }
-    final timelineMessages =
-        await _ref.read(conversationTimelineCacheProvider).loadCachedMessages(
-              conversationId,
-            );
-    for (final rawMessageId in rawMessageIds) {
-      final rawMessage = await loadMessageById(
-        rawMessageId,
-        conversationId: conversationId,
-        preferProjection: false,
-      );
-      if (rawMessage == null) {
-        continue;
-      }
-      final sourceTimelineMessages = <Message>[
-        for (final message in timelineMessages)
-          if (message.sourceMessageId == rawMessageId) message,
+    await cloudLocalWrite(() async {
+      final timelineMessages = await _ref
+          .read(conversationTimelineCacheProvider)
+          .loadCachedMessages(conversationId);
+      await _db.transaction(() async {
+        for (final rawMessageId in rawMessageIds) {
+          // Read canonical storage inside both locks. A deleted raw must never
+          // fall back to a stale timeline snapshot and be written back.
+          final current = await _ref
+              .read(messageRepositoryProvider)
+              .getById(rawMessageId);
+          if (current == null ||
+              current.conversationId != conversationId ||
+              current.deletedAt != null ||
+              current.replacedBy != null) {
+            continue;
+          }
+          var rawMessage = await _buildRawMessageFromDbMessage(current);
+          if (rawMessage == null) continue;
+          if (textReplacement != null) {
+            rawMessage = _withProjectedTextReplacement(rawMessage, textReplacement);
+          }
+          final sourceTimelineMessages = <Message>[
+            for (final message in timelineMessages)
+              if (message.sourceMessageId == rawMessageId) message,
+          ];
+          final nextRaw =
+              _rawWithFrontendMessages(rawMessage, sourceTimelineMessages);
+          if (textReplacement == null &&
+              nextRaw.content == rawMessage.content &&
+              jsonEncode(nextRaw.rawPayload) == jsonEncode(rawMessage.rawPayload)) {
+            continue;
+          }
+          await _upsertSingleMessage(conversationId, nextRaw);
+        }
+      });
+    });
+  }
+  Message _withProjectedTextReplacement(Message raw, Message replacement) {
+    if (replacement.blocks?.any((block) => block is! TextBlock) ?? false)
+      return raw;
+    final payload = raw.rawPayload;
+    final display = ChatMessageProjectionCodec.displayReplyText(payload);
+    if (display == null) return raw;
+    final projected = _ref
+        .read(chatFrontendMessageProjectionServiceProvider)
+        .projectMessage(raw);
+    final before = projected.where((m) => m.id == replacement.id).firstOrNull;
+    final oldText = before == null ? '' : _extractText(before);
+    final newText = _extractText(replacement);
+    if (oldText.isEmpty || oldText == newText || !display.contains(oldText))
+      return raw;
+    final next = <String, dynamic>{...payload!};
+    next['displayReplyText'] = display.replaceFirst(oldText, newText);
+    final processed = ChatMessageProjectionCodec.processedText(payload);
+    if (processed != null)
+      next['processedText'] = processed.replaceFirst(oldText, newText);
+    final rounds = payload['replyRounds'];
+    final roundMatch = RegExp(
+      '${RegExp.escape(raw.id)}__proj_r(\\d+)_',
+    ).firstMatch(replacement.id);
+    final roundIndex = roundMatch == null
+        ? null
+        : int.tryParse(roundMatch.group(1)!);
+    if (rounds is List && roundIndex != null) {
+      next['replyRounds'] = [
+        for (final (index, value) in rounds.indexed)
+          if (index == roundIndex && value is Map)
+            {
+              ...value,
+              if (value['replyText'] is String)
+                'replyText': (value['replyText'] as String).replaceFirst(
+                  oldText,
+                  newText,
+                ),
+              if (value['processedText'] is String)
+                'processedText': (value['processedText'] as String)
+                    .replaceFirst(oldText, newText),
+            }
+          else
+            value,
       ];
-      await _upsertSingleMessage(conversationId,
-          _rawWithFrontendMessages(rawMessage, sourceTimelineMessages));
+      for (final field in ['replyText', 'processedText']) {
+        next[field == 'replyText' ? 'displayReplyText' : field] =
+            (next['replyRounds'] as List)
+                .whereType<Map>()
+                .map((round) => (round[field] as String? ?? '').trim())
+                .where((text) => text.isNotEmpty)
+                .join('\n');
+      }
     }
+    return raw.copyWith(rawPayload: next);
   }
 
   Message _rawWithFrontendMessages(
-      Message rawMessage, List<Message> sourceTimelineMessages) {
+    Message rawMessage,
+    List<Message> sourceTimelineMessages,
+  ) {
     final normalizedTimelineMessages = _normalizeProjectedMessagesForStorage(
       rawMessageId: rawMessage.id,
       rawCreatedAt: rawMessage.createdAt,
       messages: sourceTimelineMessages,
     );
-    final nextPluginContents =
-        _collectSemanticPluginContents(sourceTimelineMessages);
-    final nextToolAudioResults =
-        _collectSemanticToolAudioResults(sourceTimelineMessages);
-    final nextSupplementInsertOps =
-        _collectSupplementInsertOps(sourceTimelineMessages);
+    final nextPluginContents = _collectSemanticPluginContents(
+      sourceTimelineMessages,
+    );
+    final nextToolAudioResults = _collectSemanticToolAudioResults(
+      sourceTimelineMessages,
+    );
+    final nextSupplementInsertOps = _collectSupplementInsertOps(
+      sourceTimelineMessages,
+    );
     final normalizedRawPayload =
         ChatMessageProjectionCodec.copyWithSupplementInsertOps(
-      ChatMessageProjectionCodec.copyWithToolAudioResults(
-        ChatMessageProjectionCodec.copyWithPluginContents(
-          ChatMessageProjectionCodec.removeProjectedMessages(
-            rawMessage.rawPayload,
+          ChatMessageProjectionCodec.copyWithToolAudioResults(
+            ChatMessageProjectionCodec.copyWithPluginContents(
+              ChatMessageProjectionCodec.removeProjectedMessages(
+                rawMessage.rawPayload,
+              ),
+              nextPluginContents,
+            ),
+            nextToolAudioResults,
           ),
-          nextPluginContents,
-        ),
-        nextToolAudioResults,
-      ),
-      nextSupplementInsertOps,
-    );
-    final rebuiltProjection = _normalizeProjectedMessagesForStorage(
-      rawMessageId: rawMessage.id,
-      rawCreatedAt: rawMessage.createdAt,
-      messages: _projectRawMessagesForFrontendSurface(<Message>[
-        rawMessage.copyWith(rawPayload: normalizedRawPayload),
-      ]),
-    );
-    final nextRawPayload = _areStoredProjectedMessagesEquivalent(
-      normalizedTimelineMessages,
-      rebuiltProjection,
-    )
-        ? normalizedRawPayload
+          nextSupplementInsertOps,
+        );
+    // Semantic payloads reproject on every device. Only truly legacy rows
+    // without a reconstructable field retain a display-only fallback.
+    final nextRawPayload =
+        ChatMessageProjectionCodec.hasProjectionSemantics(normalizedRawPayload)
+        ? ChatMessageProjectionCodec.removeProjectedMessages(
+            normalizedRawPayload,
+          )
         : ChatMessageProjectionCodec.copyWithProjectedMessages(
             normalizedRawPayload,
             normalizedTimelineMessages,
           );
     return rawMessage.copyWith(rawPayload: nextRawPayload);
   }
-
   List<Message> _normalizeProjectedMessagesForStorage({
     required String rawMessageId,
     required DateTime rawCreatedAt,
     required List<Message> messages,
   }) {
-    return <Message>[
-      for (final message in messages)
-        message.copyWith(
-          sourceMessageId: rawMessageId,
-          createdAt: rawCreatedAt,
-          rawPayload: null,
-        ),
-    ];
+    Message normalize(Message message) {
+      final blocks = message.blocks;
+      var content = message.content;
+      final normalizedBlocks = blocks == null
+          ? null
+          : <MessageBlock>[
+              for (final block in blocks)
+                if (block is AudioBlock &&
+                    (block.url.trim().isEmpty ||
+                        block.status == BlockStatus.pending) &&
+                    (block.text?.trim().isNotEmpty ?? false))
+                  TextBlock(
+                    id: block.id,
+                    messageId: message.id,
+                    content: block.text!.trim(),
+                    status: BlockStatus.success,
+                    createdAt: block.createdAt,
+                  )
+                else if (!_isUnresolvedImageBlock(block))
+                  block,
+            ];
+      if (content.trim().isEmpty &&
+          blocks?.length == 1 &&
+          blocks!.single is AudioBlock &&
+          normalizedBlocks!.single is TextBlock) {
+        content = (normalizedBlocks.single as TextBlock).content;
+      }
+      return message.copyWith(
+        sourceMessageId: rawMessageId,
+        createdAt: rawCreatedAt,
+        content: content,
+        blocks: normalizedBlocks,
+        rawPayload: null,
+      );
+    }
+
+    return messages.map(normalize).where((message) =>
+      message.content.trim().isNotEmpty || message.blocks?.isNotEmpty == true).toList(growable: false);
   }
 
-  bool _areStoredProjectedMessagesEquivalent(
-    List<Message> left,
-    List<Message> right,
-  ) {
-    return jsonEncode(ChatMessageProjectionCodec.serializeMessages(left)) ==
-        jsonEncode(ChatMessageProjectionCodec.serializeMessages(right));
-  }
 
   Future<List<Message>> _loadBestEffortFrontendMessages(
     String conversationId,
@@ -1908,6 +2394,20 @@ class ChatHistoryStore {
         }
       }
     }
+    final separator = messageId.lastIndexOf('__proj_');
+    if (separator > 0) {
+      final raw = await loadMessageById(
+        messageId.substring(0, separator),
+        conversationId: conversationId,
+        preferProjection: false,
+      );
+      if (raw != null) {
+        final projected = _projectRawMessagesForFrontendSurface([raw]);
+        for (final message in projected) {
+          if (message.id == messageId) return message;
+        }
+      }
+    }
     final mapping = await _ref
         .read(messageProjectionMappingRepositoryProvider)
         .getByProjectedMessageId(
@@ -1943,9 +2443,13 @@ class ChatHistoryStore {
     required String conversationId,
     required String rawMessageId,
     required List<Message> projectedMessages,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     final normalizedRawMessageId = rawMessageId.trim();
     if (normalizedRawMessageId.isEmpty) {
+      return;
+    }
+    if (projectedMessages.every((m) => ChatMessageProjectionCodec.isCanonicalProjectionId(normalizedRawMessageId, m.id))) {
       return;
     }
     final normalizedProjectedMessages = <Message>[
@@ -1955,32 +2459,43 @@ class ChatHistoryStore {
               ? message
               : message.copyWith(sourceMessageId: normalizedRawMessageId),
     ];
-    await _ref
-        .read(messageProjectionMappingRepositoryProvider)
-        .replaceForRawMessage(
-      rawMessageId: normalizedRawMessageId,
-      mappings: <db.MessageProjectionMappingsCompanion>[
-        for (var index = 0;
-            index < normalizedProjectedMessages.length;
-            index += 1)
-          db.MessageProjectionMappingsCompanion.insert(
-            id: '$normalizedRawMessageId::${normalizedProjectedMessages[index].id}',
+    await _db.transaction(() async {
+      if (shouldCommit != null && !await shouldCommit()) return;
+      if (shouldCommit != null &&
+          !await isRawMessageActive(
             conversationId: conversationId,
+            messageId: normalizedRawMessageId,
+          )) {
+        return;
+      }
+      await _ref
+          .read(messageProjectionMappingRepositoryProvider)
+          .replaceForRawMessage(
             rawMessageId: normalizedRawMessageId,
-            projectedMessageId: normalizedProjectedMessages[index].id,
-            projectionKind: Value(
-              _projectionKindFor(normalizedProjectedMessages[index]),
-            ),
-            segmentIndex: Value(index),
-            projectionVersion: const Value(null),
-            createdAt: normalizedProjectedMessages[index]
-                .createdAt
-                .millisecondsSinceEpoch,
-          ),
-      ],
-    );
+            mappings: <db.MessageProjectionMappingsCompanion>[
+              for (
+                var index = 0;
+                index < normalizedProjectedMessages.length;
+                index += 1
+              )
+                db.MessageProjectionMappingsCompanion.insert(
+                  id: '$normalizedRawMessageId::${normalizedProjectedMessages[index].id}',
+                  conversationId: conversationId,
+                  rawMessageId: normalizedRawMessageId,
+                  projectedMessageId: normalizedProjectedMessages[index].id,
+                  projectionKind: Value(
+                    _projectionKindFor(normalizedProjectedMessages[index]),
+                  ),
+                  segmentIndex: Value(index),
+                  projectionVersion: const Value(null),
+                  createdAt: normalizedProjectedMessages[index]
+                      .createdAt
+                      .millisecondsSinceEpoch,
+                ),
+            ],
+          );
+    });
   }
-
   (int, int)? _findMessageRangeByIdOrSource(
     List<Message> messages,
     String messageId,
@@ -2008,161 +2523,16 @@ class ChatHistoryStore {
     return (firstIndex, lastIndex);
   }
 
-  List<Message> _projectRawMessageForPersistedHistory(
-    Message rawMessage, {
-    required ChatFrontendMessageProjectionService projectionService,
-  }) {
-    if (rawMessage.role != 'assistant') {
-      return <Message>[_projectRawPassthroughMessage(rawMessage)];
-    }
-    final projected = projectionService.projectMessage(rawMessage);
-    final collapsed = _collapseAssistantPureTextProjection(
-      rawMessage,
-      projectedMessages: projected,
-    );
-    return collapsed ?? projected;
-  }
-
-  Message _projectRawPassthroughMessage(Message message) {
-    return message.copyWith(
-      sourceMessageId: message.sourceMessageId ?? message.id,
-      rawPayload: null,
-    );
-  }
-
-  List<Message>? _collapseAssistantPureTextProjection(
-    Message rawMessage, {
-    required List<Message> projectedMessages,
-  }) {
-    if (projectedMessages.length <= 1) {
-      return null;
-    }
-    if (_shouldPreserveAssistantProjectionSegments(rawMessage)) {
-      return null;
-    }
-    if (projectedMessages
-        .any((message) => !_isPureTextPersistedMessage(message))) {
-      return null;
-    }
-
-    final rebuilt = _rebuildAssistantMessagesFromPayload(rawMessage);
-    if (rebuilt.length == 1 && _isPureTextPersistedMessage(rebuilt.single)) {
-      return rebuilt;
-    }
-
-    final combinedText =
-        projectedMessages.map(_extractText).map((value) => value.trim()).join();
-    if (combinedText.isEmpty) {
-      return null;
-    }
-
-    return <Message>[
-      Message.text(
-        id: projectedMessages.first.id,
-        role: 'assistant',
-        sourceMessageId: rawMessage.id,
-        content: combinedText,
-        createdAt: projectedMessages.first.createdAt,
-        status: 'sent',
-      ),
-    ];
-  }
-
-  bool _shouldPreserveAssistantProjectionSegments(Message rawMessage) {
-    final payload = rawMessage.rawPayload;
-    if (payload != null) {
-      // TTS / 表情包需要保留“文字-多媒体-文字”多段投影。
-      // image_generate 的后补图不要求保留纯文本拆段；否则快速生图标签两侧文本
-      // 会被落成多条气泡（第一句。/ 第二句。），而期望是合并后的正文。
-      final hasSegmentPreservingEvents =
-          ChatMessageProjectionCodec.pluginEvents(payload).any((event) =>
-              event.type == 'tts_convert' || event.type == 'sticker_convert');
-      if (hasSegmentPreservingEvents) {
-        return true;
-      }
-    }
-
-    final rawReplyText =
-        ChatMessageProjectionCodec.rawReplyText(payload) ?? rawMessage.content;
-    // 仅 TTS 标签需要强制保留分段；<image> 无论是否带属性都不阻止纯文本折叠。
-    return firstPartyContentTagScanner
-        .scan(rawReplyText)
-        .any(TtsParser.isSpeechElement);
-  }
-
-  List<Message> _rebuildAssistantMessagesFromPayload(Message rawMessage) {
-    final payload = rawMessage.rawPayload;
-    if (payload == null) {
-      return const <Message>[];
-    }
-    final rebuilt = const ChatMessageProcessor().buildAssistantMessages(
-      replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
-          rawMessage.content,
-      processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
-      displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
-      pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
-      contents: ChatMessageProjectionCodec.pluginContents(payload),
-      toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
-      toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
-      rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
-      reasoning: ChatMessageProjectionCodec.reasoning(payload),
-      replyRounds: ChatMessageProjectionCodec.replyRounds(payload),
-    );
-    return <Message>[
-      for (final message in rebuilt.messages)
-        message.copyWith(
-          sourceMessageId: rawMessage.id,
-          createdAt: rawMessage.createdAt,
-          rawPayload: null,
-        ),
-    ];
-  }
-
-  bool _isPureTextPersistedMessage(Message message) {
-    final blocks = message.blocks;
-    if (blocks == null || blocks.isEmpty) {
-      return message.content.trim().isNotEmpty;
-    }
-    var hasText = false;
-    for (final block in blocks) {
-      if (block is TextBlock) {
-        if (block.content.trim().isNotEmpty) {
-          hasText = true;
-        }
-        continue;
-      }
-      return false;
-    }
-    return hasText;
-  }
-
-  List<PluginContent> _collectSemanticPluginContents(
-    List<Message> messages,
-  ) {
-    final contents = <PluginContent>[];
-    for (final message in messages) {
-      final blocks = message.blocks;
-      if (blocks == null || blocks.length != 1) {
-        continue;
-      }
-      final block = blocks.single;
-      if (block is! ImageBlock) {
-        continue;
-      }
-      final localPath = block.localPath?.trim();
-      if (localPath == null || localPath.isEmpty) {
-        continue;
-      }
-      contents.add(
-        PluginImageContent(
-          localPath,
-          caption: block.prompt,
-          generationSnapshot: block.generationSnapshot,
-        ),
-      );
-    }
-    return contents;
-  }
+  List<PluginContent> _collectSemanticPluginContents(List<Message> messages) => [
+    for (final message in messages)
+      for (final block in message.blocks ?? const <MessageBlock>[])
+        if (block is ImageBlock && block.status != BlockStatus.pending &&
+            ((block.localPath?.trim().isNotEmpty ?? false) || block.versions.isNotEmpty))
+          PluginImageContent(block.localPath ?? '', caption: block.prompt,
+            generationSnapshot: block.generationSnapshot,
+            versions: block.versions, activeVersionIndex: block.activeVersionIndex,
+            width: block.width, height: block.height),
+  ];
 
   List<ToolAudioResult> _collectSemanticToolAudioResults(
     List<Message> messages,
@@ -2201,13 +2571,21 @@ class ChatHistoryStore {
     var textCharsBefore = 0;
     for (var index = 0; index < messages.length; index += 1) {
       final message = messages[index];
-      final op = _buildStoredSupplementInsertOp(
-        message,
-        textCharsBefore: textCharsBefore,
-        forceAppendToTail: !_hasLaterTextMessage(messages, index),
-      );
-      if (op != null) {
-        ops.add(op);
+      final imageBlocks = message.blocks?.whereType<ImageBlock>().toList() ?? const <ImageBlock>[];
+      if (imageBlocks.isNotEmpty) {
+        for (var imageIndex = 0; imageIndex < imageBlocks.length; imageIndex++) {
+          final op = _buildStoredSupplementInsertOp(
+            message.copyWith(id: imageIndex == 0 ? message.id : '${message.id}__image_$imageIndex',
+              blocks: [imageBlocks[imageIndex]]),
+            textCharsBefore: textCharsBefore,
+            forceAppendToTail: !_hasLaterTextMessage(messages, index));
+          if (op != null) ops.add(op);
+        }
+      } else {
+        final op = _buildStoredSupplementInsertOp(message,
+          textCharsBefore: textCharsBefore,
+          forceAppendToTail: !_hasLaterTextMessage(messages, index));
+        if (op != null) ops.add(op);
       }
       textCharsBefore += _normalizedTextLength(_extractText(message));
     }
@@ -2226,16 +2604,23 @@ class ChatHistoryStore {
     final block = blocks.single;
     if (block is ImageBlock) {
       final localPath = block.localPath?.trim();
-      if (localPath == null || localPath.isEmpty) {
+      if (block.status == BlockStatus.pending ||
+          ((localPath == null || localPath.isEmpty) && block.versions.isEmpty &&
+              block.status != BlockStatus.error)) {
         return null;
       }
       return StoredSupplementInsertOp(
         kind: 'image',
+        status: block.status,
         textCharsBefore: textCharsBefore,
         forceAppendToTail: forceAppendToTail,
         localPath: localPath,
+        width: block.width, height: block.height,
+        legacyMessageId: message.id, legacyBlockId: block.id,
         prompt: block.prompt,
         generationSnapshot: block.generationSnapshot,
+        versions: block.versions,
+        activeVersionIndex: block.activeVersionIndex,
       );
     }
     if (block is AudioBlock) {
@@ -2381,3 +2766,16 @@ bool _isFreshVoice(MessageBlock block) =>
     !block.unread &&
     block.url.trim().isNotEmpty &&
     block.status == BlockStatus.success;
+
+bool _isUnresolvedImageBlock(MessageBlock block) => block is ImageBlock &&
+    block.status == BlockStatus.pending &&
+    (block.localPath?.trim().isEmpty ?? true) &&
+    (block.url?.trim().isEmpty ?? true) &&
+    (block.base64?.trim().isEmpty ?? true);
+
+bool _isPendingImagePlaceholder(Message message) =>
+    message.content.trim().isEmpty && message.blocks?.isNotEmpty == true &&
+    message.blocks!.every(_isUnresolvedImageBlock);
+
+Message _atPendingImageAnchor(Message message, DateTime time) =>
+    _isPendingImagePlaceholder(message) ? message.copyWith(createdAt: time) : message;

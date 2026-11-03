@@ -272,7 +272,9 @@ Future<ContactEditResult?> showContactEditDialog({
                 addressUser: address,
                 personaPrompt: PersonaPromptCodec.compose(
                   userPrompt: persona,
+                  extraPrompt: personaParts.extraPrompt,
                   customDrawingPrompt: personaParts.customDrawingPrompt,
+                  drawingPromptPackId: personaParts.drawingPromptPackId,
                   drawingToolPresetName: personaParts.drawingToolPresetName,
                   drawingArtistPresetName: personaParts.drawingArtistPresetName,
                   drawingPresetId: personaParts.drawingPresetId,

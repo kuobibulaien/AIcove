@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:aicove_flutter/src/core/database/database.dart' hide SyncScope;
+import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/core/database/repositories/repositories.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart' as domain;
@@ -97,7 +98,9 @@ void main() {
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('aicove-import-block-');
-    db = AppDatabase.forTesting(NativeDatabase.memory());
+    db = AppDatabase.forTesting(NativeDatabase.memory(setup: (db) {
+      db.execute('PRAGMA foreign_keys = ON');
+    }));
     importer = ConversationImporter(
         convRepo: ConversationRepository(db),
         msgRepo: MessageRepository(db),
@@ -218,4 +221,59 @@ void main() {
     expect((await MessageRepository(db).getById('original'))!.content,
         'must survive');
   });
+  test(
+    'B11 replace removes hidden old blocks and projections with foreign keys enabled',
+    () async {
+      await seed();
+      for (final id in ['deleted', 'replaced']) {
+        await db
+            .into(db.messages)
+            .insert(
+              MessagesCompanion.insert(
+                id: id,
+                conversationId: 'a',
+                role: 'assistant',
+                content: id,
+                createdAt: 1,
+                deletedAt: id == 'deleted'
+                    ? const Value(2)
+                    : const Value.absent(),
+                replacedBy: id == 'replaced'
+                    ? const Value('original')
+                    : const Value.absent(),
+              ),
+            );
+        await db
+            .into(db.messageBlocks)
+            .insert(
+              MessageBlocksCompanion.insert(
+                id: 'old-block-$id',
+                messageId: id,
+                type: 'mainText',
+                data: '{}',
+                createdAt: 1,
+              ),
+            );
+        await db
+            .into(db.messageProjectionMappings)
+            .insert(
+              MessageProjectionMappingsCompanion.insert(
+                id: 'old-map-$id',
+                conversationId: 'a',
+                rawMessageId: id,
+                projectedMessageId: 'old-projected-$id',
+                createdAt: 1,
+              ),
+            );
+      }
+      await restore(
+        await package('mainText', {'content': 'new text'}),
+        resolution: ImportConflictResolution.replace,
+      );
+      expect((await db.select(db.messages).get()).single.id, 'm');
+      expect((await db.select(db.messageBlocks).get()).single.id, 'block');
+      expect(await db.select(db.messageProjectionMappings).get(), isEmpty);
+      expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
+    },
+  );
 }

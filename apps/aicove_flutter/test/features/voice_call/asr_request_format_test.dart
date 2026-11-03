@@ -39,38 +39,6 @@ class _Settings extends AppSettingsNotifier {
 
 void main() {
   group('registry', () {
-    test(
-      'fills a missing format from the host only for providers with ASR models',
-      () {
-        String? norm(String url, {bool asr = true}) =>
-            AsrRequestFormat.normalizeStored(
-              rawFormat: null,
-              apiBaseUrl: url,
-              hasSpeechRecognitionModels: asr,
-            );
-        expect(
-          norm('https://dashscope.aliyuncs.com/compatible-mode/v1'),
-          'aliyun_asr',
-        );
-        expect(
-          norm('wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async'),
-          'volcengine_asr',
-        );
-        expect(norm('wss://asr.cloud.tencent.com/asr/v2'), 'tencent_asr');
-        expect(norm('wss://rtasr.xfyun.cn/v1/ws'), 'xfyun_rtasr');
-        expect(norm('https://api.groq.com/openai/v1'), 'openai_realtime_asr');
-        expect(norm('https://api.deepseek.com', asr: false), isNull);
-        expect(
-          AsrRequestFormat.normalizeStored(
-            rawFormat: 'deepgram',
-            apiBaseUrl: 'https://dashscope.aliyuncs.com',
-            hasSpeechRecognitionModels: true,
-          ),
-          'deepgram',
-        );
-      },
-    );
-
     test('derives websocket endpoints from http base URLs', () {
       expect(
         AsrRequestFormat.aliyun

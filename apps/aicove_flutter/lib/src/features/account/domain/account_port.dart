@@ -1,6 +1,6 @@
 import '../../sync/models/user_model.dart';
 
-const defaultCloudServer = 'https://cpa.aicove.online/aicove';
+const defaultCloudServer = '';
 
 class AccountFailure implements Exception {
   const AccountFailure(this.message);

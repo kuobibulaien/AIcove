@@ -12,7 +12,8 @@ class CloudLocalDocument {
   bool get isSendingMessage =>
       kind == 'messages' && (payload['row'] as Map?)?['status'] == 'sending';
   // This value is a comparison token, not a second copy of raw history.
-  String get localJson => 'sha256:${cloudObjectId(canonicalJson(payload))}';
+  String get localJson =>
+      'sha256:${cloudObjectId(canonicalJson({...payload}..remove('client_schema')))}';
 }
 
 class CloudWireDocument {

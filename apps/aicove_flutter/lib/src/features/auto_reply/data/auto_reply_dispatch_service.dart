@@ -1,9 +1,13 @@
+import 'package:drift/drift.dart' show BooleanExpressionOperators, OrderingTerm;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/database/converters/database_converters.dart';
+import '../../../core/sync/cloud_local_write.dart';
 import '../../chat/conversation_providers.dart';
 import '../../chat/domain/conversation.dart';
+import '../../chat/services/chat_history_store.dart';
 import '../../chat/services/chat_send_service.dart';
 import '../../chat/services/chat_tts_handler.dart';
 import '../../settings/app_settings.dart';
@@ -18,8 +22,9 @@ import 'proactive_owner_device.dart';
 import 'proactive_planner.dart';
 import 'proactive_reply_generator.dart';
 
-final autoReplyDispatchServiceProvider =
-    Provider<AutoReplyDispatchService>((ref) {
+final autoReplyDispatchServiceProvider = Provider<AutoReplyDispatchService>((
+  ref,
+) {
   return AutoReplyDispatchService(ref);
 });
 
@@ -35,24 +40,22 @@ class AutoReplyDispatchResult {
   final String reason;
 
   const AutoReplyDispatchResult.success()
-      : this._(success: true, retryable: false, reason: 'sent');
+    : this._(success: true, retryable: false, reason: 'sent');
 
   /// A proactive call is ringing; how it ends is recorded by the ringer.
   const AutoReplyDispatchResult.rang()
-      : this._(success: true, retryable: false, reason: 'rang');
+    : this._(success: true, retryable: false, reason: 'rang');
 
   const AutoReplyDispatchResult.skipped(String reason)
-      : this._(success: false, retryable: false, reason: reason);
+    : this._(success: false, retryable: false, reason: reason);
 
-  const AutoReplyDispatchResult.failed(
-    String reason, {
-    bool retryable = true,
-  }) : this._(success: false, retryable: retryable, reason: reason);
+  const AutoReplyDispatchResult.failed(String reason, {bool retryable = true})
+    : this._(success: false, retryable: retryable, reason: reason);
 
   /// The claim lease was taken over during generation; the other party
   /// delivers, so nothing was written here.
   const AutoReplyDispatchResult.superseded()
-      : this._(success: false, retryable: false, reason: supersededReason);
+    : this._(success: false, retryable: false, reason: supersededReason);
 
   static const supersededReason = 'claim_superseded';
 }
@@ -113,8 +116,7 @@ class AutoReplyDispatchService {
   /// no other side can fire it, so it runs without a claim.
   Future<AutoReplyDispatchResult> dispatchTestTrigger(
     AutoReplyTrigger trigger,
-  ) =>
-      _dispatch(trigger, claimToken: null);
+  ) => _dispatch(trigger, claimToken: null);
 
   Future<AutoReplyDispatchResult> _dispatch(
     AutoReplyTrigger trigger, {
@@ -157,9 +159,7 @@ class AutoReplyDispatchService {
         trigger: trigger,
         success: false,
         level: AutoReplyTriggerLogLevel.warning,
-        metadata: {
-          'targetConversationId': targetConversationId,
-        },
+        metadata: {'targetConversationId': targetConversationId},
       );
       return const AutoReplyDispatchResult.skipped(
         'target_conversation_not_found',
@@ -171,13 +171,11 @@ class AutoReplyDispatchService {
         conversation.blocksPlugin(_triggerPluginId)) {
       await _appendHistoryLog(
         event: 'dispatch_skipped_trigger_plugin_disabled',
-        message: '跳过主动回复发送：当前联系人已关闭主动关怀插件',
+        message: '跳过主动回复发送：当前联系人已关闭主动回复插件',
         trigger: trigger,
         success: false,
         level: AutoReplyTriggerLogLevel.warning,
-        metadata: {
-          'targetConversationId': targetConversationId,
-        },
+        metadata: {'targetConversationId': targetConversationId},
       );
       return const AutoReplyDispatchResult.skipped(
         'trigger_plugin_disabled_for_conversation',
@@ -229,29 +227,58 @@ class AutoReplyDispatchService {
         );
       }
 
-      final apiResult = await _chatSendService.processAssistantReplyWithPlugins(
-        conv: conversation,
-        rawReplyText: normalizedReply,
-      );
-      final buildResult = _chatSendService.buildAssistantMessages(
-        apiResult: apiResult,
-        settings: settings,
-      );
+      String? invalidReason;
+      String? rawId;
+      var anchorCommitted = false;
+      // 暂停／删除触发器与原文发布共用 cloudLocalWrite，所以触发器只需在首次
+      // 持锁写入时确认一次；之后只复查会话与已落库锚点，不再反复读偏好存储。
+      var triggerConfirmed = claimToken == null;
+      Future<bool> shouldCommit() async {
+        invalidReason = await _conversationInvalidReason(
+          targetConversationId,
+          trigger: trigger,
+        );
+        if (invalidReason == null && rawId != null) {
+          // The guard also runs before the first write. A tombstone counts as
+          // committed even if clearing happened before this callback saw it.
+          anchorCommitted =
+              anchorCommitted ||
+              await _ref.read(messageRepositoryProvider).getById(rawId) != null;
+          if (anchorCommitted &&
+              !await _ref
+                  .read(chatHistoryStoreProvider)
+                  .isRawMessageActive(
+                    conversationId: targetConversationId,
+                    messageId: rawId,
+                  )) {
+            invalidReason = 'delivery_anchor_no_longer_active';
+          }
+        }
+        if (invalidReason == null && !triggerConfirmed) {
+          invalidReason = await _triggerInvalidReason(
+            trigger: trigger,
+            conversationId: targetConversationId,
+          );
+          triggerConfirmed = invalidReason == null && cloudLocalWriteHeld;
+        }
+        return invalidReason == null;
+      }
+
+      if (!await shouldCommit()) {
+        return AutoReplyDispatchResult.skipped(invalidReason!);
+      }
       // 仍持有认领、仍是负责设备才写消息；写入开始后不再重试（至多一次，宁缺不重）。
       // 交给另一台设备时放掉本机认领，用户回到本机还能马上再触发。
       final claims = AutoReplyClaimStore(_ref.read(databaseProvider));
-      final handedOff =
-          !(await ProactiveOwnership.load()).owns(trigger.conversationId);
+      final handedOff = !(await ProactiveOwnership.load()).owns(
+        trigger.conversationId,
+      );
       if (deliveryToken != null && handedOff) {
         await claims.release(trigger.id, deliveryToken);
       }
-      if (deliveryToken != null &&
-          (handedOff ||
-              !await claims.beginDelivery(
-                trigger.id,
-                deliveryToken,
-                messageId: buildResult.rawMessage?.id,
-              ))) {
+      if ((claimToken != null && handedOff) ||
+          (deliveryToken != null &&
+              !await claims.beginDelivery(trigger.id, deliveryToken))) {
         await _appendHistoryLog(
           event: 'dispatch_superseded',
           message: '主动回复已放弃：生成期间执行权被另一方或另一台设备接管',
@@ -261,7 +288,27 @@ class AutoReplyDispatchService {
         );
         return const AutoReplyDispatchResult.superseded();
       }
+      // Claim before plugin side effects. A crash or failure from this point
+      // is at-most-once delivery even if no message has been written yet.
       deliveryStarted = true;
+      if (!await shouldCommit()) {
+        return AutoReplyDispatchResult.skipped(invalidReason!);
+      }
+      final apiResult = await _chatSendService.processAssistantReplyWithPlugins(
+        conv: conversation,
+        rawReplyText: normalizedReply,
+      );
+      final buildResult = _chatSendService.buildAssistantMessages(
+        apiResult: apiResult,
+        settings: settings,
+      );
+      rawId = buildResult.rawMessage?.id ?? buildResult.messages.firstOrNull?.id;
+      if (claimToken != null && rawId != null) {
+        await claims.attachDeliveryMessage(trigger.id, claimToken, rawId);
+      }
+      if (!await shouldCommit()) {
+        return AutoReplyDispatchResult.skipped(invalidReason!);
+      }
       await _chatTtsHandler.deliverSegmentedMessages(
         convId: targetConversationId,
         userMsgId: '',
@@ -269,7 +316,11 @@ class AutoReplyDispatchService {
         replyText: apiResult.rawReplyText,
         pluginEvents: apiResult.pluginEvents,
         ttsEnabled: settings.ttsEnabled,
+        shouldCommit: shouldCommit,
       );
+      if (invalidReason != null) {
+        return AutoReplyDispatchResult.skipped(invalidReason!);
+      }
       AppLogger.info(
         'AutoReplyDispatchService',
         'Auto-reply delivered by background agent runtime',
@@ -308,9 +359,7 @@ class AutoReplyDispatchService {
         trigger: trigger,
         success: false,
         level: AutoReplyTriggerLogLevel.error,
-        metadata: {
-          'error': e.toString(),
-        },
+        metadata: {'error': e.toString()},
       );
       // 已开始写消息时失败：可能写了一部分，不再重试，免得重复。
       return AutoReplyDispatchResult.failed(
@@ -332,10 +381,13 @@ class AutoReplyDispatchService {
   }) async {
     final now = DateTime.now();
     final openingLine = trigger.cachedContent?.trim() ?? '';
-    final quiet = settings.autoReplySettings;
+    final quiet = settings.autoReplySettings.forContact(conversation.id);
     final String? blocked;
     if (openingLine.isEmpty ||
-        !isCachedAutoReplyContentFresh(preparedAt: trigger.preparedAt, now: now)) {
+        !isCachedAutoReplyContentFresh(
+          preparedAt: trigger.preparedAt,
+          now: now,
+        )) {
       blocked = '开场白已过期';
     } else if (!trigger.allowNight &&
         QuietHours.parse(
@@ -379,7 +431,9 @@ class AutoReplyDispatchService {
     final bool claimed;
     try {
       final claims = AutoReplyClaimStore(_ref.read(databaseProvider));
-      final handedOff = !(await ProactiveOwnership.load()).owns(conversation.id);
+      final handedOff = !(await ProactiveOwnership.load()).owns(
+        conversation.id,
+      );
       if (claimToken != null && handedOff) {
         await claims.release(trigger.id, claimToken);
       }
@@ -398,8 +452,40 @@ class AutoReplyDispatchService {
         claimed: false,
       );
     }
-    await ledger.confirm(trigger.id);
-    if (!notifier.show(call, until: until)) {
+    var shown = false;
+    final invalidReason = await cloudLocalWrite(() async {
+      Future<String?> check() async =>
+          await _conversationInvalidReason(conversation.id, trigger: trigger) ??
+          (claimToken == null
+              ? null
+              : await _triggerInvalidReason(
+                  trigger: trigger,
+                  conversationId: conversation.id,
+                )) ??
+          (claimToken != null &&
+                  !(await ProactiveOwnership.load()).owns(conversation.id)
+              ? 'claim_superseded'
+              : null);
+      final beforeConfirm = await check();
+      if (beforeConfirm != null) return beforeConfirm;
+      await ledger.confirm(trigger.id);
+      final beforeShow = await check();
+      if (beforeShow == null) shown = notifier.show(call, until: until);
+      return beforeShow;
+    });
+    if (invalidReason != null) {
+      await ledger.release(trigger.id);
+      if (claimToken != null) {
+        await AutoReplyClaimStore(
+          _ref.read(databaseProvider),
+        ).abortDelivery(trigger.id, claimToken);
+      }
+      return (
+        result: AutoReplyDispatchResult.skipped(invalidReason),
+        claimed: false,
+      );
+    }
+    if (!shown) {
       // A voice call started while claiming: send the line as a message
       // under the delivery already claimed.
       await ledger.release(trigger.id);
@@ -431,6 +517,70 @@ class AutoReplyDispatchService {
     }
   }
 
+  Future<String?> _conversationInvalidReason(
+    String conversationId, {
+    required AutoReplyTrigger trigger,
+  }) async {
+    // Provider snapshots may lag behind a soft deletion or a sync apply.
+    final conversation = await _ref
+        .read(conversationRepositoryProvider)
+        .getById(conversationId);
+    if (conversation == null || conversation.deletedAt != null) {
+      return 'target_conversation_not_found';
+    }
+    if (trigger.source == TriggerSource.aiScheduler &&
+        !ConversationConverter.fromDb(
+          conversation,
+        ).allowsPlugin(_triggerPluginId)) {
+      return 'trigger_plugin_disabled_for_conversation';
+    }
+    return null;
+  }
+
+  /// Form test-sends are intentionally not persisted and skip this check.
+  Future<String?> _triggerInvalidReason({
+    required AutoReplyTrigger trigger,
+    required String conversationId,
+  }) async {
+    final latest = (await _historyStorage.loadTriggers())
+        .where((candidate) => candidate.id == trigger.id)
+        .firstOrNull;
+    if (latest == null ||
+        !latest.isActive ||
+        latest.conversationId != conversationId) {
+      return 'trigger_no_longer_active';
+    }
+    if (!(await ProactiveOwnership.load()).owns(conversationId)) {
+      return AutoReplyDispatchResult.supersededReason;
+    }
+    final db = _ref.read(databaseProvider);
+    final user =
+        await (db.select(db.messages)
+              ..where(
+                (row) =>
+                    row.conversationId.equals(conversationId) &
+                    row.role.equals('user') &
+                    row.deletedAt.isNull() &
+                    row.replacedBy.isNull(),
+              )
+              ..orderBy([
+                (row) => OrderingTerm.desc(row.createdAt),
+                (row) => OrderingTerm.desc(row.id),
+              ])
+              ..limit(1))
+            .getSingleOrNull();
+    if (latest.shouldExpire(
+      currentLastUserMessageId: user?.id,
+      currentLastUserMessageAt: user == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(user.createdAt),
+      isChatActive: false,
+    )) {
+      return 'trigger_context_expired';
+    }
+    return null;
+  }
+
   Conversation? _resolveConversation(String conversationId) {
     final conversations =
         _ref.read(conversationsProvider).valueOrNull ?? const [];
@@ -450,11 +600,16 @@ class AutoReplyDispatchService {
     final cachedContent = trigger.cachedContent?.trim();
     final hasCache = cachedContent != null && cachedContent.isNotEmpty;
     final now = DateTime.now();
-    final cacheFresh = hasCache &&
+    final canFallback =
+        hasCache &&
         isCachedAutoReplyContentFresh(
           preparedAt: trigger.preparedAt,
           now: now,
+          maxAge: const Duration(hours: 6),
         );
+    final cacheFresh =
+        hasCache &&
+        isCachedAutoReplyContentFresh(preparedAt: trigger.preparedAt, now: now);
     if (cacheFresh) {
       await _appendHistoryLog(
         event: 'dispatch_used_cached_content',
@@ -475,7 +630,7 @@ class AutoReplyDispatchService {
     if (hasCache) {
       await _appendHistoryLog(
         event: 'dispatch_cache_stale_live_generation',
-        message: '预生成缓存已过期，优先即时生成，缓存降级为兜底文案',
+        message: '预生成缓存已过期，改为即时生成',
         trigger: trigger,
         category: AutoReplyTriggerLogCategory.agent,
         metadata: {
@@ -495,13 +650,13 @@ class AutoReplyDispatchService {
       if (liveReply.trim().isNotEmpty) {
         return liveReply;
       }
-      if (hasCache) {
+      if (canFallback) {
         await _logCachedContentFallback(trigger, reason: 'empty_live_reply');
         return cachedContent;
       }
       return liveReply;
     } catch (e) {
-      if (hasCache) {
+      if (canFallback) {
         await _logCachedContentFallback(trigger, reason: e.toString());
         return cachedContent;
       }
@@ -520,9 +675,7 @@ class AutoReplyDispatchService {
       category: AutoReplyTriggerLogCategory.agent,
       success: true,
       level: AutoReplyTriggerLogLevel.warning,
-      metadata: {
-        'reason': reason,
-      },
+      metadata: {'reason': reason},
     );
   }
 
@@ -531,7 +684,10 @@ class AutoReplyDispatchService {
     required AutoReplyTrigger trigger,
     required AppSettings settings,
   }) async {
-    final modelRef = resolveAutoReplyAgentModelRef(settings);
+    final modelRef = resolveAutoReplyAgentModelRef(settings, conversation);
+    final reminder = trigger.prompt?.trim().isNotEmpty == true
+        ? trigger.prompt!.trim()
+        : trigger.title;
     await _appendHistoryLog(
       event: 'runtime_generation_started',
       message: '开始通过聊天主链路即时生成主动回复',
@@ -539,7 +695,7 @@ class AutoReplyDispatchService {
       category: AutoReplyTriggerLogCategory.agent,
       metadata: {
         'contextWindow': ProactiveReplyGenerator.contextWindow,
-        'reminderAsLastUser': (trigger.prompt?.trim().isNotEmpty ?? false),
+        'reminderAsLastUser': reminder.trim().isNotEmpty,
         'modelRef': modelRef,
       },
     );
@@ -548,7 +704,7 @@ class AutoReplyDispatchService {
         .read(proactiveReplyGeneratorProvider)
         .generate(
           conversation: conversation,
-          reminder: trigger.prompt,
+          reminder: reminder,
           turnId: 'auto_reply_dispatch_${trigger.id}',
         );
     await _appendHistoryLog(

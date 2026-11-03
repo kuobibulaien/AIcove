@@ -11,7 +11,10 @@ import '../../core/database/database_provider.dart';
 import '../../core/media/media_store.dart';
 import '../../core/models/message_block.dart';
 import '../../core/storage/app_data_directory.dart';
+import '../../core/services/system_reminder_service.dart';
 import '../agent_plugins/plugin_runtime.dart';
+import '../agent_plugins/plugin_request_context.dart';
+import '../agent_plugins/plugin_request_scope.dart';
 import '../auto_reply/data/proactive_owner_device.dart';
 import '../auto_reply/data/proactive_reply_generator.dart';
 import '../background_agent/background_agent_service.dart';
@@ -23,12 +26,13 @@ import '../chat/services/chat_history_store.dart';
 import '../chat/services/chat_send_service.dart';
 import '../chat/services/chat_tts_handler.dart';
 import '../chat/services/chat_types.dart';
+import '../chat/services/provider_key_failure.dart';
 import '../plugins/domain/handlers/ai_tool.dart';
-import '../plugins/mcp/mcp_connector_plugin.dart';
+import '../plugins/image/image_config.dart';
+import '../plugins/prompts/plugin_prompts.dart';
+import '../plugins/tts/voice_request.dart';
 import '../plugins/plugin_providers.dart';
 import '../plugins/domain/plugin.dart';
-import '../plugins/packages/package_plugin.dart';
-import '../plugins/web_search/web_search_plugin.dart';
 import '../settings/app_settings.dart';
 import '../workspace/application/workspace_toolset.dart';
 import '../workspace/application/workspace_shell.dart';
@@ -62,6 +66,7 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
     store: store,
     process: TaskProcessRecord(directory),
     runner: TaskAgentRunner(
+      keyFailureRecorder: ref.read(providerKeyFailureRecorderProvider),
       // Task steps are compacted as task progress, never as companion chat.
       summarizerFactory: () =>
           ref.read(runtimeContextSummarizerProvider.future),
@@ -83,18 +88,25 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
     ),
     capabilities: (task, runId, cancellation) =>
         _resolveCapabilities(ref, task, runId, cancellation),
-    writeReceipt: (recorded) => history.appendUserMessage(
-      conversationId: recorded.task.conversationId,
-      message: Message(
-        id: recorded.messageId,
-        role: 'user',
-        content: recorded.block.content,
-        blocks: [recorded.block],
-        createdAt: DateTime.now(),
-        status: 'sent',
-      ),
-      displayText: recorded.block.content,
-    ),
+    writeReceipt: (recorded) =>
+        ref.read(databaseProvider).transaction(() async {
+          final conversation = await ref
+              .read(proactiveReplyGeneratorProvider)
+              .loadConversation(recorded.task.conversationId);
+          if (conversation == null) return;
+          await history.appendUserMessage(
+            conversationId: recorded.task.conversationId,
+            message: Message(
+              id: recorded.messageId,
+              role: 'user',
+              content: recorded.block.content,
+              blocks: [recorded.block],
+              createdAt: DateTime.now(),
+              status: 'sent',
+            ),
+            displayText: recorded.block.content,
+          );
+        }),
     findReceipt: (receiptId) => _findReceipt(ref, receiptId),
     relay: (conversationId, receipt) => _relay(ref, conversationId, receipt),
     ownsConversation: (conversationId) async =>
@@ -126,7 +138,21 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
   final extension = await resolveTaskPluginCapabilities(
     plugins,
     enabled,
-    executable: true,
+    inputs: PluginRequestInputs(
+      ref: ref,
+      settings: await ref.read(appSettingsProvider.future),
+      conversationId: conversation.id,
+      rolePluginIds: enabled,
+      imageConfig: const ImageConfig(),
+      voiceRequest: VoiceRequest(ownerId: conversation.id),
+      pluginPrompts: const PluginPrompts(),
+      history: const [],
+      previousUserMessageTime: null,
+      useFastImageRoute: false,
+      useStableImageRoute: false,
+      supportsToolCalling: true,
+      reminders: const SystemReminderService(),
+    ),
   );
   final store = await ref.read(workspaceStoreProvider.future);
   final workspaceIds = WorkspaceGrants.effective(
@@ -164,35 +190,54 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
 Future<TaskAgentCapabilities> resolveTaskPluginCapabilities(
   Iterable<Plugin> plugins,
   Set<String>? enabled, {
-  bool executable = true,
+  required PluginRequestInputs inputs,
 }) async {
-  final runtime = PluginRuntime.fromPlugins(plugins);
-  final selected = runtime.selectForRole(enabled).toSet();
-  final tools = <AITool>[];
-  final prompts = <String, String>{};
-  final owners = <String, String>{};
-  for (final plugin in plugins) {
-    if (!selected.contains(plugin.id)) continue;
-    final contributed = switch (plugin) {
-      WebSearchPlugin() => plugin.getTools(),
-      McpConnectorPlugin() => plugin.getTools(),
-      PackagePlugin() => await (() async {
-        final prompt = await plugin.prompt();
-        if (prompt != null) prompts[plugin.id] = prompt;
-        return plugin.getTools(executable: executable);
-      })(),
-      _ => const <AITool>[],
-    };
-    for (final tool in contributed) {
-      tools.add(tool);
-      owners[tool.name] = plugin.id;
+  final runtime = PluginRuntime();
+  try {
+    for (final plugin in plugins) {
+      runtime.install(plugin.agentPlugin, enabled: plugin.enabled);
     }
+    // Packages remain direct chat plugins; do not broaden the global office
+    // predicate, which also controls chat's delegate_task redirection.
+    final selected = [
+      for (final id in runtime.selectForRole(enabled))
+        if (isOfficePluginId(id) || id.startsWith('pkg:')) id,
+    ];
+    final tools = <AITool>[];
+    final prompts = <String, String>{};
+    final owners = <String, String>{};
+    final context = PluginRequestContext(
+      userMessage: '',
+      supportsToolCalling: inputs.supportsToolCalling,
+      conversationId: inputs.conversationId,
+      rawHistory: inputs.history,
+    );
+    for (final scope in runtime.requestScopes(
+      runtime.snapshot(),
+      selected,
+      inputs,
+    )) {
+      try {
+        if (!scope.active) continue;
+        // Package prompts prepare script declarations used by tools().
+        final prompt = await scope.prompt(context);
+        if (prompt != null) prompts[scope.pluginId] = prompt;
+        for (final tool in scope.tools()) {
+          tools.add(tool);
+          owners[tool.name] = scope.pluginId;
+        }
+      } finally {
+        await scope.dispose();
+      }
+    }
+    return TaskAgentCapabilities(
+      tools: tools,
+      prompts: prompts,
+      toolOwners: owners,
+    );
+  } finally {
+    await runtime.scope.dispose();
   }
-  return TaskAgentCapabilities(
-    tools: tools,
-    prompts: prompts,
-    toolOwners: owners,
-  );
 }
 
 /// A workspace the errand agent created belongs to its role. "All plugins"
@@ -240,6 +285,12 @@ Future<bool> _relay(
   String conversationId,
   TaskReceiptBlock receipt,
 ) async {
+  final history = ref.read(chatHistoryStoreProvider);
+  Future<bool> receiptActive() => history.isRawMessageActive(
+    conversationId: conversationId,
+    messageId: taskReceiptMessageId(receipt.receiptId),
+  );
+  if (!await receiptActive()) return true;
   if (ref.read(conversationSendingProvider(conversationId))) return false;
   if (await _alreadyRelayed(ref, conversationId, receipt.receiptId)) {
     return true;
@@ -252,6 +303,7 @@ Future<bool> _relay(
     reminder: _relayReminder(receipt),
     turnId: 'task_relay_${receipt.receiptId}',
   );
+  if (!await receiptActive()) return true;
   if (text.trim().isEmpty) return false;
   // The user may have started typing meanwhile; their turn goes first.
   if (ref.read(conversationSendingProvider(conversationId))) return false;
@@ -287,6 +339,7 @@ Future<bool> _relay(
         replyText: apiResult.rawReplyText,
         pluginEvents: apiResult.pluginEvents,
         ttsEnabled: settings.ttsEnabled,
+        shouldCommit: receiptActive,
       );
   return true;
 }
@@ -333,8 +386,9 @@ class _DelegatePort implements DelegateTaskPort, TaskSteeringPort {
   }) async {
     final service = await _service;
     final task = await service.store.get(taskId);
-    if (task == null || task.conversationId != conversationId)
+    if (task == null || task.conversationId != conversationId) {
       return {'error': '没有这个任务'};
+    }
     final outcome = await service.steer(
       taskId: taskId,
       instruction: instruction,

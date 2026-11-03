@@ -56,7 +56,7 @@ void main() {
           _panel(width: 388, height: 286, dark: dark, liquid: liquid),
         );
         final tiles = find.byType(MoreActionTile);
-        expect(tiles, findsNWidgets(5));
+        expect(tiles, findsNWidgets(6));
         for (final tile in tiles.evaluate()) {
           final material = find.descendant(
             of: find.byWidget(tile.widget),
@@ -88,6 +88,7 @@ void main() {
       final gallery = _tile(tester, '相册');
       final attachment = _tile(tester, '附件');
       final call = _tile(tester, '通话');
+      final sticker = _tile(tester, '表情');
       expect(find.text('拍照'), findsNothing);
       expect(model.width, moreOrLessEquals(model.height));
 
@@ -110,10 +111,12 @@ void main() {
       expect(rightMargin, moreOrLessEquals(gap), reason: '宫格铺满宽度，左右边距一致');
 
       if (columns == 3) {
-        // Six-grid: attachment and call start the second row.
+        // Six-grid: attachment, call and sticker form the second row.
         expect(attachment.left, moreOrLessEquals(model.left));
         expect(call.left, moreOrLessEquals(thinking.left));
+        expect(sticker.left, moreOrLessEquals(gallery.left));
         expect(attachment.top - model.bottom, moreOrLessEquals(gap));
+        expect(sticker.top, moreOrLessEquals(attachment.top));
       } else {
         expect(call.top, moreOrLessEquals(model.top));
       }

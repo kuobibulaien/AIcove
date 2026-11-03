@@ -9,33 +9,33 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:aicove_flutter/src/ui/theme/moe_interaction_theme.dart';
 
 import 'package:chat_bottom_container/chat_bottom_container.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import '../../../../core/services/attachment_picker_service.dart';
+import '../../../../core/services/clipboard_attachment_service.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../settings/app_settings.dart';
 import '../../../dialogue_options/application/dialogue_options_providers.dart';
 import '../../chat_actions.dart';
 import '../../application/chat_edit.dart';
+import '../../application/composer_draft_store.dart';
+import '../../application/conversation_model.dart';
 import '../../chat_layer_providers.dart';
 import '../../conversation_providers.dart';
 import '../../domain/conversation.dart';
+import '../../domain/role_agent_mode.dart';
 import '../../domain/quoted_reply.dart';
+import '../../../stickers/sticker_registry.dart';
 import 'composer_model_picker_sheet.dart';
 import 'composer_more_panel.dart';
+import 'composer_sticker_panel.dart';
 import 'thinking_level_sheet.dart';
 import '../../../../core/api/thinking/thinking_fallback.dart';
 import '../../../../core/api/thinking/thinking_level_labels.dart';
@@ -43,59 +43,18 @@ import '../../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../../core/api/thinking/thinking_level_resolver.dart';
 import '../../../agent_context/providers/preset_recipe_provider.dart';
 
-@visibleForTesting
-const String composerLegacyDraftStorageKey = 'composer_draft_text';
+export '../../application/composer_draft_store.dart'
+    show
+        composerLegacyDraftStorageKey,
+        composerDraftStorageKey,
+        composerDecodeDraftAttachment,
+        composerResolveRestorableDraftAttachment;
 
-const String _kComposerDraftKeyPrefix = 'composer_draft_v2:';
-const int _kComposerDraftVersion = 1;
-const String _kComposerDraftMediaDirectoryName = 'composer_drafts';
-
-@visibleForTesting
-String composerDraftStorageKey(String conversationId) =>
-    '$_kComposerDraftKeyPrefix$conversationId';
-
-@visibleForTesting
-SelectedAttachment? composerDecodeDraftAttachment(dynamic rawAttachment) {
-  if (rawAttachment is! Map) return null;
-
-  final attachmentMap = Map<String, dynamic>.from(
-    rawAttachment.cast<String, dynamic>(),
-  );
-  final path = (attachmentMap['path'] as String?)?.trim();
-  if (path == null || path.isEmpty) return null;
-
-  final typeName = (attachmentMap['type'] as String?)?.trim();
-  final attachmentType = AttachmentType.values
-      .where((candidate) => candidate.name == typeName)
-      .firstOrNull;
-  if (attachmentType == null) return null;
-
-  return SelectedAttachment(
-    path: path,
-    name: attachmentMap['name'] as String?,
-    sizeBytes: attachmentMap['sizeBytes'] as int?,
-    type: attachmentType,
-  );
-}
-
-@visibleForTesting
-Future<SelectedAttachment?> composerResolveRestorableDraftAttachment(
-  SelectedAttachment? attachment,
-) async {
-  if (attachment == null) return null;
-  final path = attachment.path.trim();
-  if (path.isEmpty) return null;
-  try {
-    final exists = await File(path).exists();
-    if (!exists) return null;
-    return attachment;
-  } catch (_) {
-    return null;
-  }
-}
+part 'composer_view_parts.dart';
+part 'composer_action_parts.dart';
 
 /// 自定义底部面板类型
-enum ComposerPanelType { none, keyboard, more }
+enum ComposerPanelType { none, keyboard, more, sticker }
 
 /// 消息输入组件
 class Composer extends ConsumerStatefulWidget {
@@ -106,6 +65,8 @@ class Composer extends ConsumerStatefulWidget {
   final FutureOr<bool> Function(String)? onSubmitText;
   final FutureOr<bool> Function(String imagePath, {String? text})?
   onSubmitImage;
+  final FutureOr<bool> Function(Sticker sticker)? onSubmitSticker;
+  final FutureOr<void> Function()? onConfirmStagedSend;
   final FutureOr<void> Function(String imagePath, {String? text})?
   onImageSelected;
   final FutureOr<void> Function(String filePath, {String? text})?
@@ -128,6 +89,8 @@ class Composer extends ConsumerStatefulWidget {
     this.onImageSelected,
     this.onSubmitText,
     this.onSubmitImage,
+    this.onSubmitSticker,
+    this.onConfirmStagedSend,
     this.onFileSelected,
     this.onSubmitEdit,
     this.onHeightChanged,
@@ -183,12 +146,19 @@ class _ComposerState extends ConsumerState<Composer> {
   // 选中的附件
   SelectedAttachment? _selectedAttachment;
 
+  /// part 扩展里不能直接调用受保护的 setState。
+  void _rebuild(VoidCallback fn) => setState(fn);
+
+  bool _isCustomPanel(ComposerPanelType? type) =>
+      type == ComposerPanelType.more || type == ComposerPanelType.sticker;
+
   @override
   void initState() {
     super.initState();
     // 桌面端焦点粘性保护：输入法（如语音输入）可能短暂抢走焦点，自动恢复
     if (!_supportsSoftKeyboardPanel) {
       _inputFocus.addListener(_onDesktopFocusChange);
+      _inputFocus.onKeyEvent = _onDesktopInputKey;
     }
     // 监听输入变化，自动保存草稿
     _ctrl.addListener(_onTextChanged);
@@ -248,8 +218,8 @@ class _ComposerState extends ConsumerState<Composer> {
       // 更多面板正在显示（或即将显示）时，不恢复焦点
       // 否则 chat_bottom_container 的内部焦点监听器会把 requestFocus 解读为
       // "用户要打字了"，自动切到 keyboard 模式并关闭面板
-      if (_desiredPanelType == ComposerPanelType.more ||
-          _currentPanelType == ComposerPanelType.more) {
+      if (_isCustomPanel(_desiredPanelType) ||
+          _isCustomPanel(_currentPanelType)) {
         return;
       }
 
@@ -323,369 +293,6 @@ class _ComposerState extends ConsumerState<Composer> {
     _ctrl.dispose();
     _inputFocus.dispose();
     super.dispose();
-  }
-
-  String? _normalizeDraftScopeId(String? scopeId) {
-    final normalized = scopeId?.trim();
-    if (normalized == null || normalized.isEmpty) return null;
-    return normalized;
-  }
-
-  String _resolveDraftStorageKey(String? scopeId) {
-    final normalizedScopeId = _normalizeDraftScopeId(scopeId);
-    if (normalizedScopeId == null) {
-      return composerLegacyDraftStorageKey;
-    }
-    return composerDraftStorageKey(normalizedScopeId);
-  }
-
-  String? _readCurrentConversationId() {
-    return _normalizeDraftScopeId(ref.read(activeConversationProvider)?.id);
-  }
-
-  Future<void> _syncDraftScope({bool forceReload = false}) async {
-    final nextScopeId = _readCurrentConversationId();
-    final currentScopeId = _normalizeDraftScopeId(_draftConversationId);
-    if (!forceReload && currentScopeId == nextScopeId) return;
-
-    final epoch = ++_draftScopeEpoch;
-    _draftSaveTimer?.cancel();
-    final save = !forceReload && currentScopeId != null
-        ? _saveDraftSnapshot(scopeId: currentScopeId)
-        : Future<void>.value();
-    _draftLoading = true;
-    _draftConversationId = nextScopeId;
-    if (mounted && !forceReload) {
-      setState(() {
-        _editDraft = null;
-        _invalidEditDraft = false;
-        _selectedAttachment = null;
-        _ctrl.clear();
-      });
-    }
-    try {
-      await save;
-      if (!mounted || epoch != _draftScopeEpoch) return;
-      await _loadDraftSnapshot(scopeId: nextScopeId, replaceCurrent: true);
-    } finally {
-      if (mounted && epoch == _draftScopeEpoch) {
-        setState(() => _draftLoading = false);
-      }
-    }
-  }
-
-  Future<_ComposerDraftSnapshot?> _readStoredDraftSnapshot(
-    SharedPreferences prefs, {
-    required String? scopeId,
-  }) async {
-    final draftKey = _resolveDraftStorageKey(scopeId);
-    final scopedDraftRaw = prefs.getString(draftKey);
-    if (scopedDraftRaw != null && scopedDraftRaw.isNotEmpty) {
-      return _ComposerDraftSnapshot.fromStored(scopedDraftRaw);
-    }
-
-    if (draftKey == composerLegacyDraftStorageKey) {
-      return null;
-    }
-
-    final legacyDraft = prefs.getString(composerLegacyDraftStorageKey);
-    if (legacyDraft == null || legacyDraft.isEmpty) {
-      return null;
-    }
-
-    final snapshot = _ComposerDraftSnapshot.fromStored(legacyDraft);
-    if (snapshot == null) {
-      await prefs.remove(composerLegacyDraftStorageKey);
-      return null;
-    }
-
-    await prefs.setString(draftKey, snapshot.encode());
-    await prefs.remove(composerLegacyDraftStorageKey);
-    return snapshot;
-  }
-
-  Future<SelectedAttachment?> _resolveRestorableAttachment(
-    SelectedAttachment? attachment,
-  ) async {
-    return composerResolveRestorableDraftAttachment(attachment);
-  }
-
-  void _applyDraftText(String text, {required bool replaceCurrent}) {
-    if (!replaceCurrent && _ctrl.text.isNotEmpty) return;
-
-    if (text.isEmpty) {
-      if (replaceCurrent && _ctrl.text.isNotEmpty) {
-        _ctrl.clear();
-      }
-      return;
-    }
-
-    if (_ctrl.text == text) return;
-    _ctrl.text = text;
-    _ctrl.selection = TextSelection.fromPosition(
-      TextPosition(offset: text.length),
-    );
-  }
-
-  bool _sameAttachment(SelectedAttachment? left, SelectedAttachment? right) {
-    return left?.path == right?.path &&
-        left?.type == right?.type &&
-        left?.name == right?.name &&
-        left?.sizeBytes == right?.sizeBytes;
-  }
-
-  Future<void> _loadDraftSnapshot({
-    required String? scopeId,
-    required bool replaceCurrent,
-  }) async {
-    final serial = _editSeedSerial;
-    final epoch = _draftScopeEpoch;
-    final prefs = await SharedPreferences.getInstance();
-    final snapshot = await _readStoredDraftSnapshot(prefs, scopeId: scopeId);
-    if (!mounted ||
-        epoch != _draftScopeEpoch ||
-        serial != _editSeedSerial ||
-        scopeId != _readCurrentConversationId()) {
-      return;
-    }
-    if (snapshot?.edit == null &&
-        !(snapshot?.invalidEdit ?? false) &&
-        (scopeId == null || ref.read(chatEditSeedProvider(scopeId)) == null)) {
-      _applyDraftText(snapshot?.text ?? '', replaceCurrent: replaceCurrent);
-    }
-    final restoredAttachment = await _resolveRestorableAttachment(
-      snapshot?.attachment,
-    );
-    if (!mounted ||
-        epoch != _draftScopeEpoch ||
-        serial != _editSeedSerial ||
-        scopeId != _readCurrentConversationId()) {
-      return;
-    }
-    final seed = scopeId == null
-        ? null
-        : ref.read(chatEditSeedProvider(scopeId));
-    if (seed != null) {
-      _applyEditSeed(seed);
-      return;
-    }
-    setState(() {
-      _editDraft = snapshot?.edit;
-      _invalidEditDraft =
-          (snapshot?.invalidEdit ?? false) ||
-          (_editDraft != null &&
-              (_editDraft!.conversationId != scopeId ||
-                  (snapshot?.attachment != null &&
-                      restoredAttachment == null)));
-    });
-    _applyDraftText(snapshot?.text ?? '', replaceCurrent: replaceCurrent);
-
-    final shouldReplaceAttachment =
-        replaceCurrent || _selectedAttachment == null;
-    if (shouldReplaceAttachment &&
-        !_sameAttachment(_selectedAttachment, restoredAttachment)) {
-      setState(() => _selectedAttachment = restoredAttachment);
-    }
-
-    if (snapshot != null &&
-        snapshot.edit == null &&
-        !snapshot.invalidEdit &&
-        snapshot.attachment != null &&
-        restoredAttachment == null) {
-      final sanitized = snapshot.copyWith(attachment: null);
-      if (sanitized.isEmpty) {
-        await prefs.remove(_resolveDraftStorageKey(scopeId));
-      } else {
-        await prefs.setString(
-          _resolveDraftStorageKey(scopeId),
-          sanitized.encode(),
-        );
-      }
-    }
-  }
-
-  /// 输入变化时触发（带防抖保存草稿）
-  void _onTextChanged() {
-    if (_draftLoading) return;
-    _scheduleDraftSave();
-  }
-
-  void _scheduleDraftSave() {
-    _draftSaveTimer?.cancel();
-    _draftSaveTimer = Timer(const Duration(milliseconds: 500), () {
-      unawaited(
-        _saveDraftSnapshot(
-          scopeId: _draftConversationId,
-        ).catchError((Object _) {}),
-      );
-    });
-  }
-
-  void _persistDraftImmediately() {
-    _draftSaveTimer?.cancel();
-    unawaited(
-      _saveDraftSnapshot(
-        scopeId: _draftConversationId,
-      ).catchError((Object _) {}),
-    );
-  }
-
-  /// 保存草稿到本地
-  Future<void> _saveDraftSnapshot({String? scopeId}) {
-    if (_draftLoading) return Future<void>.value();
-    // await之前捕获owner及内容，串行写入防止旧保存覆盖取消/提交。
-    final snapshot = _ComposerDraftSnapshot(
-      text: _ctrl.text,
-      attachment: _selectedAttachment,
-      edit: _editDraft,
-      invalidEdit: _invalidEditDraft,
-    );
-    final draftKey = _resolveDraftStorageKey(scopeId);
-    final task = _draftWrites.then((_) async {
-      final prefs = await SharedPreferences.getInstance();
-      final ok = snapshot.isEmpty
-          ? await prefs.remove(draftKey)
-          : await prefs.setString(draftKey, snapshot.encode());
-      if (!ok) throw StateError('草稿保存失败');
-    });
-    _draftWrites = task.catchError((Object _) {});
-    return task;
-  }
-
-  /// 清除草稿（发送成功后调用）
-  Future<void> _clearDraft({String? scopeId}) {
-    final owner = scopeId ?? _draftConversationId;
-    if (owner == _draftConversationId) _draftSaveTimer?.cancel();
-    final key = _resolveDraftStorageKey(owner);
-    final task = _draftWrites.then((_) async {
-      final prefs = await SharedPreferences.getInstance();
-      if (!await prefs.remove(key)) throw StateError('草稿清理失败');
-    });
-    _draftWrites = task.catchError((Object _) {});
-    return task;
-  }
-
-  void _applyEditSeed(ChatEditSeed seed) {
-    if (!mounted || _readCurrentConversationId() != seed.draft.conversationId) {
-      return;
-    }
-    _editSeedSerial++;
-    _draftLoading = false;
-    _draftSaveTimer?.cancel();
-    _draftConversationId = seed.draft.conversationId;
-    ref.read(quotedMessageProvider.notifier).state = null;
-    setState(() {
-      _editDraft = seed.draft;
-      _invalidEditDraft = false;
-      _selectedAttachment = seed.attachment; // 包括null，清掉上一次的附件。
-      _ctrl.text = seed.text; // 包括空串，纯图片编辑不能带上旧文本。
-      _ctrl.selection = TextSelection.collapsed(offset: seed.text.length);
-    });
-    ref.read(chatEditSeedProvider(seed.draft.conversationId).notifier).state =
-        null;
-    unawaited(
-      _saveDraftSnapshot(scopeId: seed.draft.conversationId).catchError((
-        Object _,
-      ) {
-        if (mounted) MoeToast.error(context, '编辑草稿保存失败，原历史未改变');
-      }),
-    );
-    _showKeyboardWithPreAnimation();
-  }
-
-  Future<void> _cancelEdit() async {
-    if (_editSubmitting) return;
-    final owner = _draftConversationId;
-    _editSeedSerial++;
-    setState(() {
-      _editDraft = null;
-      _invalidEditDraft = false;
-      _selectedAttachment = null;
-      _ctrl.clear();
-    });
-    try {
-      await _clearDraft(scopeId: owner);
-    } catch (_) {
-      if (mounted) MoeToast.error(context, '草稿清理失败；原历史仍保留');
-    }
-  }
-
-  Future<SelectedAttachment> _stabilizeAttachmentForDraft(
-    SelectedAttachment attachment,
-  ) async {
-    if (attachment.type != AttachmentType.image) {
-      return attachment;
-    }
-
-    final sourcePath = attachment.path.trim();
-    if (sourcePath.isEmpty) {
-      return attachment;
-    }
-
-    final sourceFile = File(sourcePath);
-    if (!await sourceFile.exists()) {
-      return attachment;
-    }
-
-    final rootDirectory = await getApplicationSupportDirectory();
-    final draftDirectory = Directory(
-      p.join(rootDirectory.path, _kComposerDraftMediaDirectoryName),
-    );
-    if (!await draftDirectory.exists()) {
-      await draftDirectory.create(recursive: true);
-    }
-
-    final normalizedSourcePath = p.normalize(sourceFile.path);
-    final normalizedDraftRoot = p.normalize(draftDirectory.path);
-    if (normalizedSourcePath == normalizedDraftRoot ||
-        p.isWithin(normalizedDraftRoot, normalizedSourcePath)) {
-      return attachment;
-    }
-
-    final scopeId = _normalizeDraftScopeId(_draftConversationId) ?? 'global';
-    final safeScopeId = scopeId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_');
-    final extension = p.extension(normalizedSourcePath);
-    final targetPath = p.join(
-      draftDirectory.path,
-      'draft_${safeScopeId}_${DateTime.now().millisecondsSinceEpoch}'
-      '${extension.isNotEmpty ? extension : '.jpg'}',
-    );
-
-    try {
-      await sourceFile.copy(targetPath);
-      return SelectedAttachment(
-        path: targetPath,
-        name: attachment.name,
-        sizeBytes: attachment.sizeBytes,
-        type: attachment.type,
-      );
-    } catch (_) {
-      return attachment;
-    }
-  }
-
-  Future<void> _setSelectedAttachment(
-    SelectedAttachment? attachment, {
-    bool persistImmediately = true,
-  }) async {
-    if (_editSubmitting) return;
-    final epoch = _draftScopeEpoch;
-    final serial = _editSeedSerial;
-    final nextAttachment = attachment == null
-        ? null
-        : await _stabilizeAttachmentForDraft(attachment);
-    if (!mounted ||
-        _editSubmitting ||
-        epoch != _draftScopeEpoch ||
-        serial != _editSeedSerial) {
-      return;
-    }
-    if (_sameAttachment(_selectedAttachment, nextAttachment)) return;
-
-    setState(() => _selectedAttachment = nextAttachment);
-    if (persistImmediately) {
-      _persistDraftImmediately();
-    }
   }
 
   double _uiScaleFactor() {
@@ -803,9 +410,6 @@ class _ComposerState extends ConsumerState<Composer> {
     };
   }
 
-  Widget _buildComposerGlassLayer({required Widget child}) =>
-      ComposerGlassLayer(child: child);
-
   void _showKeyboardWithPreAnimation() {
     _requestPanelIntent(
       ComposerPanelType.keyboard,
@@ -878,6 +482,7 @@ class _ComposerState extends ConsumerState<Composer> {
           setState(() => _suppressKeyboard = false);
         }
       case ComposerPanelType.more:
+      case ComposerPanelType.sticker:
         _capturePanelAnchor(context);
         _holdPanelHeight = true;
         // 先设 readOnly 抑制键盘，再**立刻同步**切面板类型。
@@ -889,7 +494,7 @@ class _ComposerState extends ConsumerState<Composer> {
         }
         _panelController.updatePanelType(
           ChatBottomPanelType.other,
-          data: ComposerPanelType.more,
+          data: target,
           forceHandleFocus: ChatBottomHandleFocus.requestFocus,
         );
         if (_supportsSoftKeyboardPanel) {
@@ -923,7 +528,7 @@ class _ComposerState extends ConsumerState<Composer> {
       return;
     }
 
-    final fromMorePanel = _currentPanelType == ComposerPanelType.more;
+    final fromMorePanel = _isCustomPanel(_currentPanelType);
     if (fromMorePanel) {
       _capturePanelAnchor(context);
       _holdPanelHeight = true;
@@ -946,508 +551,53 @@ class _ComposerState extends ConsumerState<Composer> {
     _armKeyboardGuard();
   }
 
-  Future<void> _onSendButtonPressed() async {
-    if (widget.disabled) return;
+  /// Agent 会话（ADR0112）：运行中的输入可以插话或排到这轮做完后。
+  bool get _isAgentChat =>
+      ref.read(activeConversationProvider)?.effectiveAgentMode ==
+      RoleAgentMode.tool;
 
-    final isGenerating = ref.read(sendingProvider);
-    if (isGenerating) {
-      if (_isInterruptingGeneration) return;
-      final confirmed = await showMeoTalkConfirm(
-        context: context,
-        title: '停止生成？',
-        message: '当前回复还在生成中，确认后将立即停止本次生成。',
-        hint: '已生成的内容会保留，未生成部分不会继续输出。',
-        cancelText: '继续生成',
-        confirmText: '停止',
-        isDanger: true,
-      );
-      if (!mounted || confirmed != true) return;
-      if (!ref.read(sendingProvider)) return;
-      setState(() => _isInterruptingGeneration = true);
-      try {
-        final stopped = await ref
-            .read(chatActionsProvider)
-            .interruptCurrentGeneration();
-        if (!mounted) return;
-        if (stopped) {
-          MoeToast.brief(context, '已停止生成');
-        }
-      } finally {
-        if (mounted) {
-          setState(() => _isInterruptingGeneration = false);
-        }
-      }
-      return;
+  /// Agent 会话的桌面按键，对照 Pi：Enter 发送／运行中插话，Option(Alt)+Enter
+  /// 运行中排到做完后，Shift+Enter 换行，Option(Alt)+↑ 把排队的话放回输入框。
+  /// 输入法组字中不拦截。聊天模式保持原样。
+  KeyEventResult _onDesktopInputKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent ||
+        !_isAgentChat ||
+        _ctrl.value.composing.isValid) {
+      return KeyEventResult.ignored;
     }
-
-    await _submit();
-  }
-
-  Future<void> _submit() async {
-    final attachment = _selectedAttachment;
-    final draftText = _ctrl.text;
-    final text = draftText.trim();
-    final scopeId = _readCurrentConversationId();
-    final scopeEpoch = _draftScopeEpoch;
-    if (_editSubmitting ||
-        _plainSubmittingEpoch == scopeEpoch ||
-        _draftLoading) {
-      return;
+    final keyboard = HardwareKeyboard.instance;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowUp && keyboard.isAltPressed) {
+      _restoreQueuedInputs();
+      return KeyEventResult.handled;
     }
-    if (_invalidEditDraft) {
-      MoeToast.error(context, '编辑草稿或附件失效，请取消后重新编辑');
-      return;
+    if (key != LogicalKeyboardKey.enter &&
+        key != LogicalKeyboardKey.numpadEnter) {
+      return KeyEventResult.ignored;
     }
-    final edit = _editDraft;
-    if (edit != null) {
-      if (widget.disabled || (text.isEmpty && attachment == null)) return;
-      if (widget.onSubmitEdit == null) {
-        MoeToast.error(context, '当前页面不支持提交编辑');
-        return;
-      }
-      setState(() => _editSubmitting = true);
-      var locallyCommitted = false;
-      try {
-        await _saveDraftSnapshot(scopeId: edit.conversationId);
-        await widget.onSubmitEdit!(edit, text, attachment);
-        locallyCommitted = true;
-        if (mounted &&
-            _readCurrentConversationId() == edit.conversationId &&
-            identical(_editDraft, edit)) {
-          setState(() {
-            _editDraft = null;
-            _selectedAttachment = null;
-            _ctrl.clear();
-          });
-        }
-        await _clearDraft(scopeId: edit.conversationId);
-      } catch (error) {
-        if (mounted) {
-          MoeToast.error(
-            context,
-            locallyCommitted
-                ? '消息已提交，但草稿清理失败；再次进入时请取消旧草稿'
-                : error is StateError
-                ? error.message.toString()
-                : '编辑提交失败，草稿已保留',
-          );
-        }
-      } finally {
-        if (mounted) setState(() => _editSubmitting = false);
-      }
-      return;
+    if (keyboard.isShiftPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isMetaPressed) {
+      return KeyEventResult.ignored;
     }
-
-    bool draftUnchanged() =>
-        mounted &&
-        _draftScopeEpoch == scopeEpoch &&
-        _readCurrentConversationId() == scopeId &&
-        _ctrl.text == draftText &&
-        identical(_selectedAttachment, attachment);
-
-    _plainSubmittingEpoch = scopeEpoch;
-    try {
-      if (attachment != null) {
-        if (attachment.type == AttachmentType.image) {
-          final submit = widget.onSubmitImage;
-          if (submit != null) {
-            final accepted = await submit(
-              attachment.path,
-              text: text.isEmpty ? null : text,
-            );
-            if (!accepted) return;
-          } else if (widget.onImageSelected != null) {
-            await widget.onImageSelected!(
-              attachment.path,
-              text: text.isEmpty ? null : text,
-            );
-          } else {
-            return;
-          }
-        } else {
-          if (widget.onFileSelected == null) {
-            MoeToast.brief(context, '当前页面暂未接入文件发送');
-            return;
-          }
-          await widget.onFileSelected!(
-            attachment.path,
-            text: text.isEmpty ? null : text,
-          );
-        }
-        if (!draftUnchanged()) return;
-        setState(() => _selectedAttachment = null);
-      } else {
-        if (text.isEmpty || widget.disabled) return;
-        final submit = widget.onSubmitText;
-        if (submit != null) {
-          if (!await submit(text)) return;
-        } else {
-          await widget.onSend(text);
-        }
-        if (!draftUnchanged()) return;
-      }
-      _ctrl.clear();
-      unawaited(_clearDraft(scopeId: scopeId));
-    } finally {
-      if (_plainSubmittingEpoch == scopeEpoch) _plainSubmittingEpoch = null;
+    if (ref.read(sendingProvider)) {
+      unawaited(_queueWhileRunning(steer: !keyboard.isAltPressed));
+    } else if (!widget.disabled) {
+      unawaited(_submit());
     }
+    return KeyEventResult.handled;
   }
 
   void _onMorePressed() {
     if (widget.disabled) return;
     final pendingTarget = _pendingPanelIntent?.target;
     final isMoreOpen =
-        _currentPanelType == ComposerPanelType.more ||
-        pendingTarget == ComposerPanelType.more;
+        _isCustomPanel(_currentPanelType) || _isCustomPanel(pendingTarget);
     if (isMoreOpen) {
       _showKeyboardDirect();
     } else {
       _requestPanelIntent(ComposerPanelType.more);
     }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final editOwner = ref.watch(activeConversationProvider)?.id;
-    if (editOwner != null) {
-      ref.listen<DialogueOptionPick?>(dialogueOptionPickProvider(editOwner), (
-        _,
-        pick,
-      ) {
-        if (pick == null || _readCurrentConversationId() != editOwner) return;
-        ref.read(dialogueOptionPickProvider(editOwner).notifier).state = null;
-        if (_editDraft != null || widget.disabled) {
-          MoeToast.brief(context, '请先完成当前编辑，再使用对话选项');
-          return;
-        }
-        if (pick.signature != null) {
-          ref.read(dialogueOptionsConsumedProvider(editOwner).notifier).state =
-              pick.signature;
-        }
-        final text = pick.text;
-        final draft = _ctrl.text;
-        final next = draft.isEmpty ? text : '$draft\n$text';
-        _ctrl.value = TextEditingValue(
-          text: next,
-          selection: TextSelection.collapsed(offset: next.length),
-        );
-        _showKeyboardWithPreAnimation();
-      });
-      ref.listen<ChatEditSeed?>(chatEditSeedProvider(editOwner), (_, seed) {
-        if (seed != null) _applyEditSeed(seed);
-      });
-    }
-    ref.listen<String?>(editingTextProvider, (previous, next) {
-      if (next != null && next.isNotEmpty) {
-        _ctrl.text = next;
-        _ctrl.selection = TextSelection.fromPosition(
-          TextPosition(offset: next.length),
-        );
-        ref.read(editingTextProvider.notifier).state = null;
-        _showKeyboardWithPreAnimation();
-      }
-    });
-    ref.listen<SelectedAttachment?>(recalledAttachmentProvider, (
-      previous,
-      next,
-    ) {
-      if (next != null) {
-        ref.read(recalledAttachmentProvider.notifier).state = null;
-        unawaited(_setSelectedAttachment(next));
-        _showKeyboardWithPreAnimation();
-      }
-    });
-    ref.listen<Conversation?>(activeConversationProvider, (previous, next) {
-      final previousId = _normalizeDraftScopeId(previous?.id);
-      final nextId = _normalizeDraftScopeId(next?.id);
-      if (previousId == nextId) return;
-      unawaited(_syncDraftScope());
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _reportHeightIfNeeded();
-    });
-
-    return NotificationListener<SizeChangedLayoutNotification>(
-      onNotification: (_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _reportHeightIfNeeded();
-        });
-        return false;
-      },
-      child: SizeChangedLayoutNotifier(
-        child: Container(
-          key: _rootKey,
-          child: TextFieldTapRegion(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildComposerGlassLayer(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_editDraft != null || _invalidEditDraft)
-                        Row(
-                          children: [
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                _invalidEditDraft
-                                    ? '编辑草稿失效，原历史未改变'
-                                    : '发送后重新生成对话',
-                                maxLines: 2,
-                              ),
-                            ),
-                            TextButton(
-                              key: const ValueKey('cancel_message_edit'),
-                              onPressed: _editSubmitting ? null : _cancelEdit,
-                              child: const Text('取消编辑'),
-                            ),
-                          ],
-                        ),
-                      _buildQuotedMessagePreview(),
-                      if (_selectedAttachment?.type == AttachmentType.image)
-                        ImageAttachmentPreview(
-                          imagePath: _selectedAttachment!.path,
-                          onRemove: () {
-                            unawaited(_setSelectedAttachment(null));
-                          },
-                        ),
-                      if (_selectedAttachment?.type == AttachmentType.file)
-                        FileAttachmentPreview(
-                          filePath: _selectedAttachment!.path,
-                          fileName: _selectedAttachment!.name,
-                          fileSizeBytes: _selectedAttachment!.sizeBytes,
-                          leadingIcon: Icons.insert_drive_file_outlined,
-                          onRemove: () {
-                            unawaited(_setSelectedAttachment(null));
-                          },
-                        ),
-                      if (_selectedAttachment?.type == AttachmentType.audio)
-                        FileAttachmentPreview(
-                          filePath: _selectedAttachment!.path,
-                          fileName: _selectedAttachment!.name,
-                          fileSizeBytes: _selectedAttachment!.sizeBytes,
-                          leadingIcon: Icons.audiotrack_outlined,
-                          onRemove: () {
-                            unawaited(_setSelectedAttachment(null));
-                          },
-                        ),
-                      if (_selectedAttachment?.type == AttachmentType.video)
-                        FileAttachmentPreview(
-                          filePath: _selectedAttachment!.path,
-                          fileName: _selectedAttachment!.name,
-                          fileSizeBytes: _selectedAttachment!.sizeBytes,
-                          leadingIcon: Icons.movie_outlined,
-                          onRemove: () {
-                            unawaited(_setSelectedAttachment(null));
-                          },
-                        ),
-                      _buildInputBar(),
-                    ],
-                  ),
-                ),
-                _buildPanelContainer(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInputBar() {
-    final colors = context.moeColors;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          _buildMoreButton(
-            isActive: _currentPanelType == ComposerPanelType.more,
-          ),
-          const SizedBox(width: 2),
-          Expanded(
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 42),
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: TextField(
-                controller: _ctrl,
-                focusNode: _inputFocus,
-                minLines: 1,
-                maxLines: 4,
-                textAlignVertical: TextAlignVertical.center,
-                style: const TextStyle(fontSize: 16, height: 1.4),
-                readOnly: _suppressKeyboard || _editSubmitting || _draftLoading,
-                showCursor: !_suppressKeyboard,
-                decoration: InputDecoration.collapsed(
-                  hintText: widget.hintText ?? '消息',
-                  hintStyle: TextStyle(color: colors.muted),
-                ).copyWith(visualDensity: VisualDensity.standard),
-                enabled: !widget.disabled,
-                onTap: () {
-                  if (widget.disabled) return;
-                  widget.onInputTap?.call();
-                  final shouldExplicitShow =
-                      _suppressKeyboard ||
-                      _currentPanelType == ComposerPanelType.more;
-                  _showKeyboardDirect(explicitShow: shouldExplicitShow);
-                },
-                onSubmitted: (_) => _onSendButtonPressed(),
-              ),
-            ),
-          ),
-          const SizedBox(width: 2),
-          _buildSendButton(),
-        ],
-      ),
-    );
-  }
-
-  /// 构建引用消息预览
-  Widget _buildQuotedMessagePreview() {
-    final quoted = ref.watch(quotedMessageProvider);
-    if (quoted == null) return const SizedBox.shrink();
-
-    final colors = context.moeColors;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      child: Row(
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: MoeQuoteBlock(
-                label: quoted.isUser ? '回复 我' : '回复 TA',
-                text: QuotedReply.parse(quoted.content)?.body ?? quoted.content,
-                foregroundColor: colors.text,
-                accentColor: colors.accentColor,
-                maxLines: 1,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: () => ref.read(quotedMessageProvider.notifier).state = null,
-            child: MoeButtonSurface(
-              radius: 999,
-              child: Icon(Icons.close, size: 18, color: colors.muted),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPanelContainer() {
-    return ChatBottomPanelContainer<ComposerPanelType>(
-      controller: _panelController,
-      inputFocusNode: _inputFocus,
-      // 自定义面板容器动画：统一“键盘↔更多面板”的展开回收节奏
-      customPanelContainer: (panelType, data) {
-        final Widget panel;
-        if (panelType == ChatBottomPanelType.keyboard) {
-          if (_supportsSoftKeyboardPanel) {
-            final height = _keyboardPanelHeight(context);
-            panel = SizedBox(width: double.infinity, height: height);
-          } else {
-            panel = const SizedBox.shrink();
-          }
-        } else {
-          panel =
-              _panelController.buildInPanel(panelType) ??
-              const SizedBox.shrink();
-        }
-        final duration = _panelController.isKeyboardHeightChangedByItself
-            ? kAnimXFast
-            : (panelType == ChatBottomPanelType.none ? kAnim : kAnimFast);
-        // Animate the panel height without applying group opacity to its
-        // backdrop filter. Some Impeller backends reject that combination.
-        return AnimatedSize(
-          alignment: Alignment.topCenter,
-          duration: duration,
-          curve: Curves.easeOutCubic,
-          child: panel,
-        );
-      },
-      otherPanelWidget: (type) {
-        if (type == null) return const SizedBox.shrink();
-        final height = _morePanelHeight(context);
-        if (type == ComposerPanelType.keyboard) {
-          if (!_supportsSoftKeyboardPanel) return const SizedBox.shrink();
-          return SizedBox(height: height);
-        }
-        if (type != ComposerPanelType.more) return const SizedBox.shrink();
-        return SizedBox(
-          height: height,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
-            child: MoeFloatingSurface(
-              child: ComposerMorePanel(onAction: _handlePanelAction),
-            ),
-          ),
-        );
-      },
-      onPanelTypeChange: (panelType, data) {
-        setState(() {
-          switch (panelType) {
-            case ChatBottomPanelType.none:
-              _currentPanelType = ComposerPanelType.none;
-              final switchingToMore =
-                  _desiredPanelType == ComposerPanelType.more ||
-                  _pendingPanelIntent?.target == ComposerPanelType.more;
-              if (!switchingToMore) {
-                _suppressKeyboard = false;
-                _holdPanelHeight = false;
-              }
-            case ChatBottomPanelType.keyboard:
-              _currentPanelType = ComposerPanelType.keyboard;
-              _suppressKeyboard = false;
-            case ChatBottomPanelType.other:
-              if (data == ComposerPanelType.more) {
-                _currentPanelType = ComposerPanelType.more;
-                _suppressKeyboard = true;
-                _holdPanelHeight = true;
-              } else if (data == ComposerPanelType.keyboard) {
-                _currentPanelType = ComposerPanelType.keyboard;
-                _suppressKeyboard = true;
-                _holdPanelHeight = true;
-              } else {
-                _currentPanelType = ComposerPanelType.none;
-                _suppressKeyboard = false;
-                _holdPanelHeight = false;
-              }
-          }
-
-          if (_pendingPanelIntent == null && !_isProcessingPanelIntent) {
-            _desiredPanelType = _currentPanelType;
-          }
-        });
-      },
-      changeKeyboardPanelHeight: (height) {
-        final liveHeight = _toLayoutHeight(height);
-        if (liveHeight > 0) {
-          _keyboardHeight = liveHeight;
-          if (!_holdPanelHeight || liveHeight >= _anchorPanelHeight) {
-            _anchorPanelHeight = liveHeight;
-          }
-          final effectiveHeight = _holdPanelHeight && _anchorPanelHeight > 0
-              ? (liveHeight > _anchorPanelHeight
-                    ? liveHeight
-                    : _anchorPanelHeight)
-              : liveHeight;
-          return _clampToSafeArea(effectiveHeight);
-        }
-        if (_holdPanelHeight && _anchorPanelHeight > 0) {
-          return _clampToSafeArea(_anchorPanelHeight);
-        }
-        return _clampToSafeArea(0);
-      },
-      panelBgColor: Colors.transparent,
-    );
   }
 
   void _handlePanelAction(ComposerAction action) {
@@ -1464,6 +614,8 @@ class _ComposerState extends ConsumerState<Composer> {
         _pickAttachment();
       case ComposerAction.call:
         MoeToast.brief(context, '通话功能即将上线');
+      case ComposerAction.sticker:
+        _requestPanelIntent(ComposerPanelType.sticker);
     }
   }
 
@@ -1495,227 +647,105 @@ class _ComposerState extends ConsumerState<Composer> {
     await _openThinkingLevelPicker();
   }
 
-  /// 会话级思考档位：作用于当前会话 × 当前默认模型。
-  Future<void> _openThinkingLevelPicker() async {
-    final settings = ref.read(appSettingsProvider).valueOrNull;
-    final conversation = ref.read(activeConversationProvider);
-    if (settings == null || conversation == null) {
-      MoeToast.brief(context, '设置加载中，请稍后再试');
-      return;
-    }
-    final modelRef = settings.defaultModelName.trim();
-    if (modelRef.isEmpty) {
-      MoeToast.brief(context, '请先选择模型');
-      return;
-    }
-    final providerId = settings.getModelProviderId(modelRef) ?? 'openai';
-    final providerAuth = settings.providers
-        .where((p) => p.id == providerId)
-        .firstOrNull;
-    final resolvedProvider = ProviderAdapterFactory.resolveProvider(
-      providerId,
-      customConfig: providerAuth?.customConfig,
-      apiBaseUrl: providerAuth?.apiBaseUrl,
+  @override
+  Widget build(BuildContext context) {
+    final editOwner = ref.watch(
+      activeConversationProvider.select((c) => c?.id),
     );
-    String? presetEffort;
-    final recipeId = conversation.recipeId?.trim();
-    if (recipeId != null && recipeId.isNotEmpty) {
-      presetEffort = ref
-          .read(presetRecipeProvider(recipeId))
-          .valueOrNull
-          ?.reasoningEffort;
-    }
-    final effective = resolveEffectiveThinkingLevel(
-      providerType: resolvedProvider,
-      modelId: settings.getRawModelId(modelRef),
-      sessionLevel: conversation.thinkingLevels[modelRef],
-      modelDefaultLevel: settings.getModelConfig(modelRef).thinkingLevel,
-      presetReasoningEffort: presetEffort,
-    );
-
-    final modelFullId = '$providerId:${settings.getRawModelId(modelRef)}';
-    final lowestResolved = effective.level.isLowest
-        ? await ThinkingFallbackMemory.instance.recall(modelFullId)
-        : null;
-    if (!mounted) return;
-
-    final result = await showThinkingLevelSheet(
-      context,
-      title: '思考档位 · ${settings.getModelDisplayName(modelRef)}',
-      options: effective.options,
-      current: effective.level,
-      currentSource: effective.source,
-      hasOwnSetting: conversation.thinkingLevels.containsKey(modelRef),
-      clearLabel: '清除本会话设置，改用模型默认',
-      lowestResolved: lowestResolved,
-    );
-    if (result == null || !mounted) return;
-    if (result.redetect) {
-      await ThinkingFallbackMemory.instance.forget(modelFullId);
-      if (!mounted) return;
-      MoeToast.success(context, '已清除，下次发送时重新检测最低档');
-      return;
-    }
-
-    await ref
-        .read(conversationsProvider.notifier)
-        .setConversationThinkingLevel(
-          conversation.id,
-          modelRef: modelRef,
-          level: result.cleared ? null : result.level,
+    if (editOwner != null) {
+      ref.listen<DialogueOptionPick?>(dialogueOptionPickProvider(editOwner), (
+        _,
+        pick,
+      ) {
+        if (pick == null || _readCurrentConversationId() != editOwner) return;
+        ref.read(dialogueOptionPickProvider(editOwner).notifier).state = null;
+        if (_editDraft != null || widget.disabled) {
+          MoeToast.brief(context, '请先完成当前编辑，再使用对话选项');
+          return;
+        }
+        if (pick.signature != null) {
+          ref.read(dialogueOptionsConsumedProvider(editOwner).notifier).state =
+              pick.signature;
+        }
+        final text = pick.text;
+        final draft = _ctrl.text;
+        final next = draft.isEmpty ? text : '$draft\n$text';
+        _ctrl.value = TextEditingValue(
+          text: next,
+          selection: TextSelection.collapsed(offset: next.length),
         );
-    if (!mounted) return;
-    MoeToast.success(
-      context,
-      result.cleared
-          ? '已清除本会话的思考档位'
-          : '本会话思考档位：${thinkingLevelTitle(result.level!, isNative: effective.options.isNative)}',
-    );
-  }
+      });
+      ref.listen<ChatEditSeed?>(chatEditSeedProvider(editOwner), (_, seed) {
+        if (seed != null) _applyEditSeed(seed);
+      });
+    }
+    ref.listen<String?>(editingTextProvider, (previous, next) {
+      if (next != null && next.isNotEmpty) {
+        _ctrl.text = next;
+        _ctrl.selection = TextSelection.fromPosition(
+          TextPosition(offset: next.length),
+        );
+        ref.read(editingTextProvider.notifier).state = null;
+        _showKeyboardWithPreAnimation();
+      }
+    });
+    ref.listen<SelectedAttachment?>(recalledAttachmentProvider, (
+      previous,
+      next,
+    ) {
+      if (next != null) {
+        ref.read(recalledAttachmentProvider.notifier).state = null;
+        unawaited(_setSelectedAttachment(next));
+        _showKeyboardWithPreAnimation();
+      }
+    });
+    ref.listen<Conversation?>(activeConversationProvider, (previous, next) {
+      final previousId = ComposerDraftStore.normalizeScopeId(previous?.id);
+      final nextId = ComposerDraftStore.normalizeScopeId(next?.id);
+      if (previousId == nextId) return;
+      unawaited(_syncDraftScope());
+    });
 
-  Widget _buildMoreButton({required bool isActive}) {
-    final colors = context.moeColors;
-    return SizedBox(
-      width: 42,
-      height: 42,
-      child: IconButton(
-        onPressed: _onMorePressed,
-        style: withoutHoverFeedback(
-          IconButton.styleFrom(
-            padding: EdgeInsets.zero,
-            shape: const CircleBorder(),
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reportHeightIfNeeded();
+    });
+
+    return NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _reportHeightIfNeeded();
+        });
+        return false;
+      },
+      child: SizeChangedLayoutNotifier(
+        child: Container(
+          key: _rootKey,
+          child: TextFieldTapRegion(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildStagedConfirmBubble(),
+                _buildComposerGlassLayer(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_editDraft != null || _invalidEditDraft)
+                        _buildEditBanner(),
+                      _buildQueuedInputs(),
+                      _buildQuotedMessagePreview(),
+                      if (_selectedAttachment != null)
+                        _buildAttachmentPreview(_selectedAttachment!),
+                      _buildInputBar(),
+                    ],
+                  ),
+                ),
+                _buildPanelContainer(),
+              ],
+            ),
           ),
-        ),
-        icon: Icon(
-          isActive ? Icons.close_rounded : Icons.add_rounded,
-          color: isActive ? colors.accentColor : colors.muted,
-          size: 24,
         ),
       ),
     );
-  }
-
-  Widget _buildSendButton() {
-    final colors = context.moeColors;
-    final isGenerating = ref.watch(sendingProvider);
-    final isStopping = isGenerating && _isInterruptingGeneration;
-    return SizedBox(
-      width: 42,
-      height: 42,
-      child: IconButton(
-        onPressed: (widget.disabled || isStopping)
-            ? null
-            : _onSendButtonPressed,
-        tooltip: isStopping ? '正在停止' : (isGenerating ? '停止生成' : '发送'),
-        style: withoutHoverFeedback(
-          IconButton.styleFrom(
-            padding: EdgeInsets.zero,
-            shape: const CircleBorder(),
-          ),
-        ),
-        icon: Icon(
-          isStopping
-              ? Icons.hourglass_top_rounded
-              : (isGenerating
-                    ? Icons.stop_rounded
-                    : Icons.arrow_upward_rounded),
-          color: (widget.disabled || isStopping)
-              ? colors.muted
-              : colors.accentColor,
-          size: 24,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _openModelPicker() async {
-    var settings = ref.read(appSettingsProvider).valueOrNull;
-    if (settings == null) {
-      try {
-        settings = await ref.read(appSettingsProvider.future);
-      } catch (_) {}
-    }
-    if (!mounted) return;
-    if (settings == null) {
-      MoeToast.brief(context, '设置加载中，请稍后再试');
-      return;
-    }
-    final loadedSettings = settings;
-    final models = loadedSettings.modelList;
-    if (models.isEmpty) {
-      await showMeoTalkAlert(
-        context: context,
-        title: '无法选择模型',
-        message: '当前没有可用模型，请先在设置里配置提供商和模型。',
-      );
-      return;
-    }
-
-    final selected = await showComposerModelPickerSheet(context);
-    if (selected == null || selected.trim().isEmpty) {
-      return;
-    }
-
-    final latestSettings =
-        ref.read(appSettingsProvider).valueOrNull ?? loadedSettings;
-    if (selected == latestSettings.defaultModelName) {
-      return;
-    }
-
-    await ref.read(appSettingsProvider.notifier).setDefaultModelName(selected);
-    if (!mounted) return;
-    final selectedLabel = latestSettings.getModelDisplayName(selected);
-    final selectedProvider = latestSettings.getModelProviderId(selected);
-    final summary = selectedProvider == null || selectedProvider.isEmpty
-        ? selectedLabel
-        : '$selectedLabel ($selectedProvider)';
-    MoeToast.success(context, '已切换默认模型：$summary');
-  }
-
-  Future<void> _pickImage(ImageSource source) async {
-    final result = await AttachmentPickerService.pickImage(source);
-    if (!mounted) return;
-
-    switch (result) {
-      case AttachmentPickSuccess(:final attachment):
-        await _setSelectedAttachment(attachment);
-        _showKeyboardWithPreAnimation();
-      case AttachmentPickError(:final message):
-        MoeToast.error(context, message);
-      case _:
-        break;
-    }
-  }
-
-  Future<void> _pickAttachment() async {
-    final settings = ref.read(appSettingsProvider).valueOrNull;
-    final maxMb = settings?.maxFileUploadMB ?? 10;
-
-    final result = await AttachmentPickerService.pickAttachment(maxMb: maxMb);
-    if (!mounted) return;
-
-    switch (result) {
-      case AttachmentPickSuccess(:final attachment):
-        await _setSelectedAttachment(attachment);
-        _showKeyboardWithPreAnimation();
-      case AttachmentFileTooLarge(:final maxMb):
-        await showMeoTalkAlert(
-          context: context,
-          title: '附件太大',
-          message: '当前最大支持 ${maxMb}MB，已拦截发送。',
-        );
-      case AttachmentUnsupportedType():
-        await showMeoTalkAlert(
-          context: context,
-          title: '暂不支持该附件',
-          message:
-              '目前支持 txt/md/json/csv 等纯文本、mp3/wav/m4a 等音频、mp4/mov/webm 等视频及常见图片。',
-        );
-      case AttachmentPickError(:final message):
-        MoeToast.error(context, message);
-      case _:
-        break;
-    }
   }
 }
 
@@ -1788,91 +818,4 @@ class _PanelIntent {
     required this.preferPreAnimation,
     required this.explicitShow,
   });
-}
-
-class _ComposerDraftSnapshot {
-  final String text;
-  final SelectedAttachment? attachment;
-  final ChatEditDraft? edit;
-  final bool invalidEdit;
-
-  const _ComposerDraftSnapshot({
-    required this.text,
-    this.attachment,
-    this.edit,
-    this.invalidEdit = false,
-  });
-
-  bool get isEmpty =>
-      text.isEmpty && attachment == null && edit == null && !invalidEdit;
-
-  _ComposerDraftSnapshot copyWith({
-    String? text,
-    SelectedAttachment? attachment,
-  }) {
-    return _ComposerDraftSnapshot(
-      text: text ?? this.text,
-      attachment: attachment,
-      edit: edit,
-      invalidEdit: invalidEdit,
-    );
-  }
-
-  String encode() {
-    return jsonEncode(<String, Object?>{
-      'version': _kComposerDraftVersion,
-      'text': text,
-      if (edit != null) 'edit': edit!.toJson(),
-      if (invalidEdit) 'invalidEdit': true,
-      if (attachment != null)
-        'attachment': <String, Object?>{
-          'path': attachment!.path,
-          'name': attachment!.name,
-          'sizeBytes': attachment!.sizeBytes,
-          'type': attachment!.type.name,
-        },
-    });
-  }
-
-  static _ComposerDraftSnapshot? fromStored(String rawValue) {
-    if (rawValue.isEmpty) return null;
-    try {
-      final decoded = jsonDecode(rawValue);
-      if (decoded is! Map) {
-        return _ComposerDraftSnapshot(text: rawValue);
-      }
-      final draftMap = Map<String, dynamic>.from(
-        decoded.cast<String, dynamic>(),
-      );
-      final text = (draftMap['text'] as String?) ?? '';
-      final attachment = _decodeAttachment(draftMap['attachment']);
-      ChatEditDraft? edit;
-      var invalid = draftMap['invalidEdit'] == true;
-      if (draftMap.containsKey('edit')) {
-        try {
-          edit = ChatEditDraft.fromJson(
-            Map<String, dynamic>.from(draftMap['edit'] as Map),
-          );
-        } catch (_) {
-          invalid = true;
-        }
-      }
-      return _ComposerDraftSnapshot(
-        text: text,
-        attachment: attachment,
-        edit: edit,
-        invalidEdit: invalid,
-      );
-    } catch (_) {
-      // 结构化草稿损坏时禁止将原始JSON降级成普通聊天内容发送。
-      return _ComposerDraftSnapshot(
-        text: rawValue,
-        invalidEdit: rawValue.trimLeft().startsWith('{'),
-      );
-    }
-  }
-
-  static SelectedAttachment? _decodeAttachment(dynamic rawAttachment) {
-    return composerDecodeDraftAttachment(rawAttachment);
-  }
 }

@@ -1,5 +1,7 @@
 library;
 
+import 'dart:async';
+
 import '../../../core/app_logger.dart' show TraceLogger;
 import '../../observability/trace_models.dart' show TraceContext;
 import '../../settings/app_settings.dart';
@@ -72,6 +74,8 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
     required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
+    bool updateSummary = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) {
     return _historyStore.appendAssistantRawMessage(
       conversationId: conversationId,
@@ -80,6 +84,8 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
       projectedMessages: projectedMessages,
       lastMessagePreview: lastMessagePreview,
       updateShortWindow: updateShortWindow,
+      updateSummary: updateSummary,
+      shouldCommit: shouldCommit,
     );
   }
 
@@ -108,11 +114,11 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
   }
 
   @override
-  Future<void> truncateAfterMessage({
+  Future<Future<void> Function()> prepareTruncateAfterMessage({
     required String conversationId,
     required String anchorMessageId,
   }) {
-    return _historyStore.truncateAfterMessage(
+    return _historyStore.prepareTruncateAfterMessage(
       conversationId: conversationId,
       anchorMessageId: anchorMessageId,
     );

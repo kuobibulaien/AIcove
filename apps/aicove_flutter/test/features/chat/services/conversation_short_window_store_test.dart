@@ -2488,9 +2488,9 @@ void main() {
 
       final store = container.read(conversationTimelineCacheProvider);
       await store.reloadConversationFromRawStore('conv-t7-map');
-      // reload 全量同步：map_raw 一次。
+      // reload 的原文／确定性投影 ID 可直接定位 raw，无需写映射。
       final writesAfterReload = spyMapping.writeCallCount;
-      expect(writesAfterReload, 1);
+      expect(writesAfterReload, 0, reason: 'canonical 消息不写映射');
 
       // 成功维护轮：不得新增映射写。
       await store.upsertMessage(
@@ -2506,7 +2506,7 @@ void main() {
       expect(
         writesAfterUpsert1,
         writesAfterReload + 1,
-        reason: 'upsert 自身同步一次',
+        reason: '旧式非 canonical 图片 ID 在 upsert 时同步一次',
       );
       await _drainMaintenance(store, 'conv-t7-map');
       expect(store.debugProbeCount, 1);
@@ -2527,7 +2527,11 @@ void main() {
         ),
       );
       final writesAfterUpsert2 = spyMapping.writeCallCount;
-      expect(writesAfterUpsert2, writesAfterUpsert1 + 1);
+      expect(
+        writesAfterUpsert2,
+        writesAfterUpsert1 + 1,
+        reason: '新增旧式投影仍需更新映射',
+      );
       await _drainMaintenance(store, 'conv-t7-map');
       expect(store.debugProbeCount, 2);
       expect(

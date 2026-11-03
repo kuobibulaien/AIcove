@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
@@ -31,6 +32,8 @@ class _RecordingHistoryStore extends ChatHistoryStore {
     required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
+    bool updateSummary = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     appended.add(
       _Appended(

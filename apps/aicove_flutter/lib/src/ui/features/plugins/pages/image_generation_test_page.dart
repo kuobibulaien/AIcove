@@ -510,8 +510,7 @@ class _ImageGenerationTestPageState
                 onTap: _openPreview,
                 child: SmoothClipRRect(
                   radius: 18,
-                  child: Container(
-                    color: colors.surface,
+                  child: MoeInsetSurface(
                     child: AspectRatio(
                       aspectRatio: aspectRatio,
                       child: Image.file(
@@ -545,24 +544,23 @@ class _ImageGenerationTestPageState
                       final isSelected = index == safeIndex;
                       return GestureDetector(
                         onTap: () => setState(() => _selectedIndex = index),
-                        child: Container(
+                        child: SizedBox(
                           width: 72,
-                          padding: const EdgeInsets.all(2),
-                          decoration: MoeG2Decoration(
+                          child: MoeInsetSurface(
                             radius: 12,
-                            color: colors.surface,
-                            border: Border.all(
+                            padding: const EdgeInsets.all(2),
+                            border: BorderSide(
                               color: isSelected
                                   ? colors.primary
                                   : colors.borderLight,
                               width: isSelected ? 1.6 : 1,
                             ),
-                          ),
-                          child: SmoothClipRRect(
-                            radius: 10,
-                            child: Image.file(
-                              File(_localPaths[index]),
-                              fit: BoxFit.cover,
+                            child: SmoothClipRRect(
+                              radius: 10,
+                              child: Image.file(
+                                File(_localPaths[index]),
+                                fit: BoxFit.cover,
+                              ),
                             ),
                           ),
                         ),

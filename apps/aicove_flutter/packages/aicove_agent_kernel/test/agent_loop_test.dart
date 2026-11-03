@@ -498,6 +498,93 @@ void main() {
     },
   );
 
+  test(
+    'yield stops after the current tool batch, before the next request',
+    () async {
+      late Harness h;
+      h = Harness(
+        steps: [
+          (TurnContext ctx) async {
+            expect(h.loop.yieldAtBoundary(), isTrue);
+            return callTools(['a', 'b']);
+          },
+          reply('never requested'),
+        ],
+      );
+      final result = await h.run();
+
+      expect(result.status, LoopStatus.completed);
+      expect(result.stopReason, KernelStopReason.steered);
+      expect(h.tools.log, ['start:a', 'end:a', 'start:b', 'end:b']);
+      expect(h.model.requests, hasLength(1));
+      expect(h.loop.yieldAtBoundary(), isFalse);
+    },
+  );
+
+  test('a withdrawn yield lets the run continue', () async {
+    late Harness h;
+    h = Harness(
+      steps: [
+        (TurnContext ctx) async {
+          h.loop.yieldAtBoundary();
+          h.loop.yieldAtBoundary(enabled: false);
+          return callTools(['a']);
+        },
+        reply('done'),
+      ],
+    );
+    final result = await h.run();
+    expect(result.stopReason, isNull);
+    expect(result.lastTurn!.text, 'done');
+  });
+
+  test('yield requested while preparing the next round skips its request', () async {
+    late Harness h;
+    h = Harness(
+      steps: [
+        callTools(['a']),
+        reply('never requested'),
+      ],
+    );
+    h.preparer.onPrepare = () {
+      if (h.preparer.modes.length == 2) h.loop.yieldAtBoundary();
+    };
+    final result = await h.run();
+    expect(result.stopReason, KernelStopReason.steered);
+    expect(h.model.requests, hasLength(1));
+  });
+
+  test('yield requested during overflow recovery skips the retry', () async {
+    late Harness h;
+    h = Harness(
+      steps: [
+        callTools(['a']),
+        const KernelContextOverflow('too long'),
+        reply('never requested'),
+      ],
+    );
+    h.preparer.onRecovery = () => h.loop.yieldAtBoundary();
+    final result = await h.run();
+    expect(result.stopReason, KernelStopReason.steered);
+    expect(h.model.requests, hasLength(2));
+  });
+
+  test('yield during a final reply lets the run finish normally', () async {
+    late Harness h;
+    h = Harness(
+      steps: [
+        (TurnContext ctx) async {
+          h.loop.yieldAtBoundary();
+          return reply('answer');
+        },
+      ],
+    );
+    final result = await h.run();
+    expect(result.status, LoopStatus.completed);
+    expect(result.stopReason, isNull);
+    expect(result.lastTurn!.text, 'answer');
+  });
+
   test('a loop instance runs once', () async {
     final h = Harness(steps: [reply('x')]);
     await h.run();

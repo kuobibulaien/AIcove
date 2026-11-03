@@ -10,6 +10,7 @@ import '../../../../core/utils/data_image.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/moe_frosted_material.dart';
 import '../../../theme/tokens.dart';
 import '../../chat/widgets/chat_wallpaper_background.dart';
 import '../widgets/wallpaper_preview_samples.dart';
@@ -427,17 +428,19 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
         viewPadding: EdgeInsets.zero,
         viewInsets: EdgeInsets.zero,
       ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          wallpaper,
-          WallpaperSampleScreen(
-            kind: widget.kind,
-            wide: layout == WallpaperLayout.wide,
-            conversation: conversation,
-            documentStyle: documentStyle,
-          ),
-        ],
+      child: MoeSolidBackdropScope.none(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            wallpaper,
+            WallpaperSampleScreen(
+              kind: widget.kind,
+              wide: layout == WallpaperLayout.wide,
+              conversation: conversation,
+              documentStyle: documentStyle,
+            ),
+          ],
+        ),
       ),
     );
   }

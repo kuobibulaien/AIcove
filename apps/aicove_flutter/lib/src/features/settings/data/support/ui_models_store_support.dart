@@ -158,6 +158,7 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'stream_segment_delay_seconds': 0.0,
   'chat_display_style': 'bubble',
   'auto_scroll_on_send': true,
+  'allow_multi_message_send': false,
   'text_scale_factor': 1.0,
   'ui_scale_factor': 1.0,
   'windows_window_controls_side': WindowControlButtonSide.left.value,
@@ -186,9 +187,10 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
 };
 
 Map<String, dynamic> _defaultAutoReplySettings() => <String, dynamic>{
+  'frequency': 'default',
   'daily_limit': 3,
   'min_interval_minutes': 120,
-  'quiet_hours_enabled': true,
+  'quiet_hours_enabled': false,
   'quiet_hours_start': '22:00',
   'quiet_hours_end': '08:00',
   'allow_exact_alarm': false,
@@ -462,7 +464,57 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       return v;
     }
 
+    String normalizeFrequency(dynamic value) {
+      return value?.toString().trim() == 'frequent' ? 'frequent' : 'default';
+    }
+
+    String? normalizeOptionalTime(String? value) {
+      if (value == null || value.isEmpty) return null;
+      final parts = value.split(':');
+      if (parts.length != 2) return null;
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h == null || m == null) return null;
+      final hh = h.clamp(0, 23).toInt().toString().padLeft(2, '0');
+      final mm = m.clamp(0, 59).toInt().toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+
+    final contactSettings = <String, Map<String, dynamic>>{};
+    final rawContacts = source['contact_settings'];
+    if (rawContacts is Map) {
+      for (final entry in rawContacts.entries) {
+        final key = entry.key.toString().trim();
+        final value = entry.value;
+        if (key.isEmpty || value is! Map) continue;
+        final item = <String, dynamic>{};
+        final rawFreq = value['frequency']?.toString().trim();
+        if (rawFreq == 'default' || rawFreq == 'frequent') {
+          item['frequency'] = rawFreq;
+        }
+        if (value['quiet_hours_enabled'] is bool) {
+          item['quiet_hours_enabled'] = value['quiet_hours_enabled'];
+        }
+        final qStart = normalizeOptionalTime(
+          value['quiet_hours_start'] as String?,
+        );
+        if (qStart != null) item['quiet_hours_start'] = qStart;
+        final qEnd = normalizeOptionalTime(value['quiet_hours_end'] as String?);
+        if (qEnd != null) item['quiet_hours_end'] = qEnd;
+        if (value['allow_ai_set_reminders'] is bool) {
+          item['allow_ai_set_reminders'] = value['allow_ai_set_reminders'];
+        }
+        if (value['allow_proactive_calls'] is bool) {
+          item['allow_proactive_calls'] = value['allow_proactive_calls'];
+        }
+        if (item.isNotEmpty) {
+          contactSettings[key] = item;
+        }
+      }
+    }
+
     return <String, dynamic>{
+      'frequency': normalizeFrequency(source['frequency']),
       'daily_limit': clampInt(
         source['daily_limit'] as num?,
         1,
@@ -475,7 +527,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         720,
         defaults['min_interval_minutes'] as int,
       ),
-      'quiet_hours_enabled': source['quiet_hours_enabled'] != false,
+      'quiet_hours_enabled': source['quiet_hours_enabled'] == true,
       'quiet_hours_start': normalizeTime(
         source['quiet_hours_start'] as String?,
         defaults['quiet_hours_start'] as String,
@@ -495,6 +547,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
           (source['analyzer_provider'] as String?)?.trim().isNotEmpty == true
           ? (source['analyzer_provider'] as String).trim()
           : null,
+      if (contactSettings.isNotEmpty) 'contact_settings': contactSettings,
     };
   }
 
@@ -597,6 +650,8 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
           if (!models.contains(model)) models.add(model);
           if (!visible.contains(model)) visible.add(model);
         }
+        customConfig[AsrRequestFormat.configKey] ??=
+            AsrRequestFormat.aliyun.value;
         customConfig[kAliyunAsrSeededKey] = true;
       }
 
@@ -641,28 +696,14 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
           }
         }
       }
-      // 语音识别渠道：补显式识别格式；纯识别渠道的模型名大多推断不出类型
-      // （nova-3、16k_zh、volc.seedasr.*），未手动设类型的一律算识别。
+      // 纯识别渠道的模型名大多推断不出类型（nova-3、16k_zh、volc.seedasr.*），
+      // 未手动设类型的一律算识别。识别格式只认用户写下的值，不按地址猜。
       final asrOnly =
           capabilities.isNotEmpty &&
           capabilities.every((item) => item == ModelType.stt.value);
-      final asrFormat = AsrRequestFormat.normalizeStored(
-        rawFormat: customConfig[AsrRequestFormat.configKey]?.toString(),
-        apiBaseUrl: apiBaseUrl,
-        hasSpeechRecognitionModels:
-            asrOnly ||
-            models.any(
-              (model) =>
-                  _resolveProviderModelType(
-                    providerId: id,
-                    modelId: model,
-                    modelTypes: modelTypes,
-                  ) ==
-                  ModelType.stt,
-            ),
-      );
+      final asrFormat = AsrRequestFormat.ofConfig(customConfig);
       if (asrFormat != null) {
-        customConfig[AsrRequestFormat.configKey] = asrFormat;
+        customConfig[AsrRequestFormat.configKey] = asrFormat.value;
       }
       if (asrOnly) {
         for (final model in models) {
@@ -727,7 +768,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         }
         visibleList.add(model);
       }
-      if (visibleList.isEmpty && models.isNotEmpty) {
+      if (visibleList.isEmpty && models.isNotEmpty && hidden.isEmpty) {
         visibleList.add(models.first);
       }
 

@@ -1,3 +1,5 @@
+import '../chat/domain/message.dart';
+
 /// Read-only inputs available when a plugin builds its system prompt for one
 /// request, after the request messages are known.
 class PluginRequestContext {
@@ -7,6 +9,7 @@ class PluginRequestContext {
     this.conversationId,
     this.hasInternalImageContext = false,
     this.readOnly = false,
+    this.rawHistory = const [],
   });
 
   final String userMessage;
@@ -21,4 +24,8 @@ class PluginRequestContext {
   /// A context preview: assemble only, start no background work and write
   /// nothing.
   final bool readOnly;
+
+  /// Raw messages already bounded to this request's topic and replay anchor.
+  /// Never replace this with a fresh read of the conversation's latest history.
+  final List<Message> rawHistory;
 }

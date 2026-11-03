@@ -18,6 +18,14 @@ import '../../../voice_call/domain/asr_request_format.dart';
 import '../../settings_models.dart';
 import '../support/ui_models_store_support.dart';
 
+/// 渠道没有列模型的接口，只能手动添加模型。
+class ProviderModelListUnsupported implements Exception {
+  const ProviderModelListUnsupported();
+
+  @override
+  String toString() => '这个渠道没有模型列表接口，请用「自定义模型」手动添加。';
+}
+
 /// 设置模块远端探测数据源。
 /// 只负责模型列表预览和单模型连通性测试。
 class ProviderProbeRemoteDataSource {
@@ -56,16 +64,17 @@ class ProviderProbeRemoteDataSource {
         customConfig: customConfig,
       );
     }
-    if (isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl)) {
-      return kNovelAiDefaultModels;
-    }
-    // Fish Audio 与各家识别接口都没有列模型的端点，直接用注册表里的模型。
+    // NovelAI、Fish Audio 和走 WebSocket 的识别厂商没有列模型的接口：如实报错，
+    // 不拿内置模型冒充拉取结果。识别格式挂在 http(s) 渠道上时照常请求 /models。
     final config = customConfig ?? const <String, dynamic>{};
-    final asrFormat = AsrRequestFormat.ofConfig(config);
-    if (asrFormat != null) return asrFormat.defaultModels;
-    if (TtsRequestFormat.fromRaw(config['requestFormat']?.toString()) ==
-        TtsRequestFormat.fishAudio) {
-      return TtsRequestFormat.fishAudio.defaultModels;
+    final scheme = Uri.tryParse(apiBaseUrl.trim())?.scheme ?? '';
+    if (isNovelAiProvider(providerId: providerId, apiBaseUrl: apiBaseUrl) ||
+        TtsRequestFormat.fromRaw(config['requestFormat']?.toString()) ==
+            TtsRequestFormat.fishAudio ||
+        (AsrRequestFormat.ofConfig(config) != null &&
+            scheme != 'http' &&
+            scheme != 'https')) {
+      throw const ProviderModelListUnsupported();
     }
     if (resolvedProvider == 'gemini') {
       return _previewGeminiProvider(

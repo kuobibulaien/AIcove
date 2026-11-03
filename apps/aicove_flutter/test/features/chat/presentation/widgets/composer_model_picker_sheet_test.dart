@@ -11,7 +11,7 @@ import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
 class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   _FakeAppSettingsNotifier(this._settings);
 
-  AppSettings _settings;
+  final AppSettings _settings;
   final List<List<String>> reorderedQueues = <List<String>>[];
   final List<String> selectedModels = <String>[];
 
@@ -23,82 +23,31 @@ class _FakeAppSettingsNotifier extends AppSettingsNotifier {
   @override
   Future<void> setDefaultChatModels(List<String> models) async {
     reorderedQueues.add(List<String>.from(models));
-    final nextDefaultModel =
-        models.isNotEmpty ? models.first : _settings.defaultModelName;
-    _settings = _settings.copyWith(
-      defaultModelName: nextDefaultModel,
-      defaultChatModels: List<String>.from(models),
-    );
-    state = AsyncData(_settings);
   }
 
   @override
   Future<void> setDefaultModelName(String modelId) async {
     selectedModels.add(modelId);
-    final normalized = <String>[modelId];
-    for (final existing in _settings.defaultChatModels) {
-      if (!normalized.contains(existing)) {
-        normalized.add(existing);
-      }
-    }
-    _settings = _settings.copyWith(
-      defaultModelName: modelId,
-      defaultChatModels: normalized,
-    );
-    state = AsyncData(_settings);
   }
 }
 
 void main() {
-  test('composerReorderModelQueue should adjust insertion index correctly', () {
-    final reordered = composerReorderModelQueue(
+  test('composerGroupModelsByProvider groups visible models by provider', () {
+    final settings = _buildSettings(
+      defaultModelName: 'openai:model-a',
+      defaultChatModels: const <String>['openai:model-a'],
+    );
+    final groups = composerGroupModelsByProvider(settings);
+    expect(groups, hasLength(1));
+    expect(groups.single.providerId, 'openai');
+    expect(groups.single.providerName, 'OpenAI');
+    expect(
+      groups.single.models,
       <String>['openai:model-a', 'openai:model-b', 'openai:model-c'],
-      0,
-      3,
-    );
-
-    expect(
-      reordered,
-      <String>['openai:model-b', 'openai:model-c', 'openai:model-a'],
     );
   });
 
-  testWidgets('default queue reorder should persist new order', (tester) async {
-    final notifier = _FakeAppSettingsNotifier(
-      _buildSettings(
-        defaultModelName: 'openai:model-a',
-        defaultChatModels: const <String>[
-          'openai:model-a',
-          'openai:model-b',
-          'openai:model-c',
-        ],
-      ),
-    );
-
-    await tester.pumpWidget(_buildHost(notifier));
-    await _openSheet(tester);
-
-    final reorderable = tester.widget<ReorderableListView>(
-      find.byType(ReorderableListView),
-    );
-    expect(reorderable.onReorder, isNotNull);
-    reorderable.onReorder!(2, 0);
-    await tester.pumpAndSettle();
-
-    expect(
-      notifier.reorderedQueues.single,
-      <String>['openai:model-c', 'openai:model-a', 'openai:model-b'],
-    );
-    expect(
-      notifier.currentSettings.defaultChatModels,
-      <String>['openai:model-c', 'openai:model-a', 'openai:model-b'],
-    );
-    expect(notifier.currentSettings.defaultModelName, 'openai:model-c');
-    await tester.pump(const Duration(seconds: 2));
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('tapping other model should promote it to queue head',
+  testWidgets('tapping a model picks it for this session only without global queue editor',
       (tester) async {
     final notifier = _FakeAppSettingsNotifier(
       _buildSettings(
@@ -109,21 +58,116 @@ void main() {
         ],
       ),
     );
+    final results = <ComposerModelSelection?>[];
 
-    await tester.pumpWidget(_buildHost(notifier));
+    await tester.pumpWidget(_buildHost(notifier, results: results));
     await _openSheet(tester);
 
-    expect(find.text('其他可用模型'), findsOneWidget);
+    expect(find.byType(ReorderableListView), findsNothing);
+    expect(find.text('默认队列'), findsNothing);
+    expect(find.text('其他可用模型'), findsNothing);
+    expect(find.text('OpenAI'), findsOneWidget);
+
     await tester.tap(find.text('模型 C'));
     await tester.pumpAndSettle();
 
-    expect(notifier.selectedModels.single, 'openai:model-c');
-    expect(
-      notifier.currentSettings.defaultChatModels,
-      <String>['openai:model-c', 'openai:model-a', 'openai:model-b'],
+    expect(results.single?.modelRef, 'openai:model-c');
+    expect(notifier.selectedModels, isEmpty);
+    expect(notifier.reorderedQueues, isEmpty);
+    expect(notifier.currentSettings.defaultModelName, 'openai:model-a');
+  });
+
+  testWidgets('session model is marked and follow-default clears it',
+      (tester) async {
+    final notifier = _FakeAppSettingsNotifier(
+      _buildSettings(
+        defaultModelName: 'openai:model-a',
+        defaultChatModels: const <String>[
+          'openai:model-a',
+          'openai:model-b',
+        ],
+      ),
     );
-    expect(notifier.currentSettings.defaultModelName, 'openai:model-c');
-    expect(find.text('默认队列'), findsNothing);
+    final results = <ComposerModelSelection?>[];
+
+    await tester.pumpWidget(
+      _buildHost(notifier, sessionModel: 'openai:model-b', results: results),
+    );
+    await _openSheet(tester);
+
+    final followTile = find.byKey(const ValueKey<String>('follow_default_queue'));
+    expect(
+      find.descendant(
+        of: followTile,
+        matching: find.byIcon(Icons.radio_button_unchecked),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('当前默认：模型 A（OpenAI）'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('model_openai:model-b')),
+        matching: find.byIcon(Icons.radio_button_checked),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('model_openai:model-a')),
+        matching: find.byIcon(Icons.radio_button_checked),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('跟随默认模型'));
+    await tester.pumpAndSettle();
+
+    expect(results.single, isNotNull);
+    expect(results.single!.modelRef, isNull);
+    expect(notifier.selectedModels, isEmpty);
+  });
+
+  testWidgets('stale session model shows unavailable notice and can be cleared',
+      (tester) async {
+    final notifier = _FakeAppSettingsNotifier(
+      _buildSettings(
+        defaultModelName: 'openai:model-a',
+        defaultChatModels: const <String>['openai:model-a'],
+      ),
+    );
+    final results = <ComposerModelSelection?>[];
+
+    await tester.pumpWidget(
+      _buildHost(notifier, sessionModel: 'openai:hidden-model', results: results),
+    );
+    await _openSheet(tester);
+
+    expect(
+      find.byKey(const ValueKey<String>('stale_session_model')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('原选模型：hidden-model（OpenAI）'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('该模型已隐藏或渠道已关闭，当前暂按默认模型回复'),
+      findsOneWidget,
+    );
+    final followTile = find.byKey(const ValueKey<String>('follow_default_queue'));
+    expect(
+      find.descendant(
+        of: followTile,
+        matching: find.byIcon(Icons.radio_button_unchecked),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('跟随默认模型'));
+    await tester.pumpAndSettle();
+
+    expect(results.single, isNotNull);
+    expect(results.single!.modelRef, isNull);
   });
 }
 
@@ -192,7 +236,11 @@ AppSettings _buildSettings({
   );
 }
 
-Widget _buildHost(_FakeAppSettingsNotifier notifier) {
+Widget _buildHost(
+  _FakeAppSettingsNotifier notifier, {
+  String? sessionModel,
+  List<ComposerModelSelection?>? results,
+}) {
   return ProviderScope(
     overrides: [
       appSettingsProvider.overrideWith(() => notifier),
@@ -206,20 +254,11 @@ Widget _buildHost(_FakeAppSettingsNotifier notifier) {
               return Center(
                 child: TextButton(
                   onPressed: () async {
-                    final selected =
-                        await showComposerModelPickerSheet(context);
-                    if (selected == null || selected.trim().isEmpty) {
-                      return;
-                    }
-                    final latestSettings =
-                        ref.read(appSettingsProvider).valueOrNull ??
-                            notifier.currentSettings;
-                    if (selected == latestSettings.defaultModelName) {
-                      return;
-                    }
-                    await ref
-                        .read(appSettingsProvider.notifier)
-                        .setDefaultModelName(selected);
+                    final selection = await showComposerModelPickerSheet(
+                      context,
+                      sessionModel: sessionModel,
+                    );
+                    results?.add(selection);
                   },
                   child: const Text('open'),
                 ),

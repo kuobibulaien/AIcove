@@ -20,6 +20,7 @@ const localGeneralSettings = <String>{
   'chat_display_style',
   'auto_scroll_on_send',
   'auto_scroll_on_ai_reply',
+  'allow_multi_message_send',
   'bubble_show_thinking',
   'document_show_thinking',
   'document_show_tool_calls',
@@ -127,7 +128,12 @@ Future<bool> saveCloudPreference(
   Object? value, {
   int? atMs,
 }) => cloudLocalWrite(() async {
-  final oldFields = cloudPreferenceFields(key, preferences.get(key));
+  final oldValue = preferences.get(key);
+  final changed =
+      (oldValue != null) != (value != null) ||
+      canonicalSettingJson(projectCloudPreference(key, oldValue)) !=
+          canonicalSettingJson(projectCloudPreference(key, value));
+  final oldFields = cloudPreferenceFields(key, oldValue);
   final fields = cloudPreferenceFields(key, value);
   final journal = preferenceTimeJournal(preferences);
   final previousJournal = jsonEncode(journal);
@@ -155,7 +161,10 @@ Future<bool> saveCloudPreference(
   )) {
     return false;
   }
-  if (await _writePreference(preferences, key, value)) return true;
+  if (await _writePreference(preferences, key, value)) {
+    if (changed) notifyExternalSyncChange(key);
+    return true;
+  }
   if (!await preferences.setString(cloudPreferenceTimesKey, previousJournal)) {
     throw StateError('Setting clock rollback failed');
   }

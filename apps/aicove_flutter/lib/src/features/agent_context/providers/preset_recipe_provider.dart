@@ -194,6 +194,21 @@ class PresetRecipeImportController extends AsyncNotifier<void> {
     sourceFileName: '基础上下文.json',
   );
 
+  Future<void> renamePreset(String presetId, String name) async {
+    state = const AsyncLoading();
+    try {
+      await ref
+          .read(sillyTavernPresetStoreProvider)
+          .renamePreset(presetId, name);
+      ref.invalidate(presetRecipeListProvider);
+      ref.invalidate(presetRecipeProvider(presetId));
+      state = const AsyncData(null);
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+      rethrow;
+    }
+  }
+
   /// 删除预设。仍有角色明确绑定时拒绝，避免这些角色请求时报“预设丢失”。
   Future<void> deletePreset(String presetId) async {
     state = const AsyncLoading();

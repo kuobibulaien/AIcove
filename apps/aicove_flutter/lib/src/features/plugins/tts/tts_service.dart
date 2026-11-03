@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
 
 import 'package:http/http.dart' as http;
 
 import '../../../core/app_logger.dart';
+import '../../../core/api/media_request_retry.dart';
+import '../../../core/api/request_control.dart';
 import '../../../core/utils/mime_utils.dart';
 import 'providers/tts_provider_factory.dart';
 import 'aliyun_qwen_tts_websocket.dart';
@@ -141,31 +144,24 @@ class TtsService {
       final client = http.Client();
       http.Response resp;
       try {
-        final req = http.Request('POST', speechUri);
-        req.headers.addAll(headers);
-        req.body = requestBodyJson;
-
-        final streamed = await client.send(req).timeout(timeout);
-        headersReceivedMs = sw.elapsedMilliseconds;
-        stage = 'downloading_body';
-
-        final remaining = timeout - Duration(milliseconds: headersReceivedMs);
-        if (remaining <= Duration.zero) {
-          throw TimeoutException('TTS response body not completed', timeout);
-        }
-
-        final bytes = await streamed.stream.toBytes().timeout(remaining);
-        sw.stop();
-
-        resp = http.Response.bytes(
-          bytes,
-          streamed.statusCode,
-          headers: streamed.headers,
-          request: streamed.request,
-          isRedirect: streamed.isRedirect,
-          persistentConnection: streamed.persistentConnection,
-          reasonPhrase: streamed.reasonPhrase,
+        // UI stop/30-second fallback does not yet own a cancellation signal.
+        // All attempts still share the original convert timeout budget.
+        resp = await sendMediaRequestWithRetry(
+          policy: MediaRetryPolicy.tts,
+          remaining: () => timeout - sw.elapsed,
+          phase: 'tts.synthesize',
+          send: () async {
+            stage = 'waiting_headers';
+            final req = RequestControl.request('POST', speechUri);
+            req.headers.addAll(headers);
+            req.body = requestBodyJson;
+            final streamed = await client.send(req);
+            headersReceivedMs = sw.elapsedMilliseconds;
+            stage = 'downloading_body';
+            return streamed;
+          },
         );
+        sw.stop();
       } finally {
         client.close();
       }
@@ -230,6 +226,8 @@ class TtsService {
       // 如果是 JSON 响应，按原来的方式解析
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       return _parseResponse(data);
+    } on KernelCancelledException {
+      rethrow;
     } on TtsException {
       rethrow;
     } on TimeoutException catch (e) {
@@ -345,6 +343,7 @@ class TtsService {
       final wsService = AliyunQwenTtsWebSocket(
         apiKey: apiKey!,
         model: targetModel,
+        endpoint: _buildAliyunRealtimeUri(requestUrl),
       );
 
       // realtime 模型只支持 pcm 格式
@@ -353,7 +352,7 @@ class TtsService {
         voiceId: voiceId,
         responseFormat: 'pcm',
         sampleRate: 24000,
-        languageType: 'Chinese',
+        languageType: 'Auto',
       );
 
       if (pcmBytes.isEmpty) {
@@ -432,6 +431,28 @@ class TtsService {
     }
   }
 
+  Uri _resolveAliyunBaseUri(String rawUrl) {
+    try {
+      final url = rawUrl.trim();
+      final uri = Uri.parse(url.contains('://') ? url : 'https://$url');
+      if (uri.host.isNotEmpty) return uri;
+    } on FormatException {
+      // 无效地址沿用阿里云默认站点；空地址已在 convert 入口拒绝。
+    }
+    return Uri.parse('https://dashscope.aliyuncs.com');
+  }
+
+  Uri _buildAliyunRealtimeUri(String rawUrl) {
+    final uri = _resolveAliyunBaseUri(rawUrl);
+    return Uri(
+      userInfo: uri.userInfo,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : null,
+      scheme: uri.scheme == 'http' || uri.scheme == 'ws' ? 'ws' : 'wss',
+      path: '/api-ws/v1/realtime',
+    );
+  }
+
   /// 根据配置构造同步语音接口地址
   ///
   /// 兼容多种写法：
@@ -439,29 +460,23 @@ class TtsService {
   /// - 直接填完整语音地址（保留原路径）
   /// - 阿里云使用专用端点
   Uri _buildSpeechUri(String rawUrl, String effectiveFormat) {
+    if (effectiveFormat == 'aliyun_qwen_tts' ||
+        effectiveFormat == 'aliyun_cosyvoice') {
+      final uri = _resolveAliyunBaseUri(rawUrl);
+      final isQwen = effectiveFormat == 'aliyun_qwen_tts';
+      final endpoint = isQwen ? 'multimodal-generation' : 'text2audio';
+      if (uri.path.contains(endpoint)) return uri.replace(query: null);
+      return Uri(
+        scheme: uri.scheme,
+        userInfo: uri.userInfo,
+        host: uri.host,
+        port: uri.hasPort ? uri.port : null,
+        path: '/api/v1/services/aigc/$endpoint/generation',
+      );
+    }
+
     final uri = Uri.parse(rawUrl);
     final path = uri.path;
-
-    // 阿里云 Qwen-TTS 使用 multimodal-generation 端点
-    if (effectiveFormat == 'aliyun_qwen_tts') {
-      const qwenTtsPath =
-          '/api/v1/services/aigc/multimodal-generation/generation';
-      if (path.contains('multimodal-generation')) {
-        return uri.replace(query: null);
-      }
-      // 构建阿里云 Qwen-TTS 端点
-      return Uri.parse('https://dashscope.aliyuncs.com$qwenTtsPath');
-    }
-
-    // 阿里云 CosyVoice 使用 text2audio 端点（非流式）
-    if (effectiveFormat == 'aliyun_cosyvoice') {
-      const cosyVoicePath = '/api/v1/services/aigc/text2audio/generation';
-      if (path.contains('text2audio')) {
-        return uri.replace(query: null);
-      }
-      // 构建阿里云 CosyVoice 端点
-      return Uri.parse('https://dashscope.aliyuncs.com$cosyVoicePath');
-    }
 
     // OpenAI 兼容格式使用 /audio/speech
     const speechPath = '/audio/speech';
@@ -490,6 +505,8 @@ class TtsService {
       try {
         final result = await convert(text);
         results.add(result);
+      } on KernelCancelledException {
+        rethrow;
       } catch (e) {
         // 单条失败不影响整体结果，记录日志并返回失败条目
         AppLogger.warning(
@@ -784,11 +801,7 @@ class TtsService {
     // Qwen-TTS 请求格式：input 包含 text、voice、language_type
     return {
       'model': targetModel,
-      'input': {
-        'text': text,
-        'voice': voiceId,
-        'language_type': 'Chinese', // 默认中文
-      },
+      'input': {'text': text, 'voice': voiceId, 'language_type': 'Auto'},
     };
   }
 

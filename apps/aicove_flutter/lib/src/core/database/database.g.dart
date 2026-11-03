@@ -179,6 +179,54 @@ class $ConversationsTable extends Conversations
   late final GeneratedColumn<String> chatDisplayStyle = GeneratedColumn<String>(
       'chat_display_style', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _imagePreviewScaleMeta =
+      const VerificationMeta('imagePreviewScale');
+  @override
+  late final GeneratedColumn<double> imagePreviewScale =
+      GeneratedColumn<double>('image_preview_scale', aliasedName, true,
+          type: DriftSqlType.double, requiredDuringInsert: false);
+  static const VerificationMeta _expandAudioTextMeta =
+      const VerificationMeta('expandAudioText');
+  @override
+  late final GeneratedColumn<bool> expandAudioText = GeneratedColumn<bool>(
+      'expand_audio_text', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("expand_audio_text" IN (0, 1))'));
+  static const VerificationMeta _hideUserAvatarMeta =
+      const VerificationMeta('hideUserAvatar');
+  @override
+  late final GeneratedColumn<bool> hideUserAvatar = GeneratedColumn<bool>(
+      'hide_user_avatar', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("hide_user_avatar" IN (0, 1))'));
+  static const VerificationMeta _chunkEnabledMeta =
+      const VerificationMeta('chunkEnabled');
+  @override
+  late final GeneratedColumn<bool> chunkEnabled = GeneratedColumn<bool>(
+      'chunk_enabled', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("chunk_enabled" IN (0, 1))'));
+  static const VerificationMeta _filterPunctuationMeta =
+      const VerificationMeta('filterPunctuation');
+  @override
+  late final GeneratedColumn<bool> filterPunctuation = GeneratedColumn<bool>(
+      'filter_punctuation', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("filter_punctuation" IN (0, 1))'));
+  static const VerificationMeta _chunkPunctuationSetIdMeta =
+      const VerificationMeta('chunkPunctuationSetId');
+  @override
+  late final GeneratedColumn<String> chunkPunctuationSetId =
+      GeneratedColumn<String>('chunk_punctuation_set_id', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _agentModeMeta =
       const VerificationMeta('agentMode');
   @override
@@ -280,6 +328,12 @@ class $ConversationsTable extends Conversations
         recipeId,
         thinkingLevels,
         chatDisplayStyle,
+        imagePreviewScale,
+        expandAudioText,
+        hideUserAvatar,
+        chunkEnabled,
+        filterPunctuation,
+        chunkPunctuationSetId,
         agentMode,
         lastMessage,
         lastMessageTime,
@@ -444,6 +498,42 @@ class $ConversationsTable extends Conversations
           chatDisplayStyle.isAcceptableOrUnknown(
               data['chat_display_style']!, _chatDisplayStyleMeta));
     }
+    if (data.containsKey('image_preview_scale')) {
+      context.handle(
+          _imagePreviewScaleMeta,
+          imagePreviewScale.isAcceptableOrUnknown(
+              data['image_preview_scale']!, _imagePreviewScaleMeta));
+    }
+    if (data.containsKey('expand_audio_text')) {
+      context.handle(
+          _expandAudioTextMeta,
+          expandAudioText.isAcceptableOrUnknown(
+              data['expand_audio_text']!, _expandAudioTextMeta));
+    }
+    if (data.containsKey('hide_user_avatar')) {
+      context.handle(
+          _hideUserAvatarMeta,
+          hideUserAvatar.isAcceptableOrUnknown(
+              data['hide_user_avatar']!, _hideUserAvatarMeta));
+    }
+    if (data.containsKey('chunk_enabled')) {
+      context.handle(
+          _chunkEnabledMeta,
+          chunkEnabled.isAcceptableOrUnknown(
+              data['chunk_enabled']!, _chunkEnabledMeta));
+    }
+    if (data.containsKey('filter_punctuation')) {
+      context.handle(
+          _filterPunctuationMeta,
+          filterPunctuation.isAcceptableOrUnknown(
+              data['filter_punctuation']!, _filterPunctuationMeta));
+    }
+    if (data.containsKey('chunk_punctuation_set_id')) {
+      context.handle(
+          _chunkPunctuationSetIdMeta,
+          chunkPunctuationSetId.isAcceptableOrUnknown(
+              data['chunk_punctuation_set_id']!, _chunkPunctuationSetIdMeta));
+    }
     if (data.containsKey('agent_mode')) {
       context.handle(_agentModeMeta,
           agentMode.isAcceptableOrUnknown(data['agent_mode']!, _agentModeMeta));
@@ -572,6 +662,19 @@ class $ConversationsTable extends Conversations
           .read(DriftSqlType.string, data['${effectivePrefix}thinking_levels']),
       chatDisplayStyle: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}chat_display_style']),
+      imagePreviewScale: attachedDatabase.typeMapping.read(
+          DriftSqlType.double, data['${effectivePrefix}image_preview_scale']),
+      expandAudioText: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}expand_audio_text']),
+      hideUserAvatar: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}hide_user_avatar']),
+      chunkEnabled: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}chunk_enabled']),
+      filterPunctuation: attachedDatabase.typeMapping.read(
+          DriftSqlType.bool, data['${effectivePrefix}filter_punctuation']),
+      chunkPunctuationSetId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}chunk_punctuation_set_id']),
       agentMode: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}agent_mode']),
       lastMessage: attachedDatabase.typeMapping
@@ -633,6 +736,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
   final String? recipeId;
   final String? thinkingLevels;
   final String? chatDisplayStyle;
+  final double? imagePreviewScale;
+  final bool? expandAudioText;
+  final bool? hideUserAvatar;
+  final bool? chunkEnabled;
+  final bool? filterPunctuation;
+  final String? chunkPunctuationSetId;
   final String? agentMode;
   final String? lastMessage;
   final int? lastMessageTime;
@@ -671,6 +780,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       this.recipeId,
       this.thinkingLevels,
       this.chatDisplayStyle,
+      this.imagePreviewScale,
+      this.expandAudioText,
+      this.hideUserAvatar,
+      this.chunkEnabled,
+      this.filterPunctuation,
+      this.chunkPunctuationSetId,
       this.agentMode,
       this.lastMessage,
       this.lastMessageTime,
@@ -744,6 +859,24 @@ class Conversation extends DataClass implements Insertable<Conversation> {
     }
     if (!nullToAbsent || chatDisplayStyle != null) {
       map['chat_display_style'] = Variable<String>(chatDisplayStyle);
+    }
+    if (!nullToAbsent || imagePreviewScale != null) {
+      map['image_preview_scale'] = Variable<double>(imagePreviewScale);
+    }
+    if (!nullToAbsent || expandAudioText != null) {
+      map['expand_audio_text'] = Variable<bool>(expandAudioText);
+    }
+    if (!nullToAbsent || hideUserAvatar != null) {
+      map['hide_user_avatar'] = Variable<bool>(hideUserAvatar);
+    }
+    if (!nullToAbsent || chunkEnabled != null) {
+      map['chunk_enabled'] = Variable<bool>(chunkEnabled);
+    }
+    if (!nullToAbsent || filterPunctuation != null) {
+      map['filter_punctuation'] = Variable<bool>(filterPunctuation);
+    }
+    if (!nullToAbsent || chunkPunctuationSetId != null) {
+      map['chunk_punctuation_set_id'] = Variable<String>(chunkPunctuationSetId);
     }
     if (!nullToAbsent || agentMode != null) {
       map['agent_mode'] = Variable<String>(agentMode);
@@ -838,6 +971,24 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       chatDisplayStyle: chatDisplayStyle == null && nullToAbsent
           ? const Value.absent()
           : Value(chatDisplayStyle),
+      imagePreviewScale: imagePreviewScale == null && nullToAbsent
+          ? const Value.absent()
+          : Value(imagePreviewScale),
+      expandAudioText: expandAudioText == null && nullToAbsent
+          ? const Value.absent()
+          : Value(expandAudioText),
+      hideUserAvatar: hideUserAvatar == null && nullToAbsent
+          ? const Value.absent()
+          : Value(hideUserAvatar),
+      chunkEnabled: chunkEnabled == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chunkEnabled),
+      filterPunctuation: filterPunctuation == null && nullToAbsent
+          ? const Value.absent()
+          : Value(filterPunctuation),
+      chunkPunctuationSetId: chunkPunctuationSetId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chunkPunctuationSetId),
       agentMode: agentMode == null && nullToAbsent
           ? const Value.absent()
           : Value(agentMode),
@@ -905,6 +1056,14 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       recipeId: serializer.fromJson<String?>(json['recipeId']),
       thinkingLevels: serializer.fromJson<String?>(json['thinkingLevels']),
       chatDisplayStyle: serializer.fromJson<String?>(json['chatDisplayStyle']),
+      imagePreviewScale:
+          serializer.fromJson<double?>(json['imagePreviewScale']),
+      expandAudioText: serializer.fromJson<bool?>(json['expandAudioText']),
+      hideUserAvatar: serializer.fromJson<bool?>(json['hideUserAvatar']),
+      chunkEnabled: serializer.fromJson<bool?>(json['chunkEnabled']),
+      filterPunctuation: serializer.fromJson<bool?>(json['filterPunctuation']),
+      chunkPunctuationSetId:
+          serializer.fromJson<String?>(json['chunkPunctuationSetId']),
       agentMode: serializer.fromJson<String?>(json['agentMode']),
       lastMessage: serializer.fromJson<String?>(json['lastMessage']),
       lastMessageTime: serializer.fromJson<int?>(json['lastMessageTime']),
@@ -954,6 +1113,13 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       'recipeId': serializer.toJson<String?>(recipeId),
       'thinkingLevels': serializer.toJson<String?>(thinkingLevels),
       'chatDisplayStyle': serializer.toJson<String?>(chatDisplayStyle),
+      'imagePreviewScale': serializer.toJson<double?>(imagePreviewScale),
+      'expandAudioText': serializer.toJson<bool?>(expandAudioText),
+      'hideUserAvatar': serializer.toJson<bool?>(hideUserAvatar),
+      'chunkEnabled': serializer.toJson<bool?>(chunkEnabled),
+      'filterPunctuation': serializer.toJson<bool?>(filterPunctuation),
+      'chunkPunctuationSetId':
+          serializer.toJson<String?>(chunkPunctuationSetId),
       'agentMode': serializer.toJson<String?>(agentMode),
       'lastMessage': serializer.toJson<String?>(lastMessage),
       'lastMessageTime': serializer.toJson<int?>(lastMessageTime),
@@ -996,6 +1162,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           Value<String?> recipeId = const Value.absent(),
           Value<String?> thinkingLevels = const Value.absent(),
           Value<String?> chatDisplayStyle = const Value.absent(),
+          Value<double?> imagePreviewScale = const Value.absent(),
+          Value<bool?> expandAudioText = const Value.absent(),
+          Value<bool?> hideUserAvatar = const Value.absent(),
+          Value<bool?> chunkEnabled = const Value.absent(),
+          Value<bool?> filterPunctuation = const Value.absent(),
+          Value<String?> chunkPunctuationSetId = const Value.absent(),
           Value<String?> agentMode = const Value.absent(),
           Value<String?> lastMessage = const Value.absent(),
           Value<int?> lastMessageTime = const Value.absent(),
@@ -1053,6 +1225,22 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         chatDisplayStyle: chatDisplayStyle.present
             ? chatDisplayStyle.value
             : this.chatDisplayStyle,
+        imagePreviewScale: imagePreviewScale.present
+            ? imagePreviewScale.value
+            : this.imagePreviewScale,
+        expandAudioText: expandAudioText.present
+            ? expandAudioText.value
+            : this.expandAudioText,
+        hideUserAvatar:
+            hideUserAvatar.present ? hideUserAvatar.value : this.hideUserAvatar,
+        chunkEnabled:
+            chunkEnabled.present ? chunkEnabled.value : this.chunkEnabled,
+        filterPunctuation: filterPunctuation.present
+            ? filterPunctuation.value
+            : this.filterPunctuation,
+        chunkPunctuationSetId: chunkPunctuationSetId.present
+            ? chunkPunctuationSetId.value
+            : this.chunkPunctuationSetId,
         agentMode: agentMode.present ? agentMode.value : this.agentMode,
         lastMessage: lastMessage.present ? lastMessage.value : this.lastMessage,
         lastMessageTime: lastMessageTime.present
@@ -1131,6 +1319,24 @@ class Conversation extends DataClass implements Insertable<Conversation> {
       chatDisplayStyle: data.chatDisplayStyle.present
           ? data.chatDisplayStyle.value
           : this.chatDisplayStyle,
+      imagePreviewScale: data.imagePreviewScale.present
+          ? data.imagePreviewScale.value
+          : this.imagePreviewScale,
+      expandAudioText: data.expandAudioText.present
+          ? data.expandAudioText.value
+          : this.expandAudioText,
+      hideUserAvatar: data.hideUserAvatar.present
+          ? data.hideUserAvatar.value
+          : this.hideUserAvatar,
+      chunkEnabled: data.chunkEnabled.present
+          ? data.chunkEnabled.value
+          : this.chunkEnabled,
+      filterPunctuation: data.filterPunctuation.present
+          ? data.filterPunctuation.value
+          : this.filterPunctuation,
+      chunkPunctuationSetId: data.chunkPunctuationSetId.present
+          ? data.chunkPunctuationSetId.value
+          : this.chunkPunctuationSetId,
       agentMode: data.agentMode.present ? data.agentMode.value : this.agentMode,
       lastMessage:
           data.lastMessage.present ? data.lastMessage.value : this.lastMessage,
@@ -1185,6 +1391,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           ..write('recipeId: $recipeId, ')
           ..write('thinkingLevels: $thinkingLevels, ')
           ..write('chatDisplayStyle: $chatDisplayStyle, ')
+          ..write('imagePreviewScale: $imagePreviewScale, ')
+          ..write('expandAudioText: $expandAudioText, ')
+          ..write('hideUserAvatar: $hideUserAvatar, ')
+          ..write('chunkEnabled: $chunkEnabled, ')
+          ..write('filterPunctuation: $filterPunctuation, ')
+          ..write('chunkPunctuationSetId: $chunkPunctuationSetId, ')
           ..write('agentMode: $agentMode, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
@@ -1228,6 +1440,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
         recipeId,
         thinkingLevels,
         chatDisplayStyle,
+        imagePreviewScale,
+        expandAudioText,
+        hideUserAvatar,
+        chunkEnabled,
+        filterPunctuation,
+        chunkPunctuationSetId,
         agentMode,
         lastMessage,
         lastMessageTime,
@@ -1270,6 +1488,12 @@ class Conversation extends DataClass implements Insertable<Conversation> {
           other.recipeId == this.recipeId &&
           other.thinkingLevels == this.thinkingLevels &&
           other.chatDisplayStyle == this.chatDisplayStyle &&
+          other.imagePreviewScale == this.imagePreviewScale &&
+          other.expandAudioText == this.expandAudioText &&
+          other.hideUserAvatar == this.hideUserAvatar &&
+          other.chunkEnabled == this.chunkEnabled &&
+          other.filterPunctuation == this.filterPunctuation &&
+          other.chunkPunctuationSetId == this.chunkPunctuationSetId &&
           other.agentMode == this.agentMode &&
           other.lastMessage == this.lastMessage &&
           other.lastMessageTime == this.lastMessageTime &&
@@ -1310,6 +1534,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
   final Value<String?> recipeId;
   final Value<String?> thinkingLevels;
   final Value<String?> chatDisplayStyle;
+  final Value<double?> imagePreviewScale;
+  final Value<bool?> expandAudioText;
+  final Value<bool?> hideUserAvatar;
+  final Value<bool?> chunkEnabled;
+  final Value<bool?> filterPunctuation;
+  final Value<String?> chunkPunctuationSetId;
   final Value<String?> agentMode;
   final Value<String?> lastMessage;
   final Value<int?> lastMessageTime;
@@ -1349,6 +1579,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.recipeId = const Value.absent(),
     this.thinkingLevels = const Value.absent(),
     this.chatDisplayStyle = const Value.absent(),
+    this.imagePreviewScale = const Value.absent(),
+    this.expandAudioText = const Value.absent(),
+    this.hideUserAvatar = const Value.absent(),
+    this.chunkEnabled = const Value.absent(),
+    this.filterPunctuation = const Value.absent(),
+    this.chunkPunctuationSetId = const Value.absent(),
     this.agentMode = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
@@ -1389,6 +1625,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     this.recipeId = const Value.absent(),
     this.thinkingLevels = const Value.absent(),
     this.chatDisplayStyle = const Value.absent(),
+    this.imagePreviewScale = const Value.absent(),
+    this.expandAudioText = const Value.absent(),
+    this.hideUserAvatar = const Value.absent(),
+    this.chunkEnabled = const Value.absent(),
+    this.filterPunctuation = const Value.absent(),
+    this.chunkPunctuationSetId = const Value.absent(),
     this.agentMode = const Value.absent(),
     this.lastMessage = const Value.absent(),
     this.lastMessageTime = const Value.absent(),
@@ -1433,6 +1675,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     Expression<String>? recipeId,
     Expression<String>? thinkingLevels,
     Expression<String>? chatDisplayStyle,
+    Expression<double>? imagePreviewScale,
+    Expression<bool>? expandAudioText,
+    Expression<bool>? hideUserAvatar,
+    Expression<bool>? chunkEnabled,
+    Expression<bool>? filterPunctuation,
+    Expression<String>? chunkPunctuationSetId,
     Expression<String>? agentMode,
     Expression<String>? lastMessage,
     Expression<int>? lastMessageTime,
@@ -1477,6 +1725,13 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       if (recipeId != null) 'recipe_id': recipeId,
       if (thinkingLevels != null) 'thinking_levels': thinkingLevels,
       if (chatDisplayStyle != null) 'chat_display_style': chatDisplayStyle,
+      if (imagePreviewScale != null) 'image_preview_scale': imagePreviewScale,
+      if (expandAudioText != null) 'expand_audio_text': expandAudioText,
+      if (hideUserAvatar != null) 'hide_user_avatar': hideUserAvatar,
+      if (chunkEnabled != null) 'chunk_enabled': chunkEnabled,
+      if (filterPunctuation != null) 'filter_punctuation': filterPunctuation,
+      if (chunkPunctuationSetId != null)
+        'chunk_punctuation_set_id': chunkPunctuationSetId,
       if (agentMode != null) 'agent_mode': agentMode,
       if (lastMessage != null) 'last_message': lastMessage,
       if (lastMessageTime != null) 'last_message_time': lastMessageTime,
@@ -1521,6 +1776,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       Value<String?>? recipeId,
       Value<String?>? thinkingLevels,
       Value<String?>? chatDisplayStyle,
+      Value<double?>? imagePreviewScale,
+      Value<bool?>? expandAudioText,
+      Value<bool?>? hideUserAvatar,
+      Value<bool?>? chunkEnabled,
+      Value<bool?>? filterPunctuation,
+      Value<String?>? chunkPunctuationSetId,
       Value<String?>? agentMode,
       Value<String?>? lastMessage,
       Value<int?>? lastMessageTime,
@@ -1563,6 +1824,13 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
       recipeId: recipeId ?? this.recipeId,
       thinkingLevels: thinkingLevels ?? this.thinkingLevels,
       chatDisplayStyle: chatDisplayStyle ?? this.chatDisplayStyle,
+      imagePreviewScale: imagePreviewScale ?? this.imagePreviewScale,
+      expandAudioText: expandAudioText ?? this.expandAudioText,
+      hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
+      chunkEnabled: chunkEnabled ?? this.chunkEnabled,
+      filterPunctuation: filterPunctuation ?? this.filterPunctuation,
+      chunkPunctuationSetId:
+          chunkPunctuationSetId ?? this.chunkPunctuationSetId,
       agentMode: agentMode ?? this.agentMode,
       lastMessage: lastMessage ?? this.lastMessage,
       lastMessageTime: lastMessageTime ?? this.lastMessageTime,
@@ -1662,6 +1930,25 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
     if (chatDisplayStyle.present) {
       map['chat_display_style'] = Variable<String>(chatDisplayStyle.value);
     }
+    if (imagePreviewScale.present) {
+      map['image_preview_scale'] = Variable<double>(imagePreviewScale.value);
+    }
+    if (expandAudioText.present) {
+      map['expand_audio_text'] = Variable<bool>(expandAudioText.value);
+    }
+    if (hideUserAvatar.present) {
+      map['hide_user_avatar'] = Variable<bool>(hideUserAvatar.value);
+    }
+    if (chunkEnabled.present) {
+      map['chunk_enabled'] = Variable<bool>(chunkEnabled.value);
+    }
+    if (filterPunctuation.present) {
+      map['filter_punctuation'] = Variable<bool>(filterPunctuation.value);
+    }
+    if (chunkPunctuationSetId.present) {
+      map['chunk_punctuation_set_id'] =
+          Variable<String>(chunkPunctuationSetId.value);
+    }
     if (agentMode.present) {
       map['agent_mode'] = Variable<String>(agentMode.value);
     }
@@ -1734,6 +2021,12 @@ class ConversationsCompanion extends UpdateCompanion<Conversation> {
           ..write('recipeId: $recipeId, ')
           ..write('thinkingLevels: $thinkingLevels, ')
           ..write('chatDisplayStyle: $chatDisplayStyle, ')
+          ..write('imagePreviewScale: $imagePreviewScale, ')
+          ..write('expandAudioText: $expandAudioText, ')
+          ..write('hideUserAvatar: $hideUserAvatar, ')
+          ..write('chunkEnabled: $chunkEnabled, ')
+          ..write('filterPunctuation: $filterPunctuation, ')
+          ..write('chunkPunctuationSetId: $chunkPunctuationSetId, ')
           ..write('agentMode: $agentMode, ')
           ..write('lastMessage: $lastMessage, ')
           ..write('lastMessageTime: $lastMessageTime, ')
@@ -4141,861 +4434,6 @@ class ProvidersCompanion extends UpdateCompanion<Provider> {
   }
 }
 
-class $SyncScopesTable extends SyncScopes
-    with TableInfo<$SyncScopesTable, SyncScope> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $SyncScopesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _enabledScopesMeta =
-      const VerificationMeta('enabledScopes');
-  @override
-  late final GeneratedColumn<String> enabledScopes = GeneratedColumn<String>(
-      'enabled_scopes', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant('["chat.history", "characters.cards"]'));
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
-  @override
-  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-      'id', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(1));
-  @override
-  List<GeneratedColumn> get $columns => [enabledScopes, updatedAt, id];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'sync_scopes';
-  @override
-  VerificationContext validateIntegrity(Insertable<SyncScope> instance,
-      {bool isInserting = false}) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('enabled_scopes')) {
-      context.handle(
-          _enabledScopesMeta,
-          enabledScopes.isAcceptableOrUnknown(
-              data['enabled_scopes']!, _enabledScopesMeta));
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  SyncScope map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return SyncScope(
-      enabledScopes: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}enabled_scopes'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
-    );
-  }
-
-  @override
-  $SyncScopesTable createAlias(String alias) {
-    return $SyncScopesTable(attachedDatabase, alias);
-  }
-}
-
-class SyncScope extends DataClass implements Insertable<SyncScope> {
-  final String enabledScopes;
-  final int updatedAt;
-  final int id;
-  const SyncScope(
-      {required this.enabledScopes, required this.updatedAt, required this.id});
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['enabled_scopes'] = Variable<String>(enabledScopes);
-    map['updated_at'] = Variable<int>(updatedAt);
-    map['id'] = Variable<int>(id);
-    return map;
-  }
-
-  SyncScopesCompanion toCompanion(bool nullToAbsent) {
-    return SyncScopesCompanion(
-      enabledScopes: Value(enabledScopes),
-      updatedAt: Value(updatedAt),
-      id: Value(id),
-    );
-  }
-
-  factory SyncScope.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return SyncScope(
-      enabledScopes: serializer.fromJson<String>(json['enabledScopes']),
-      updatedAt: serializer.fromJson<int>(json['updatedAt']),
-      id: serializer.fromJson<int>(json['id']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'enabledScopes': serializer.toJson<String>(enabledScopes),
-      'updatedAt': serializer.toJson<int>(updatedAt),
-      'id': serializer.toJson<int>(id),
-    };
-  }
-
-  SyncScope copyWith({String? enabledScopes, int? updatedAt, int? id}) =>
-      SyncScope(
-        enabledScopes: enabledScopes ?? this.enabledScopes,
-        updatedAt: updatedAt ?? this.updatedAt,
-        id: id ?? this.id,
-      );
-  SyncScope copyWithCompanion(SyncScopesCompanion data) {
-    return SyncScope(
-      enabledScopes: data.enabledScopes.present
-          ? data.enabledScopes.value
-          : this.enabledScopes,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-      id: data.id.present ? data.id.value : this.id,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('SyncScope(')
-          ..write('enabledScopes: $enabledScopes, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('id: $id')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(enabledScopes, updatedAt, id);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is SyncScope &&
-          other.enabledScopes == this.enabledScopes &&
-          other.updatedAt == this.updatedAt &&
-          other.id == this.id);
-}
-
-class SyncScopesCompanion extends UpdateCompanion<SyncScope> {
-  final Value<String> enabledScopes;
-  final Value<int> updatedAt;
-  final Value<int> id;
-  const SyncScopesCompanion({
-    this.enabledScopes = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.id = const Value.absent(),
-  });
-  SyncScopesCompanion.insert({
-    this.enabledScopes = const Value.absent(),
-    required int updatedAt,
-    this.id = const Value.absent(),
-  }) : updatedAt = Value(updatedAt);
-  static Insertable<SyncScope> custom({
-    Expression<String>? enabledScopes,
-    Expression<int>? updatedAt,
-    Expression<int>? id,
-  }) {
-    return RawValuesInsertable({
-      if (enabledScopes != null) 'enabled_scopes': enabledScopes,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (id != null) 'id': id,
-    });
-  }
-
-  SyncScopesCompanion copyWith(
-      {Value<String>? enabledScopes, Value<int>? updatedAt, Value<int>? id}) {
-    return SyncScopesCompanion(
-      enabledScopes: enabledScopes ?? this.enabledScopes,
-      updatedAt: updatedAt ?? this.updatedAt,
-      id: id ?? this.id,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (enabledScopes.present) {
-      map['enabled_scopes'] = Variable<String>(enabledScopes.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<int>(updatedAt.value);
-    }
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('SyncScopesCompanion(')
-          ..write('enabledScopes: $enabledScopes, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('id: $id')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $SyncCursorsTable extends SyncCursors
-    with TableInfo<$SyncCursorsTable, SyncCursor> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $SyncCursorsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _deviceIdMeta =
-      const VerificationMeta('deviceId');
-  @override
-  late final GeneratedColumn<String> deviceId = GeneratedColumn<String>(
-      'device_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _conversationsCursorMeta =
-      const VerificationMeta('conversationsCursor');
-  @override
-  late final GeneratedColumn<int> conversationsCursor = GeneratedColumn<int>(
-      'conversations_cursor', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _messagesCursorMeta =
-      const VerificationMeta('messagesCursor');
-  @override
-  late final GeneratedColumn<int> messagesCursor = GeneratedColumn<int>(
-      'messages_cursor', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _providersCursorMeta =
-      const VerificationMeta('providersCursor');
-  @override
-  late final GeneratedColumn<int> providersCursor = GeneratedColumn<int>(
-      'providers_cursor', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
-  @override
-  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  @override
-  List<GeneratedColumn> get $columns => [
-        deviceId,
-        conversationsCursor,
-        messagesCursor,
-        providersCursor,
-        updatedAt
-      ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'sync_cursors';
-  @override
-  VerificationContext validateIntegrity(Insertable<SyncCursor> instance,
-      {bool isInserting = false}) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('device_id')) {
-      context.handle(_deviceIdMeta,
-          deviceId.isAcceptableOrUnknown(data['device_id']!, _deviceIdMeta));
-    } else if (isInserting) {
-      context.missing(_deviceIdMeta);
-    }
-    if (data.containsKey('conversations_cursor')) {
-      context.handle(
-          _conversationsCursorMeta,
-          conversationsCursor.isAcceptableOrUnknown(
-              data['conversations_cursor']!, _conversationsCursorMeta));
-    }
-    if (data.containsKey('messages_cursor')) {
-      context.handle(
-          _messagesCursorMeta,
-          messagesCursor.isAcceptableOrUnknown(
-              data['messages_cursor']!, _messagesCursorMeta));
-    }
-    if (data.containsKey('providers_cursor')) {
-      context.handle(
-          _providersCursorMeta,
-          providersCursor.isAcceptableOrUnknown(
-              data['providers_cursor']!, _providersCursorMeta));
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {deviceId};
-  @override
-  SyncCursor map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return SyncCursor(
-      deviceId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}device_id'])!,
-      conversationsCursor: attachedDatabase.typeMapping.read(
-          DriftSqlType.int, data['${effectivePrefix}conversations_cursor'])!,
-      messagesCursor: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}messages_cursor'])!,
-      providersCursor: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}providers_cursor'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
-    );
-  }
-
-  @override
-  $SyncCursorsTable createAlias(String alias) {
-    return $SyncCursorsTable(attachedDatabase, alias);
-  }
-}
-
-class SyncCursor extends DataClass implements Insertable<SyncCursor> {
-  final String deviceId;
-  final int conversationsCursor;
-  final int messagesCursor;
-  final int providersCursor;
-  final int updatedAt;
-  const SyncCursor(
-      {required this.deviceId,
-      required this.conversationsCursor,
-      required this.messagesCursor,
-      required this.providersCursor,
-      required this.updatedAt});
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['device_id'] = Variable<String>(deviceId);
-    map['conversations_cursor'] = Variable<int>(conversationsCursor);
-    map['messages_cursor'] = Variable<int>(messagesCursor);
-    map['providers_cursor'] = Variable<int>(providersCursor);
-    map['updated_at'] = Variable<int>(updatedAt);
-    return map;
-  }
-
-  SyncCursorsCompanion toCompanion(bool nullToAbsent) {
-    return SyncCursorsCompanion(
-      deviceId: Value(deviceId),
-      conversationsCursor: Value(conversationsCursor),
-      messagesCursor: Value(messagesCursor),
-      providersCursor: Value(providersCursor),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory SyncCursor.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return SyncCursor(
-      deviceId: serializer.fromJson<String>(json['deviceId']),
-      conversationsCursor:
-          serializer.fromJson<int>(json['conversationsCursor']),
-      messagesCursor: serializer.fromJson<int>(json['messagesCursor']),
-      providersCursor: serializer.fromJson<int>(json['providersCursor']),
-      updatedAt: serializer.fromJson<int>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'deviceId': serializer.toJson<String>(deviceId),
-      'conversationsCursor': serializer.toJson<int>(conversationsCursor),
-      'messagesCursor': serializer.toJson<int>(messagesCursor),
-      'providersCursor': serializer.toJson<int>(providersCursor),
-      'updatedAt': serializer.toJson<int>(updatedAt),
-    };
-  }
-
-  SyncCursor copyWith(
-          {String? deviceId,
-          int? conversationsCursor,
-          int? messagesCursor,
-          int? providersCursor,
-          int? updatedAt}) =>
-      SyncCursor(
-        deviceId: deviceId ?? this.deviceId,
-        conversationsCursor: conversationsCursor ?? this.conversationsCursor,
-        messagesCursor: messagesCursor ?? this.messagesCursor,
-        providersCursor: providersCursor ?? this.providersCursor,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
-  SyncCursor copyWithCompanion(SyncCursorsCompanion data) {
-    return SyncCursor(
-      deviceId: data.deviceId.present ? data.deviceId.value : this.deviceId,
-      conversationsCursor: data.conversationsCursor.present
-          ? data.conversationsCursor.value
-          : this.conversationsCursor,
-      messagesCursor: data.messagesCursor.present
-          ? data.messagesCursor.value
-          : this.messagesCursor,
-      providersCursor: data.providersCursor.present
-          ? data.providersCursor.value
-          : this.providersCursor,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('SyncCursor(')
-          ..write('deviceId: $deviceId, ')
-          ..write('conversationsCursor: $conversationsCursor, ')
-          ..write('messagesCursor: $messagesCursor, ')
-          ..write('providersCursor: $providersCursor, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(deviceId, conversationsCursor, messagesCursor,
-      providersCursor, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is SyncCursor &&
-          other.deviceId == this.deviceId &&
-          other.conversationsCursor == this.conversationsCursor &&
-          other.messagesCursor == this.messagesCursor &&
-          other.providersCursor == this.providersCursor &&
-          other.updatedAt == this.updatedAt);
-}
-
-class SyncCursorsCompanion extends UpdateCompanion<SyncCursor> {
-  final Value<String> deviceId;
-  final Value<int> conversationsCursor;
-  final Value<int> messagesCursor;
-  final Value<int> providersCursor;
-  final Value<int> updatedAt;
-  final Value<int> rowid;
-  const SyncCursorsCompanion({
-    this.deviceId = const Value.absent(),
-    this.conversationsCursor = const Value.absent(),
-    this.messagesCursor = const Value.absent(),
-    this.providersCursor = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  SyncCursorsCompanion.insert({
-    required String deviceId,
-    this.conversationsCursor = const Value.absent(),
-    this.messagesCursor = const Value.absent(),
-    this.providersCursor = const Value.absent(),
-    required int updatedAt,
-    this.rowid = const Value.absent(),
-  })  : deviceId = Value(deviceId),
-        updatedAt = Value(updatedAt);
-  static Insertable<SyncCursor> custom({
-    Expression<String>? deviceId,
-    Expression<int>? conversationsCursor,
-    Expression<int>? messagesCursor,
-    Expression<int>? providersCursor,
-    Expression<int>? updatedAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (deviceId != null) 'device_id': deviceId,
-      if (conversationsCursor != null)
-        'conversations_cursor': conversationsCursor,
-      if (messagesCursor != null) 'messages_cursor': messagesCursor,
-      if (providersCursor != null) 'providers_cursor': providersCursor,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  SyncCursorsCompanion copyWith(
-      {Value<String>? deviceId,
-      Value<int>? conversationsCursor,
-      Value<int>? messagesCursor,
-      Value<int>? providersCursor,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
-    return SyncCursorsCompanion(
-      deviceId: deviceId ?? this.deviceId,
-      conversationsCursor: conversationsCursor ?? this.conversationsCursor,
-      messagesCursor: messagesCursor ?? this.messagesCursor,
-      providersCursor: providersCursor ?? this.providersCursor,
-      updatedAt: updatedAt ?? this.updatedAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (deviceId.present) {
-      map['device_id'] = Variable<String>(deviceId.value);
-    }
-    if (conversationsCursor.present) {
-      map['conversations_cursor'] = Variable<int>(conversationsCursor.value);
-    }
-    if (messagesCursor.present) {
-      map['messages_cursor'] = Variable<int>(messagesCursor.value);
-    }
-    if (providersCursor.present) {
-      map['providers_cursor'] = Variable<int>(providersCursor.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<int>(updatedAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('SyncCursorsCompanion(')
-          ..write('deviceId: $deviceId, ')
-          ..write('conversationsCursor: $conversationsCursor, ')
-          ..write('messagesCursor: $messagesCursor, ')
-          ..write('providersCursor: $providersCursor, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $PendingOperationsTable extends PendingOperations
-    with TableInfo<$PendingOperationsTable, PendingOperation> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $PendingOperationsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _opIdMeta = const VerificationMeta('opId');
-  @override
-  late final GeneratedColumn<String> opId = GeneratedColumn<String>(
-      'op_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _opTypeMeta = const VerificationMeta('opType');
-  @override
-  late final GeneratedColumn<String> opType = GeneratedColumn<String>(
-      'op_type', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _opDataMeta = const VerificationMeta('opData');
-  @override
-  late final GeneratedColumn<String> opData = GeneratedColumn<String>(
-      'op_data', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
-  @override
-  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _syncedMeta = const VerificationMeta('synced');
-  @override
-  late final GeneratedColumn<bool> synced = GeneratedColumn<bool>(
-      'synced', aliasedName, false,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("synced" IN (0, 1))'),
-      defaultValue: const Constant(false));
-  @override
-  List<GeneratedColumn> get $columns =>
-      [opId, opType, opData, createdAt, synced];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'pending_operations';
-  @override
-  VerificationContext validateIntegrity(Insertable<PendingOperation> instance,
-      {bool isInserting = false}) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('op_id')) {
-      context.handle(
-          _opIdMeta, opId.isAcceptableOrUnknown(data['op_id']!, _opIdMeta));
-    } else if (isInserting) {
-      context.missing(_opIdMeta);
-    }
-    if (data.containsKey('op_type')) {
-      context.handle(_opTypeMeta,
-          opType.isAcceptableOrUnknown(data['op_type']!, _opTypeMeta));
-    } else if (isInserting) {
-      context.missing(_opTypeMeta);
-    }
-    if (data.containsKey('op_data')) {
-      context.handle(_opDataMeta,
-          opData.isAcceptableOrUnknown(data['op_data']!, _opDataMeta));
-    } else if (isInserting) {
-      context.missing(_opDataMeta);
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('synced')) {
-      context.handle(_syncedMeta,
-          synced.isAcceptableOrUnknown(data['synced']!, _syncedMeta));
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {opId};
-  @override
-  PendingOperation map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return PendingOperation(
-      opId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}op_id'])!,
-      opType: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}op_type'])!,
-      opData: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}op_data'])!,
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      synced: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}synced'])!,
-    );
-  }
-
-  @override
-  $PendingOperationsTable createAlias(String alias) {
-    return $PendingOperationsTable(attachedDatabase, alias);
-  }
-}
-
-class PendingOperation extends DataClass
-    implements Insertable<PendingOperation> {
-  final String opId;
-  final String opType;
-  final String opData;
-  final int createdAt;
-  final bool synced;
-  const PendingOperation(
-      {required this.opId,
-      required this.opType,
-      required this.opData,
-      required this.createdAt,
-      required this.synced});
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['op_id'] = Variable<String>(opId);
-    map['op_type'] = Variable<String>(opType);
-    map['op_data'] = Variable<String>(opData);
-    map['created_at'] = Variable<int>(createdAt);
-    map['synced'] = Variable<bool>(synced);
-    return map;
-  }
-
-  PendingOperationsCompanion toCompanion(bool nullToAbsent) {
-    return PendingOperationsCompanion(
-      opId: Value(opId),
-      opType: Value(opType),
-      opData: Value(opData),
-      createdAt: Value(createdAt),
-      synced: Value(synced),
-    );
-  }
-
-  factory PendingOperation.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return PendingOperation(
-      opId: serializer.fromJson<String>(json['opId']),
-      opType: serializer.fromJson<String>(json['opType']),
-      opData: serializer.fromJson<String>(json['opData']),
-      createdAt: serializer.fromJson<int>(json['createdAt']),
-      synced: serializer.fromJson<bool>(json['synced']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'opId': serializer.toJson<String>(opId),
-      'opType': serializer.toJson<String>(opType),
-      'opData': serializer.toJson<String>(opData),
-      'createdAt': serializer.toJson<int>(createdAt),
-      'synced': serializer.toJson<bool>(synced),
-    };
-  }
-
-  PendingOperation copyWith(
-          {String? opId,
-          String? opType,
-          String? opData,
-          int? createdAt,
-          bool? synced}) =>
-      PendingOperation(
-        opId: opId ?? this.opId,
-        opType: opType ?? this.opType,
-        opData: opData ?? this.opData,
-        createdAt: createdAt ?? this.createdAt,
-        synced: synced ?? this.synced,
-      );
-  PendingOperation copyWithCompanion(PendingOperationsCompanion data) {
-    return PendingOperation(
-      opId: data.opId.present ? data.opId.value : this.opId,
-      opType: data.opType.present ? data.opType.value : this.opType,
-      opData: data.opData.present ? data.opData.value : this.opData,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      synced: data.synced.present ? data.synced.value : this.synced,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('PendingOperation(')
-          ..write('opId: $opId, ')
-          ..write('opType: $opType, ')
-          ..write('opData: $opData, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('synced: $synced')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(opId, opType, opData, createdAt, synced);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is PendingOperation &&
-          other.opId == this.opId &&
-          other.opType == this.opType &&
-          other.opData == this.opData &&
-          other.createdAt == this.createdAt &&
-          other.synced == this.synced);
-}
-
-class PendingOperationsCompanion extends UpdateCompanion<PendingOperation> {
-  final Value<String> opId;
-  final Value<String> opType;
-  final Value<String> opData;
-  final Value<int> createdAt;
-  final Value<bool> synced;
-  final Value<int> rowid;
-  const PendingOperationsCompanion({
-    this.opId = const Value.absent(),
-    this.opType = const Value.absent(),
-    this.opData = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.synced = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  PendingOperationsCompanion.insert({
-    required String opId,
-    required String opType,
-    required String opData,
-    required int createdAt,
-    this.synced = const Value.absent(),
-    this.rowid = const Value.absent(),
-  })  : opId = Value(opId),
-        opType = Value(opType),
-        opData = Value(opData),
-        createdAt = Value(createdAt);
-  static Insertable<PendingOperation> custom({
-    Expression<String>? opId,
-    Expression<String>? opType,
-    Expression<String>? opData,
-    Expression<int>? createdAt,
-    Expression<bool>? synced,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (opId != null) 'op_id': opId,
-      if (opType != null) 'op_type': opType,
-      if (opData != null) 'op_data': opData,
-      if (createdAt != null) 'created_at': createdAt,
-      if (synced != null) 'synced': synced,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  PendingOperationsCompanion copyWith(
-      {Value<String>? opId,
-      Value<String>? opType,
-      Value<String>? opData,
-      Value<int>? createdAt,
-      Value<bool>? synced,
-      Value<int>? rowid}) {
-    return PendingOperationsCompanion(
-      opId: opId ?? this.opId,
-      opType: opType ?? this.opType,
-      opData: opData ?? this.opData,
-      createdAt: createdAt ?? this.createdAt,
-      synced: synced ?? this.synced,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (opId.present) {
-      map['op_id'] = Variable<String>(opId.value);
-    }
-    if (opType.present) {
-      map['op_type'] = Variable<String>(opType.value);
-    }
-    if (opData.present) {
-      map['op_data'] = Variable<String>(opData.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<int>(createdAt.value);
-    }
-    if (synced.present) {
-      map['synced'] = Variable<bool>(synced.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('PendingOperationsCompanion(')
-          ..write('opId: $opId, ')
-          ..write('opType: $opType, ')
-          ..write('opData: $opData, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('synced: $synced, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -5005,10 +4443,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $MessageProjectionMappingsTable(this);
   late final $MessageBlocksTable messageBlocks = $MessageBlocksTable(this);
   late final $ProvidersTable providers = $ProvidersTable(this);
-  late final $SyncScopesTable syncScopes = $SyncScopesTable(this);
-  late final $SyncCursorsTable syncCursors = $SyncCursorsTable(this);
-  late final $PendingOperationsTable pendingOperations =
-      $PendingOperationsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -5018,10 +4452,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         messages,
         messageProjectionMappings,
         messageBlocks,
-        providers,
-        syncScopes,
-        syncCursors,
-        pendingOperations
+        providers
       ];
 }
 
@@ -5052,6 +4483,12 @@ typedef $$ConversationsTableCreateCompanionBuilder = ConversationsCompanion
   Value<String?> recipeId,
   Value<String?> thinkingLevels,
   Value<String?> chatDisplayStyle,
+  Value<double?> imagePreviewScale,
+  Value<bool?> expandAudioText,
+  Value<bool?> hideUserAvatar,
+  Value<bool?> chunkEnabled,
+  Value<bool?> filterPunctuation,
+  Value<String?> chunkPunctuationSetId,
   Value<String?> agentMode,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
@@ -5093,6 +4530,12 @@ typedef $$ConversationsTableUpdateCompanionBuilder = ConversationsCompanion
   Value<String?> recipeId,
   Value<String?> thinkingLevels,
   Value<String?> chatDisplayStyle,
+  Value<double?> imagePreviewScale,
+  Value<bool?> expandAudioText,
+  Value<bool?> hideUserAvatar,
+  Value<bool?> chunkEnabled,
+  Value<bool?> filterPunctuation,
+  Value<String?> chunkPunctuationSetId,
   Value<String?> agentMode,
   Value<String?> lastMessage,
   Value<int?> lastMessageTime,
@@ -5150,6 +4593,12 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> recipeId = const Value.absent(),
             Value<String?> thinkingLevels = const Value.absent(),
             Value<String?> chatDisplayStyle = const Value.absent(),
+            Value<double?> imagePreviewScale = const Value.absent(),
+            Value<bool?> expandAudioText = const Value.absent(),
+            Value<bool?> hideUserAvatar = const Value.absent(),
+            Value<bool?> chunkEnabled = const Value.absent(),
+            Value<bool?> filterPunctuation = const Value.absent(),
+            Value<String?> chunkPunctuationSetId = const Value.absent(),
             Value<String?> agentMode = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
@@ -5190,6 +4639,12 @@ class $$ConversationsTableTableManager extends RootTableManager<
             recipeId: recipeId,
             thinkingLevels: thinkingLevels,
             chatDisplayStyle: chatDisplayStyle,
+            imagePreviewScale: imagePreviewScale,
+            expandAudioText: expandAudioText,
+            hideUserAvatar: hideUserAvatar,
+            chunkEnabled: chunkEnabled,
+            filterPunctuation: filterPunctuation,
+            chunkPunctuationSetId: chunkPunctuationSetId,
             agentMode: agentMode,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
@@ -5230,6 +4685,12 @@ class $$ConversationsTableTableManager extends RootTableManager<
             Value<String?> recipeId = const Value.absent(),
             Value<String?> thinkingLevels = const Value.absent(),
             Value<String?> chatDisplayStyle = const Value.absent(),
+            Value<double?> imagePreviewScale = const Value.absent(),
+            Value<bool?> expandAudioText = const Value.absent(),
+            Value<bool?> hideUserAvatar = const Value.absent(),
+            Value<bool?> chunkEnabled = const Value.absent(),
+            Value<bool?> filterPunctuation = const Value.absent(),
+            Value<String?> chunkPunctuationSetId = const Value.absent(),
             Value<String?> agentMode = const Value.absent(),
             Value<String?> lastMessage = const Value.absent(),
             Value<int?> lastMessageTime = const Value.absent(),
@@ -5270,6 +4731,12 @@ class $$ConversationsTableTableManager extends RootTableManager<
             recipeId: recipeId,
             thinkingLevels: thinkingLevels,
             chatDisplayStyle: chatDisplayStyle,
+            imagePreviewScale: imagePreviewScale,
+            expandAudioText: expandAudioText,
+            hideUserAvatar: hideUserAvatar,
+            chunkEnabled: chunkEnabled,
+            filterPunctuation: filterPunctuation,
+            chunkPunctuationSetId: chunkPunctuationSetId,
             agentMode: agentMode,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
@@ -5413,6 +4880,36 @@ class $$ConversationsTableFilterComposer
 
   ColumnFilters<String> get chatDisplayStyle => $state.composableBuilder(
       column: $state.table.chatDisplayStyle,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<double> get imagePreviewScale => $state.composableBuilder(
+      column: $state.table.imagePreviewScale,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get expandAudioText => $state.composableBuilder(
+      column: $state.table.expandAudioText,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get hideUserAvatar => $state.composableBuilder(
+      column: $state.table.hideUserAvatar,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get chunkEnabled => $state.composableBuilder(
+      column: $state.table.chunkEnabled,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<bool> get filterPunctuation => $state.composableBuilder(
+      column: $state.table.filterPunctuation,
+      builder: (column, joinBuilders) =>
+          ColumnFilters(column, joinBuilders: joinBuilders));
+
+  ColumnFilters<String> get chunkPunctuationSetId => $state.composableBuilder(
+      column: $state.table.chunkPunctuationSetId,
       builder: (column, joinBuilders) =>
           ColumnFilters(column, joinBuilders: joinBuilders));
 
@@ -5636,6 +5133,36 @@ class $$ConversationsTableOrderingComposer
 
   ColumnOrderings<String> get chatDisplayStyle => $state.composableBuilder(
       column: $state.table.chatDisplayStyle,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<double> get imagePreviewScale => $state.composableBuilder(
+      column: $state.table.imagePreviewScale,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get expandAudioText => $state.composableBuilder(
+      column: $state.table.expandAudioText,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get hideUserAvatar => $state.composableBuilder(
+      column: $state.table.hideUserAvatar,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get chunkEnabled => $state.composableBuilder(
+      column: $state.table.chunkEnabled,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<bool> get filterPunctuation => $state.composableBuilder(
+      column: $state.table.filterPunctuation,
+      builder: (column, joinBuilders) =>
+          ColumnOrderings(column, joinBuilders: joinBuilders));
+
+  ColumnOrderings<String> get chunkPunctuationSetId => $state.composableBuilder(
+      column: $state.table.chunkPunctuationSetId,
       builder: (column, joinBuilders) =>
           ColumnOrderings(column, joinBuilders: joinBuilders));
 
@@ -6715,351 +6242,6 @@ class $$ProvidersTableOrderingComposer
           ColumnOrderings(column, joinBuilders: joinBuilders));
 }
 
-typedef $$SyncScopesTableCreateCompanionBuilder = SyncScopesCompanion Function({
-  Value<String> enabledScopes,
-  required int updatedAt,
-  Value<int> id,
-});
-typedef $$SyncScopesTableUpdateCompanionBuilder = SyncScopesCompanion Function({
-  Value<String> enabledScopes,
-  Value<int> updatedAt,
-  Value<int> id,
-});
-
-class $$SyncScopesTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $SyncScopesTable,
-    SyncScope,
-    $$SyncScopesTableFilterComposer,
-    $$SyncScopesTableOrderingComposer,
-    $$SyncScopesTableCreateCompanionBuilder,
-    $$SyncScopesTableUpdateCompanionBuilder> {
-  $$SyncScopesTableTableManager(_$AppDatabase db, $SyncScopesTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          filteringComposer:
-              $$SyncScopesTableFilterComposer(ComposerState(db, table)),
-          orderingComposer:
-              $$SyncScopesTableOrderingComposer(ComposerState(db, table)),
-          updateCompanionCallback: ({
-            Value<String> enabledScopes = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> id = const Value.absent(),
-          }) =>
-              SyncScopesCompanion(
-            enabledScopes: enabledScopes,
-            updatedAt: updatedAt,
-            id: id,
-          ),
-          createCompanionCallback: ({
-            Value<String> enabledScopes = const Value.absent(),
-            required int updatedAt,
-            Value<int> id = const Value.absent(),
-          }) =>
-              SyncScopesCompanion.insert(
-            enabledScopes: enabledScopes,
-            updatedAt: updatedAt,
-            id: id,
-          ),
-        ));
-}
-
-class $$SyncScopesTableFilterComposer
-    extends FilterComposer<_$AppDatabase, $SyncScopesTable> {
-  $$SyncScopesTableFilterComposer(super.$state);
-  ColumnFilters<String> get enabledScopes => $state.composableBuilder(
-      column: $state.table.enabledScopes,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get updatedAt => $state.composableBuilder(
-      column: $state.table.updatedAt,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-}
-
-class $$SyncScopesTableOrderingComposer
-    extends OrderingComposer<_$AppDatabase, $SyncScopesTable> {
-  $$SyncScopesTableOrderingComposer(super.$state);
-  ColumnOrderings<String> get enabledScopes => $state.composableBuilder(
-      column: $state.table.enabledScopes,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
-      column: $state.table.updatedAt,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get id => $state.composableBuilder(
-      column: $state.table.id,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-}
-
-typedef $$SyncCursorsTableCreateCompanionBuilder = SyncCursorsCompanion
-    Function({
-  required String deviceId,
-  Value<int> conversationsCursor,
-  Value<int> messagesCursor,
-  Value<int> providersCursor,
-  required int updatedAt,
-  Value<int> rowid,
-});
-typedef $$SyncCursorsTableUpdateCompanionBuilder = SyncCursorsCompanion
-    Function({
-  Value<String> deviceId,
-  Value<int> conversationsCursor,
-  Value<int> messagesCursor,
-  Value<int> providersCursor,
-  Value<int> updatedAt,
-  Value<int> rowid,
-});
-
-class $$SyncCursorsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $SyncCursorsTable,
-    SyncCursor,
-    $$SyncCursorsTableFilterComposer,
-    $$SyncCursorsTableOrderingComposer,
-    $$SyncCursorsTableCreateCompanionBuilder,
-    $$SyncCursorsTableUpdateCompanionBuilder> {
-  $$SyncCursorsTableTableManager(_$AppDatabase db, $SyncCursorsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          filteringComposer:
-              $$SyncCursorsTableFilterComposer(ComposerState(db, table)),
-          orderingComposer:
-              $$SyncCursorsTableOrderingComposer(ComposerState(db, table)),
-          updateCompanionCallback: ({
-            Value<String> deviceId = const Value.absent(),
-            Value<int> conversationsCursor = const Value.absent(),
-            Value<int> messagesCursor = const Value.absent(),
-            Value<int> providersCursor = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              SyncCursorsCompanion(
-            deviceId: deviceId,
-            conversationsCursor: conversationsCursor,
-            messagesCursor: messagesCursor,
-            providersCursor: providersCursor,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String deviceId,
-            Value<int> conversationsCursor = const Value.absent(),
-            Value<int> messagesCursor = const Value.absent(),
-            Value<int> providersCursor = const Value.absent(),
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              SyncCursorsCompanion.insert(
-            deviceId: deviceId,
-            conversationsCursor: conversationsCursor,
-            messagesCursor: messagesCursor,
-            providersCursor: providersCursor,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-        ));
-}
-
-class $$SyncCursorsTableFilterComposer
-    extends FilterComposer<_$AppDatabase, $SyncCursorsTable> {
-  $$SyncCursorsTableFilterComposer(super.$state);
-  ColumnFilters<String> get deviceId => $state.composableBuilder(
-      column: $state.table.deviceId,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get conversationsCursor => $state.composableBuilder(
-      column: $state.table.conversationsCursor,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get messagesCursor => $state.composableBuilder(
-      column: $state.table.messagesCursor,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get providersCursor => $state.composableBuilder(
-      column: $state.table.providersCursor,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get updatedAt => $state.composableBuilder(
-      column: $state.table.updatedAt,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-}
-
-class $$SyncCursorsTableOrderingComposer
-    extends OrderingComposer<_$AppDatabase, $SyncCursorsTable> {
-  $$SyncCursorsTableOrderingComposer(super.$state);
-  ColumnOrderings<String> get deviceId => $state.composableBuilder(
-      column: $state.table.deviceId,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get conversationsCursor => $state.composableBuilder(
-      column: $state.table.conversationsCursor,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get messagesCursor => $state.composableBuilder(
-      column: $state.table.messagesCursor,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get providersCursor => $state.composableBuilder(
-      column: $state.table.providersCursor,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get updatedAt => $state.composableBuilder(
-      column: $state.table.updatedAt,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-}
-
-typedef $$PendingOperationsTableCreateCompanionBuilder
-    = PendingOperationsCompanion Function({
-  required String opId,
-  required String opType,
-  required String opData,
-  required int createdAt,
-  Value<bool> synced,
-  Value<int> rowid,
-});
-typedef $$PendingOperationsTableUpdateCompanionBuilder
-    = PendingOperationsCompanion Function({
-  Value<String> opId,
-  Value<String> opType,
-  Value<String> opData,
-  Value<int> createdAt,
-  Value<bool> synced,
-  Value<int> rowid,
-});
-
-class $$PendingOperationsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $PendingOperationsTable,
-    PendingOperation,
-    $$PendingOperationsTableFilterComposer,
-    $$PendingOperationsTableOrderingComposer,
-    $$PendingOperationsTableCreateCompanionBuilder,
-    $$PendingOperationsTableUpdateCompanionBuilder> {
-  $$PendingOperationsTableTableManager(
-      _$AppDatabase db, $PendingOperationsTable table)
-      : super(TableManagerState(
-          db: db,
-          table: table,
-          filteringComposer:
-              $$PendingOperationsTableFilterComposer(ComposerState(db, table)),
-          orderingComposer: $$PendingOperationsTableOrderingComposer(
-              ComposerState(db, table)),
-          updateCompanionCallback: ({
-            Value<String> opId = const Value.absent(),
-            Value<String> opType = const Value.absent(),
-            Value<String> opData = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<bool> synced = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PendingOperationsCompanion(
-            opId: opId,
-            opType: opType,
-            opData: opData,
-            createdAt: createdAt,
-            synced: synced,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String opId,
-            required String opType,
-            required String opData,
-            required int createdAt,
-            Value<bool> synced = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PendingOperationsCompanion.insert(
-            opId: opId,
-            opType: opType,
-            opData: opData,
-            createdAt: createdAt,
-            synced: synced,
-            rowid: rowid,
-          ),
-        ));
-}
-
-class $$PendingOperationsTableFilterComposer
-    extends FilterComposer<_$AppDatabase, $PendingOperationsTable> {
-  $$PendingOperationsTableFilterComposer(super.$state);
-  ColumnFilters<String> get opId => $state.composableBuilder(
-      column: $state.table.opId,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get opType => $state.composableBuilder(
-      column: $state.table.opType,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<String> get opData => $state.composableBuilder(
-      column: $state.table.opData,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<int> get createdAt => $state.composableBuilder(
-      column: $state.table.createdAt,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-
-  ColumnFilters<bool> get synced => $state.composableBuilder(
-      column: $state.table.synced,
-      builder: (column, joinBuilders) =>
-          ColumnFilters(column, joinBuilders: joinBuilders));
-}
-
-class $$PendingOperationsTableOrderingComposer
-    extends OrderingComposer<_$AppDatabase, $PendingOperationsTable> {
-  $$PendingOperationsTableOrderingComposer(super.$state);
-  ColumnOrderings<String> get opId => $state.composableBuilder(
-      column: $state.table.opId,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get opType => $state.composableBuilder(
-      column: $state.table.opType,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<String> get opData => $state.composableBuilder(
-      column: $state.table.opData,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<int> get createdAt => $state.composableBuilder(
-      column: $state.table.createdAt,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-
-  ColumnOrderings<bool> get synced => $state.composableBuilder(
-      column: $state.table.synced,
-      builder: (column, joinBuilders) =>
-          ColumnOrderings(column, joinBuilders: joinBuilders));
-}
-
 class $AppDatabaseManager {
   final _$AppDatabase _db;
   $AppDatabaseManager(this._db);
@@ -7074,10 +6256,4 @@ class $AppDatabaseManager {
       $$MessageBlocksTableTableManager(_db, _db.messageBlocks);
   $$ProvidersTableTableManager get providers =>
       $$ProvidersTableTableManager(_db, _db.providers);
-  $$SyncScopesTableTableManager get syncScopes =>
-      $$SyncScopesTableTableManager(_db, _db.syncScopes);
-  $$SyncCursorsTableTableManager get syncCursors =>
-      $$SyncCursorsTableTableManager(_db, _db.syncCursors);
-  $$PendingOperationsTableTableManager get pendingOperations =>
-      $$PendingOperationsTableTableManager(_db, _db.pendingOperations);
 }

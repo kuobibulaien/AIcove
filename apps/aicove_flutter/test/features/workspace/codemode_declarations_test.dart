@@ -18,6 +18,48 @@ AITool tool(
   handler: (_) async => 'ok',
 );
 void main() {
+  test(
+    'frequent tools are direct while management and MCP remain discoverable',
+    () {
+      const direct = [
+        'read',
+        'write',
+        'edit',
+        'bash',
+        'codemode',
+        'workspace_open',
+        'workspace_search',
+        'aicove_role',
+        'aicove_role_context',
+        'web_search',
+        'draw_image',
+      ];
+      final tools = assembleCodemodeTools([
+        ...direct.map(tool),
+        tool('aicove_list_presets'),
+        tool('aicove_read_role'),
+        tool('workspace_create'),
+        tool('web_fetch'),
+        tool('read_tool_result'),
+        tool('workspace_grep'),
+        tool('mcp__s__lookup'),
+      ]);
+      expect(directToolSchemas(tools).map((s) => s['function']['name']), [
+        ...direct,
+        'tool_search',
+      ]);
+      expect(tools.firstWhere((t) => t.name == 'read').description, 'Example');
+      expect(
+        tools.firstWhere((t) => t.name == 'aicove_list_presets').exposure,
+        ToolExposure.codemode,
+      );
+      expect(
+        tools.firstWhere((t) => t.name == 'mcp__s__lookup').exposure,
+        ToolExposure.deferred,
+      );
+    },
+  );
+
   test('direct remains default and metadata survives copies', () {
     final t = tool('read');
     expect(t.exposure, ToolExposure.direct);
@@ -31,8 +73,20 @@ void main() {
         tool('nested', exposure: ToolExposure.codemode),
         tool('mcp', exposure: ToolExposure.deferred),
       ]),
-      hasLength(1),
+      hasLength(2),
     );
+    final bounded = AITool(
+      name: 'bounded',
+      description: 'bounded',
+      parameters: const {},
+      handler: (_) async => '',
+      managesOutput: true,
+    );
+    expect(
+      bounded.copyWith(exposure: ToolExposure.codemode).managesOutput,
+      isTrue,
+    );
+    expect(assembleCodemodeTools([bounded]).single.managesOutput, isTrue);
   });
   test(
     'schema declarations preserve required, nested types, tags and output types',
@@ -130,7 +184,7 @@ void main() {
   );
   test('catalog is namespace-fair, bounded, and excludes deferred tools', () {
     final tools = [
-      for (var i = 0; i < 70; i++)
+      for (var i = 0; i < 200; i++)
         tool(
           'aicove_test_$i',
           exposure: ToolExposure.codemode,
@@ -141,9 +195,12 @@ void main() {
     ];
     final text = createCodemodeDescription(tools);
     expect(text, contains('## aicove'));
-    expect(text, contains('workspace_list(args:'));
+    expect(text, contains('workspace_list'));
+    expect(text, isNot(contains('(args:')));
+    expect(text, isNot(contains('description description')));
+    expect(text, contains('await describeTool(name)'));
     expect(text, contains('(some tools not listed)'));
     expect(text, isNot(contains('mcp__s__lookup')));
-    expect(text.length, lessThanOrEqualTo(12000));
+    expect(text.length - codemodeIntro.length, lessThanOrEqualTo(1500));
   });
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../settings/app_settings.dart';
+import '../../chat/services/provider_key_failure.dart';
 import '../data/workspace_store.dart';
 import '../domain/workspace_errors.dart';
 import '../workspace_providers.dart';
@@ -18,6 +19,7 @@ final webAppServerProvider = FutureProvider<WebAppServer>((ref) async {
     dataDir: store.root.parent,
     aiChat: createWebAppAiChat(
       loadSettings: () => ref.read(appSettingsProvider.future),
+      keyFailureRecorder: ref.read(providerKeyFailureRecorderProvider),
     ),
   );
   ref.onDispose(() => unawaited(server.close()));
@@ -80,12 +82,29 @@ class WebAppLauncher {
       'http://${wsId.toLowerCase()}.localhost:${started.port}/${page.split('/').map(Uri.encodeComponent).join('/')}',
     );
     if (!await _openExternal(uri)) {
-      throw const WebAppOpenException(
-        'launch_failed',
-        '没能打开浏览器，请检查是否设置了默认浏览器',
-      );
+      throw const WebAppOpenException('launch_failed', '没能打开浏览器，请检查是否设置了默认浏览器');
     }
     return WebAppOpenResult(uri: uri, portChanged: started.portChanged);
+  }
+
+  /// Preview an existing native directory, without importing it into a workspace.
+  Future<Uri> openLocalDirectoryForAgent(
+    String rootPath,
+    String pagePath,
+  ) async {
+    final id = await server.allowLocalDirectory(rootPath, pagePath);
+    final started = await server.start();
+    await server.activate();
+    final uri = Uri(
+      scheme: 'http',
+      host: '$id.localhost',
+      port: started.port,
+      pathSegments: pagePath.split('/'),
+    );
+    if (!await _openExternal(uri)) {
+      throw const WorkspaceException('launch_failed', '没能打开浏览器，请检查是否设置了默认浏览器');
+    }
+    return uri;
   }
 
   /// [open] for agent tools: failures surface as tool errors.

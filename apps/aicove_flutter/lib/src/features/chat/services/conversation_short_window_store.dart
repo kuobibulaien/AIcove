@@ -11,9 +11,11 @@ import 'package:path/path.dart' as p;
 import '../../../core/database/database.dart' as db;
 import '../../../core/database/database_provider.dart';
 import '../../../core/models/message_block.dart';
+import '../../../core/models/block_status.dart';
 import '../domain/message.dart';
 import '../../observability/frontend_diagnostics_port.dart';
 import 'history_display_decoder.dart';
+import 'chat_message_projection_codec.dart';
 import '../../task_agent/domain/task_relay.dart';
 import '../../observability/frontend_diagnostics_provider.dart';
 import 'image_dimension_probe/image_dimension_probe.dart';
@@ -549,7 +551,8 @@ class ConversationTimelineCache {
         if (_disposed || !canRefresh(id)) return false;
         // Remote snapshots already contain canonical projection mappings.
         // Refreshing the view must not rewrite them into local sync mutations.
-        final next = _buildInMemorySnapshot(rebuilt);
+        final next = await _retainPendingPlaceholders(current, _buildInMemorySnapshot(rebuilt));
+        if (_disposed || !canRefresh(id)) return false;
         _installSnapshot(id, next, scheduleMaintenance: true);
         _notifyConversationChanged(id);
         diagnostics.record(
@@ -570,6 +573,91 @@ class ConversationTimelineCache {
       if (!refreshed) deferred.add(id);
     }
     return deferred;
+  }
+
+  Future<_ConversationTimelineSnapshot> _retainPendingPlaceholders(
+    _ConversationTimelineSnapshot current, _ConversationTimelineSnapshot rebuilt,
+  ) async {
+    final messages = List<Message>.of(rebuilt.messages);
+    for (var index = 0; index < current.messages.length; index++) {
+      final pending = current.messages[index];
+      if (pending.blocks?.any((block) => block.status == BlockStatus.pending &&
+          (block is ImageBlock || block is AudioBlock)) != true ||
+          messages.any((message) => message.id == pending.id)) {
+        continue;
+      }
+      final source = pending.sourceMessageId;
+      if (source == null || source.isEmpty) {
+        final slot = messages.indexWhere((message) => message.createdAt.isAfter(pending.createdAt));
+        messages.insert(slot < 0 ? messages.length : slot, pending);
+        continue;
+      }
+      final siblings = messages.where((message) => _messageRawSourceId(message) == source).toList();
+      if (siblings.isEmpty) {
+        // An image-only raw can be active but have no display projection yet.
+        final raw = await _ref.read(messageRepositoryProvider).getById(source);
+        if (raw != null && raw.conversationId == rebuilt.conversationId &&
+            raw.deletedAt == null && raw.replacedBy == null) {
+          final slot = messages.indexWhere((message) => message.createdAt.isAfter(pending.createdAt));
+          messages.insert(slot < 0 ? messages.length : slot, pending);
+        }
+        continue;
+      }
+      final previousIds = current.messages.take(index).where((message) =>
+        message.sourceMessageId == source).map((message) => message.id).toSet();
+      var slot = messages.indexOf(siblings.first);
+      for (var i = slot; i < messages.length; i++) {
+        if (previousIds.contains(messages[i].id)) slot = i + 1;
+      }
+      // Raw reprojection can change text IDs; use the semantic text offset then.
+      if (slot == messages.indexOf(siblings.first)) {
+        final charsBefore = current.messages.take(index).where((message) => message.sourceMessageId == source)
+          .fold<int>(0, (sum, message) => sum + _pendingAnchorTextLength(message));
+        var chars = 0;
+        for (final sibling in siblings) {
+          if (chars >= charsBefore) break;
+          final length = _pendingAnchorTextLength(sibling);
+          if (chars + length > charsBefore) {
+            final text = sibling.blocks?.isNotEmpty == true
+              ? sibling.blocks!.whereType<TextBlock>().map((block) => block.content).join()
+              : sibling.content;
+            var count = 0, cut = 0;
+            while (cut < text.length && count < charsBefore - chars) {
+              if (!RegExp(r'\s').hasMatch(text[cut])) count++;
+              cut++;
+            }
+            final siblingIndex = messages.indexOf(sibling);
+            final afterId = '${sibling.id}__pending_${pending.id}';
+            Message textPart(String id, String part, bool first) => sibling.copyWith(
+              id: id, content: part,
+              blocks: sibling.blocks == null ? null : [
+                if (first) ...sibling.blocks!.where((block) => block is! TextBlock),
+                TextBlock(id: '${id}__text', messageId: id, content: part,
+                  createdAt: sibling.createdAt),
+              ]);
+            messages.replaceRange(siblingIndex, siblingIndex + 1, [
+              textPart(sibling.id, text.substring(0, cut), true),
+              textPart(afterId, text.substring(cut), false),
+            ]);
+            slot = siblingIndex + 1;
+            break;
+          }
+          chars += length;
+          slot = messages.indexOf(sibling) + 1;
+        }
+      }
+      final time = slot > 0 ? messages[slot - 1].createdAt : siblings.first.createdAt;
+      messages.insert(slot, pending.copyWith(createdAt: time));
+    }
+    return rebuilt.copyWith(messages: messages);
+  }
+
+  int _pendingAnchorTextLength(Message message) {
+    final blocks = message.blocks;
+    final text = blocks?.isNotEmpty == true
+      ? blocks!.whereType<TextBlock>().map((block) => block.content).join()
+      : message.content;
+    return text.replaceAll(RegExp(r'\s+'), '').length;
   }
 
   Future<void> reloadConversationFromRawStore(
@@ -596,7 +684,8 @@ class ConversationTimelineCache {
         normalizedConversationId,
         targetCount: normalizedTargetCount,
       );
-      final next = await _normalizeAndSyncSnapshotUnlocked(rebuilt);
+      final normalized = await _normalizeAndSyncSnapshotUnlocked(rebuilt);
+      final next = current == null ? normalized : await _retainPendingPlaceholders(current, normalized);
       _installSnapshot(
         normalizedConversationId,
         next,
@@ -1371,6 +1460,7 @@ class ConversationTimelineCache {
                 ImageBlock(
                   id: block.id,
                   messageId: block.messageId,
+                  createdAt: block.createdAt,
                   url: block.url,
                   localPath: block.localPath,
                   base64: block.base64,
@@ -1379,6 +1469,8 @@ class ConversationTimelineCache {
                   prompt: block.prompt,
                   generationSnapshot: block.generationSnapshot,
                   status: block.status,
+                  versions: block.versions,
+                  activeVersionIndex: block.activeVersionIndex,
                 ),
               );
               continue;
@@ -1737,12 +1829,22 @@ class ConversationTimelineCache {
     if (normalizedAffectedRawIds != null && normalizedAffectedRawIds.isEmpty) {
       return;
     }
+    final canonicalRawIds = <String>{};
     final segmentIndexesByRawMessageId = <String, int>{};
     final mappingsByRawMessageId =
         <String, List<db.MessageProjectionMappingsCompanion>>{};
     for (final message in snapshot.messages) {
+      if (message.blocks?.isNotEmpty == true && message.blocks!.every((block) =>
+          block is ImageBlock && block.status == BlockStatus.pending &&
+          (block.localPath?.isEmpty ?? true) && (block.url?.isEmpty ?? true) &&
+          (block.base64?.isEmpty ?? true))) {
+        continue;
+      }
       final rawMessageId = message.sourceMessageId?.trim();
-      if (rawMessageId == null || rawMessageId.isEmpty) {
+      if (rawMessageId == null ||
+          rawMessageId.isEmpty ||
+          rawMessageId == message.id) {
+        canonicalRawIds.add(message.id);
         continue;
       }
       if (normalizedAffectedRawIds != null &&
@@ -1754,6 +1856,10 @@ class ConversationTimelineCache {
         (value) => value + 1,
         ifAbsent: () => 0,
       );
+      if (ChatMessageProjectionCodec.isCanonicalProjectionId(rawMessageId, message.id)) {
+        canonicalRawIds.add(rawMessageId);
+        continue;
+      }
       mappingsByRawMessageId
           .putIfAbsent(
             rawMessageId,
@@ -1774,6 +1880,7 @@ class ConversationTimelineCache {
     }
     if (normalizedAffectedRawIds != null) {
       for (final rawMessageId in normalizedAffectedRawIds) {
+        if (canonicalRawIds.contains(rawMessageId)) continue;
         mappingsByRawMessageId.putIfAbsent(
           rawMessageId,
           () => <db.MessageProjectionMappingsCompanion>[],

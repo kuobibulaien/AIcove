@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/mcp/mcp_connector.dart';
+import '../../../../features/plugins/mcp/mcp_stdio_launch.dart';
 import '../../../../features/plugins/mcp/mcp_connector_providers.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
-/// 单个 MCP 连接器：地址、鉴权、连接测试与工具开关。
+/// 单个 MCP 连接器：传输、连接配置、连接测试与工具开关。
 class McpConnectorDetailPage extends ConsumerStatefulWidget {
   const McpConnectorDetailPage({super.key, required this.connectorId});
 
@@ -87,64 +88,143 @@ class _McpConnectorDetailPageState
                       title: '连接',
                       children: [
                         MoeSettingsRow(
-                          key: const ValueKey('mcp-connector-url'),
-                          label: '服务地址',
+                          key: const ValueKey('mcp-connector-type'),
+                          label: '连接方式',
                           trailingType: MoeSettingsRowTrailing.text,
-                          detailText: connector.url.trim().isEmpty
-                              ? '未填写'
-                              : connector.url.trim(),
-                          onTap: () => _editText(
-                            title: '服务地址',
-                            initialValue: connector.url,
-                            hint: 'https://example.com/mcp',
-                            keyboardType: TextInputType.url,
-                            apply: (c, value) {
-                              final trimmed = value.trim();
-                              final next = c.copyWith(url: trimmed);
-                              if (trimmed.isNotEmpty && !next.hasValidUrl) {
-                                throw const FormatException('请输入 http(s) 地址');
-                              }
-                              return next;
-                            },
-                          ),
+                          detailText: connector.isStdio ? '本地命令' : 'HTTP',
+                          onTap: () => _chooseType(connector),
                         ),
-                        MoeSettingsRow(
-                          key: const ValueKey('mcp-connector-token'),
-                          label: '访问令牌（可选）',
-                          trailingType: MoeSettingsRowTrailing.text,
-                          detailText: connector.bearerToken.trim().isEmpty
-                              ? '未填写'
-                              : _mask(connector.bearerToken),
-                          onTap: () => _editText(
-                            title: '访问令牌',
-                            initialValue: connector.bearerToken,
-                            hint: '粘贴服务提供的令牌',
-                            obscureText: true,
-                            apply: (c, value) =>
-                                c.copyWith(bearerToken: value.trim()),
+                        if (connector.isStdio) ...[
+                          MoeSettingsRow(
+                            key: const ValueKey('mcp-connector-command'),
+                            label: '启动命令',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: connector.command.isEmpty
+                                ? '未填写'
+                                : formatMcpCommandLine(
+                                    connector.command,
+                                    connector.args,
+                                  ),
+                            onTap: McpConnector.supportsStdio
+                                ? () => _editText(
+                                    title: '启动命令',
+                                    initialValue: formatMcpCommandLine(
+                                      connector.command,
+                                      connector.args,
+                                    ),
+                                    hint: 'npx -y @modelcontextprotocol/server-filesystem ~/Documents',
+                                    apply: (c, value) {
+                                      final tokens = parseMcpCommandLine(value);
+                                      return c.copyWith(
+                                        command: tokens.first,
+                                        args: tokens.skip(1).toList(),
+                                      );
+                                    },
+                                  )
+                                : null,
                           ),
-                        ),
-                        MoeSettingsRow(
-                          key: const ValueKey('mcp-connector-headers'),
-                          label: '自定义请求头（可选）',
-                          subtitle: '每行一个，格式为 名称: 值',
-                          trailingType: MoeSettingsRowTrailing.text,
-                          detailText: connector.headers.isEmpty
-                              ? '无'
-                              : '${connector.headers.length} 个',
-                          showDivider: false,
-                          onTap: () => _editText(
-                            title: '自定义请求头',
-                            initialValue: [
-                              for (final e in connector.headers.entries)
-                                '${e.key}: ${e.value}',
-                            ].join('\n'),
-                            hint: 'X-Api-Key: xxxx',
-                            maxLines: 6,
-                            apply: (c, value) =>
-                                c.copyWith(headers: parseHeaderLines(value)),
+                          MoeSettingsRow(
+                            key: const ValueKey('mcp-connector-cwd'),
+                            label: '工作目录（可选）',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: connector.cwd.isEmpty
+                                ? '默认'
+                                : connector.cwd,
+                            onTap: McpConnector.supportsStdio
+                                ? () => _editText(
+                                    title: '工作目录',
+                                    initialValue: connector.cwd,
+                                    hint: '~/Documents',
+                                    apply: (c, value) =>
+                                        c.copyWith(cwd: value.trim()),
+                                  )
+                                : null,
                           ),
-                        ),
+                          MoeSettingsRow(
+                            key: const ValueKey('mcp-connector-env'),
+                            label: '环境变量（可选）',
+                            subtitle: '每行一个，格式为 名称=值',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: connector.env.isEmpty
+                                ? '无'
+                                : '${connector.env.length} 个',
+                            showDivider: false,
+                            onTap: McpConnector.supportsStdio
+                                ? () => _editText(
+                                    title: '环境变量',
+                                    initialValue: [
+                                      for (final e in connector.env.entries)
+                                        '${e.key}=${e.value}',
+                                    ].join('\n'),
+                                    hint: 'API_KEY=xxxx',
+                                    maxLines: 6,
+                                    apply: (c, value) => c.copyWith(
+                                      env: parseMcpEnvironment(value),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ] else ...[
+                          MoeSettingsRow(
+                            key: const ValueKey('mcp-connector-url'),
+                            label: '服务地址',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: connector.url.trim().isEmpty
+                                ? '未填写'
+                                : connector.url.trim(),
+                            onTap: () => _editText(
+                              title: '服务地址',
+                              initialValue: connector.url,
+                              hint: 'https://example.com/mcp',
+                              keyboardType: TextInputType.url,
+                              apply: (c, value) {
+                                final trimmed = value.trim();
+                                final next = c.copyWith(url: trimmed);
+                                if (trimmed.isNotEmpty && !next.hasValidUrl) {
+                                  throw const FormatException('请输入 http(s) 地址');
+                                }
+                                return next;
+                              },
+                            ),
+                          ),
+                          MoeSettingsRow(
+                            key: const ValueKey('mcp-connector-token'),
+                            label: '访问令牌（可选）',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: connector.bearerToken.trim().isEmpty
+                                ? '未填写'
+                                : _mask(connector.bearerToken),
+                            onTap: () => _editText(
+                              title: '访问令牌',
+                              initialValue: connector.bearerToken,
+                              hint: '粘贴服务提供的令牌',
+                              obscureText: true,
+                              apply: (c, value) =>
+                                  c.copyWith(bearerToken: value.trim()),
+                            ),
+                          ),
+                          MoeSettingsRow(
+                            key: const ValueKey('mcp-connector-headers'),
+                            label: '自定义请求头（可选）',
+                            subtitle: '每行一个，格式为 名称: 值',
+                            trailingType: MoeSettingsRowTrailing.text,
+                            detailText: connector.headers.isEmpty
+                                ? '无'
+                                : '${connector.headers.length} 个',
+                            showDivider: false,
+                            onTap: () => _editText(
+                              title: '自定义请求头',
+                              initialValue: [
+                                for (final e in connector.headers.entries)
+                                  '${e.key}: ${e.value}',
+                              ].join('\n'),
+                              hint: 'X-Api-Key: xxxx',
+                              maxLines: 6,
+                              apply: (c, value) =>
+                                  c.copyWith(headers: parseHeaderLines(value)),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: MoeSettingsLayout.sectionGap),
@@ -157,10 +237,14 @@ class _McpConnectorDetailPageState
                               : connector.tools.isEmpty
                               ? '测试连接'
                               : '刷新工具列表',
-                          subtitle: connector.toolsFetchedAt == null
+                          subtitle:
+                              connector.isStdio && !McpConnector.supportsStdio
+                              ? '仅电脑端可用'
+                              : connector.toolsFetchedAt == null
                               ? '连接服务并读取它提供的工具'
                               : '上次更新：${_formatTime(connector.toolsFetchedAt!)}',
-                          enabled: connector.hasValidUrl && !_connecting,
+                          enabled:
+                              connector.hasValidConfiguration && !_connecting,
                           showDivider: false,
                           onTap: () => _connect(connector),
                         ),
@@ -225,6 +309,18 @@ class _McpConnectorDetailPageState
     );
   }
 
+  Future<void> _chooseType(McpConnector connector) => showMoeActionSheet(
+    context: context,
+    title: '连接方式',
+    actions: [
+      for (final type in McpTransportType.values)
+        MoeSheetAction(
+          label: type == McpTransportType.http ? 'HTTP' : '本地命令',
+          onTap: () => _guard(_save((c) => c.copyWith(type: type))),
+        ),
+    ],
+  );
+
   Future<void> _connect(McpConnector connector) async {
     setState(() => _connecting = true);
     try {
@@ -243,7 +339,7 @@ class _McpConnectorDetailPageState
       context: context,
       title: '删除连接器',
       content: Text(
-        '确定删除「${connector.displayName}」吗？地址、令牌和工具设置会一起删除，'
+        '确定删除「${connector.displayName}」吗？连接配置和工具设置会一起删除，'
         '开启了它的角色将不再能调用这些工具。',
       ),
       confirmText: '删除',

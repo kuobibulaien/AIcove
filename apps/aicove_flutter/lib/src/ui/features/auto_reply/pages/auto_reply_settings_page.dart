@@ -1,10 +1,12 @@
-/// AutoReplySettingsPage - 主动关怀插件设置页
+/// AutoReplySettingsPage - 主动回复插件设置页
 ///
 /// 重构记录：
 /// - 2025-12-31: 拆分为多个组件文件，对话框改用底部弹窗 (MoeBottomSheet)
 /// - 2026-09-15: 重写为 MoeSettingsGroup/MoeSettingsRow 分组式设置页
 /// - 2026-10-03: 去掉全局总开关（由角色卡逐个勾选），首页只留常用项；
 ///   模型、提示词、准时提醒、后台运行与历史记录收进「更多设置」
+/// - 2026-10-28: 改名回「主动回复」，「打扰程度」改为「回复频率」（默认 / 频繁），
+///   支持角色独立设置（未单独设置时继承全局默认）
 library;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -23,7 +25,14 @@ import 'auto_reply_advanced_settings_page.dart';
 import 'auto_reply_trigger_list_page.dart';
 
 class AutoReplySettingsPage extends ConsumerStatefulWidget {
-  const AutoReplySettingsPage({super.key});
+  final String? conversationId;
+  final String? roleName;
+
+  const AutoReplySettingsPage({
+    super.key,
+    this.conversationId,
+    this.roleName,
+  });
 
   @override
   ConsumerState<AutoReplySettingsPage> createState() =>
@@ -31,8 +40,12 @@ class AutoReplySettingsPage extends ConsumerStatefulWidget {
 }
 
 class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
-  /// 滑块拖动中的临时值；松手后写回设置并清空。
-  AutoReplySettings? _dragging;
+  String? get _scopedConversationId {
+    final id = widget.conversationId?.trim() ?? '';
+    return id.isEmpty ? null : id;
+  }
+
+  bool get _isContactScoped => _scopedConversationId != null;
 
   Future<void> _save(AutoReplySettings next) async {
     try {
@@ -41,8 +54,6 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
           .updateAutoReplySettings(next);
     } catch (e) {
       if (mounted) MoeToast.error(context, '保存失败: $e');
-    } finally {
-      if (mounted) setState(() => _dragging = null);
     }
   }
 
@@ -52,7 +63,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
 
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
-      appBar: const MoeAppBar(title: '主动关怀', showBackButton: true),
+      appBar: const MoeAppBar(title: '主动回复', showBackButton: true),
       backgroundColor: context.moeColors.surface,
       body: settingsAsync.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
@@ -63,20 +74,24 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
             description: '$e',
           ),
         ),
-        data: (settings) =>
-            _buildContent(_dragging ?? settings.autoReplySettings),
+        data: (settings) => _buildContent(settings.autoReplySettings),
       ),
     );
   }
 
-  Widget _buildContent(AutoReplySettings current) {
+  Widget _buildContent(AutoReplySettings rawSettings) {
+    final scopeId = _scopedConversationId;
+    final current = rawSettings.forContact(scopeId);
+    final hasContactOverride = rawSettings.hasContactOverride(scopeId);
     final callsSupported = proactiveCallsSupported(defaultTargetPlatform);
     final pendingCount =
         ref
             .watch(autoReplyTriggersProvider)
             .valueOrNull
             ?.where(
-              (t) => t.isActive || t.status == AutoReplyTriggerStatus.paused,
+              (t) =>
+                  (t.isActive || t.status == AutoReplyTriggerStatus.paused) &&
+                  (scopeId == null || t.conversationId == scopeId),
             )
             .length ??
         0;
@@ -97,7 +112,7 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
                   detailText: pendingCount > 0 ? '$pendingCount 条' : '无',
                   onTap: () => Navigator.of(context).push(
                     ParallaxSlidePageRoute(
-                      page: const AutoReplyTriggerListPage(),
+                      page: AutoReplyTriggerListPage(conversationId: scopeId),
                     ),
                   ),
                 ),
@@ -106,12 +121,20 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
                   subtitle: '聊天里说「明早叫我起床」，AI 会到点来找你',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: current.allowAiSetReminders,
-                  onSwitchChanged: (value) =>
-                      _save(current.copyWith(allowAiSetReminders: value)),
+                  onSwitchChanged: (value) => _save(
+                    rawSettings.applyScoped(
+                      scopeId,
+                      allowAiSetReminders: value,
+                    ),
+                  ),
                 ),
               ],
             ),
-            const AutoReplySectionFooter('在角色资料的插件里打开「主动关怀」，这个角色才会主动找你。'),
+            AutoReplySectionFooter(
+              _isContactScoped
+                  ? '这里的设置只对当前角色生效。'
+                  : '在角色资料的插件里打开「主动回复」，这个角色才会主动找你。这里设的是默认项，也可在角色资料里单独设置。',
+            ),
             const SizedBox(height: MoeSettingsLayout.sectionGap),
 
             MoeSettingsGroup(
@@ -123,8 +146,12 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: callsSupported && current.allowProactiveCalls,
                   onSwitchChanged: callsSupported
-                      ? (value) =>
-                            _save(current.copyWith(allowProactiveCalls: value))
+                      ? (value) => _save(
+                            rawSettings.applyScoped(
+                              scopeId,
+                              allowProactiveCalls: value,
+                            ),
+                          )
                       : null,
                 ),
               ],
@@ -138,69 +165,72 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
             const SizedBox(height: MoeSettingsLayout.sectionGap),
 
             MoeSettingsGroup(
-              title: '打扰程度',
               children: [
-                AutoReplySliderTile(
-                  label: '每天最多',
-                  valueText: '${current.dailyLimit} 次',
-                  value: current.dailyLimit.toDouble(),
-                  min: 1,
-                  max: 6,
-                  divisions: 5,
-                  onChanged: (value) => setState(
-                    () => _dragging = current.copyWith(
-                      dailyLimit: value.round(),
+                MoeSettingsRow(
+                  key: const ValueKey('auto-reply-frequency'),
+                  label: '回复频率',
+                  trailingType: MoeSettingsRowTrailing.custom,
+                  trailing: MoeSegmentedControl<AutoReplyFrequency>(
+                    value: current.frequency,
+                    onChanged: (value) => _save(
+                      rawSettings.applyScoped(scopeId, frequency: value),
                     ),
-                  ),
-                  onChangeEnd: (value) =>
-                      _save(current.copyWith(dailyLimit: value.round())),
-                ),
-                AutoReplySliderTile(
-                  label: '两条之间至少隔',
-                  valueText: _formatInterval(current.minIntervalMinutes),
-                  value: current.minIntervalMinutes.toDouble(),
-                  min: 30,
-                  max: 360,
-                  divisions: 11,
-                  onChanged: (value) => setState(
-                    () => _dragging = current.copyWith(
-                      minIntervalMinutes: value.round(),
-                    ),
-                  ),
-                  onChangeEnd: (value) => _save(
-                    current.copyWith(minIntervalMinutes: value.round()),
+                    height: 28,
+                    expanded: false,
+                    segments: const [
+                      MoeSegment(
+                        value: AutoReplyFrequency.normal,
+                        label: '默认',
+                      ),
+                      MoeSegment(
+                        value: AutoReplyFrequency.frequent,
+                        label: '频繁',
+                      ),
+                    ],
                   ),
                 ),
                 MoeSettingsRow(
                   label: '夜间免打扰',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: current.quietHoursEnabled,
-                  onSwitchChanged: (value) =>
-                      _save(current.copyWith(quietHoursEnabled: value)),
+                  onSwitchChanged: (value) => _save(
+                    rawSettings.applyScoped(scopeId, quietHoursEnabled: value),
+                  ),
                 ),
                 if (current.quietHoursEnabled) ...[
                   MoeSettingsRow(
                     label: '开始',
                     trailingType: MoeSettingsRowTrailing.text,
                     detailText: current.quietHoursStart,
-                    onTap: () => _pickTime(current, true),
+                    onTap: () => _pickTime(rawSettings, current, true),
                   ),
                   MoeSettingsRow(
                     label: '结束',
                     trailingType: MoeSettingsRowTrailing.text,
                     detailText: current.quietHoursEnd,
-                    onTap: () => _pickTime(current, false),
+                    onTap: () => _pickTime(rawSettings, current, false),
                   ),
                 ],
               ],
             ),
+            const AutoReplySectionFooter('选「频繁」时，角色会更常主动找你。'),
             const SizedBox(height: MoeSettingsLayout.sectionGap),
 
             MoeSettingsGroup(
               children: [
+                if (_isContactScoped && hasContactOverride)
+                  MoeSettingsRow(
+                    key: const ValueKey('auto-reply-reset-contact'),
+                    label: '恢复默认设置',
+                    subtitle: '跟随全局主动回复设置',
+                    trailingType: MoeSettingsRowTrailing.none,
+                    onTap: () => _save(
+                      rawSettings.clearContactOverride(scopeId!),
+                    ),
+                  ),
                 MoeSettingsRow(
                   label: '更多设置',
-                  subtitle: '模型、提示词、后台运行、历史记录',
+                  subtitle: '模型、提示词、准时提醒、后台运行、历史记录',
                   onTap: () => Navigator.of(context).push(
                     ParallaxSlidePageRoute(
                       page: const AutoReplyAdvancedSettingsPage(),
@@ -216,13 +246,11 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
     );
   }
 
-  String _formatInterval(int minutes) {
-    if (minutes < 60) return '$minutes 分钟';
-    if (minutes % 60 == 0) return '${minutes ~/ 60} 小时';
-    return '${(minutes / 60).toStringAsFixed(1)} 小时';
-  }
-
-  Future<void> _pickTime(AutoReplySettings current, bool isStart) async {
+  Future<void> _pickTime(
+    AutoReplySettings rawSettings,
+    AutoReplySettings current,
+    bool isStart,
+  ) async {
     final initial = _parseTime(
       isStart ? current.quietHoursStart : current.quietHoursEnd,
     );
@@ -234,10 +262,11 @@ class _AutoReplySettingsPageState extends ConsumerState<AutoReplySettingsPage> {
     if (picked == null) return;
     final formatted =
         '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+    final scopeId = _scopedConversationId;
     await _save(
       isStart
-          ? current.copyWith(quietHoursStart: formatted)
-          : current.copyWith(quietHoursEnd: formatted),
+          ? rawSettings.applyScoped(scopeId, quietHoursStart: formatted)
+          : rawSettings.applyScoped(scopeId, quietHoursEnd: formatted),
     );
   }
 

@@ -128,8 +128,14 @@ class _PresetRow extends ConsumerWidget {
         alignToEnd: true,
         items: [
           MoePopupMenuItem(
-            label: '打开',
-            onTap: () => openTavernPreset(context, preset.id),
+            key: ValueKey('rename-tavern-preset-${preset.id}'),
+            label: '重命名',
+            onTap: () => renameTavernPreset(
+              context,
+              ref,
+              presetId: preset.id,
+              currentName: preset.name,
+            ),
           ),
           if (canSetDefault)
             MoePopupMenuItem(

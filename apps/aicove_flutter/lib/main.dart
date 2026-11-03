@@ -10,6 +10,7 @@ import 'src/core/app_logger.dart';
 import 'src/core/storage/app_data_directory.dart';
 import 'src/ui/theme/tokens.dart';
 import 'src/core/frontend_error_capture.dart';
+import 'src/features/observability/frame_jank_recorder.dart';
 import 'src/features/observability/frontend_diagnostics_service.dart';
 import 'src/features/observability/diagnostic_runtime_identity.dart';
 import 'src/features/observability/diagnostic_access_service.dart';
@@ -29,6 +30,7 @@ void main(List<String> args) async {
   FrontendErrorCapture(FrontendDiagnosticsService.instance).install();
   FrontendDiagnosticsService.instance
       .setRuntimeIdentity(await readDiagnosticRuntimeIdentity());
+  FrameJankRecorder.instance.install();
 
   // 安全预热液态玻璃着色器（捕获异常并自动记录，不阻断主启动流程）
   await MoeLiquidGlassService.initialize();

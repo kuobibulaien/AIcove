@@ -3,7 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
-import 'package:aicove_flutter/src/core/database/database.dart' hide SyncScope;
+import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/features/backup/data/transfer_safety.dart';
 import 'package:aicove_flutter/src/features/backup/models/export_format.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';

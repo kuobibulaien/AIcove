@@ -1,10 +1,18 @@
 import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:aicove_flutter/src/features/plugins/image/image_plugin.dart';
+import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
+import 'package:aicove_flutter/src/features/chat/services/tts_fallback_notification.dart';
+
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:aicove_flutter/src/core/api/agent_api.dart';
+import 'package:aicove_flutter/src/core/app_logger.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
@@ -15,6 +23,8 @@ import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'api_runner_variants.dart';
 import 'test_plugin_support.dart';
+
+class _ImageHttpOverrides extends HttpOverrides {}
 
 class _FastFollowupClient extends http.BaseClient {
   int callCount = 0;
@@ -633,6 +643,66 @@ void _runAll(RunnerFactory createRunner) {
 }
 
 void main() {
+  test('real async image failures notify once per session and turn', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var received = 0;
+    final threeRequests = Completer<void>();
+    server.listen((request) async {
+      await request.drain<void>();
+      request.response.statusCode = 400;
+      request.response.write('{"error":"offline image failure"}');
+      await request.response.close();
+      if (++received == 3) threeRequests.complete();
+    });
+    final settings = mapUiModelsToAppSettings({}).copyWith(
+      imageGenerationEnabled: true,
+      callFlowSettings: const CallFlowSettings(mode: CallFlowMode.call),
+      modelTypes: const {'local:image': 'image'},
+      modelProviderMap: const {'local:image': 'local'},
+      providers: [ProviderAuth(id: 'local', apiKeys: ['test-key'],
+        apiBaseUrl: 'http://127.0.0.1:${server.port}', models: ['image'],
+        visibleModels: ['image'], capabilities: ['image'])],
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notices = <TtsFallbackEvent>[];
+    final subscription = container.read(ttsFallbackNotificationServiceProvider)
+        .stream.listen(notices.add);
+    addTearDown(subscription.cancel);
+    final plugin = container.read(Provider((ref) => ImagePlugin(
+      const ImageConfig(selectedProviderId: 'local', selectedModelId: 'local:image'),
+      ref, requestSettings: settings, isRequestSnapshot: true)));
+    final previousFailures = AppLogger.entries.value.where(
+      (entry) => entry.message == 'Async draw_image job failed').length;
+    await HttpOverrides.runWithHttpOverrides(() async {
+      final tool = plugin.getTools().single;
+      for (final turn in ['one', 'one', 'two']) {
+        final accepted = jsonDecode((await tool.handler({
+          'prompt': 'cat', '_aicove_async': true,
+          '_aicove_session_id': 'conversation', '_aicove_turn_id': turn,
+        }))!) as Map;
+        expect(accepted['success'], true);
+      }
+      await threeRequests.future.timeout(const Duration(seconds: 5));
+      // Wait for all jobs, including the duplicate notification, before disposal.
+      for (var i = 0; i < 200; i++) {
+        final failures = AppLogger.entries.value.where(
+          (entry) => entry.message == 'Async draw_image job failed').length;
+        if (failures == previousFailures + 3) break;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      expect(AppLogger.entries.value.where(
+        (entry) => entry.message == 'Async draw_image job failed').length,
+        previousFailures + 3);
+      await Future<void>.delayed(Duration.zero);
+    }, _ImageHttpOverrides());
+    expect(notices.map((event) => event.message), [
+      '图片生成失败，可稍后重试或检查绘图渠道',
+      '图片生成失败，可稍后重试或检查绘图渠道',
+    ]);
+  });
+
   for (final (variant, createRunner) in apiRunnerVariants) {
     group(variant, () => _runAll(createRunner));
   }

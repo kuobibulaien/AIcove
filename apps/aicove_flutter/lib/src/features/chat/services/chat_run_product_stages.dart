@@ -63,6 +63,18 @@ extension _ChatProductPolicy on _KernelRun {
         reasoning: rich.reasoning,
       );
     }
+    final extracted = extractAssistantThinking(
+      rich.text,
+      reasoning: rich.reasoning,
+    );
+    rich = SendMessageRichResult(
+      text: extracted.text,
+      toolResults: rich.toolResults,
+      toolCalls: rich.toolCalls,
+      hiddenThoughtParts: rich.hiddenThoughtParts,
+      rawFinishReason: rich.rawFinishReason,
+      reasoning: extracted.reasoning,
+    );
     lastRich = rich;
     final reasoning = rich.reasoning.trim();
     if (reasoning.isNotEmpty) roundReasonings.add(reasoning);
@@ -138,11 +150,32 @@ extension _ChatProductPolicy on _KernelRun {
     if (keepsNarrative) {
       preToolNarrativeTexts.add(roundNarrativeText);
     }
+    final displayResult = await applyAssistantDisplayRegex(
+      text: keepsNarrative ? roundNarrativeText : '',
+      scripts: config.presetRegexScripts,
+      authorized: config.presetRegexAuthorized,
+    );
     toolRoundDrafts.add((
+      rawText: roundNarrativeText,
       narrative: keepsNarrative ? roundNarrativeText : '',
+      displayText: displayResult.text,
       reasoning: lastRich!.reasoning.trim(),
       toolCallIds: [for (final call in currentToolCalls) call.id],
     ));
+
+    await config.onToolRounds?.call(
+      [
+        for (final draft in toolRoundDrafts)
+          ReplyRound(
+            rawText: draft.rawText,
+            replyText: draft.displayText,
+            processedText: draft.displayText,
+            reasoning: draft.reasoning,
+            toolCallIds: draft.toolCallIds,
+          ),
+      ],
+      [...allToolCalls, ...currentToolCalls],
+    );
 
     onStreamToolCallObserved?.call();
 
@@ -222,9 +255,10 @@ extension _ChatProductPolicy on _KernelRun {
       if (drawImageStableReviewEnabled &&
           !outcome.isAsyncAcceptedDrawImage &&
           outcome.toolResult.name == 'draw_image') {
-        pendingStableReviewImages = _selectStableReviewImages(
-          outcome.imageContents,
-        );
+        pendingStableReviewImages = <PluginImageContent>[
+          ...pendingStableReviewImages,
+          ...outcome.imageContents,
+        ].take(ImagePlugin.maxInlineImagesPerTurn).toList(growable: false);
         AppLogger.info(
           _KernelRun._logTag,
           'Stable draw_image result held for review',
@@ -339,8 +373,9 @@ extension _ChatProductPolicy on _KernelRun {
       );
     }
 
-    if (turn.finishReason == kernel.FinishReason.length)
+    if (turn.finishReason == kernel.FinishReason.length) {
       return const kernel.TurnVerdict.proceed();
+    }
 
     final shouldContinueFastFollowup =
         useFastToolRoute && toolOutcomes.any((o) => o.isAsyncAcceptedDrawImage);
@@ -392,7 +427,11 @@ extension _ChatProductPolicy on _KernelRun {
     final generatedImageCount = allToolContents
         .whereType<PluginImageContent>()
         .length;
-    if (executedAnyTool &&
+    // 为插话让出时还没有结论，不补「工具已执行」这类占位正文。
+    final summarize =
+        executedAnyTool &&
+        stopReason != kernel.KernelStopReason.steered.wireValue;
+    if (summarize &&
         (finalAssistantText.trim().isEmpty ||
             _looksLikeToolInstructionText(finalAssistantText))) {
       finalAssistantText = _buildToolCompletionSummary(
@@ -406,7 +445,7 @@ extension _ChatProductPolicy on _KernelRun {
         finalAssistantText,
       );
     }
-    if (executedAnyTool && finalAssistantText.trim().isEmpty) {
+    if (summarize && finalAssistantText.trim().isEmpty) {
       finalAssistantText = _buildToolCompletionSummary(
         generatedImageCount: generatedImageCount,
         hasAudio: allToolAudioResults.isNotEmpty,
@@ -420,10 +459,13 @@ extension _ChatProductPolicy on _KernelRun {
             normalizedFinalText: normalizedFinalText,
             mergedText: finalAssistantText,
           );
-    final roundRegexResults = await _applyRoundRegex(
+    final roundProjections = await _projectReplyRounds(
       roundTexts ?? [finalAssistantText],
       config,
     );
+    final roundRegexResults = [
+      for (final projection in roundProjections) projection.regexResult,
+    ];
     final presetRegexResult = _joinRegexResults(roundRegexResults);
     finalAssistantText = presetRegexResult.text;
     apiCallTrace?.note(
@@ -435,10 +477,14 @@ extension _ChatProductPolicy on _KernelRun {
     );
     apiCallTrace?.end(additionalMessage: status.name);
     final pluginTrace = _trace?.startChild('运行插件');
-    final roundPluginResults = await _runRoundProcessors(
-      roundRegexResults,
-      responseProcessors,
-    );
+    final roundPluginResults = [
+      for (final projection in roundProjections)
+        await projection.process(
+          processors: responseProcessors,
+          logTag: ChatSendApiRunner._logTag,
+          skipEmpty: roundProjections.length > 1,
+        ),
+    ];
     final pluginResult = _joinPluginResults(roundPluginResults);
     pluginTrace?.note(
       '插件处理',
@@ -545,6 +591,7 @@ extension _ChatProductPolicy on _KernelRun {
               for (var i = 0; i < roundTexts.length; i++)
                 _replyRound(
                   index: i,
+                  rawText: roundTexts[i],
                   regexText: roundRegexResults[i].text,
                   pluginResult: roundPluginResults[i],
                   suppressText: shouldSuppressStatusText,
@@ -555,12 +602,14 @@ extension _ChatProductPolicy on _KernelRun {
 
   ReplyRound _replyRound({
     required int index,
+    required String rawText,
     required String regexText,
     required PluginProcessResult pluginResult,
     required bool suppressText,
   }) {
     final isFinal = index == toolRoundDrafts.length;
     return ReplyRound(
+      rawText: rawText,
       replyText: suppressText ? '' : regexText,
       processedText: suppressText ? '' : pluginResult.processedText,
       pluginEvents: [if (isFinal) ...allToolEvents, ...pluginResult.events],

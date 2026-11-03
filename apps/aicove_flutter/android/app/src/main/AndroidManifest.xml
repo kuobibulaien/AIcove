@@ -61,6 +61,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="ongoing_ai_chat_generation_and_proactive_assistant" />
         </service>
+        <!-- 空间文件交给默认应用查看：只暴露缓存里的只读副本。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.workspace_files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/workspace_file_paths" />
+        </provider>
         <!-- 只允许持有 DUMP 的 adb shell 读取诊断凭证，普通应用无法获得该权限。 -->
         <provider
             android:name=".DiagnosticTokenProvider"

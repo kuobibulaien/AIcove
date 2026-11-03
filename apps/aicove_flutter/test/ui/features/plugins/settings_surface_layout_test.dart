@@ -309,23 +309,35 @@ void main() {
     }
   });
 
-  testWidgets('主动关怀首页无总开关，全部分组同列等宽', (tester) async {
+  testWidgets('主动回复首页无总开关，全部分组同列等宽', (tester) async {
     await _mount(tester, const AutoReplySettingsPage());
     for (final label in [
       '待发送的消息',
       '让 AI 帮你记提醒',
       '允许主动打电话',
-      '打扰程度',
+      '回复频率',
+      '默认',
+      '频繁',
       '更多设置',
     ]) {
       expect(find.text(label), findsWidgets, reason: label);
     }
-    expect(find.text('主动回复'), findsNothing);
+    expect(find.text('打扰程度'), findsNothing);
     expect(find.byType(MoeSwitch), findsNWidgets(3));
     _expectUnifiedSurfaceWidth(tester);
   });
 
-  testWidgets('主动关怀更多设置全部分组同列等宽', (tester) async {
+  testWidgets('主动回复联系人级设置独立生效并支持恢复默认', (tester) async {
+    await _mount(
+      tester,
+      const AutoReplySettingsPage(conversationId: 'c1', roleName: '理'),
+    );
+    expect(find.text('这里的设置只对当前角色生效。'), findsOneWidget);
+    expect(find.text('1 条'), findsOneWidget);
+    _expectUnifiedSurfaceWidth(tester);
+  });
+
+  testWidgets('主动回复更多设置全部分组同列等宽', (tester) async {
     await _mount(tester, const AutoReplyAdvancedSettingsPage());
     for (final label in ['判断时机', '使用的模型', '更准时', '历史记录']) {
       expect(find.text(label), findsWidgets, reason: label);
@@ -427,31 +439,6 @@ void main() {
         _expectUnifiedSurfaceWidth(tester);
       }
     });
-  });
-
-  testWidgets('时间感知两个开关分别回写配置且互不影响', (tester) async {
-    await _mount(tester, const TimeAwarenessPluginDetailPage());
-    _expectUnifiedSurfaceWidth(tester);
-    final element = tester.element(find.byType(TimeAwarenessPluginDetailPage));
-    final container = ProviderScope.containerOf(element);
-    Future<bool> timestamp() async => container
-        .read(timeAwarenessPluginConfigProvider)
-        .includeMessageTimestamp;
-    Future<bool> currentTime() async =>
-        container.read(timeAwarenessPluginConfigProvider).includeCurrentTime;
-    final timestampBefore = await timestamp();
-    final currentBefore = await currentTime();
-
-    await tester.tap(find.text('历史消息时间戳'));
-    await tester.pumpAndSettle();
-    expect(await timestamp(), isNot(timestampBefore));
-    expect(await currentTime(), currentBefore);
-
-    await tester.tap(find.text('当前时间注入'));
-    await tester.pumpAndSettle();
-    expect(await currentTime(), isNot(currentBefore));
-    expect(await timestamp(), isNot(timestampBefore));
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('语音搜索滚出卸载后回来仍保持查询与过滤', (tester) async {

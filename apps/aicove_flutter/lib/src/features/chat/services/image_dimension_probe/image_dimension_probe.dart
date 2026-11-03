@@ -4,6 +4,8 @@
 /// Web：`probe_stub.dart`，恒返回 null（本次禁用遗留尺寸回填）。
 library;
 
+export 'probe_bytes.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'probe_stub.dart' if (dart.library.io) 'probe_io.dart' as impl;

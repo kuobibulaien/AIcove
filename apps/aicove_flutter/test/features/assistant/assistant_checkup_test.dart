@@ -3,6 +3,7 @@
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_parser.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_checkup.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'assistant_onboarding_test.dart' show deepSeek, settingsWith;
@@ -14,6 +15,7 @@ Conversation _role(
   List<String>? plugins,
   String? recipeId,
   bool hidden = false,
+  RoleAgentMode? mode,
 }) => Conversation(
   id: id,
   title: id,
@@ -21,6 +23,7 @@ Conversation _role(
   enabledPlugins: plugins,
   recipeId: recipeId,
   isHidden: hidden,
+  agentMode: mode,
   createdAt: _now,
   updatedAt: _now,
 );
@@ -48,6 +51,12 @@ void main() {
       ], 'deepseek:deepseek-flash'),
       roles: () async => [
         _role('drawer', plugins: const ['image', 'tts'], recipeId: preset.id),
+        _role(
+          'agent',
+          plugins: const ['image'],
+          recipeId: preset.id,
+          mode: RoleAgentMode.tool,
+        ),
         _role('lost', recipeId: 'st_preset_bbbbbbbbbbbbbbbbbbbbbbbb'),
         _role('bare', plugins: const []),
         _role('secret', recipeId: 'gone', hidden: true),
@@ -73,6 +82,10 @@ void main() {
     expect(textOf('plugins', 'bare'), contains('一个插件都没开'));
     expect(textOf('voice_call', 'drawer'), contains('没有可用的音色'));
     expect(findings.where((f) => f.roleId == 'secret'), isEmpty);
+    expect(
+      findings.where((f) => f.roleId == 'agent' && f.text.contains('关闭了函数调用')),
+      isEmpty,
+    );
     expect(checked, ['drawer', 'lost']);
   });
 

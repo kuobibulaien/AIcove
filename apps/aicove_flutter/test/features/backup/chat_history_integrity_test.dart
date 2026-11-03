@@ -1,13 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aicove_flutter/src/core/media/media_asset.dart';
+import 'package:aicove_flutter/src/core/media/media_store.dart';
+
 import 'package:archive/archive.dart';
 import 'package:drift/drift.dart' show Value, driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:aicove_flutter/src/core/database/database.dart'
-    hide SyncScope, MessageBlock;
+    hide MessageBlock;
 import 'package:aicove_flutter/src/core/database/repositories/repositories.dart';
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/core/models/message_block.dart';
@@ -27,6 +30,7 @@ void main() {
   late AppDatabase target;
   late Directory root;
   late ConversationExporter exporter;
+  late MediaStore mediaStore;
   late ConversationImporter importer;
   const scopes = [SyncScope.characterCards, SyncScope.chatHistory];
   Future<Directory> dir(String name) =>
@@ -116,7 +120,7 @@ void main() {
                 durationSeconds: 1.25)
             .toJson();
     return {
-      ...base,
+      ...base..remove('processedText'),
       'projectedMessages': [
         {
           'id': 'cached-message',
@@ -144,7 +148,9 @@ void main() {
     root = await Directory.systemTemp.createTemp('aicove-history-integrity-');
     source = AppDatabase.forTesting(NativeDatabase.memory());
     target = AppDatabase.forTesting(NativeDatabase.memory());
+    mediaStore = MediaStore(await dir('media'), 'test');
     exporter = ConversationExporter(
+        mediaStoreResolver: () async => mediaStore,
         convRepo: ConversationRepository(source),
         msgRepo: MessageRepository(source),
         blockRepo: MessageBlockRepository(source),
@@ -174,6 +180,7 @@ void main() {
         createdAt: 2));
   });
   tearDown(() async {
+    await mediaStore.close();
     await source.close();
     await target.close();
     await root.delete(recursive: true);
@@ -300,10 +307,8 @@ void main() {
                 m.createdAt.millisecondsSinceEpoch == 2),
             isTrue);
         expect(
-            after
-                .expand((m) => m.blocks ?? <MessageBlock>[])
-                .whereType<TextBlock>()
-                .map((b) => b.content),
+            after.expand((m) => [m.content,
+                ...?m.blocks?.whereType<TextBlock>().map((b) => b.content)]),
             contains('正文'));
         final archive = ZipDecoder().decodeBytes(await file.readAsBytes());
         final manifest = jsonDecode(utf8
@@ -397,20 +402,15 @@ void main() {
     expect(
         (await loadBlocks(target, 'm')).whereType<ImageBlock>(), hasLength(1));
   });
-  test(
-      'H12 selected cached representation takes precedence over stale supplements',
-      () async {
-    final media = File(p.join(root.path, 'image.png'));
+  test('H12 semantic supplements override stale cached media', () async {
+    final media = File(p.join(root.path, 'new.png'));
     await media.writeAsBytes([1, 2, 3]);
-    final payload = payloadFor('image', media.path, 'cached');
-    payload['supplementInsertOps'] = payloadFor(
-        'image',
-        p.join(root.path, 'stale-missing'),
-        'supplement')['supplementInsertOps'];
+    final payload = payloadFor('image', p.join(root.path, 'old-missing.png'), 'cached');
+    payload.addAll(payloadFor('image', media.path, 'supplement'));
     await storePayload(payload);
     await restore(await export());
-    expect(
-        (await loadBlocks(target, 'm')).whereType<ImageBlock>(), hasLength(1));
+    final image = (await loadBlocks(target, 'm')).whereType<ImageBlock>().single;
+    expect(await File(image.localPath!).readAsBytes(), [1, 2, 3]);
   });
   test('H14 repeated references preserve occurrences but copy bytes once',
       () async {
@@ -598,4 +598,91 @@ void main() {
     expect(restored.single, isNot(isA<TaskReceiptBlock>()));
     expect((restored.single as TextBlock).content, line);
   });
+  Map<String, dynamic> stickerEvent(String path, {String type = 'sticker_convert'}) => {
+    'pluginId': 'sticker', 'type': type, 'data': {
+      'assetPath': path, 'stickerId': 'saved-sticker', 'tag': '开心',
+    }, 'id': 'event', 'createdAt': DateTime(2026).toIso8601String(),
+  };
+  for (final round in [false, true]) {
+    for (final supplement in [false, true]) {
+      test('H22 saved sticker event round=$round supplement=$supplement survives once', () async {
+        final sticker = File(p.join(root.path, 'sticker.gif'));
+        await sticker.writeAsBytes([7, 8, 9]);
+        final semantic = {
+          'replyText': '正文<sticker tag="开心"/>', 'processedText': '正文',
+          'pluginEvents': [stickerEvent(sticker.path)],
+        };
+        await block('emoji', jsonEncode(EmojiBlock(id: 'block', messageId: 'm',
+            emojiId: 'saved-sticker', path: sticker.path).toJson()));
+        await storePayload({
+          'processedText': '正文', 'displayReplyText': semantic['replyText'],
+          'pluginEvents': round ? [stickerEvent(p.join(root.path, 'unused'))] : semantic['pluginEvents'],
+          if (round) 'replyRounds': [semantic],
+          if (supplement) 'supplementInsertOps': [{
+            'kind': 'image', 'textCharsBefore': 0, 'forceAppendToTail': false,
+            'localPath': sticker.path,
+          }],
+          'projectedMessages': [{'blocks': [EmojiBlock(id: 'old', messageId: 'old',
+              emojiId: 'old', path: p.join(root.path, 'old-missing')).toJson()]}],
+        });
+        await restore(await export());
+        final emoji = (await loadBlocks(target, 'm')).whereType<EmojiBlock>().single;
+        expect(emoji.emojiId, 'saved-sticker');
+        expect(await File(emoji.path).readAsBytes(), [7, 8, 9]);
+      });
+    }
+  }
+  test('H23 sticker pluginId is sufficient and excluded missing stickers are ignored', () async {
+    final sticker = File(p.join(root.path, 'sticker.gif'));
+    await sticker.writeAsBytes([7]);
+    await storePayload({'displayReplyText': '<sticker tag="开心"/>',
+      'pluginEvents': [stickerEvent(sticker.path, type: 'legacy')],});
+    await restore(await export());
+    expect((await loadBlocks(target, 'm')).whereType<EmojiBlock>(), hasLength(1));
+    await sticker.delete();
+    await expectLater(export(), throwsFormatException);
+    final archive = ZipDecoder().decodeBytes(await (await export(images: false)).readAsBytes());
+    expect(archive.files.where((f) => f.name.startsWith('files/')), isEmpty);
+    final json = jsonDecode(utf8.decode(archive.findFile('messages.json')!.content as List<int>));
+    expect((json['messages'][0]['blocks'] as List).where((b) => b['type'] == 'emoji'), isEmpty);
+  });
+  test('H24 managed sticker uses original bytes and never substitutes thumbnail', () async {
+    final original = File(p.join(root.path, 'original.gif'));
+    final thumbnail = File(p.join(root.path, 'thumbnail.webp'));
+    await original.writeAsBytes([1, 2, 3, 4]);
+    await thumbnail.writeAsBytes([9]);
+    final asset = MediaAsset(id: 'a' * 64, mimeType: 'image/gif', byteLength: 4, createdAtMs: 2);
+    await mediaStore.save(LocalMedia(asset, originalPath: original.path, thumbnailPath: thumbnail.path));
+    await storePayload({'displayReplyText': '<sticker tag="开心"/>',
+      'pluginEvents': [stickerEvent(asset.reference)],});
+    await restore(await export());
+    final emoji = (await loadBlocks(target, 'm')).whereType<EmojiBlock>().single;
+    expect(await File(emoji.path).readAsBytes(), [1, 2, 3, 4]);
+    expect(p.extension(emoji.path), '.gif');
+    await original.delete();
+    await expectLater(export(), throwsFormatException);
+    await export(images: false);
+  });
+
+  test('H25 unmatched event does not revive hidden native sticker', () async {
+    final missing = p.join(root.path, 'hidden-missing.gif');
+    await block('emoji', jsonEncode(EmojiBlock(id: 'block', messageId: 'm',
+        emojiId: 'saved-sticker', path: missing).toJson()));
+    await storePayload({'displayReplyText': '只有正文',
+      'pluginEvents': [stickerEvent(missing)],});
+    await restore(await export());
+    expect((await loadBlocks(target, 'm')).whereType<EmojiBlock>(), isEmpty);
+  });
+  test('H26 repeated event occurrences are retained but bytes copied once', () async {
+    final sticker = File(p.join(root.path, 'repeat.gif'));
+    await sticker.writeAsBytes([7]);
+    await storePayload({'displayReplyText': '<sticker tag="开心"/><sticker tag="开心"/>',
+      'pluginEvents': [stickerEvent(sticker.path), stickerEvent(sticker.path)],});
+    final file = await export();
+    await restore(file);
+    expect((await loadBlocks(target, 'm')).whereType<EmojiBlock>(), hasLength(2));
+    final archive = ZipDecoder().decodeBytes(await file.readAsBytes());
+    expect(archive.files.where((f) => f.name.startsWith('files/')), hasLength(1));
+  });
+
 }

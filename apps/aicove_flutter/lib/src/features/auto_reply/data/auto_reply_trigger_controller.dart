@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/app_logger.dart';
@@ -10,11 +11,13 @@ import '../../../core/sync/cloud_local_write.dart';
 import '../../chat/providers2.dart';
 import '../../chat/services/chat_history_store.dart';
 import 'auto_reply_claim_store.dart';
+import 'analyzer_scheduler.dart';
 import 'auto_reply_dispatch_service.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
 import 'background_service.dart';
 import 'proactive_owner_device.dart';
+import 'proactive_call_ledger.dart';
 import 'proactive_planner.dart';
 import '../../settings/app_settings.dart';
 
@@ -55,6 +58,7 @@ final autoReplyTriggersProvider =
 class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   final _uuid = const Uuid();
   Timer? _ticker;
+  bool _pollInProgress = false;
   late AutoReplyTriggerStorage _storage;
 
   /// Triggers whose send is under way in this process. The trigger stays
@@ -96,8 +100,31 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   /// Picks up a list written by sync. Keeps the current value meanwhile, so
   /// a write in between never starts from an empty list.
   Future<void> reloadFromStorage() => cloudLocalWrite(() async {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
         state = AsyncData(await _storage.loadTriggers());
+        _ticker?.cancel();
+        _ticker = null;
+        _startTicker();
       });
+
+  Future<void> removeTriggersForConversation(
+    String conversationId, {
+    bool onlyAutoScheduled = false,
+  }) async {
+    final removed = <AutoReplyTrigger>[];
+    await _update((stored) => stored.where((trigger) {
+          final matches = trigger.conversationId == conversationId &&
+              (!onlyAutoScheduled || trigger.source == TriggerSource.aiScheduler);
+          if (matches) removed.add(trigger);
+          return !matches;
+        }).toList());
+    for (final trigger in removed) {
+      _inFlight.remove(trigger.id);
+      await _cancelBackgroundTaskByTriggerId(trigger.id);
+      _emitEvent(AutoReplyTriggerEventType.deleted, trigger);
+    }
+  }
 
   Future<void> _appendHistoryLog({
     required AutoReplyTriggerLogCategory category,
@@ -364,7 +391,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   }
 
   Future<void> deleteTrigger(String id, {String? reason}) async {
-    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+    final current = await _storage.loadTriggers();
     final target =
         current.where((element) => element.id == id).toList(growable: false);
     if (target.isEmpty) return;
@@ -451,46 +478,22 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   Future<void> pollDueTriggersForTest() => _pollDueTriggers();
 
   Future<void> _pollDueTriggers() async {
+    if (_pollInProgress) return;
+    _pollInProgress = true;
+    try {
+      await _pollDueTriggersUnlocked();
+    } finally {
+      _pollInProgress = false;
+    }
+  }
+
+  Future<void> _pollDueTriggersUnlocked() async {
     final current = state.valueOrNull;
     if (current == null || current.isEmpty) return;
     final settings = await ref.read(appSettingsProvider.future);
     final autoReplySettings = settings.autoReplySettings;
 
     final now = DateTime.now();
-    final quietHoursActive = QuietHours.parse(
-      enabled: autoReplySettings.quietHoursEnabled,
-      start: autoReplySettings.quietHoursStart,
-      end: autoReplySettings.quietHoursEnd,
-    ).contains(now);
-
-    final firedTodayCount = current.where((t) {
-      if (t.status != AutoReplyTriggerStatus.fired || t.lastFiredAt == null) {
-        return false;
-      }
-      return _isSameDay(t.lastFiredAt!, now);
-    }).length;
-    if (firedTodayCount >= autoReplySettings.dailyLimit) {
-      AppLogger.info('AutoReplyTrigger', 'Skip polling: daily limit reached',
-          metadata: {
-            'dailyLimit': autoReplySettings.dailyLimit,
-            'firedToday': firedTodayCount,
-          });
-      return;
-    }
-
-    final latestFiredAt = current
-        .where((t) =>
-            t.status == AutoReplyTriggerStatus.fired && t.lastFiredAt != null)
-        .map((t) => t.lastFiredAt!)
-        .fold<DateTime?>(null, (latest, firedAt) {
-      if (latest == null || firedAt.isAfter(latest)) return firedAt;
-      return latest;
-    });
-    if (latestFiredAt != null &&
-        now.difference(latestFiredAt).inMinutes <
-            autoReplySettings.minIntervalMinutes) {
-      return;
-    }
 
     // Check if chat is active
     final activeChatId = ref.read(activeConversationIdProvider);
@@ -509,18 +512,19 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
           await _settleStartedDelivery(trigger, now)) {
         continue;
       }
+      final contactSettings = autoReplySettings.forContact(
+        trigger.conversationId,
+      );
+      final quietHoursActive = QuietHours.parse(
+        enabled: contactSettings.quietHoursEnabled,
+        start: contactSettings.quietHoursStart,
+        end: contactSettings.quietHoursEnd,
+      ).contains(now);
       if (quietHoursActive && !trigger.allowNight) {
         continue;
       }
 
       if (trigger.requireExact && !autoReplySettings.allowExactAlarm) {
-        continue;
-      }
-
-      if (trigger.requireExact &&
-          autoReplySettings.allowExactAlarm &&
-          now.difference(trigger.nextFireAt) > const Duration(minutes: 2)) {
-        await _expireUnderClaim(trigger, '错过精确触发窗口', now);
         continue;
       }
 
@@ -635,12 +639,12 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     }
   }
 
-  Future<void> _handleTrigger(String id, DateTime firedAt) async {
+  Future<bool> _handleTrigger(String id, DateTime firedAt) async {
     final current = await _storage.loadTriggers();
-    if (current.isEmpty) return;
+    if (current.isEmpty) return false;
     final latest = current.where((t) => t.id == id).firstOrNull;
     if (latest == null || !latest.isActive || _isInFlight(id, DateTime.now())) {
-      return;
+      return false;
     }
 
     // 执行权认领：与后台 WorkManager 链路互斥，认领失败说明后台已在执行
@@ -649,7 +653,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       claimedBy: AutoReplyClaimOwner.foreground,
     );
     if (token == null) {
-      if (await _settleStartedDelivery(latest, DateTime.now())) return;
+      if (await _settleStartedDelivery(latest, DateTime.now())) return false;
       AppLogger.info('AutoReplyTrigger', 'Fire skipped: claimed elsewhere',
           metadata: {'triggerId': id});
       await _appendHistoryLog(
@@ -662,7 +666,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         source: latest.source,
         level: AutoReplyTriggerLogLevel.warning,
       );
-      return;
+      return false;
     }
 
     // 送达后才标记 fired（completeTriggeredSend）；发送期间保持原状态，
@@ -690,6 +694,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       },
     );
     _emitEvent(AutoReplyTriggerEventType.fired, fired, claimToken: token);
+    return true;
   }
 
   Future<void> completeTriggeredSend({
@@ -908,21 +913,32 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         .where((t) => t.id == trigger.id)
         .firstOrNull;
     if (latest == null || !latest.isActive) return;
-    final delivered = await ref.read(messageRepositoryProvider).getById(
+    final delivered = (trigger.action == ProactiveAction.callUser &&
+            await ProactiveCallLedger(ref.read(databaseProvider))
+                .isConfirmed(trigger.id)) ||
+        await ref.read(messageRepositoryProvider).getById(
               claim.messageId ?? backgroundTriggerMessageId(trigger.id),
             ) !=
         null;
     if (delivered) {
-      await _update((stored) => [
-        for (final t in stored)
-          t.id == trigger.id
-              ? t.copyWith(
-                  status: AutoReplyTriggerStatus.fired,
-                  lastFiredAt: DateTime.now(),
-                  expireReason: null,
-                )
-              : t,
-      ]);
+      var finalized = false;
+      await _update((stored) => stored.map((t) {
+        if (t.id != trigger.id || !t.isActive) return t;
+        finalized = true;
+        return t.copyWith(
+          status: AutoReplyTriggerStatus.fired,
+          lastFiredAt: claim.startedAt,
+          expireReason: null,
+        );
+      }).toList());
+      if (finalized) {
+        await ref.read(analyzerSchedulerProvider).onAutoTriggerSendCompleted(
+          trigger: trigger,
+          success: true,
+          retryable: false,
+          occurredAt: claim.startedAt,
+        );
+      }
     } else {
       await expireTrigger(trigger.id, interruptedDeliveryReason);
     }

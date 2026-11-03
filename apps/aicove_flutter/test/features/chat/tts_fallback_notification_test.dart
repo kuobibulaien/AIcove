@@ -26,6 +26,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('image notification deduplicates by conversation and turn', () async {
+    final service = TtsFallbackNotificationService();
+    addTearDown(service.dispose);
+    final events = <TtsFallbackEvent>[];
+    final subscription = service.stream.listen(events.add);
+    addTearDown(subscription.cancel);
+    service.notifyImageFailure(conversationId: 'a', turnId: 'one');
+    service.notifyImageFailure(conversationId: 'a', turnId: 'two');
+    service.notifyImageFailure(conversationId: 'a', turnId: 'one');
+    service.notifyImageFailure(conversationId: 'b', turnId: 'one');
+    service.notify('error');
+    await Future<void>.delayed(Duration.zero);
+    expect(events, hasLength(4));
+    expect(events.take(3).every((event) => event.isImageFailure), isTrue);
+    expect(events.last.message, '语音生成失败，已显示文本');
+  });
+
   for (final width in [390.0, 1000.0]) {
     testWidgets(
       'fallback notice is shown inside the route overlay width=$width',
@@ -95,6 +112,17 @@ void main() {
             .notify('timeout');
         await tester.pumpAndSettle();
         expect(find.text('语音生成超时，已显示文本'), findsNothing);
+        container
+            .read(ttsFallbackNotificationServiceProvider)
+            .notifyImageFailure(conversationId: 'conversation', turnId: 'turn');
+        await tester.pumpAndSettle();
+        expect(find.text('图片生成失败，可稍后重试或检查绘图渠道'), findsOneWidget);
+        expect(find.text('不再提醒'), findsNothing);
+        await saveReleaseSourcePreview(
+          tester,
+          boundaryKey,
+          'image-failure-$width',
+        );
         await tester.pump(const Duration(seconds: 5));
       },
     );

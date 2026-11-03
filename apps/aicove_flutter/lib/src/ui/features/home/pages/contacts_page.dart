@@ -37,7 +37,7 @@ class _ContactsPageState extends ConsumerState<ContactsPage> {
         bottomHeight: MoeSearchField.heightFor(context),
         actions: [
           MoeIconButton(
-            icon: Icons.person_add_alt_1_outlined,
+            icon: Icons.add,
             tooltip: '新建聊天',
             onTap: () => MoeWorkspace.openLocation(context, '/contact/new'),
           ),

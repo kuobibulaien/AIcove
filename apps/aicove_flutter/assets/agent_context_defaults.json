@@ -110,7 +110,7 @@
             "label": "Analyzer / trigger decision",
             "name": "后台分析 / 触发决策",
             "order": 10,
-            "description": "用于判断是否触发主动关怀的后台分析请求。"
+            "description": "用于判断是否触发主动回复的后台分析请求。"
           },
           {
             "id": "reply_generation",

@@ -304,6 +304,16 @@ class MessageRepository {
   /// 删除会话的所有消息；视为会话状态重置，连同基线删除全部状态行（ADR0071）。
   Future<int> deleteByConversation(String conversationId) async {
     return _db.transaction(() async {
+      // 必须按全量raw行清理，包括软删除与已被替换的消息；显示查询会漏掉它们。
+      await _db.customStatement(
+        'DELETE FROM message_blocks WHERE message_id IN '
+        '(SELECT id FROM messages WHERE conversation_id = ?)',
+        [conversationId],
+      );
+      await _db.customStatement(
+        'DELETE FROM message_projection_mappings WHERE conversation_id = ?',
+        [conversationId],
+      );
       await _db.customStatement(
         'DELETE FROM message_states WHERE conversation_id = ?',
         [conversationId],
@@ -470,12 +480,24 @@ class MessageRepository {
             return "CASE WHEN json_valid(m.raw_payload) THEN "
                 "CASE WHEN json_type(m.raw_payload, '\$.projectedMessages') = 'array' "
                 "AND json_array_length(m.raw_payload, '\$.projectedMessages') > 0 "
+                "AND json_extract(m.raw_payload, '\$.displayReplyText') IS NULL "
+                "AND json_extract(m.raw_payload, '\$.processedText') IS NULL "
+                "AND COALESCE(json_array_length(m.raw_payload, '\$.replyRounds'), 0) = 0 "
+                "AND COALESCE(json_array_length(m.raw_payload, '\$.pluginContents'), 0) = 0 "
+                "AND COALESCE(json_array_length(m.raw_payload, '\$.toolAudioResults'), 0) = 0 "
+                "AND COALESCE(json_array_length(m.raw_payload, '\$.supplementInsertOps'), 0) = 0 "
                 "THEN json_object('__aicoveDisplayRead', 1, 'projectedMessages', "
                 "json_extract(m.raw_payload, '\$.projectedMessages'), "
+                "'runStatus', json_extract(m.raw_payload, '\$.runStatus'), "
+                "'stopReason', json_extract(m.raw_payload, '\$.stopReason'), "
                 // ADR0088 §7: the display dedupes relays by receipt.
                 "'taskRelayReceiptId', "
                 "json_extract(m.raw_payload, '\$.taskRelayReceiptId')) "
-                "ELSE m.raw_payload END ELSE m.raw_payload END AS raw_payload";
+                "ELSE CASE WHEN m.role = 'assistant' "
+                "AND COALESCE(json_array_length(m.raw_payload, '\$.supplementInsertOps'), 0) > 0 "
+                "THEN json_remove(m.raw_payload, '\$.projectedMessages', '\$.hiddenThoughtParts', '\$.pluginContents', '\$.toolAudioResults') "
+                "ELSE json_remove(m.raw_payload, '\$.hiddenThoughtParts') END "
+                "END ELSE m.raw_payload END AS raw_payload";
           }).join(', ')
         : 'm.*';
     final sql = StringBuffer()

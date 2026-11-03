@@ -115,9 +115,10 @@ class _ModelSearchContentState extends ConsumerState<_ModelSearchContent> {
       };
 
       for (final modelId in allModels) {
-        final modelRef = settings.buildModelRef(provider.id, modelId);
-        final resolvedName = settings.getModelDisplayName(modelRef);
-        final displayName = resolvedName == modelId ? null : resolvedName;
+        final displayName = settings.getCustomModelDisplayName(
+          modelId,
+          providerId: provider.id,
+        );
         final isVisible = provider.visibleModels.contains(modelId);
 
         // 搜索匹配逻辑
@@ -175,10 +176,13 @@ class _SearchResultRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final notifier = ref.read(appSettingsProvider.notifier);
 
+    final hasDisplayName =
+        result.displayName != null && result.displayName!.isNotEmpty;
+
     return MoeSettingsRow(
       icon: Icons.model_training_outlined,
-      label: result.modelId,
-      subtitle: '${result.displayName ?? ""} · ${result.providerName}',
+      label: hasDisplayName ? result.displayName! : result.modelId,
+      subtitle: result.providerName,
       trailingType: MoeSettingsRowTrailing.switchControl,
       switchValue: result.isVisible,
       onSwitchChanged: (value) {

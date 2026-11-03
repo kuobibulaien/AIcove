@@ -318,11 +318,11 @@ void main() {
   test('nested settings change one field and undo it', () async {
     final before = now().autoReplySettings;
     final done = await run(AssistantSettingsTools.setTool, {
-      'key': 'auto_reply.daily_limit',
-      'value': 5,
+      'key': 'auto_reply.frequency',
+      'value': 'frequent',
     });
     expect(done['ok'], isTrue);
-    expect(now().autoReplySettings.dailyLimit, 5);
+    expect(now().autoReplySettings.frequency, AutoReplyFrequency.frequent);
     expect(now().autoReplySettings.quietHoursStart, before.quietHoursStart);
 
     final bad = await run(AssistantSettingsTools.setTool, {
@@ -333,6 +333,6 @@ void main() {
     expect(now().autoReplySettings.quietHoursStart, before.quietHoursStart);
 
     await journal.undo((await journal.recent()).first.id);
-    expect(now().autoReplySettings.dailyLimit, before.dailyLimit);
+    expect(now().autoReplySettings.frequency, before.frequency);
   });
 }

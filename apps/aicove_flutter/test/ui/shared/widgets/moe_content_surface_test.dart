@@ -1,9 +1,14 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:aicove_flutter/src/ui/shared/effects/smooth_clip.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:figma_squircle/figma_squircle.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
@@ -302,6 +307,277 @@ void main() {
             as ShapeDecoration;
     expect(decoration.shadows, shadows);
     expect(decoration.shape, moeG2Shape(radius: 16));
+  });
+
+  for (final (glassEnabled, liquid) in [
+    (false, false),
+    (true, false),
+    (true, true),
+  ]) {
+    testWidgets('sliver surface keeps rows lazy, blurs when translucent '
+        'glass=$glassEnabled liquid=$liquid', (tester) async {
+      await tester.pumpWidget(
+        _wrap(
+          glassEnabled: glassEnabled,
+          liquid: liquid,
+          child: CustomScrollView(
+            slivers: [
+              MoeSliverContentSurface(
+                sliver: SliverList.builder(
+                  itemCount: 1000,
+                  itemBuilder: (_, i) =>
+                      SizedBox(height: 40, child: Text('row $i')),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('row 0'), findsOneWidget);
+      expect(find.text('row 999'), findsNothing);
+      final blurs = tester.layers.whereType<BackdropFilterLayer>();
+      expect(blurs, glassEnabled ? hasLength(1) : isEmpty);
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -2000));
+      await tester.pumpAndSettle();
+      expect(find.text('row 0'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final (dark, liquid) in [
+    (false, false),
+    (true, false),
+    (false, true),
+    (true, true),
+  ]) {
+    testWidgets(
+      'MoePageScaffold solid backdrop skips BackdropFilterLayer for content cards '
+      'dark=$dark liquid=$liquid',
+      (tester) async {
+        MoeLiquidGlassService.setMockState(available: true);
+        final colors = dark ? MoeColors.dark() : MoeColors.light();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(
+              brightness: dark ? Brightness.dark : Brightness.light,
+              extensions: [colors],
+            ),
+            builder: (context, child) => MoeGlassTheme(
+              enabled: true,
+              useLiquidGlass: liquid,
+              blurSigma: 16,
+              tintFill: 0.5,
+              child: child!,
+            ),
+            home: MoePageScaffold(
+              body: ListView(
+                children: [
+                  const MoeContentSurface(child: Text('卡片一')),
+                  const MoeContentSurface(child: Text('卡片二')),
+                  SizedBox(
+                    height: 120,
+                    child: CustomScrollView(
+                      slivers: [
+                        MoeSliverContentSurface(
+                          sliver: SliverList.list(
+                            children: const [Text('列表项')],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('卡片一'), findsOneWidget);
+        expect(find.text('卡片二'), findsOneWidget);
+        expect(find.text('列表项'), findsOneWidget);
+        expect(tester.layers.whereType<BackdropFilterLayer>(), isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'MoePageScaffold with wallpaper shares one BackdropKey across sibling cards '
+    'and isolates nested cards',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: [MoeColors.light()]),
+          builder: (context, child) => MoeGlassTheme(
+            enabled: true,
+            blurSigma: 16,
+            tintFill: 0.5,
+            child: MoeWallpaperTheme(
+              wallpaper: GlobalWallpaper.catnap,
+              child: child!,
+            ),
+          ),
+          home: const MoePageScaffold(
+            body: Column(
+              children: [
+                MoeContentSurface(
+                  key: ValueKey('card-1'),
+                  child: MoeContentSurface(
+                    key: ValueKey('nested-card'),
+                    child: Text('嵌套卡片'),
+                  ),
+                ),
+                MoeContentSurface(
+                  key: ValueKey('card-2'),
+                  child: Text('同级卡片二'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      BackdropFilter filterInside(Key surfaceKey) => tester.widget<BackdropFilter>(
+        find
+            .descendant(
+              of: find.byKey(surfaceKey),
+              matching: find.byType(BackdropFilter),
+            )
+            .first,
+      );
+      final card1Filter = filterInside(const ValueKey('card-1'));
+      final card2Filter = filterInside(const ValueKey('card-2'));
+      final nestedFilter = tester.widget<BackdropFilter>(
+        find.descendant(
+          of: find.byKey(const ValueKey('nested-card')),
+          matching: find.byType(BackdropFilter),
+        ),
+      );
+      expect(card1Filter.backdropGroupKey, isNotNull);
+      expect(card2Filter.backdropGroupKey, same(card1Filter.backdropGroupKey));
+      expect(nestedFilter.backdropGroupKey, isNull);
+    },
+  );
+
+  testWidgets('solid backdrop content cards source rendered preview', (
+    tester,
+  ) async {
+    if (!const bool.fromEnvironment('WRITE_CONTENT_PREVIEW')) return;
+    tester.view.physicalSize = const Size(390, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.runAsync(() async {
+      final loader = FontLoader('Preview')
+        ..addFont(
+          File(
+            '/System/Library/Fonts/STHeiti Medium.ttc',
+          ).readAsBytes().then(ByteData.sublistView),
+        );
+      await loader.load();
+      final icons = FontLoader('MaterialIcons')
+        ..addFont(
+          File(
+            '${Platform.environment['HOME']}/dev-sdks/flutter-3.44.6/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+          ).readAsBytes().then(ByteData.sublistView),
+        );
+      await icons.load();
+    });
+
+    MoeLiquidGlassService.setMockState(available: true);
+    for (final (name, liquid, dark) in [
+      ('frosted-light', false, false),
+      ('liquid-light', true, false),
+    ]) {
+      final key = GlobalKey();
+      final colors = dark ? MoeColors.dark() : MoeColors.light();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(
+            fontFamily: 'Preview',
+            brightness: dark ? Brightness.dark : Brightness.light,
+            extensions: [colors],
+          ),
+          builder: (context, child) => MoeGlassTheme(
+            enabled: true,
+            useLiquidGlass: liquid,
+            blurSigma: 16,
+            tintFill: 0.5,
+            child: child!,
+          ),
+          home: RepaintBoundary(
+            key: key,
+            child: MoePageScaffold(
+              appBar: const MoeAppBar(
+                title: '界面设置',
+                showBackButton: true,
+              ),
+              body: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 80, 16, 24),
+                children: [
+                  const MoeSettingsGroup(
+                    margin: EdgeInsets.zero,
+                    children: [
+                      MoeSettingsRow(
+                        icon: Icons.palette_outlined,
+                        label: '主题外观',
+                        subtitle: '跟随系统浅色与深色切换',
+                      ),
+                      MoeSettingsRow(
+                        icon: Icons.auto_awesome_outlined,
+                        label: '表面材质',
+                        subtitle: '纯色底面自动静态合成，保持通透质感',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  MoeContentSurface(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '分段切换预览',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        MoeSegmentedControl<String>(
+                          value: liquid ? 'liquid' : 'frosted',
+                          segments: const [
+                            MoeSegment(value: 'solid', label: '纯色'),
+                            MoeSegment(value: 'frosted', label: '毛玻璃'),
+                            MoeSegment(value: 'liquid', label: '液态玻璃'),
+                          ],
+                          onChanged: (_) {},
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 2);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        final dir = Directory('../../.codex-temp/blur-opt-previews')
+          ..createSync(recursive: true);
+        await File(
+          '${dir.path}/settings-$name-390.png',
+        ).writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+    }
   });
 }
 

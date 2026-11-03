@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -144,7 +145,8 @@ class _ProgressiveEdge extends StatelessWidget {
 
   /// (share of the clear line covered, share of the full sigma). The squared
   /// shares sum to ~1, so the top edge reaches the full blur.
-  static const _layers = [(1.0, 0.5), (0.66, 0.55), (0.33, 0.65)];
+  static const _desktopLayers = [(1.0, 0.5), (0.66, 0.55), (0.33, 0.65)];
+  static const _mobileLayers = [(1.0, 0.6), (0.5, 0.8)];
 
   @override
   Widget build(BuildContext context) {
@@ -168,10 +170,13 @@ class _ProgressiveEdge extends StatelessWidget {
           0.0,
           constraints.maxHeight,
         );
+        final layers = (Platform.isAndroid || Platform.isIOS)
+            ? _mobileLayers
+            : _desktopLayers;
         return Stack(
           fit: StackFit.expand,
           children: [
-            for (final (index, (reach, share)) in _layers.indexed)
+            for (final (index, (reach, share)) in layers.indexed)
               Positioned(
                 left: 0,
                 right: 0,

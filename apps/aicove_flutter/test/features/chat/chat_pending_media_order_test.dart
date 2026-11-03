@@ -180,9 +180,19 @@ void main() {
         container.dispose();
         container = newContainer();
         final restored = await timeline();
-        expect(restored.map((m) => m.id), expectedIds);
+        if (fallback) {
+          expect(restored.map((m) => m.id), expectedIds);
+        } else {
+          final pure = await history().loadProjectedMessagesFromRawStore(owner);
+          expect(restored.map((m) => m.id), pure.map((m) => m.id));
+          expect(restored.map((m) => m.displayText), [
+            '文字 0', '[语音]', '文字 2', '[语音]', '文字 4', '下一轮',
+          ]);
+        }
         for (final i in [1, 3]) {
-          final message = restored.firstWhere((m) => m.id == 'segment-$i');
+          final message = restored.firstWhere((m) => fallback
+              ? m.id == 'segment-$i'
+              : m.audios.any((audio) => audio.text == '语音 $i'));
           if (fallback) {
             expect(
               message.blocks!.whereType<TextBlock>().single.content,

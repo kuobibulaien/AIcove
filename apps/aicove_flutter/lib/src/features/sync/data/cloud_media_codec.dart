@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import '../../../core/media/media_asset.dart';
 import '../../../core/media/media_store.dart';
 import 'cloud_document.dart';
+import '../../chat/services/chat_message_projection_codec.dart';
 
 /// Only attachment references are rewritten; prompt text, tags and call
 /// arguments retain their original structure and values.
@@ -12,6 +13,46 @@ class CloudMediaCodec {
   CloudMediaCodec(this.media, {this.allowNetworkDownload = true});
   final MediaStore media;
   final bool allowNetworkDownload;
+
+  static Map<String, dynamic> normalizeMessagePayload(
+    String kind,
+    Map<String, dynamic> payload,
+  ) {
+    if (kind != 'messages' || payload['row'] is! Map) return payload;
+    final row = Map<String, dynamic>.from(payload['row'] as Map);
+    final raw = row['raw_payload'];
+    if (raw is! String || raw.isEmpty) return payload;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException {
+      return payload;
+    }
+    if (decoded is! Map) return payload;
+    final source = Map<String, dynamic>.from(decoded);
+    final normalized = ChatMessageProjectionCodec.normalizeLegacyMediaPayload(
+      rawMessageId: row['id'] as String,
+      role: row['role'] as String,
+      payload: source,
+      blocks: [
+        for (final b in (payload['message_blocks'] as List? ?? const []))
+          if (b is Map && b['deleted_at'] == null && b['data'] is String)
+            if (_blockJson(b['data'] as String) case final block?) block,
+      ],
+    );
+    if (identical(normalized, source)) return payload;
+    row['raw_payload'] = jsonEncode(normalized);
+    return {...payload, 'row': row};
+  }
+
+  static Map<String, dynamic>? _blockJson(String value) {
+    try {
+      final decoded = jsonDecode(value);
+      return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } on FormatException {
+      return null;
+    }
+  }
 
   static const _jsonColumns = {
     'raw_payload',
@@ -65,16 +106,112 @@ class CloudMediaCodec {
     'promptAudioUrl',
   };
 
+  static bool _stickerEvent(Map value) =>
+      value['pluginId'] == 'sticker' || value['type'] == 'sticker_convert';
+
+  static const _stickerOpaqueKeys = {
+    'text',
+    'content',
+    'prompt',
+    'negativePrompt',
+    'promptText',
+    'arguments',
+    'parameters',
+    'generationSnapshot',
+    'rawToolResults',
+  };
+
+  /// Visits only persisted sticker attachments, including JSON-backed columns.
+  /// Unchanged nodes retain their identity so migrations do not rewrite JSON
+  /// formatting or manufacture edits on devices without the original file.
+  static Future<Object?> rewriteStickerAttachments(
+    Object? value,
+    Future<String> Function(String path) rewrite, {
+    bool stickerData = false,
+    bool emojiData = false,
+    String key = '',
+  }) async {
+    if (_stickerOpaqueKeys.contains(key)) {
+      return value;
+    }
+    if (value is Map) {
+      final emoji = emojiData || value['type'] == 'emoji';
+      var changed = false;
+      final result = <String, dynamic>{};
+      for (final entry in value.entries) {
+        final name = entry.key.toString();
+        final previous = entry.value;
+        final next =
+            previous is String &&
+                ((stickerData && name == 'assetPath') ||
+                    (emoji && name == 'path'))
+            ? await rewrite(previous)
+            : await rewriteStickerAttachments(
+                previous,
+                rewrite,
+                key: name,
+                stickerData: name == 'data' && _stickerEvent(value),
+                emojiData: name == 'data' && emoji,
+              );
+        result[name] = next;
+        changed = changed || !identical(previous, next);
+      }
+      return changed ? result : value;
+    }
+    if (value is List) {
+      var changed = false;
+      final result = <Object?>[];
+      for (final item in value) {
+        final next = await rewriteStickerAttachments(item, rewrite);
+        changed = changed || !identical(item, next);
+        result.add(next);
+      }
+      return changed ? result : value;
+    }
+    if (value is String &&
+        (_jsonColumns.contains(key) || key == 'json_value')) {
+      Object? decoded;
+      try {
+        decoded = jsonDecode(value);
+      } on FormatException {
+        return value;
+      }
+      final next = await rewriteStickerAttachments(
+        decoded,
+        rewrite,
+        stickerData: stickerData,
+        emojiData: emojiData,
+      );
+      return identical(next, decoded) ? value : jsonEncode(next);
+    }
+    return value;
+  }
+
   /// A remote attachment must never address a file on the receiving device.
   static void validateWirePaths(Map<String, dynamic> payload) {
-    void visit(Object? value, String key) {
+    void visit(
+      Object? value,
+      String key, {
+      bool stickerData = false,
+      bool stickerPath = false,
+      bool inspectSticker = true,
+    }) {
+      inspectSticker = inspectSticker && !_stickerOpaqueKeys.contains(key);
       if (value is Map) {
         for (final entry in value.entries) {
-          visit(entry.value, entry.key.toString());
+          final name = entry.key.toString();
+          visit(
+            entry.value,
+            name,
+            stickerData:
+                inspectSticker && name == 'data' && _stickerEvent(value),
+            stickerPath: inspectSticker && stickerData && name == 'assetPath',
+            inspectSticker: inspectSticker,
+          );
         }
       } else if (value is List) {
         for (final item in value) {
-          visit(item, key);
+          visit(item, key, inspectSticker: inspectSticker);
         }
       } else if (value is String && value.isNotEmpty) {
         if (_jsonColumns.contains(key) || key == 'json_value') {
@@ -84,9 +221,15 @@ class CloudMediaCodec {
           } on FormatException {
             return;
           }
-          visit(decoded, '');
+          visit(
+            decoded,
+            '',
+            stickerData: stickerData,
+            inspectSticker: inspectSticker,
+          );
         } else if ((_imageKeys.contains(key) ||
                 _fileKeys.contains(key) ||
+                stickerPath ||
                 key == 'images') &&
             (p.posix.isAbsolute(value) ||
                 p.windows.isAbsolute(value) ||
@@ -274,7 +417,38 @@ class CloudMediaCodec {
       return record.asset.reference;
     }
 
-    final result = await visit(document.payload, '') as Map<String, dynamic>;
+    final stickers = await rewriteStickerAttachments(
+      normalizeMessagePayload(document.kind, document.payload),
+      (path) async {
+        if (path.isEmpty ||
+            path.startsWith('assets/') ||
+            path.startsWith('packages/')) {
+          return path;
+        }
+        final existing = mediaIdFromReference(path);
+        if (existing != null) {
+          await media.noteUsage(
+            existing,
+            createdAtMs: at,
+            originalRequired: true,
+          );
+          return path;
+        }
+        LocalMedia record;
+        try {
+          record = await media.register(
+            path,
+            createdAtMs: at,
+            originalRequired: true,
+            allowNetworkDownload: allowNetworkDownload,
+          );
+        } on IOException {
+          record = await media.unavailable(path, createdAtMs: at);
+        }
+        return record.asset.reference;
+      },
+    );
+    final result = await visit(stickers, '') as Map<String, dynamic>;
     return CloudWireDocument(result, ids.toList()..sort());
   }
 
@@ -337,6 +511,7 @@ class CloudMediaCodec {
       return media.originalDestination(id);
     }
 
-    return await visit(payload, '') as Map<String, dynamic>;
+    return await visit(normalizeMessagePayload(kind, payload), '')
+        as Map<String, dynamic>;
   }
 }

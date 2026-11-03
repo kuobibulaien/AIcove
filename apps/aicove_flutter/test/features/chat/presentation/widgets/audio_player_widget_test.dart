@@ -590,6 +590,23 @@ void main() {
       expect(backend.playCalls, 1);
     });
 
+    test('autoLoad 为 false 时初始化不预加载音频，点击播放时才加载', () async {
+      final backend = _FakeAudioPlaybackBackend();
+      final controller = AudioPlayerController(
+        'https://example.com/lazy-audio.mp3',
+        backend: backend,
+        temporaryDirectoryProvider: () async => Directory.systemTemp,
+        autoLoad: false,
+      );
+      addTearDown(controller.dispose);
+      await _settleAsync();
+      expect(backend.setUrlCalls, isEmpty);
+
+      await controller.togglePlayPause();
+      expect(backend.setUrlCalls, <String>['https://example.com/lazy-audio.mp3']);
+      expect(backend.playCalls, 1);
+    });
+
     test('首次播放即使只有轻微初始偏移，也应先 seek 到 0 秒', () async {
       final backend = _FakeAudioPlaybackBackend(
         initialPosition: const Duration(milliseconds: 20),

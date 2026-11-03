@@ -44,7 +44,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
           _showHistoryLoadingOverlay ? DateTime.now() : null;
       _hydrateInitialListItems(
         ref
-            .read(chatDisplayPolicyProvider(widget.chatDisplayStyle))
+            .read(chatDisplayPolicyProvider(_displayPolicyKey))
             .effectiveFormatConfig,
       );
       _prepareTailFirstEntryLayout();

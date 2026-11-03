@@ -20,6 +20,7 @@ Future<String?> showCharacterTextEditorSheet({
   required String initialValue,
   required String hint,
   ValueChanged<String>? onChanged,
+  bool readOnly = false,
 }) async {
   String draft = initialValue;
   final statusBarHeight = MediaQuery.paddingOf(context).top;
@@ -33,6 +34,7 @@ Future<String?> showCharacterTextEditorSheet({
       return _CharacterTextEditorBody(
         initialValue: initialValue,
         hint: hint,
+        readOnly: readOnly,
         onChanged: (value) {
           draft = value;
           onChanged?.call(value);
@@ -48,11 +50,15 @@ class _CharacterTextEditorBody extends StatefulWidget {
     required this.initialValue,
     required this.hint,
     required this.onChanged,
+    required this.readOnly,
   });
 
   final String initialValue;
   final String hint;
   final ValueChanged<String> onChanged;
+
+  /// 只能查看、不能修改（如 AIcove酱 的内置系统提示词）。
+  final bool readOnly;
 
   @override
   State<_CharacterTextEditorBody> createState() =>
@@ -99,11 +105,12 @@ class _CharacterTextEditorBodyState extends State<_CharacterTextEditorBody> {
                 maxLines: null,
                 expands: true,
                 textAlignVertical: TextAlignVertical.top,
-                autofocus: true,
+                readOnly: widget.readOnly,
+                autofocus: !widget.readOnly,
                 style: TextStyle(
                   fontSize: 15,
                   height: 1.6,
-                  color: colors.text,
+                  color: widget.readOnly ? colors.muted : colors.text,
                 ),
                 decoration: MoeInputDecoration(
                   hintText: widget.hint,

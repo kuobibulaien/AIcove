@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
+import 'package:aicove_flutter/src/features/workspace/data/workspace_read_only_mount.dart';
 import 'package:aicove_flutter/src/features/workspace/data/workspace_store.dart';
 import 'package:aicove_flutter/src/features/workspace/domain/workspace_errors.dart';
 import 'package:aicove_flutter/src/features/workspace/domain/workspace_models.dart';
@@ -100,6 +102,21 @@ void main() {
       );
       expect(await store.runs(ws.id), isEmpty, reason: '宿主写入不进撤销列表');
     });
+  });
+
+  test('diskFile points at local files and leaves mounts to a copy', () async {
+    final store = await open();
+    final ws = (await store.create(name: '笔记')).id;
+    await store.write(ws, 'a/图.png', [1, 2, 3], runId: 'r');
+    final file = await store.diskFile(ws, 'a/图.png');
+    expect(file!.path, p.join(store.directoryOf(ws).path, 'a', '图.png'));
+    expect(await file.readAsBytes(), [1, 2, 3]);
+    store.registerReadOnlyMount(ws, 'view', _OneFileMount());
+    expect(await store.diskFile(ws, 'view/x.txt'), isNull);
+    await expectLater(
+      store.diskFile(ws, 'missing.txt'),
+      throwsA(_code('not_found')),
+    );
   });
 
   group('conditional commit', () {
@@ -503,4 +520,16 @@ void main() {
     expect(blobs.listSync(recursive: true).whereType<File>(), isEmpty);
     expect(await store.runs(ws), isEmpty);
   });
+}
+
+class _OneFileMount implements WorkspaceReadOnlyMount {
+  @override
+  Future<Map<String, MountedWorkspaceFile>> files() async => {
+    'x.txt': MountedWorkspaceFile(
+      size: 1,
+      revision: 'x',
+      updatedAt: DateTime(2026),
+      read: () async => Uint8List.fromList([1]),
+    ),
+  };
 }

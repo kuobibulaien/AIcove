@@ -1,3 +1,4 @@
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show JournalEntry;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:flutter/material.dart';
@@ -16,6 +17,11 @@ import '../../../../features/chat/domain/conversation.dart';
 import '../../../shared/widgets/image_crop_dialog.dart';
 import '../../../../features/assistant/assistant_providers.dart';
 import '../../../../features/chat/conversation_providers.dart';
+import '../../../../features/chat/chat_providers.dart'
+    show conversationSendingProvider;
+import '../../../../features/chat/conversation_timeline_providers.dart'
+    show conversationMessagesProvider;
+import '../../../../features/chat/domain/message.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
@@ -43,14 +49,44 @@ import '../../settings/pages/profile_page.dart';
 import '../../settings/pages/provider_detail_page.dart';
 import '../../settings/pages/ui_settings_page.dart';
 
+/// When the latest reply in a chat began: the time of the user's last
+/// message there; null while it is unknown.
+final assistantRunStartProvider = Provider.autoDispose
+    .family<DateTime?, String>((ref, conversationId) {
+      final messages = ref
+          .watch(conversationMessagesProvider(conversationId))
+          .valueOrNull;
+      DateTime? latest;
+      for (final message in messages ?? const <Message>[]) {
+        if (message.role == 'user' &&
+            (latest == null || message.createdAt.isAfter(latest))) {
+          latest = message.createdAt;
+        }
+      }
+      return latest;
+    });
+
 /// Above the composer in the assistant chat (ADR0073, batch T3): the calls
 /// waiting for the user's approval, key inputs and page links the assistant
-/// handed over, and the latest changes with an undo.
+/// handed over, and, once a reply has finished, one card summing up the
+/// changes it made with an undo for all of them.
 class AssistantActivityPanel extends ConsumerStatefulWidget {
-  const AssistantActivityPanel({super.key});
+  const AssistantActivityPanel({super.key, required this.conversationId});
 
-  /// Changes shown at once; older ones stay undoable from the journal.
-  static const visibleChanges = 3;
+  /// The chat the panel sits in; its last user message starts the run.
+  final String? conversationId;
+
+  /// The changes of the latest reply: those made after [since], the user's
+  /// last message. None while [since] is unknown, so an undo of the run
+  /// never reaches earlier ones. Newest first.
+  static List<JournalEntry> latestRun(
+    List<JournalEntry> changes,
+    DateTime? since,
+  ) => [
+    if (since != null)
+      for (final entry in changes)
+        if (!entry.createdAt.isBefore(since)) entry,
+  ];
 
   @override
   ConsumerState<AssistantActivityPanel> createState() =>
@@ -61,20 +97,31 @@ class _AssistantActivityPanelState
     extends ConsumerState<AssistantActivityPanel> {
   /// Changes the user closed without undoing; local to this page.
   final _dismissed = <String>{};
-  final _undoing = <String>{};
+  bool _undoing = false;
 
-  Future<void> _undo(String id) async {
-    setState(() => _undoing.add(id));
+  /// Undoes newest first, so a later change never blocks an earlier one.
+  Future<void> _undoAll(List<JournalEntry> changes) async {
+    setState(() => _undoing = true);
+    final journal = ref.read(assistantChangeJournalProvider);
+    Map<String, String> failures;
     try {
-      await ref.read(assistantChangeJournalProvider).undo(id);
-      if (mounted) MoeToast.show(context, '已撤销');
-    } on StateError catch (error) {
-      if (mounted) MoeToast.error(context, error.message.toString());
+      failures = await journal.undoAll([for (final e in changes) e.id]);
     } catch (_) {
-      if (mounted) MoeToast.error(context, '撤销失败');
-    } finally {
-      ref.invalidate(assistantRecentChangesProvider);
-      if (mounted) setState(() => _undoing.remove(id));
+      failures = {for (final e in changes) e.id: '撤销失败'};
+    }
+    if (!mounted) return;
+    ref.invalidate(assistantRecentChangesProvider);
+    setState(() => _undoing = false);
+    final undone = changes.length - failures.length;
+    if (failures.isEmpty) {
+      MoeToast.show(context, '已撤销 $undone 项改动');
+    } else {
+      final first = changes.firstWhere((e) => failures.containsKey(e.id));
+      MoeToast.error(
+        context,
+        '已撤销 $undone 项，${failures.length} 项没能撤销：'
+        '${first.change.description}：${failures[first.id]}',
+      );
     }
   }
 
@@ -83,11 +130,18 @@ class _AssistantActivityPanelState
     final colors = context.moeColors;
     final approvals = ref.watch(assistantApprovalsProvider);
     final cards = ref.watch(assistantCardsProvider);
-    final changes = [
-      for (final entry
-          in ref.watch(assistantRecentChangesProvider).valueOrNull ?? const [])
-        if (!_dismissed.contains(entry.id)) entry,
-    ].take(AssistantActivityPanel.visibleChanges).toList();
+    // While the reply runs nothing is shown; the summary comes once it ends.
+    final conversationId = widget.conversationId;
+    final changes =
+        conversationId == null ||
+            ref.watch(conversationSendingProvider(conversationId))
+        ? const <JournalEntry>[]
+        : AssistantActivityPanel.latestRun([
+            for (final entry
+                in ref.watch(assistantRecentChangesProvider).valueOrNull ??
+                    const <JournalEntry>[])
+              if (!_dismissed.contains(entry.id)) entry,
+          ], ref.watch(assistantRunStartProvider(conversationId)));
     if (approvals.isEmpty && cards.isEmpty && changes.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -185,40 +239,66 @@ class _AssistantActivityPanelState
                 ),
               },
             ),
-          for (final entry in changes)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: MoeContentSurface(
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 14),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          entry.change.description,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: textStyle,
+          if (changes.isNotEmpty)
+            MoeContentSurface(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 4, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '本轮改动 ${changes.length} 项',
+                            style: textStyle.copyWith(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _undoing ? null : () => _undoAll(changes),
+                          child: const Text('全部撤销'),
+                        ),
+                        IconButton(
+                          tooltip: '收起',
+                          iconSize: 18,
+                          icon: Icon(
+                            Icons.close_rounded,
+                            color: colors.textSecondary,
+                          ),
+                          onPressed: () => setState(
+                            () => _dismissed.addAll(changes.map((e) => e.id)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 132),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Oldest first, in the order they were made.
+                            for (final entry in changes.reversed)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 2),
+                                child: Text(
+                                  '· ${entry.change.description}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: textStyle.copyWith(
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                      TextButton(
-                        onPressed: _undoing.contains(entry.id)
-                            ? null
-                            : () => _undo(entry.id),
-                        child: const Text('撤销'),
-                      ),
-                      IconButton(
-                        tooltip: '收起',
-                        iconSize: 18,
-                        icon: Icon(
-                          Icons.close_rounded,
-                          color: colors.textSecondary,
-                        ),
-                        onPressed: () =>
-                            setState(() => _dismissed.add(entry.id)),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),

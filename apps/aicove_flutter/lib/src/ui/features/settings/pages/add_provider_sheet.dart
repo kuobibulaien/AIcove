@@ -23,7 +23,6 @@ import '../../../../features/voice_call/domain/asr_request_format.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/settings/data/support/ui_models_store_support.dart'
     show kNovelAiDefaultModels;
-import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../widgets/tts_request_template_editor.dart';
@@ -36,7 +35,9 @@ Future<bool?> showAddProviderSheet(
   return showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.transparent,
+    constraints: const BoxConstraints(maxWidth: 640),
     builder: (context) => AddProviderSheet(initialCategory: initialCategory),
   );
 }
@@ -391,219 +392,150 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    final viewInsets = MediaQuery.of(context).viewInsets;
-    final screenHeight = MediaQuery.of(context).size.height;
-
-    // 不把整个 sheet 往上顶：只在内部内容区给键盘让位。
-    return MoeFloatingSurface(
-      baseline: MoeMaterialBaseline.background,
-      radius: 24,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      child: Container(
-        constraints: BoxConstraints(maxHeight: screenHeight * 0.85),
-        child: SafeArea(
-          child: AnimatedPadding(
-            duration: kAnimFast,
-            curve: Curves.easeOutCubic,
-            padding: EdgeInsets.only(bottom: viewInsets.bottom),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+    return MoeBottomSheet(
+      title: '添加供应商',
+      showCloseButton: true,
+      footer: Row(
+        children: [
+          Expanded(
+            child: MoeSecondaryButton(
+              label: '取消',
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: MoePrimaryButton(
+              label: _submitting ? '添加中...' : '立即添加',
+              onPressed: _submitting ? null : _submit,
+            ),
+          ),
+        ],
+      ),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSectionTitle('类型与格式', colors),
+            const SizedBox(height: 8),
+            MoeSettingsGroup(
+              margin: EdgeInsets.zero,
+              padding: const EdgeInsets.all(12),
+              borderRadius: BorderRadius.circular(20),
               children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 12, bottom: 8),
-                  width: 32,
-                  height: 4,
-                  decoration: MoeG2Decoration(
-                    radius: 2,
-                    color: colors.border.withValues(alpha: 0.5),
-                  ),
+                MoeSegmentedControl<ProviderCategory>(
+                  value: _category,
+                  segments: ProviderCategory.values
+                      .map((c) => MoeSegment(value: c, label: c.label))
+                      .toList(),
+                  onChanged: _onCategoryChanged,
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    children: [
-                      Text(
-                        '添加供应商',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: MoeFontWeights.emphasis,
-                          color: colors.text,
-                        ),
-                      ),
-                      const Spacer(),
-                      MoeIconButton(
-                        icon: Icons.close,
-                        onTap: () => Navigator.of(context).pop(),
-                        backgroundColor: colors.surfaceAlt,
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionTitle('类型与格式', colors),
-                        const SizedBox(height: 8),
-                        MoeSettingsGroup(
-                          margin: EdgeInsets.zero,
-                          padding: const EdgeInsets.all(12),
-                          borderRadius: BorderRadius.circular(20),
-                          children: [
-                            MoeSegmentedControl<ProviderCategory>(
-                              value: _category,
-                              segments: ProviderCategory.values
-                                  .map(
-                                    (c) =>
-                                        MoeSegment(value: c, label: c.label),
-                                  )
-                                  .toList(),
-                              onChanged: _onCategoryChanged,
-                            ),
-                            const SizedBox(height: 10),
-                            _FormatBar(
-                              value: _selectedFormat,
-                              formats: ApiFormat.forCategory(_category),
-                              onChanged: _onFormatChanged,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 20),
-                        _buildSectionTitle('基础配置', colors),
-                        const SizedBox(height: 8),
-                        MoeSettingsGroup(
-                          margin: EdgeInsets.zero,
-                          children: [
-                            _buildInputRow(
-                              colors,
-                              icon: Icons.badge_outlined,
-                              label: '显示名称',
-                              controller: _displayCtrl,
-                              hintText: '可留空',
-                            ),
-                            _buildInputRow(
-                              colors,
-                              icon: Icons.key_outlined,
-                              label:
-                                  _selectedFormat.asr?.apiKeyLabel ?? 'API Key',
-                              controller: _keyCtrl,
-                              hintText: _selectedFormat.apiKeyOptional
-                                  ? '可选（Bearer Token）'
-                                  : '必填',
-                            ),
-                            for (final field
-                                in _selectedFormat.asr?.credentialFields ??
-                                    const <AsrCredentialField>[])
-                              _buildInputRow(
-                                colors,
-                                icon: Icons.vpn_key_outlined,
-                                label: field.label,
-                                controller: _credentialCtrl(field.key),
-                                hintText: field.optional ? '可选' : '必填',
-                              ),
-                            _buildInputRow(
-                              colors,
-                              icon: Icons.link_outlined,
-                              label: '基础 URL',
-                              controller: _urlCtrl,
-                              showDivider: _selectedFormat.showsApiPath,
-                            ),
-                            if (_selectedFormat.showsApiPath)
-                              _buildInputRow(
-                                colors,
-                                icon: Icons.route_outlined,
-                                label: 'API 路径',
-                                controller: _pathCtrl,
-                                showDivider: false,
-                              ),
-                          ],
-                        ),
-                        if (_isComfyUI)
-                          _buildHint(
-                            '同机可用 127.0.0.1；手机连接电脑时填写电脑的局域网地址。添加后将自动拉取基础模型列表，可在绘图预设中绑定 LoRA 或导入自定义工作流 JSON。',
-                            colors,
-                          ),
-                        if (_isCustomRestTts) ...[
-                          const SizedBox(height: 16),
-                          MoeSettingsGroup(
-                            margin: EdgeInsets.zero,
-                            children: [
-                              MoeSettingsRow(
-                                label: '请求模板',
-                                detailText: '路径、请求头、请求体',
-                                trailingType: MoeSettingsRowTrailing.text,
-                                showDivider: false,
-                                onTap: () async {
-                                  final template =
-                                      await showTtsRequestTemplateEditor(
-                                        context,
-                                        {
-                                          TtsRequestFormat
-                                                  .customRestTemplateKey:
-                                              _ttsTemplate,
-                                        },
-                                      );
-                                  if (template != null && mounted) {
-                                    setState(() => _ttsTemplate = template);
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
-                          _buildHint(
-                            '适合没有内置格式的语音服务：按厂商文档改模板即可。模型列表可在添加后的详情页手动添加。',
-                            colors,
-                          ),
-                        ],
-                        for (final field
-                            in _selectedFormat.asr?.credentialFields ??
-                                const <AsrCredentialField>[])
-                          if (field.hint != null)
-                            _buildHint('${field.label}：${field.hint}', colors),
-                        ValueListenableBuilder<TextEditingValue>(
-                          valueListenable: _urlCtrl,
-                          builder: (context, value, _) {
-                            if (_selectedFormat != ApiFormat.openai ||
-                                !shouldSuggestOpenAiBaseUrlV1(value.text)) {
-                              return const SizedBox.shrink();
-                            }
-                            return _buildHint(
-                              'OpenAI 格式推荐让基础 URL 以 /v1 结尾，模型预览会更稳。',
-                              colors,
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 32),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: MoeSecondaryButton(
-                                label: '取消',
-                                onPressed: () => Navigator.of(context).pop(),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: MoePrimaryButton(
-                                label: _submitting ? '添加中...' : '立即添加',
-                                onPressed: _submitting ? null : _submit,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                const SizedBox(height: 10),
+                _FormatBar(
+                  value: _selectedFormat,
+                  formats: ApiFormat.forCategory(_category),
+                  onChanged: _onFormatChanged,
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: 20),
+            _buildSectionTitle('基础配置', colors),
+            const SizedBox(height: 8),
+            MoeSettingsGroup(
+              margin: EdgeInsets.zero,
+              children: [
+                _buildInputRow(
+                  colors,
+                  icon: Icons.badge_outlined,
+                  label: '显示名称',
+                  controller: _displayCtrl,
+                  hintText: '可留空',
+                ),
+                _buildInputRow(
+                  colors,
+                  icon: Icons.key_outlined,
+                  label: _selectedFormat.asr?.apiKeyLabel ?? 'API Key',
+                  controller: _keyCtrl,
+                  hintText: _selectedFormat.apiKeyOptional
+                      ? '可选（Bearer Token）'
+                      : '必填',
+                ),
+                for (final field
+                    in _selectedFormat.asr?.credentialFields ??
+                        const <AsrCredentialField>[])
+                  _buildInputRow(
+                    colors,
+                    icon: Icons.vpn_key_outlined,
+                    label: field.label,
+                    controller: _credentialCtrl(field.key),
+                    hintText: field.optional ? '可选' : '必填',
+                  ),
+                _buildInputRow(
+                  colors,
+                  icon: Icons.link_outlined,
+                  label: '基础 URL',
+                  controller: _urlCtrl,
+                  showDivider: _selectedFormat.showsApiPath,
+                ),
+                if (_selectedFormat.showsApiPath)
+                  _buildInputRow(
+                    colors,
+                    icon: Icons.route_outlined,
+                    label: 'API 路径',
+                    controller: _pathCtrl,
+                    showDivider: false,
+                  ),
+              ],
+            ),
+            if (_isComfyUI)
+              _buildHint(
+                '同机可用 127.0.0.1；手机连接电脑时填写电脑的局域网地址。添加后将自动拉取基础模型列表，可在绘图预设中绑定 LoRA 或导入自定义工作流 JSON。',
+                colors,
+              ),
+            if (_isCustomRestTts) ...[
+              const SizedBox(height: 16),
+              MoeSettingsGroup(
+                margin: EdgeInsets.zero,
+                children: [
+                  MoeSettingsRow(
+                    label: '请求模板',
+                    detailText: '路径、请求头、请求体',
+                    trailingType: MoeSettingsRowTrailing.text,
+                    showDivider: false,
+                    onTap: () async {
+                      final template = await showTtsRequestTemplateEditor(
+                        context,
+                        {TtsRequestFormat.customRestTemplateKey: _ttsTemplate},
+                      );
+                      if (template != null && mounted) {
+                        setState(() => _ttsTemplate = template);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              _buildHint('适合没有内置格式的语音服务：按厂商文档改模板即可。模型列表可在添加后的详情页手动添加。', colors),
+            ],
+            for (final field
+                in _selectedFormat.asr?.credentialFields ??
+                    const <AsrCredentialField>[])
+              if (field.hint != null)
+                _buildHint('${field.label}：${field.hint}', colors),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _urlCtrl,
+              builder: (context, value, _) {
+                if (_selectedFormat != ApiFormat.openai ||
+                    !shouldSuggestOpenAiBaseUrlV1(value.text)) {
+                  return const SizedBox.shrink();
+                }
+                return _buildHint(
+                  'OpenAI 格式推荐让基础 URL 以 /v1 结尾，模型预览会更稳。',
+                  colors,
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -638,28 +570,13 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     );
   }
 
+  /// 分组下方的脚注：不加底色和描边，左右与卡片内的行内容对齐。
   Widget _buildHint(String text, MoeColors colors) {
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: MoeG2Decoration(
-          radius: MoeRadii.md,
-          color: colors.surfaceAlt.withValues(alpha: 0.72),
-          border: Border.all(
-            color: colors.border.withValues(alpha: 0.45),
-            width: 1,
-          ),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: 12,
-            color: colors.textSecondary,
-            height: 1.35,
-          ),
-        ),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 12, color: colors.muted, height: 1.4),
       ),
     );
   }

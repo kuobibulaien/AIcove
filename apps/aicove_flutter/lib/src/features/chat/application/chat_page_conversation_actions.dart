@@ -9,7 +9,11 @@ import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../../settings/app_settings.dart';
 import '../conversation_providers.dart';
+import '../chat_actions.dart' show quotedMessageProvider;
+import '../chat_providers.dart';
+import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/persona_prompt_codec.dart';
 import '../services/chat_frontend_message_projection_service.dart';
 import '../services/chat_message_projection_codec.dart';
 import '../services/chat_types.dart';
@@ -87,6 +91,22 @@ class ChatPageConversationActions {
         );
   }
 
+  /// Rewrites only the drawing preset inside the latest persona prompt.
+  Future<void> switchDrawingPreset(Conversation conv, String? presetId) {
+    final latest = _ref.read(resolvedConversationByIdProvider(conv.id)) ?? conv;
+    final parts = PersonaPromptCodec.parse(latest.personaPrompt);
+    return applyConversationEdits(
+      conv.id,
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: parts.userPrompt,
+        extraPrompt: parts.extraPrompt,
+        customDrawingPrompt: parts.customDrawingPrompt,
+        drawingPromptPackId: parts.drawingPromptPackId,
+        drawingPresetId: presetId,
+      ),
+    );
+  }
+
   Future<void> updateConversationSettings(
     String conversationId, {
     bool? isPinned,
@@ -109,10 +129,37 @@ class ChatPageConversationActions {
         );
   }
 
-  Future<void> hideMessages(String conversationId, List<String> messageIds) {
+  Future<void> hideMessages(
+    String conversationId,
+    List<String> messageIds,
+  ) async {
+    if (messageIds.isEmpty) return;
+    final idSet = messageIds.toSet();
+    final staged = _ref.read(
+      stagedUserMessagesProvider(conversationId).notifier,
+    );
+    final stagedRemoved = staged.state
+        .where((message) => idSet.contains(message.id))
+        .map((message) => message.id)
+        .toSet();
+    if (stagedRemoved.isNotEmpty) {
+      staged.state = [
+        for (final message in staged.state)
+          if (!stagedRemoved.contains(message.id)) message,
+      ];
+      final quoted = _ref.read(quotedMessageProvider);
+      if (quoted != null && stagedRemoved.contains(quoted.id)) {
+        _ref.read(quotedMessageProvider.notifier).state = null;
+      }
+    }
+    final remaining = [
+      for (final id in messageIds)
+        if (!stagedRemoved.contains(id)) id,
+    ];
+    if (remaining.isEmpty) return;
     return _ref
         .read(chatHistoryStoreProvider)
-        .hideMessagesInFrontendTimeline(conversationId, messageIds);
+        .hideMessagesInFrontendTimeline(conversationId, remaining);
   }
 
   /// 把角色卡开场白写成会话里的第一条角色消息（与酒馆建聊一致，宏在写入时替换）。
@@ -182,13 +229,30 @@ class ChatPageConversationActions {
   static bool isCharacterGreeting(Message message) =>
       message.sourceMessageIdOrSelf.startsWith('msg_greeting_');
 
+  void _resetStagedMessages(String conversationId) {
+    _ref
+        .read(stagedMessagesResetEpochProvider(conversationId).notifier)
+        .state++;
+    final staged = _ref.read(
+      stagedUserMessagesProvider(conversationId).notifier,
+    );
+    final removedIds = staged.state.map((m) => m.id).toSet();
+    staged.state = const <Message>[];
+    final quoted = _ref.read(quotedMessageProvider);
+    if (quoted != null && removedIds.contains(quoted.id)) {
+      _ref.read(quotedMessageProvider.notifier).state = null;
+    }
+  }
+
   Future<void> clearMessages(String conversationId) {
+    _resetStagedMessages(conversationId);
     return _ref
         .read(conversationsProvider.notifier)
         .clearMessages(conversationId);
   }
 
   Future<void> deleteConversation(String conversationId) {
+    _resetStagedMessages(conversationId);
     return _ref
         .read(conversationsProvider.notifier)
         .deleteConversation(conversationId);

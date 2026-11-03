@@ -28,7 +28,7 @@ class SqliteMemoryStore implements MemoryStorePort {
         .customSelect(
           'SELECT * FROM memory_items WHERE owner_id = ?'
           '${layer == null ? '' : ' AND layer = ?'}'
-          ' ORDER BY layer, updated_at DESC, id',
+          " ORDER BY layer, CASE WHEN title GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN substr(title, 1, 10) ELSE '' END DESC, updated_at DESC, id",
           variables: [
             Variable(ownerId),
             if (layer != null) Variable(layer.name),
@@ -65,10 +65,12 @@ class SqliteMemoryStore implements MemoryStorePort {
         throw const MemoryException('这条记忆已不存在。');
       }
       if (layer == MemoryLayer.core) {
-        final others = (await list(ownerId, layer: MemoryLayer.core))
-            .where((i) => i.id != id)
-            .fold<int>(0, (n, i) => n + _tokens(i));
-        if (others + estimateTokenCount('$normalizedTitle\n$normalizedContent') >
+        final others = (await list(
+          ownerId,
+          layer: MemoryLayer.core,
+        )).where((i) => i.id != id).fold<int>(0, (n, i) => n + _tokens(i));
+        if (others +
+                estimateTokenCount('$normalizedTitle\n$normalizedContent') >
             kCoreMemoryTokenBudget) {
           throw const MemoryException('常驻记忆合计超过约 2000 tokens，请精简，或改存到档案。');
         }
@@ -275,8 +277,14 @@ ON CONFLICT(owner_id) DO UPDATE SET until_at = NULL, until_id = NULL,
   Future<void> clearDerived(String ownerId) => database.transaction(() async {
     await _deleteUnlocked(ownerId);
     await database.customStatement(
-      'DELETE FROM memory_progress WHERE owner_id = ?',
-      [ownerId],
+      '''
+INSERT INTO memory_progress(owner_id, generation, updated_at) VALUES (?, 1, ?)
+ON CONFLICT(owner_id) DO UPDATE SET
+  until_at = NULL, until_id = NULL, rebuild_until_id = NULL,
+  generation = memory_progress.generation + 1,
+  paused = 0, last_error = NULL, updated_at = excluded.updated_at
+''',
+      [ownerId, DateTime.now().millisecondsSinceEpoch],
     );
   });
 
@@ -286,10 +294,9 @@ ON CONFLICT(owner_id) DO UPDATE SET until_at = NULL, until_id = NULL,
     String query, {
     int limit = 8,
   }) async {
-    final tokens = LexicalTokenizerZh.tokenizeForFts(query)
-        .split(' ')
-        .where((t) => t.isNotEmpty)
-        .toSet();
+    final tokens = LexicalTokenizerZh.tokenizeForFts(
+      query,
+    ).split(' ').where((t) => t.isNotEmpty).toSet();
     if (tokens.isEmpty || limit <= 0) return const [];
     // 每个词加引号，避免用户文字被当成 FTS 语法；OR 让长查询也能命中。
     final match = tokens

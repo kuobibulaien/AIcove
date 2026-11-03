@@ -4,6 +4,8 @@ import '../../../core/api/tool_media.dart';
 import '../../../core/api/request_control.dart';
 import '../../plugins/domain/handlers/tool_schema_validator.dart';
 import '../../plugins/data/tool_result_store.dart';
+import '../../workspace/application/codemode_search.dart';
+import '../../workspace/application/tool_search.dart';
 import 'dart:async';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' as kernel;
 import '../../agent_context/domain/preset_script_runtime.dart';
@@ -12,6 +14,7 @@ import '../../context/domain/context_window_policy.dart';
 import '../../../core/media/media_resolver.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import '../../../core/models/image_generation_snapshot.dart';
 
 import '../../plugins/domain/handlers/ai_tool.dart';
@@ -20,6 +23,7 @@ import '../../agent_plugins/tool_policy.dart';
 import '../../agent_context/domain/agent_runtime_contracts.dart'
     show AgentToolAuthorization;
 import '../../plugins/domain/plugin.dart';
+import '../../plugins/image/image_plugin.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../../plugins/plugin_content_tags.dart';
 import '../../stickers/sticker_tag.dart';
@@ -37,6 +41,7 @@ import '../../observability/trace_store.dart';
 import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import 'api_runner.dart';
 import 'chat_types.dart';
+import 'chat_reply_display_transform.dart';
 import 'stream_monitor_service.dart';
 
 part 'chat_send_api_runner_tool_support.dart';
@@ -52,19 +57,17 @@ class ChatSendApiRunner implements ApiRunner {
 
   ChatSendApiRunner.withAgentClientFactory({
     required AgentApiClient Function(Duration timeout) agentClientFactory,
+    // Preserve the public named parameter while keeping the field private.
+    // ignore: prefer_initializing_formals
   }) : _agentClientFactory = agentClientFactory;
 
-  static const SillyTavernRegexProcessor _presetRegexProcessor =
-      SillyTavernRegexProcessor();
   static const String _logTag = 'ChatSendService';
-  static const String _stableDrawImageReviewPrefix =
-      '__AICOVE_DRAW_IMAGE_REVIEW__';
   static String get _stableDrawImageReviewInstruction =>
       PromptBuiltinDefaults.requireTemplate(
         'chat.draw_image.stable_review_instruction',
       );
   static final RegExp _imagePlaceholderRegex = RegExp(
-    r'(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
+    r'(?:<image>\s*(?:\{[^<]*\})?\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
     caseSensitive: false,
   );
   static AgentApiClient _defaultAgentClientFactory(Duration timeout) =>

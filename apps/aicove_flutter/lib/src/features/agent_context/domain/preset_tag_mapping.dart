@@ -89,6 +89,7 @@ class _BuiltinTag {
 
 /// 常用标签名：模型或预设约定俗成的写法，不依赖某一份预设。
 const Map<String, _BuiltinTag> _builtinTags = {
+  'comic_plan': _BuiltinTag(TagPresentation.fold, '分镜规划'),
   'thinking': _BuiltinTag(TagPresentation.fold, '思考'),
   'think': _BuiltinTag(TagPresentation.fold, '思考'),
   'thought': _BuiltinTag(TagPresentation.fold, '思考'),
@@ -130,7 +131,20 @@ const Set<String> _ignoredTagNames = {
   'option',
 };
 
-final RegExp _optionalGroupPattern = RegExp(r'\(\?:([^()|]*)\)\?');
+/// 不含嵌套括号的分组：`(?:a|b)`、`(a|b)`，可带 `?`。
+final RegExp _simpleGroupPattern = RegExp(
+  r'(?<!\\)\((\?:|(?!\?))([^()]*)\)(\?)?',
+);
+
+/// 标签名末尾紧邻 `>` 的单字符可选量词：`<a~?>`、`<\/a\~?>`。
+/// 量词、字符类和 `\s` 这类类名都不算（`.*?>`、`]?>`、`)?>`、`\s?>`）。
+final RegExp _optionalNameEndPattern = RegExp(
+  r'<(?:\\?/)?((?:\\[^A-Za-z0-9]|[^\s<>()\[\]{}|?*+.^$\\/])*)'
+  r'(\\[^A-Za-z0-9/]|[^\s<>()\[\]{}|?*+.^$\\/])\?>',
+);
+
+/// 展开写法的数量上限，防止组合爆炸。
+const int _maxTagVariants = 32;
 
 /// 未转义时结束标签名的正则元字符与分隔符。
 const String _nameTerminators = ' \t\r\n<>/\\()[]{}|^\$*+?."\'=';
@@ -532,28 +546,65 @@ final RegExp _foldWord = RegExp(r'摘要|总结|思考|思维|推演|状态|小�
 final RegExp _optionsWord = RegExp(r'选项|分支|行动选择|choices?|options?',
     caseSensitive: false);
 
-/// `<(?:角色)?状态面板>` 展开为带前缀与不带前缀两种写法。
+/// 展开分组与可选后缀：`<(?:角色)?状态面板>`、`<(?:a|b)>`、`<(a|b)>`、`<a~?>`
+/// 逐一写成具体标签。超过 [_maxTagVariants] 时停止，保留已展开的写法。
 List<String> _expandOptionalGroups(String source) {
   var variants = [source];
-  for (var round = 0; round < 4; round++) {
+  while (true) {
     final next = <String>[];
     var changed = false;
     for (final variant in variants) {
-      final match = _optionalGroupPattern.firstMatch(variant);
-      if (match == null) {
-        next.add(variant);
-        continue;
-      }
-      changed = true;
-      // 同一个可选前缀在开、闭标签里各出现一次，必须同时取舍，否则开闭对不上。
-      next
-        ..add(variant.replaceAll(match[0]!, match.group(1)!))
-        ..add(variant.replaceAll(match[0]!, ''));
+      final expanded = _expandFirstChoice(variant);
+      changed = changed || expanded != null;
+      next.addAll(expanded ?? [variant]);
     }
+    if (!changed || next.length > _maxTagVariants) return variants;
     variants = next;
-    if (!changed) break;
   }
-  return variants;
+}
+
+/// 展开第一处可选写法；没有时返回 null。相同写法在开、闭标签里各出现一次，
+/// 必须同时取舍，否则开闭对不上。
+List<String>? _expandFirstChoice(String variant) {
+  for (final match in _simpleGroupPattern.allMatches(variant)) {
+    final optional = match[3] != null;
+    final branches = _splitTopLevelAlternation(match[2]!);
+    if (branches.length < 2 && !optional) continue;
+    final capture = match[1]!.isEmpty
+        ? _captureGroupPattern
+                  .allMatches(variant.substring(0, match.start))
+                  .length +
+              1
+        : null;
+    return [
+      for (final branch in {...branches, if (optional) ''})
+        _selectGroupBranch(variant, match[0]!, branch, capture),
+    ];
+  }
+  final end = _optionalNameEndPattern.firstMatch(variant);
+  if (end == null) return null;
+  final name = end[1]!;
+  final key = '$name${end[2]!}?>';
+  return [
+    variant.replaceAll(key, '$name${end[2]!}>'),
+    variant.replaceAll(key, '$name>'),
+  ];
+}
+
+/// 捕获分组的 `\1` 同步换成当前分支，其后的分组序号前移。
+String _selectGroupBranch(
+  String variant,
+  String group,
+  String branch,
+  int? capture,
+) {
+  final selected = variant.replaceAll(group, branch);
+  if (capture == null) return selected;
+  return selected.replaceAllMapped(RegExp(r'\\(\d+)'), (match) {
+    final index = int.parse(match[1]!);
+    if (index == capture) return branch;
+    return index > capture ? '\\${index - 1}' : match[0]!;
+  });
 }
 
 /// 名称含常见词根的变体（如小猫之神的 `think_nya~`）按词根归类。

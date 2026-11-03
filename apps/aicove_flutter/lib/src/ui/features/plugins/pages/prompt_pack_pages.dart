@@ -1,3 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,6 +24,9 @@ class PromptPackListPage extends ConsumerWidget {
 
   static const title = '提示词包';
 
+  static String titleFor(String pluginId) =>
+      pluginId == 'image' ? '生图偏好' : title;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.moeColors;
@@ -25,7 +34,7 @@ class PromptPackListPage extends ConsumerWidget {
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: colors.surface,
-      appBar: const MoeAppBar(title: title, showBackButton: true),
+      appBar: MoeAppBar(title: titleFor(pluginId), showBackButton: true),
       body: state.when(
         loading: () => const Center(child: MoeLoadingIndicator()),
         error: (e, _) => MoeEmptyState(
@@ -43,35 +52,73 @@ class PromptPackListPage extends ConsumerWidget {
                   MoeSettingsLayout.verticalListPadding,
                 ),
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                    child: Text(
-                      '预设选「自动」时，按渠道格式和模型名从上往下找第一个匹配的包；'
-                      '都不匹配用「通用」类的出厂包。自建包排在最前面。',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
+                  if (pluginId != 'image')
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                      child: Text(
+                        '预设选「自动」时，按渠道格式和模型名从上往下找第一个匹配的包；'
+                        '都不匹配用「通用」类的出厂包。自建包排在最前面。',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.textSecondary,
+                        ),
                       ),
                     ),
-                  ),
                   MoeSettingsGroup(
                     children: [
                       for (final pack in packs)
                         MoeSettingsRow(
                           label: pack.name,
-                          subtitle: [
-                            pack.builtIn ? '出厂' : '自建',
-                            if (pack.fallback) '兜底',
-                            if (pack.match.isNotEmpty) _rulesText(pack.match),
-                            if (promptPackBoundPresets(ref, pack.id).isNotEmpty)
-                              '${promptPackBoundPresets(ref, pack.id).length} 个预设绑定',
-                          ].join(' · '),
+                          subtitle: pluginId == 'image'
+                              ? (pack.description.isNotEmpty
+                                    ? pack.description
+                                    : (pack.builtIn ? '内置方案' : '自建方案'))
+                              : [
+                                  pack.builtIn ? '出厂' : '自建',
+                                  if (pack.fallback) '默认',
+                                  if (isPromptPackModified(data.library, pack))
+                                    '已修改',
+                                  if (pack.description.isNotEmpty)
+                                    pack.description
+                                  else if (pack.match.isNotEmpty)
+                                    _rulesText(pack.match),
+                                  if (promptPackActivePresets(
+                                    ref,
+                                    data.library,
+                                    pack,
+                                  ).isNotEmpty)
+                                    '${promptPackActivePresets(ref, data.library, pack).length} 个预设在用',
+                                ].join(' · '),
                           onTap: () => Navigator.of(context).push(
                             ParallaxSlidePageRoute(
                               page: PromptPackDetailPage(packId: pack.id),
                             ),
                           ),
                         ),
+                      MoeSettingsRow(
+                        icon: Icons.add,
+                        iconColor: colors.primary,
+                        label: pluginId == 'image' ? '新建生图方案' : '新建提示词包',
+                        labelColor: colors.primary,
+                        trailingType: MoeSettingsRowTrailing.none,
+                        showDivider: true,
+                        onTap: () =>
+                            createCustomPromptPack(context, ref, packs: packs),
+                      ),
+                      MoeSettingsRow(
+                        key: ValueKey('list-import-pack-$pluginId'),
+                        icon: Icons.file_upload_outlined,
+                        iconColor: colors.primary,
+                        label: '从文件导入',
+                        labelColor: colors.primary,
+                        trailingType: MoeSettingsRowTrailing.none,
+                        showDivider: false,
+                        onTap: () => importCustomPromptPack(
+                          context,
+                          ref,
+                          expectedPluginId: pluginId,
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -84,6 +131,108 @@ class PromptPackListPage extends ConsumerWidget {
   }
 }
 
+/// Forks the fallback pack (or first pack) to create a new custom pack and
+/// opens its detail page.
+Future<void> createCustomPromptPack(
+  BuildContext context,
+  WidgetRef ref, {
+  required List<PromptPack> packs,
+}) async {
+  final base = packs.where((p) => p.fallback).firstOrNull ?? packs.firstOrNull;
+  if (base == null) return;
+  try {
+    final id = await ref
+        .read(promptPackProvider.notifier)
+        .fork(base.id, name: '自建提示词包');
+    if (!context.mounted) return;
+    await Navigator.of(
+      context,
+    ).push(ParallaxSlidePageRoute(page: PromptPackDetailPage(packId: id)));
+  } catch (e) {
+    if (context.mounted) MoeToast.error(context, '新建失败：$e');
+  }
+}
+
+const int _maxImportBytes = 2 * 1024 * 1024;
+
+/// Picks a pack JSON file (or uses [rawJsonOverride]), imports it as a custom
+/// pack and opens its detail page. Cancelling the picker does nothing.
+Future<void> importCustomPromptPack(
+  BuildContext context,
+  WidgetRef ref, {
+  String? expectedPluginId,
+  String? rawJsonOverride,
+  String? fallbackNameOverride,
+}) async {
+  try {
+    var rawJson = rawJsonOverride;
+    var fallbackName = fallbackNameOverride;
+    if (rawJson == null) {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      if (file.size > _maxImportBytes) {
+        throw const FormatException('文件超过 2 MB，导入不了');
+      }
+      final bytes = file.bytes ?? await file.xFile.readAsBytes();
+      if (bytes.length > _maxImportBytes) {
+        throw const FormatException('文件超过 2 MB，导入不了');
+      }
+      try {
+        rawJson = utf8.decode(bytes);
+      } on FormatException {
+        throw const FormatException('这个文件打不开，可能已经损坏');
+      }
+      fallbackName ??= file.name.toLowerCase().endsWith('.json')
+          ? file.name.substring(0, file.name.length - '.json'.length)
+          : file.name;
+    }
+    final pack = await ref
+        .read(promptPackProvider.notifier)
+        .importCustomFromJson(
+          rawJson,
+          expectedPluginId: expectedPluginId,
+          fallbackName: fallbackName,
+        );
+    if (!context.mounted) return;
+    await Navigator.of(
+      context,
+    ).push(ParallaxSlidePageRoute(page: PromptPackDetailPage(packId: pack.id)));
+  } catch (e) {
+    if (!context.mounted) return;
+    MoeToast.error(
+      context,
+      e is FormatException ? e.message : '这个文件打不开，可能已经损坏',
+    );
+  }
+}
+
+/// Saves [pack] as a pretty-printed JSON file chosen by the user.
+Future<void> exportPromptPack(BuildContext context, PromptPack pack) async {
+  final jsonText = const JsonEncoder.withIndent('  ').convert(pack.toJson());
+  final bytes = Uint8List.fromList(utf8.encode(jsonText));
+  try {
+    final savePath = await FilePicker.platform.saveFile(
+      dialogTitle: '导出提示词包',
+      fileName: '${pack.name}.json',
+      type: FileType.custom,
+      allowedExtensions: const ['json'],
+      bytes: bytes,
+    );
+    if (savePath == null) return;
+    // Mobile pickers write [bytes] themselves; desktop only returns a path.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      await File(savePath).writeAsString(jsonText, flush: true);
+    }
+    if (context.mounted) MoeToast.success(context, '已导出「${pack.name}」');
+  } catch (e) {
+    if (context.mounted) MoeToast.error(context, '导出失败，请换个位置再试');
+  }
+}
+
 String _rulesText(List<PromptMatchRule> rules) => rules
     .map(
       (r) => [
@@ -92,6 +241,12 @@ String _rulesText(List<PromptMatchRule> rules) => rules
       ].join(' + '),
     )
     .join('；');
+
+String _postProcessorSubtitle(String postProcessor) => switch (postProcessor) {
+  'novelai_manga' => '拆格定位与台词嵌字，并自动过滤单图冲突词',
+  'moss_manga' => '将版式暗号编译为多格坐标后发给工作流',
+  _ => '按画面描述原样发给绘图渠道',
+};
 
 /// One pack: its sections, and for a custom pack its name and rules.
 class PromptPackDetailPage extends ConsumerStatefulWidget {
@@ -109,6 +264,7 @@ class _PromptPackDetailPageState extends ConsumerState<PromptPackDetailPage>
   final _name = TextEditingController();
   final _formats = TextEditingController();
   final _models = TextEditingController();
+  String _postProcessor = 'plain';
   bool _loaded = false;
 
   @override
@@ -121,10 +277,15 @@ class _PromptPackDetailPageState extends ConsumerState<PromptPackDetailPage>
       final rule = pack.match.firstOrNull;
       _formats.text = rule?.formats.join(', ') ?? '';
       _models.text = rule?.models.join('\n') ?? '';
+      _postProcessor = pack.postProcessor;
       autoSave.configure(
         save: _saveMeta,
-        snapshot: () =>
-            moeAutoSaveSignature([_name.text, _formats.text, _models.text]),
+        snapshot: () => moeAutoSaveSignature([
+          _name.text,
+          _formats.text,
+          _models.text,
+          _postProcessor,
+        ]),
         fields: [_name, _formats, _models],
       );
       setState(() => _loaded = true);
@@ -148,7 +309,34 @@ class _PromptPackDetailPageState extends ConsumerState<PromptPackDetailPage>
           match: formats.isEmpty && models.isEmpty
               ? const []
               : [PromptMatchRule(formats: formats, models: models)],
+          postProcessor: _postProcessor,
         );
+  }
+
+  Future<void> _pickPostProcessor() async {
+    const options = ['plain', 'novelai_manga', 'moss_manga'];
+    final chosen = await showMoeBottomSheet<String>(
+      context: context,
+      title: '后处理方式',
+      showCloseButton: true,
+      builder: (context) => ListView(
+        shrinkWrap: true,
+        children: [
+          for (final option in options)
+            ListTile(
+              title: Text(PromptPack.postProcessorLabel(option)),
+              subtitle: Text(_postProcessorSubtitle(option)),
+              trailing: option == _postProcessor
+                  ? Icon(Icons.check, color: context.moeColors.primary)
+                  : null,
+              onTap: () => Navigator.pop(context, option),
+            ),
+        ],
+      ),
+    );
+    if (chosen == null || chosen == _postProcessor || !mounted) return;
+    setState(() => _postProcessor = chosen);
+    unawaited(autoSave.flush());
   }
 
   Future<void> _delete(PromptPack pack) async {
@@ -260,11 +448,22 @@ class _PromptPackDetailPageState extends ConsumerState<PromptPackDetailPage>
                             subtitle: pack.fallback
                                 ? '没有别的包匹配时用它'
                                 : '出厂规则不能改；想换规则请另存为自建包',
+                            showDivider: pack.pluginId == 'image',
                             trailingType: MoeSettingsRowTrailing.none,
                           ),
+                          if (pack.pluginId == 'image')
+                            MoeSettingsRow(
+                              label:
+                                  '后处理：${PromptPack.postProcessorLabel(pack.postProcessor)}',
+                              subtitle: _postProcessorSubtitle(
+                                pack.postProcessor,
+                              ),
+                              showDivider: false,
+                              trailingType: MoeSettingsRowTrailing.none,
+                            ),
                         ],
                       )
-                    else if (_loaded)
+                    else if (_loaded) ...[
                       MoeSettingsGroup(
                         title: '名称与匹配规则',
                         titleFirst: true,
@@ -292,6 +491,23 @@ class _PromptPackDetailPageState extends ConsumerState<PromptPackDetailPage>
                           ),
                         ],
                       ),
+                      if (pack.pluginId == 'image')
+                        MoeSettingsGroup(
+                          title: '后处理方式',
+                          titleFirst: true,
+                          children: [
+                            MoeSettingsRow(
+                              label: PromptPack.postProcessorLabel(
+                                _postProcessor,
+                              ),
+                              subtitle: _postProcessorSubtitle(_postProcessor),
+                              showDivider: false,
+                              trailingType: MoeSettingsRowTrailing.chevron,
+                              onTap: _pickPostProcessor,
+                            ),
+                          ],
+                        ),
+                    ],
                     for (final scope in PromptScopes.of(pack.pluginId).entries)
                       if (pack.sections.any((s) => s.scope == scope.key))
                         MoeSettingsGroup(
@@ -356,6 +572,12 @@ class _PromptPackDetailPageState extends ConsumerState<PromptPackDetailPage>
                               );
                             },
                           ),
+                          if (!pack.builtIn)
+                            MoeSecondaryButton(
+                              label: '导出为文件',
+                              size: MoeSecondaryButtonSize.sm,
+                              onPressed: () => exportPromptPack(context, pack),
+                            ),
                           if (!pack.builtIn)
                             MoeSecondaryButton(
                               label: '删除这个包',

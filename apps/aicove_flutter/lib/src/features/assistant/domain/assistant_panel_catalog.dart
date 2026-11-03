@@ -1,8 +1,8 @@
 import '../../ui_blocks/domain/ui_block.dart' show kUiBlockFenceLanguage;
 import '../../ui_blocks/domain/ui_block_catalog.dart';
 
-/// AIcove酱's quick panels (ADR0094): action components of the assistant
-/// chat. The renderer registry (`assistant_quick_panels.dart`) covers the
+/// Quick panels (ADR0094): action components of tool-mode chats
+/// (ADR0111). The renderer registry (`assistant_quick_panels.dart`) covers the
 /// same names as [kUiActionComponents].
 const kAssistantPanels = [
   UiCatalogComponent(
@@ -59,7 +59,7 @@ String assistantPanelPrompt({Map<String, String> settings = const {}}) {
   return '''
 ## 快捷面板
 
-<nature>快捷面板也是 `$kUiBlockFenceLanguage` 代码块，但列表内容由 AIcove 渲染时从本机实时读取：你只写组件名、id 和意图，不要自己列条目、不要编名字。用户点选一项后可以打开它的编辑页、直接改（可撤销），或点「交给 AIcove酱」把要求填进输入框发给你。</nature>
+<nature>快捷面板也是 `$kUiBlockFenceLanguage` 代码块，但列表内容由 AIcove 渲染时从本机实时读取：你只写组件名、id 和意图，不要自己列条目、不要编名字。用户点选一项后可以打开它的编辑页、直接改（可撤销），或点「写进输入框」把要求填进输入框发给你。</nature>
 <when>
   <use>用户要改、换、挑某类东西却没说清是哪一个或要改哪里（「帮我改个角色」「改一下纳西妲的绘图预设」）；用户想自己动手调几项设置；做完修改后给一个回头调的入口。</use>
   <avoid>用户已经说清要怎么改、你有工具能直接做时，直接用工具改，不要先出面板让用户点。一条回复最多一个面板。</avoid>

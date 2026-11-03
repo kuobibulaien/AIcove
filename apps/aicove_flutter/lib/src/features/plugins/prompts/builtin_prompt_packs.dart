@@ -205,7 +205,7 @@ const kBuiltinPromptPacks = <PromptPack>[
     id: 'builtin.image.novelai',
     pluginId: 'image',
     name: 'NovelAI',
-    description: 'Danbooru 标签骨架＋花括号权重＋| 多人分段',
+    description: '单张插画，适合 NovelAI 动漫生图与双人互动',
     match: [
       PromptMatchRule(formats: ['novelai']),
     ],
@@ -214,12 +214,12 @@ const kBuiltinPromptPacks = <PromptPack>[
         id: 'novelai.inline',
         scope: PromptScopes.imageInline,
         title: '快速模式说明（NovelAI）',
-        text: '''你可以使用 <image>英文正向提示词</image> 直接触发图片生成。
+        text: '''你可以使用 <image>正向提示词</image> 直接触发图片生成。
 
 ## 使用规则
 
 1. 只有真的要生成并发送图片时，才输出 <image>...</image>
-2. <image> 内可写英文正向提示词，或使用下文定义的参数 JSON；不要写解释或代码块
+2. <image> 内可写正向提示词，或使用下文定义的参数 JSON；不要写解释或代码块
 3. 一轮最多输出 1 个 <image>...</image>
 4. 如果只是文字里提到图片，不要输出 <image> 标签
 
@@ -231,7 +231,7 @@ const kBuiltinPromptPacks = <PromptPack>[
 
 质量标签示例：masterpiece, best quality, very aesthetic
 
-【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English prompt","width":{default_width},"height":{default_height},"count":{default_count},"steps":{default_steps},"guidance_scale":{default_guidance_scale}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设；negative_prompt 可选。宽高范围 256–2048，张数 count 范围 1–4。宽高必须是64的倍数。steps为1–100整数，guidance_scale范围0–10。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
+【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"prompt","width":{default_width},"height":{default_height},"count":{default_count},"steps":{default_steps},"guidance_scale":{default_guidance_scale}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设；negative_prompt 可选。宽高范围 256–2048，张数 count 范围 1–4。宽高必须是64的倍数，会自动对齐。steps为1–50整数，guidance_scale范围0–10。超出范围会被自动修正。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
       ),
       _toolDescription,
       PromptSection(
@@ -240,8 +240,7 @@ const kBuiltinPromptPacks = <PromptPack>[
         title: '提示词参数（NovelAI）',
         text: '''## 核心规范
 
-- 仅限英文，<512 tokens
-- 以 Danbooru 标签为骨架，复杂细节用自然语言补充
+- <512 tokens，以 Danbooru 标签为骨架，复杂细节用自然语言补充（支持英文、中文、日文及画面内文字）
 - 推荐顺序：视角 → 主体 → 外貌设定 → 姿势标签 → 场景光影 → 自然语言细节 → 质量标签
 
 质量标签示例：masterpiece, best quality, very aesthetic
@@ -277,14 +276,192 @@ const kBuiltinPromptPacks = <PromptPack>[
 
 【负面提示词】精简为主，只写必要提示词，防止白熊效应。可选基础负面提示词示例:lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page。注意：在负面内容中，{} 和 [] 的权重语义与正面提示词是反转的。''',
       ),
-      _paramsSampling,
+      _paramsNovelAi,
+    ],
+  ),
+  PromptPack(
+    id: 'builtin.image.novelai_manga',
+    postProcessor: 'novelai_manga',
+    pluginId: 'image',
+    name: 'NovelAI 分镜漫画',
+    description: '一次可画 1–8 页带台词气泡的竖版日漫分镜',
+    match: [],
+    sections: [
+      PromptSection(
+        id: 'novelai_manga.inline',
+        scope: PromptScopes.imageInline,
+        title: '快速模式说明（NovelAI 分镜漫画）',
+        text:
+            '''你可以使用 <image>...</image> 生成单页或多页分格漫画（单轮最多 8 页，每个 <image> 代表一页漫画并带正整数编号 id = 1, 2, ...）。
+
+## 直接输出分镜（每轮 1–8 页）
+
+在每个 `<image>...</image>` 内直接写该页完整的 `@position manual / @page / @panel / @character` 分镜脚本（不要包代码块）；也可传入带编号、完整脚本与尺寸的参数 JSON：`<image>{ "id":1,"prompt":"完整分镜脚本","width":{default_width},"height":{default_height} }</image>`。
+
+先用 `<comic_plan>...</comic_plan>` 规划角色母表与本话分镜节奏，会在聊天界面自动折叠为「分镜规划」。需要复用角色设定时，在 `- 角色母表：` 下填写角色（C1、C2）的固定身份词与初始服装词；每个 `@character C1` 段可直接写当前镜头可见的完整英文外貌与服装标签，也可用 `@C1, @C1_outfit` 引用已填写的母表，客户端自动展开并保留 `Text:` 后的台词原样。
+
+跨页双联：在脚本中写 `double-page spread` 或 `見開きページ`，客户端会自动使用横版画布。
+
+## 分镜导演与构图文法（按当前剧情氛围自适应）
+
+- **单页节奏与格数**：每页控制在 2–5 格（高潮爆发页 2–3 格，日常推进页 3–4 格），每格只抓一个核心动作瞬间，严禁同页连续两格画相似角度与表情。
+- **风格化画格调度**：
+  - 热血/动作：主冲击格占半页以上，相邻画格采用锐利斜切边框（`diagonal panel border`），配速度线与动势冲击（`speed lines, motion lines, dynamic angle`）。
+  - 恋爱/少女：多用纵向修长格与破框演出（`outside border`），背景点缀花瓣、星屑或柔光（`falling petals, sparkling background, ornate border`）。
+  - 悬疑/情绪：采用横向宽银幕视线格（`wide horizontal panel`）、眼神阴影特写（`shaded face, extreme close-up on eyes`）与静默留白格制造张力。
+- **气泡与嵌字铁律**：每格气泡不超过 2 个，单句台词精炼在 18 字以内；用 `Text: "中文台词"`（心声加 `thought bubble`，咆哮加 `jagged speech bubble`）写在对应发声角色段末尾。
+
+## 单页分镜协议语法（NovelAI V4.5 / V5）
+
+```
+<comic_plan>
+- 角色母表:
+  - C1:
+    - 固定身份词: 1girl, silver hair, long hair, purple eyes, petite
+    - 初始服装词: white dress, bare shoulders, ribbon
+  - C2:
+    - 固定身份词: 1boy, black hair, tall, sharp eyes
+    - 初始服装词: black coat, collared shirt
+- 第1页规划: 3格，天台夕阳重逢，上格远景建立环境，左下格少女转身递信，右下格少年惊讶特写
+</comic_plan>
+<image>
+@position manual
+@page
+black and white manga, monochrome, greyscale, screentone, comic, 3 panels, reading order right to left, The top panel stretches across the width of the page.
+
+@panel 1
+upper wide panel, wide shot, school rooftop at sunset, dramatic clouds
+@character C1
+1girl, silver hair, long hair, purple eyes, petite, white dress, bare shoulders, ribbon, standing by fence, wind blowing hair, looking back, gentle smile
+@center 0.38,0.24
+Text: "今天放学后，我一直在这里等你。"
+
+@panel 2
+lower right panel, medium close-up, extending hand holding a letter
+@character C1
+1girl, silver hair, long hair, purple eyes, petite, white dress, bare shoulders, ribbon, blushing, shy eyes, holding envelope toward viewer
+@center 0.72,0.65
+
+@panel 3
+lower left panel, close-up, surprised expression, emphasis lines
+@character C2
+1boy, black hair, tall, sharp eyes, black coat, collared shirt, wide eyes, parted lips, blushing
+@center 0.28,0.70
+Text: "诶？这是……给我的吗？"
+</image>
+```
+
+- 负面词中严禁写入 text、comic、screentone、halftone、multiple views、speech bubble，以免压制分格、网点与气泡''',
+      ),
+      PromptSection(
+        id: 'novelai_manga.tool_description',
+        scope: PromptScopes.imageToolDescription,
+        title: '工具说明（分镜漫画）',
+        text:
+            '当剧情适合以分格漫画呈现时，调用 draw_image 工具生成漫画页（单轮最多 8 页），并在回复正文对应位置放置 <image>{"id":1}</image> 或 <image></image> 占位。先在 <comic_plan> 中规划角色母表与本话分镜节奏，再传入 id 与完整分镜脚本 prompt。',
+      ),
+      PromptSection(
+        id: 'novelai_manga.prompt',
+        scope: PromptScopes.imageToolPrompt,
+        title: '提示词参数（NovelAI 分镜漫画）',
+        text: '''按 NovelAI 分镜协议编写单页漫画脚本（每页 2–5 格，兼顾主次画格大小对比与镜头调度）：
+- 每个 `@character C1` 段可直接写当前镜头可见的完整英文外貌与服装标签；如需复用角色设定，可在 `<comic_plan>` 的 `- 角色母表：` 下填写角色（C1、C2）的固定身份词与初始服装词，再用 `@C1, @C1_outfit` 引用母表。客户端自动展开引用并保留 `Text:` 后的台词原样；
+- 顶部写 `@position manual` 与 `@page`（声明漫画风格、总格数与主画格版式英文句，如 `black and white manga, monochrome, greyscale, screentone, comic, 3 panels, reading order right to left, The main panel fills most of the page.`；彩漫写 `colored manga, vibrant colors, comic`；跨页双联写 `double-page spread` 或 `見開きページ`，客户端会自动使用横版画布）
+- 按画格依次写 `@panel 1`、`@panel 2`…：
+  - 先写画格位置、尺寸、景别与背景动效（如 `upper wide panel, wide shot`、`lower left inset cut-in panel, extreme close-up, speed lines`）
+  - 再用 `@character C1` 写该格出场人物的完整外貌、当前服装与动作神态（可直接写完整英文词或引用角色母表），用 `@center x,y`（0.0–1.0）指定人物在画布中的中心坐标，并在该角色段末尾用 `Text: "中文台词"` 写气泡台词（单格不超过 2 个气泡，单句不超过 18 字）
+- 负面提示词（negative_prompt）：只写画质与解剖纠错（如 `lowres, bad anatomy, bad hands, worst quality`），严禁写 `text, comic, screentone, halftone, multiple views, speech bubble`
+
+示例：
+@position manual
+@page
+black and white manga, monochrome, greyscale, screentone, comic, 2 panels, reading order right to left, The upper panel takes up more than half of the page.
+
+@panel 1
+upper panel, wide shot, classroom, sunlight through window
+@character C1
+1girl, silver hair, school uniform, looking out window, gentle smile
+@center 0.35,0.22
+Text: "今天放学后，去天台聊聊吧。"
+
+@panel 2
+lower right panel, close-up, surprised expression
+@character C2
+1boy, black hair, school uniform, blushing, wide eyes
+@center 0.72,0.68
+Text: "诶？只有我们两个吗……"''',
+      ),
+      _paramsNovelAi,
+    ],
+  ),
+  PromptPack(
+    id: 'builtin.image.moss_manga',
+    postProcessor: 'moss_manga',
+    pluginId: 'image',
+    name: 'MOSS 多格漫画',
+    description: '一次可画 1–8 页多格排版与带台词气泡的漫画',
+    match: [
+      PromptMatchRule(formats: ['comfyui'], models: ['/moss[_-]?image/']),
+    ],
+    sections: [
+      PromptSection(
+        id: 'moss_manga.inline',
+        scope: PromptScopes.imageInline,
+        title: '快速模式说明（MOSS 多格漫画）',
+        text:
+            '''你可以使用 <image>...</image> 生成单页或多页多格漫画（一轮可输出 1–8 个 <image>...</image>，每个 <image> 代表一页漫画并带正整数编号 id = 1, 2, ...）。
+
+## 直接输出分镜（每轮 1–8 页）
+
+在 `<image>...</image>` 内直接写完整符号化排版 JSON，并附带正整数编号 `"id": 1`。
+
+先用 `<comic_plan>...</comic_plan>` 规划 C1、C2 的角色外貌服装与本话每页分镜节奏，客户端会自动折叠规划。
+
+## 使用规则
+
+1. 不要手算像素坐标，只输出下方规定的符号化排版 JSON，客户端会自动查表换算为画布坐标
+2. 竖版可选 layout：`balanced_1`（单格）、`balanced_2`（上下两格）、`balanced_3`（上中下三格）、`balanced_4`（四格）、`main_then_side`（上大下二）、`main_then_right_two`、`strip_main_right_two`、`two_then_tall`、`top_focus_bottom_two`、`three_then_wide`、`tall_left_stack_right`、`grid_2x2`
+3. 横版可选 layout：`balanced_1`～`balanced_4`、`left_main_right_stack`、`top_wide_bottom_two`、`left_two_right_main`、`grid_2x2`、`top_two_bottom_wide`
+4. 每个画格（panel，从 1 开始编号）可用槽位 slot：`F`（满格）、`C`（居中）、`L`（左）、`R`（右）、`T`（上）、`B`（下）、`TL`（左上）、`TR`（右上）、`BL`（左下）、`BR`（右下）
+
+## 单页 JSON 示例（直接放在 <image> 与 </image> 之间）
+
+{"id":1,"layout":"main_then_side","summary":{"caption":"Japanese manga page, full color webtoon style, crisp lineart"},"items":[{"panel":1,"slot":"C","label":"heroine","caption":"silver-haired girl standing on rooftop at sunset, wind blowing hair, gentle smile"},{"panel":1,"slot":"TR","label":"text","caption":"speech bubble","text":"终于找到你了。"},{"panel":2,"slot":"C","label":"protagonist","caption":"black-haired boy looking surprised, close-up"},{"panel":3,"slot":"C","label":"heroine","caption":"close-up of her hand holding a letter"}]}''',
+      ),
+      PromptSection(
+        id: 'moss_manga.tool_description',
+        scope: PromptScopes.imageToolDescription,
+        title: '工具说明（MOSS 多格漫画）',
+        text:
+            '当剧情适合以分格漫画呈现时，调用 draw_image 工具生成漫画页（单轮最多 8 页），并在回复正文对应位置放置 <image>{"id":1}</image> 或 <image></image> 占位。先在 <comic_plan> 中规划角色母表与本话分镜节奏，再传入 id 与完整分镜脚本 prompt。',
+      ),
+      PromptSection(
+        id: 'moss_manga.prompt',
+        scope: PromptScopes.imageToolPrompt,
+        title: '提示词参数（MOSS 多格漫画）',
+        text: '''在 prompt 参数中直接传入符号化排版 JSON 字符串（不要手算 bbox 像素坐标）：
+`{"layout":"版式名","summary":{"caption":"整页画风与氛围英文描述"},"items":[{"panel":1,"slot":"C","label":"角色或text","caption":"画面或气泡英文描述","text":"可选台词文字"}]}`
+- 竖图常用 layout（默认宽 1088、高 1920）：`balanced_1`～`balanced_4`、`main_then_side`、`main_then_right_two`、`two_then_tall`、`top_focus_bottom_two`、`grid_2x2`
+- 横图常用 layout（宽 1920、高 1088）：`left_main_right_stack`、`top_wide_bottom_two`、`left_two_right_main`、`grid_2x2`
+- 槽位 slot：`F`、`C`、`L`、`R`、`T`、`B`、`TL`、`TR`、`BL`、`BR`；台词项将 `label` 设为 `"text"` 并填写 `"text"` 字段，同一槽位多句台词会自动上下排开''',
+      ),
+      PromptSection(
+        id: 'moss_manga.params',
+        scope: PromptScopes.imageToolParams,
+        title: '参数（MOSS 多格漫画）',
+        text: '''## 参数
+
+- 宽度 width：竖版漫画推荐 1088（或 832）；横版漫画推荐 1920（或 1216），取 64 的倍数。参考值 {default_width}，可省略。
+- 高度 height：竖版漫画推荐 1920（或 1216）；横版漫画推荐 1088（或 832），取 64 的倍数。参考值 {default_height}，可省略。
+- 张数 count：固定为 1（多页漫画请并列调用多次 draw_image）。''',
+      ),
     ],
   ),
   PromptPack(
     id: 'builtin.image.comfyui',
     pluginId: 'image',
     name: 'ComfyUI 通用',
-    description: '英文自然语言描述画面＋Danbooru 标签补细节，动漫与写实底模都适用',
+    description: '英文句子搭配细节标签，动漫与写实模型都适用',
     match: [
       // Pure natural-language families (Flux, SD3, Qwen-Image…) on ComfyUI
       // fall through to the natural pack.
@@ -322,14 +499,15 @@ const kBuiltinPromptPacks = <PromptPack>[
 
 示例：A girl with long silver hair sits by a rainy café window, smiling softly at the viewer while holding a warm cup of tea. 1girl, solo, long hair, silver hair, blue eyes, white sweater, sitting, holding cup, window, rain, indoors, warm lighting, upper body, masterpiece, best quality
 
-【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English prompt","negative_prompt":"…","width":{default_width},"height":{default_height},"count":{default_count},"steps":{default_steps},"guidance_scale":{default_guidance_scale}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设。宽高范围 256–2048，取 64 的倍数；张数 count 范围 1–4。steps、guidance_scale 只在工作流绑定了对应输入时生效，使用服务端模板时由模板决定，一般省略即可。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
+【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English prompt","negative_prompt":"…","width":{default_width},"height":{default_height},"count":{default_count},"steps":{default_steps},"guidance_scale":{default_guidance_scale}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设。宽高范围 256–2048，取 64 的倍数；张数 count 范围 1–4。steps 范围 1–100，guidance_scale 范围 0–20，超出范围会被自动修正。steps、guidance_scale 只在工作流绑定了对应输入时生效，使用服务端模板时由模板决定，一般省略即可。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
       ),
       _toolDescription,
       PromptSection(
         id: 'comfyui.prompt',
         scope: PromptScopes.imageToolPrompt,
         title: '提示词参数（ComfyUI 通用）',
-        text: '''英文，<300 tokens。先用一到两句准确的自然语言讲清画面（主体、外貌服装、动作表情、场景、光线、镜头），再接 Danbooru 标签补细节（人数、发色瞳色、服装、姿势、构图、画风与质量标签），英文逗号分隔。
+        text:
+            '''英文，<300 tokens。先用一到两句准确的自然语言讲清画面（主体、外貌服装、动作表情、场景、光线、镜头），再接 Danbooru 标签补细节（人数、发色瞳色、服装、姿势、构图、画风与质量标签），英文逗号分隔。
 
 - 句子和标签保持一致，不要堆叠重复特征
 - 画面里要有文字时，用英文双引号写出原文并说明位置
@@ -348,7 +526,7 @@ const kBuiltinPromptPacks = <PromptPack>[
 - 宽度 width：竖图人像 832；横图 1216；方图 1024，取 64 的倍数。参考值 {default_width}，可省略。
 - 高度 height：竖图人像 1216；横图 832；方图 1024，取 64 的倍数。参考值 {default_height}，可省略。
 - 张数 count：1–4，参考 {default_count}，可省略。
-- 步数 steps、提示词强度 guidance_scale：只在工作流绑定了对应输入时生效，服务端模板会忽略它们；没有特别需要就省略（参考 {default_steps}、{default_guidance_scale}）。''',
+- 步数 steps：1–100；提示词强度 guidance_scale：0–20。超出范围会被自动修正。只在工作流绑定了对应输入时生效，服务端模板会忽略它们；没有特别需要就省略（参考 {default_steps}、{default_guidance_scale}）。''',
       ),
     ],
   ),
@@ -356,7 +534,7 @@ const kBuiltinPromptPacks = <PromptPack>[
     id: 'builtin.image.danbooru',
     pluginId: 'image',
     name: 'SD／ComfyUI（Danbooru 标签）',
-    description: 'Illustrious、NoobAI、Pony 等动漫底模：标签串＋(tag:1.2) 权重',
+    description: '适合 Illustrious、NoobAI、Pony 等动漫标签模型',
     match: [
       // ComfyUI channels use the general pack above; this one stays for
       // anime base models on other channels and as an explicit choice.
@@ -386,7 +564,7 @@ const kBuiltinPromptPacks = <PromptPack>[
 - 自拍/第一人称：pov, selfie 或 pov hands
 - 质量标签示例：masterpiece, best quality, very aesthetic, absurdres
 
-【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English prompt","width":{default_width},"height":{default_height},"count":{default_count},"steps":{default_steps},"guidance_scale":{default_guidance_scale}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设；negative_prompt 可选。宽高范围 256–2048，张数 count 范围 1–4。steps为1–100整数，guidance_scale范围0–10；ComfyUI仅对已绑定输入生效。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
+【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English prompt","width":{default_width},"height":{default_height},"count":{default_count},"steps":{default_steps},"guidance_scale":{default_guidance_scale}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设；negative_prompt 可选。宽高范围 256–2048，张数 count 范围 1–4。steps为1–100整数，guidance_scale范围0–20；ComfyUI仅对已绑定输入生效。超出范围会被自动修正。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
       ),
       _toolDescription,
       PromptSection(
@@ -409,7 +587,7 @@ const kBuiltinPromptPacks = <PromptPack>[
     id: 'builtin.image.natural',
     pluginId: 'image',
     name: '自然语言',
-    description: 'gpt-image、Flux、Seedream、Gemini 等：用完整句子描述画面',
+    description: '用完整句子描述画面，适合 GPT、豆包、Flux、Gemini 等模型',
     fallback: true,
     match: [
       PromptMatchRule(
@@ -440,14 +618,15 @@ const kBuiltinPromptPacks = <PromptPack>[
 - 不要使用 (tag:1.2)、{tag}、[tag] 这类权重符号，也不要写 masterpiece、best quality 这类质量标签
 - 想避免的内容直接在句子里说明（例如 "no text, no watermark"），这类模型通常不支持负面提示词
 
-【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English description","width":{default_width},"height":{default_height},"count":{default_count}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设。宽高范围 256–2048，张数 count 范围 1–4。当前渠道不支持 steps、guidance_scale。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
+【本次绘图参数契约】需要调整参数时，<image> 内可传 JSON：{"prompt":"English description","width":{default_width},"height":{default_height},"count":{default_count}}。以上是参考值，可合理调整。除 prompt 外均可省略，省略时使用角色绘图预设。宽高范围 256–2048，张数 count 范围 1–4。当前渠道不支持 steps、guidance_scale，传入时会忽略。超出范围会被自动修正。本次格式以此契约为准，禁止传入渠道或模型选择参数。''',
       ),
       _toolDescription,
       PromptSection(
         id: 'natural.prompt',
         scope: PromptScopes.imageToolPrompt,
         title: '提示词参数（自然语言）',
-        text: '''用一到三段完整的英文句子描述画面：主体、外貌服装、动作表情、场景、光线、镜头、画风。不要写标签串、权重符号或质量标签；想避免的内容直接写进句子。
+        text:
+            '''用一到三段完整的英文句子描述画面：主体、外貌服装、动作表情、场景、光线、镜头、画风。不要写标签串、权重符号或质量标签；想避免的内容直接写进句子。
 
 ## 负面提示词
 
@@ -499,6 +678,19 @@ const _toolDescription = PromptSection(
 
 /// Width, height, count, steps and guidance in one section: the tool reads
 /// them together, so the editor shows one item for them.
+const _paramsNovelAi = PromptSection(
+  id: 'image.params',
+  scope: PromptScopes.imageToolParams,
+  title: '参数',
+  text: '''## 参数
+
+- 宽度 width：严格遵循，竖图人像 832；横图 1216；方图 1024。宽度范围 256–2048，必须是 64 的倍数，会自动对齐。参考值 {default_width}，可省略。
+- 高度 height：严格遵循，竖图人像 1216；横图 832；方图 1024。高度范围 256–2048，必须是 64 的倍数，会自动对齐。参考值 {default_height}，可省略。
+- 张数 count：1–4，参考 {default_count}，可省略。
+- 步数 steps：采样步数 1–50，参考 {default_steps}，可合理调整。
+- 提示词强度 guidance_scale：0–10，参考 {default_guidance_scale}，可合理调整。超出范围会被自动修正。''',
+);
+
 const _paramsSampling = PromptSection(
   id: 'image.params',
   scope: PromptScopes.imageToolParams,
@@ -509,7 +701,7 @@ const _paramsSampling = PromptSection(
 - 高度 height：严格遵循，竖图人像 1216；横图 832；方图 1024。参考值 {default_height}，可省略。
 - 张数 count：1–4，参考 {default_count}，可省略。
 - 步数 steps：采样步数 1–100，参考 {default_steps}，可合理调整。
-- 提示词强度 guidance_scale：0–10，参考 {default_guidance_scale}，可合理调整。''',
+- 提示词强度 guidance_scale：0–20，参考 {default_guidance_scale}，可合理调整。超出范围会被自动修正。''',
 );
 
 /// Same as [_paramsSampling] for a channel without steps or guidance.
@@ -521,5 +713,5 @@ const _paramsBasic = PromptSection(
 
 - 宽度 width：严格遵循，竖图人像 832；横图 1216；方图 1024。参考值 {default_width}，可省略。
 - 高度 height：严格遵循，竖图人像 1216；横图 832；方图 1024。参考值 {default_height}，可省略。
-- 张数 count：1–4，参考 {default_count}，可省略。''',
+- 张数 count：1–4，参考 {default_count}，可省略。超出范围会被自动修正。''',
 );

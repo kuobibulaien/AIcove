@@ -26,6 +26,12 @@ class FakeChatInterfaceSettingsNotifier extends AppSettingsNotifier {
   }
 
   @override
+  Future<void> setAllowMultiMessageSend(bool enabled) async {
+    settings = settings.copyWith(allowMultiMessageSend: enabled);
+    state = AsyncData(settings);
+  }
+
+  @override
   Future<void> setBubbleShowThinking(bool enabled) async {
     settings = settings.copyWith(bubbleShowThinking: enabled);
     state = AsyncData(settings);
@@ -41,6 +47,41 @@ class FakeChatInterfaceSettingsNotifier extends AppSettingsNotifier {
   Future<void> setDocumentShowToolCalls(bool enabled) async {
     settings = settings.copyWith(documentShowToolCalls: enabled);
     state = AsyncData(settings);
+  }
+}
+
+/// 会话列表只在内存里改，不写数据库。
+class FakeChatInterfaceConversations extends ConversationsNotifier {
+  FakeChatInterfaceConversations(this.initial);
+
+  final List<Conversation> initial;
+
+  @override
+  Future<List<Conversation>> build() async => initial;
+
+  @override
+  Future<void> setConversationChatView(
+    String id, {
+    double? imagePreviewScale,
+    bool clearImagePreviewScale = false,
+    bool? expandAudioText,
+    bool clearExpandAudioText = false,
+    bool? hideUserAvatar,
+    bool clearHideUserAvatar = false,
+    bool? chunkEnabled,
+    bool clearChunkEnabled = false,
+  }) async {
+    state = AsyncData([
+      for (final c in state.value ?? initial)
+        c.id == id
+            ? c.copyWith(
+                imagePreviewScale: imagePreviewScale ?? c.imagePreviewScale,
+                expandAudioText: expandAudioText ?? c.expandAudioText,
+                hideUserAvatar: hideUserAvatar ?? c.hideUserAvatar,
+                chunkEnabled: chunkEnabled ?? c.chunkEnabled,
+              )
+            : c,
+    ]);
   }
 }
 
@@ -79,6 +120,7 @@ Widget chatInterfaceTestScope({
   required Conversation conversation,
   required Widget child,
   FakeChatInterfaceSettingsNotifier? settings,
+  List<Conversation> others = const [],
 }) {
   final notifier =
       settings ??
@@ -86,9 +128,19 @@ Widget chatInterfaceTestScope({
   return ProviderScope(
     overrides: [
       appSettingsProvider.overrideWith(() => notifier),
-      resolvedConversationByIdProvider(
-        conversation.id,
-      ).overrideWith((ref) => conversation),
+      conversationsProvider.overrideWith(
+        () => FakeChatInterfaceConversations([conversation, ...others]),
+      ),
+      for (final conv in [conversation, ...others])
+        resolvedConversationByIdProvider(conv.id).overrideWith(
+          (ref) =>
+              ref
+                  .watch(conversationsProvider)
+                  .valueOrNull
+                  ?.where((c) => c.id == conv.id)
+                  .firstOrNull ??
+              conv,
+        ),
     ],
     child: child,
   );

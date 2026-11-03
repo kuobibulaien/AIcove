@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
+
 import '../../../core/app_logger.dart';
+import '../../../core/api/request_control.dart';
 
 /// 阿里云 Qwen-TTS Realtime WebSocket 服务
 ///
@@ -25,6 +28,11 @@ class AliyunQwenTtsWebSocket {
   final String apiKey;
   final String model;
 
+  /// 自定义合成端点；未提供时使用阿里云国内站。
+  final Uri? endpoint;
+  final Future<WebSocket> Function(String url, {Map<String, dynamic>? headers})
+  _connect;
+
   /// WebSocket 端点
   static const String _wsEndpoint =
       'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
@@ -32,7 +40,10 @@ class AliyunQwenTtsWebSocket {
   AliyunQwenTtsWebSocket({
     required this.apiKey,
     required this.model,
-  });
+    this.endpoint,
+    Future<WebSocket> Function(String url, {Map<String, dynamic>? headers})?
+    connect,
+  }) : _connect = connect ?? WebSocket.connect;
 
   /// 合成语音（一次性返回完整音频）
   ///
@@ -45,15 +56,19 @@ class AliyunQwenTtsWebSocket {
     required String voiceId,
     String responseFormat = 'pcm', // realtime 模型只支持 pcm
     int sampleRate = 24000,
-    String languageType = 'Chinese',
+    String languageType = 'Auto',
   }) async {
-    AppLogger.info('TTS-WS', '开始 WebSocket 语音合成', metadata: {
-      'model': model,
-      'voiceId': voiceId,
-      'textLength': text.length,
-      'responseFormat': responseFormat,
-      'sampleRate': sampleRate,
-    });
+    AppLogger.info(
+      'TTS-WS',
+      '开始 WebSocket 语音合成',
+      metadata: {
+        'model': model,
+        'voiceId': voiceId,
+        'textLength': text.length,
+        'responseFormat': responseFormat,
+        'sampleRate': sampleRate,
+      },
+    );
 
     final completer = Completer<Uint8List>();
     final audioChunks = <Uint8List>[];
@@ -61,21 +76,17 @@ class AliyunQwenTtsWebSocket {
 
     try {
       // 构建 WebSocket URL（model 必须作为查询参数）
-      final wsUri = Uri.parse('$_wsEndpoint?model=$model');
-
-      AppLogger.info('TTS-WS', '连接 WebSocket', metadata: {
-        'url': wsUri.toString(),
-        'model': model,
-      });
-
-      // 使用 dart:io WebSocket 支持自定义头
-      socket = await WebSocket.connect(
-        wsUri.toString(),
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-        },
+      final wsUri = (endpoint ?? Uri.parse(_wsEndpoint)).replace(
+        queryParameters: {'model': model},
       );
 
+      AppLogger.info(
+        'TTS-WS',
+        '连接 WebSocket',
+        metadata: {'url': wsUri.toString(), 'model': model},
+      );
+
+      socket = await _connectWithRetry(wsUri);
       AppLogger.info('TTS-WS', 'WebSocket 连接成功');
 
       // 监听消息
@@ -89,9 +100,11 @@ class AliyunQwenTtsWebSocket {
               case 'session.created':
                 // 会话创建成功，发送配置
                 final sessionId = (data['session'] as Map?)?['id'] as String?;
-                AppLogger.info('TTS-WS', '会话已创建', metadata: {
-                  'sessionId': sessionId,
-                });
+                AppLogger.info(
+                  'TTS-WS',
+                  '会话已创建',
+                  metadata: {'sessionId': sessionId},
+                );
                 _sendSessionUpdate(
                   socket!,
                   voiceId: voiceId,
@@ -120,17 +133,23 @@ class AliyunQwenTtsWebSocket {
 
               case 'response.done':
                 // 响应完成
-                AppLogger.info('TTS-WS', '响应完成', metadata: {
-                  'responseId': (data['response'] as Map?)?['id'],
-                  'usage': (data['response'] as Map?)?['usage'],
-                });
+                AppLogger.info(
+                  'TTS-WS',
+                  '响应完成',
+                  metadata: {
+                    'responseId': (data['response'] as Map?)?['id'],
+                    'usage': (data['response'] as Map?)?['usage'],
+                  },
+                );
                 break;
 
               case 'session.finished':
                 // 会话结束，合并音频数据
-                AppLogger.info('TTS-WS', '会话结束，合并音频数据', metadata: {
-                  'chunksCount': audioChunks.length,
-                });
+                AppLogger.info(
+                  'TTS-WS',
+                  '会话结束，合并音频数据',
+                  metadata: {'chunksCount': audioChunks.length},
+                );
                 _completeWithAudio(completer, audioChunks);
                 break;
 
@@ -139,10 +158,11 @@ class AliyunQwenTtsWebSocket {
                 final error = data['error'] as Map<String, dynamic>?;
                 final code = error?['code'] as String? ?? 'unknown';
                 final errMsg = error?['message'] as String? ?? '未知错误';
-                AppLogger.error('TTS-WS', 'WebSocket 错误', metadata: {
-                  'code': code,
-                  'message': errMsg,
-                });
+                AppLogger.error(
+                  'TTS-WS',
+                  'WebSocket 错误',
+                  metadata: {'code': code, 'message': errMsg},
+                );
                 if (!completer.isCompleted) {
                   completer.completeError(
                     AliyunTtsWebSocketException('$code: $errMsg'),
@@ -151,18 +171,22 @@ class AliyunQwenTtsWebSocket {
                 break;
             }
           } catch (e, st) {
-            AppLogger.error('TTS-WS', '处理消息异常', metadata: {
-              'error': e.toString(),
-            });
+            AppLogger.error(
+              'TTS-WS',
+              '处理消息异常',
+              metadata: {'error': e.toString()},
+            );
             if (!completer.isCompleted) {
               completer.completeError(e, st);
             }
           }
         },
         onError: (Object error, StackTrace stackTrace) {
-          AppLogger.error('TTS-WS', 'WebSocket 连接错误', metadata: {
-            'error': error.toString(),
-          });
+          AppLogger.error(
+            'TTS-WS',
+            'WebSocket 连接错误',
+            metadata: {'error': error.toString()},
+          );
           if (!completer.isCompleted) {
             completer.completeError(
               AliyunTtsWebSocketException('WebSocket 连接错误: $error'),
@@ -192,12 +216,69 @@ class AliyunQwenTtsWebSocket {
         },
       );
     } catch (e) {
-      AppLogger.error('TTS-WS', 'WebSocket 语音合成失败', metadata: {
-        'error': e.toString(),
-      });
+      AppLogger.error(
+        'TTS-WS',
+        'WebSocket 语音合成失败',
+        metadata: {'error': e.toString()},
+      );
       rethrow;
     } finally {
       await socket?.close();
+    }
+  }
+
+  Future<WebSocket> _connectWithRetry(Uri uri) async {
+    final clock = Stopwatch()..start();
+    const budget = Duration(seconds: 10);
+    const delay = Duration(milliseconds: 500);
+    final cancellation = RequestControl.cancellation;
+    for (var attempt = 0; ; attempt++) {
+      cancellation?.throwIfCancelled();
+      final remaining = budget - clock.elapsed;
+      if (remaining <= Duration.zero) {
+        throw TimeoutException('WebSocket connection timed out', budget);
+      }
+      final connecting = Future<WebSocket>.sync(
+        () => _connect(
+          uri.toString(),
+          headers: {'Authorization': 'Bearer $apiKey'},
+        ),
+      );
+      try {
+        final timed = connecting.timeout(remaining);
+        final socket = await (cancellation == null
+            ? timed
+            : cancellation.bind(timed));
+        cancellation?.throwIfCancelled();
+        return socket;
+      } catch (error) {
+        // Neither timeout nor cancellation cancels an in-flight handshake.
+        if (error is TimeoutException || error is KernelCancelledException) {
+          unawaited(
+            connecting.then<void>((lateSocket) async {
+              await lateSocket.close();
+            }, onError: (Object _) {}),
+          );
+        }
+        cancellation?.throwIfCancelled();
+        if (error is! SocketException ||
+            attempt >= 1 ||
+            delay >= budget - clock.elapsed) {
+          rethrow;
+        }
+        AppLogger.warning(
+          'TTS-WS',
+          'WebSocket 建连重试',
+          metadata: {
+            'phase': 'tts.websocket.connect',
+            'attempt': attempt + 1,
+            'delayMs': delay.inMilliseconds,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+        final waiting = Future<void>.delayed(delay);
+        await (cancellation == null ? waiting : cancellation.bind(waiting));
+      }
     }
   }
 
@@ -208,8 +289,10 @@ class AliyunQwenTtsWebSocket {
   ) {
     if (completer.isCompleted) return;
 
-    final totalLength =
-        audioChunks.fold<int>(0, (sum, chunk) => sum + chunk.length);
+    final totalLength = audioChunks.fold<int>(
+      0,
+      (sum, chunk) => sum + chunk.length,
+    );
     final result = Uint8List(totalLength);
     var offset = 0;
     for (final chunk in audioChunks) {
@@ -239,9 +322,11 @@ class AliyunQwenTtsWebSocket {
       },
     };
 
-    AppLogger.debug('TTS-WS', '发送 session.update', metadata: {
-      'voiceId': voiceId,
-    });
+    AppLogger.debug(
+      'TTS-WS',
+      '发送 session.update',
+      metadata: {'voiceId': voiceId},
+    );
     socket.add(jsonEncode(event));
   }
 
@@ -253,18 +338,13 @@ class AliyunQwenTtsWebSocket {
       'text': text,
     };
 
-    AppLogger.debug('TTS-WS', '发送文本', metadata: {
-      'textLength': text.length,
-    });
+    AppLogger.debug('TTS-WS', '发送文本', metadata: {'textLength': text.length});
     socket.add(jsonEncode(event));
   }
 
   /// 发送结束信号
   void _sendFinish(WebSocket socket) {
-    final event = {
-      'type': 'session.finish',
-      'event_id': _generateEventId(),
-    };
+    final event = {'type': 'session.finish', 'event_id': _generateEventId()};
 
     AppLogger.debug('TTS-WS', '发送 session.finish');
     socket.add(jsonEncode(event));

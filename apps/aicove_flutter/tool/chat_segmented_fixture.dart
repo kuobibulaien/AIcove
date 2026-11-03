@@ -278,6 +278,7 @@ class _OfflineSendService extends ChatSendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async =>
       ApiConfig(
         settings: settings,

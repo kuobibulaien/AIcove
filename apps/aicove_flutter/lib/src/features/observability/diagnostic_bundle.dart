@@ -62,6 +62,7 @@ Map<String, Object?>? sanitizeDiagnosticEntry(Object? entry, String name) {
       'messageId',
       'sourceMessageId',
       'pageInstanceId',
+      'pageName',
       'phase',
       'reason',
       'errorType',
@@ -163,6 +164,13 @@ Map<String, Object?>? sanitizeDiagnosticEntry(Object? entry, String name) {
   return result;
 }
 
+/// 同一天内应用日志优先于 trace 索引，再优先于 API 日志。
+int _logFileRank(String name) => name.startsWith('app_')
+    ? 0
+    : name.startsWith('trace/')
+    ? 1
+    : 2;
+
 /// 在工作 isolate 中执行。有界读取活动文件，缺失/截断如实写入 coverage。
 Future<Uint8List> createDiagnosticBundle(
   String logDirectory, {
@@ -216,14 +224,17 @@ Future<Uint8List> createDiagnosticBundle(
     final date = diagnosticLogName
         .firstMatch(b)![1]!
         .compareTo(diagnosticLogName.firstMatch(a)![1]!);
-    return date != 0 ? date : a.compareTo(b);
+    return date != 0 ? date : _logFileRank(a).compareTo(_logFileRank(b));
   });
+  // Spend the input budget newest-first, then scan oldest-first so that a full
+  // lane evicts the oldest records rather than today's.
+  final planned = <(String, int, int)>[];
+  var plannedBytes = 0;
   for (final name in candidates) {
-    if (inputBytes >= maxInput) {
+    if (plannedBytes >= maxInput) {
       limits.add('bundle_budget_reached');
       break;
     }
-
     try {
       final file = File('$logDirectory/$name');
       if (await FileSystemEntity.type(file.path, followLinks: false) !=
@@ -231,18 +242,26 @@ Future<Uint8List> createDiagnosticBundle(
         limits.add('$name:file_unavailable');
         continue;
       }
+      final size = await file.length();
+      final length = size.clamp(0, (maxInput - plannedBytes).clamp(0, maxFile));
+      planned.add((name, size - length, length));
+      plannedBytes += length;
+    } on FileSystemException {
+      limits.add('$name:read_failed');
+    }
+  }
+  for (final (name, offset, length) in planned.reversed) {
+    try {
+      final file = File('$logDirectory/$name');
       final handle = await file.open();
       late Uint8List bytes;
-      var tail = false;
+      final tail = offset > 0;
       try {
-        final size = await handle.length();
-        final allowed = (maxInput - inputBytes).clamp(0, maxFile);
-        tail = size > allowed;
         if (tail) {
-          await handle.setPosition(size - allowed);
+          await handle.setPosition(offset);
           limits.add('$name:tail_read');
         }
-        bytes = await handle.read(size.clamp(0, allowed));
+        bytes = await handle.read(length);
       } finally {
         await handle.close();
       }
@@ -320,7 +339,7 @@ Future<Uint8List> createDiagnosticBundle(
 
   for (final lane in lanes) {
     var bytes = 0, count = 0;
-    for (final record in lane) {
+    for (final record in lane.toList().reversed) {
       if (count >= maxRecords ~/ 4 || bytes + record.$4 > maxOutput ~/ 4) break;
       if (add(record)) {
         bytes += record.$4;
@@ -329,7 +348,7 @@ Future<Uint8List> createDiagnosticBundle(
     }
   }
   for (final lane in lanes) {
-    for (final record in lane) {
+    for (final record in lane.toList().reversed) {
       if (!selectedIds.contains(record.$1) && !add(record)) {
         limits.add('bundle_budget_reached');
       }

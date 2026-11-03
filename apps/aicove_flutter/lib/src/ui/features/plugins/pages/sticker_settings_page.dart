@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
+import '../../../../features/plugins/prompts/plugin_prompts.dart';
 import '../../../../features/stickers/sticker_library.dart';
 import '../../../../features/stickers/sticker_library_provider.dart';
 import '../../../../features/stickers/sticker_pack_download.dart';
@@ -12,6 +13,7 @@ import '../../../../features/stickers/sticker_registry.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
+import 'plugin_prompts_page.dart';
 import 'sticker_pack_page.dart';
 
 /// 可选下载的动图表情包导入后的套组名，用来判断是否已下载。
@@ -173,6 +175,7 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                           iconWidget: StickerThumb(
                             sticker: pack.stickers.firstOrNull,
                           ),
+                          iconContainerWidth: StickerThumb.size,
                           label: pack.name,
                           subtitle: _packSubtitle(pack),
                           showDivider: index != packs.length - 1,
@@ -186,8 +189,25 @@ class _StickerSettingsPageState extends ConsumerState<StickerSettingsPage> {
                   ),
                 ),
               ),
-            if (packs != null && !searching && !library.hasError)
+            if (packs != null && !searching && !library.hasError) ...[
               _buildDownloads(packs),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: MoeSettingsGroup(
+                    title: '提示词',
+                    titleFirst: true,
+                    children: [
+                      PluginPromptSlotRow(
+                        slot: PluginPromptSlot.sticker,
+                        prompts: ref.watch(pluginPromptsProvider).valueOrNull,
+                        icon: Icons.tune_rounded,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -327,84 +347,95 @@ Future<void> showStickerDetailSheet(
   return showMoeBottomSheet<void>(
     context: context,
     title: sticker.description.isNotEmpty ? sticker.description : '表情',
-    builder: (sheetContext) => Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          GestureDetector(
-            onTap: () => MoeImagePreview.show(
-              sheetContext,
-              stickerImageProvider(sticker),
-              heroTag: 'sticker_${sticker.id}',
-            ),
-            child: SizedBox(
-              height: 180,
-              child: MoeContentSurface(
-                radius: 16,
-                padding: const EdgeInsets.all(12),
-                child: StickerImage(sticker: sticker, iconSize: 48),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          MoeSettingsGroup(
-            margin: EdgeInsets.zero,
+    builder: (sheetContext) => Consumer(
+      builder: (sheetContext, ref, _) {
+        final packs = ref.watch(stickerLibraryProvider).valueOrNull;
+        final current = packs
+                ?.expand((p) => p.stickers)
+                .where((s) => s.id == sticker.id)
+                .firstOrNull ??
+            sticker;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MoeSettingsRow(
-                label: '标签',
-                detailText: sticker.tags.isEmpty
-                    ? '未标注'
-                    : sticker.tags.join('、'),
-                trailingType: MoeSettingsRowTrailing.text,
-                onTap: () => showMoeAutoSaveTextEditor(
-                  context: sheetContext,
-                  title: '编辑标签',
-                  hint: '用逗号或空格分隔，如：开心 好耶',
-                  initialValue: sticker.tags.join('，'),
-                  onSave: (value) async {
-                    await notifier.updateSticker(
-                      sticker.id,
-                      tags: splitStickerTags(value),
-                    );
-                    if (sheetContext.mounted) Navigator.of(sheetContext).pop();
-                  },
+              Center(
+                child: GestureDetector(
+                  onTap: () => MoeImagePreview.show(
+                    sheetContext,
+                    stickerImageProvider(current),
+                    heroTag: 'sticker_${current.id}',
+                  ),
+                  child: SizedBox.square(
+                    dimension: 168,
+                    child: StickerImage(
+                      sticker: current,
+                      iconSize: 48,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
                 ),
               ),
-              MoeSettingsRow(
-                label: '描述',
-                detailText: sticker.description.isEmpty
-                    ? '无'
-                    : sticker.description,
-                trailingType: MoeSettingsRowTrailing.text,
-                onTap: () => showMoeAutoSaveTextEditor(
-                  context: sheetContext,
-                  title: '编辑描述',
-                  initialValue: sticker.description,
-                  onSave: (value) async {
-                    await notifier.updateSticker(
-                      sticker.id,
-                      description: value,
-                    );
-                    if (sheetContext.mounted) Navigator.of(sheetContext).pop();
-                  },
-                ),
-              ),
-              MoeSettingsRow(
-                label: '删除这张表情',
-                labelColor: Theme.of(sheetContext).colorScheme.error,
-                trailingType: MoeSettingsRowTrailing.none,
-                showDivider: false,
-                onTap: () async {
-                  await notifier.deleteStickers(sticker.packId, {sticker.id});
-                  if (sheetContext.mounted) Navigator.of(sheetContext).pop();
-                },
+              const SizedBox(height: 12),
+              MoeSettingsGroup(
+                margin: EdgeInsets.zero,
+                children: [
+                  MoeSettingsRow(
+                    label: '标签',
+                    detailText: current.tags.isEmpty
+                        ? '未标注'
+                        : current.tags.join('、'),
+                    trailingType: MoeSettingsRowTrailing.text,
+                    onTap: () => showMoeAutoSaveTextEditor(
+                      context: sheetContext,
+                      title: '编辑标签',
+                      hint: '用逗号或空格分隔，如：开心 好耶',
+                      initialValue: current.tags.join('，'),
+                      onSave: (value) => notifier.updateSticker(
+                        current.id,
+                        tags: splitStickerTags(value),
+                      ),
+                    ),
+                  ),
+                  MoeSettingsRow(
+                    label: '描述',
+                    detailText: current.description.isEmpty
+                        ? '无'
+                        : current.description,
+                    trailingType: MoeSettingsRowTrailing.text,
+                    onTap: () => showMoeAutoSaveTextEditor(
+                      context: sheetContext,
+                      title: '编辑描述',
+                      initialValue: current.description,
+                      onSave: (value) => notifier.updateSticker(
+                        current.id,
+                        description: value,
+                      ),
+                    ),
+                  ),
+                  MoeSettingsRow(
+                    label: '删除这张表情',
+                    labelColor: Theme.of(sheetContext).colorScheme.error,
+                    trailingType: MoeSettingsRowTrailing.none,
+                    showDivider: false,
+                    onTap: () async {
+                      await notifier.deleteStickers(
+                        current.packId,
+                        {current.id},
+                      );
+                      if (sheetContext.mounted) {
+                        Navigator.of(sheetContext).pop();
+                      }
+                    },
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     ),
   );
 }
@@ -414,10 +445,16 @@ ImageProvider stickerImageProvider(Sticker sticker) =>
 
 /// 表情图片，加载失败显示占位图标。
 class StickerImage extends StatelessWidget {
-  const StickerImage({super.key, required this.sticker, this.iconSize = 30});
+  const StickerImage({
+    super.key,
+    required this.sticker,
+    this.iconSize = 30,
+    this.fit = BoxFit.contain,
+  });
 
   final Sticker sticker;
   final double iconSize;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
@@ -428,7 +465,7 @@ class StickerImage extends StatelessWidget {
         null,
         stickerImageProvider(sticker),
       ),
-      fit: BoxFit.contain,
+      fit: fit,
       errorBuilder: (_, __, ___) => Center(
         child: Icon(
           Icons.emoji_emotions_outlined,
@@ -440,29 +477,28 @@ class StickerImage extends StatelessWidget {
   }
 }
 
-/// 套组列表行的小封面。
+/// 套组列表行的小封面（正方形铺满，无圆角框与内边距）。
 class StickerThumb extends StatelessWidget {
   const StickerThumb({super.key, required this.sticker});
 
   final Sticker? sticker;
 
-  static const double _size = 40;
+  static const double size = 42;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
     return SizedBox.square(
-      dimension: _size,
-      child: MoeContentSurface(
-        radius: 10,
-        padding: const EdgeInsets.all(4),
+      dimension: size,
+      child: ColoredBox(
+        color: colors.surfaceAlt,
         child: sticker == null
             ? Icon(
                 Icons.emoji_emotions_outlined,
                 color: colors.muted,
-                size: _size * 0.6,
+                size: size * 0.55,
               )
-            : StickerImage(sticker: sticker!, iconSize: _size * 0.6),
+            : StickerImage(sticker: sticker!, iconSize: size * 0.55),
       ),
     );
   }
@@ -502,7 +538,7 @@ class StickerSectionHeader extends StatelessWidget {
   }
 }
 
-/// 表情网格：单元格宽度固定上限，列数随可用宽度变化。未标注的右上角带小圆点。
+/// 表情网格：采用类似苹果相册的紧凑正方形网格（无圆角、无内边距、细缝拼接）。
 class StickerGrid extends StatelessWidget {
   const StickerGrid({
     super.key,
@@ -519,28 +555,25 @@ class StickerGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SliverPadding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      sliver: SliverGrid(
-        delegate: SliverChildBuilderDelegate(
-          (context, index) => _StickerCell(
-            sticker: stickers[index],
-            selected: selected?.contains(stickers[index].id),
-            onTap: () => onTap(stickers[index]),
-          ),
-          childCount: stickers.length,
+    return SliverGrid(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) => _StickerCell(
+          sticker: stickers[index],
+          selected: selected?.contains(stickers[index].id),
+          onTap: () => onTap(stickers[index]),
         ),
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 88,
-          crossAxisSpacing: 10,
-          mainAxisSpacing: 10,
-        ),
+        childCount: stickers.length,
+      ),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 100,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
       ),
     );
   }
 }
 
-/// 网格中的单个表情：统一内容面 + 按压缩放反馈。
+/// 网格中的单个正方形表情单元格。
 class _StickerCell extends StatefulWidget {
   const _StickerCell({
     required this.sticker,
@@ -576,47 +609,54 @@ class _StickerCellState extends State<_StickerCell> {
         onTapDown: (_) => setState(() => _pressed = true),
         onTapUp: (_) => setState(() => _pressed = false),
         onTapCancel: () => setState(() => _pressed = false),
-        child: AnimatedScale(
-          scale: _pressed ? 0.92 : 1,
-          duration: kAnimFast,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              MoeContentSurface(
-                radius: 14,
-                color: selected == true
-                    ? colors.primary.withValues(alpha: 0.16)
-                    : null,
-                padding: const EdgeInsets.all(8),
-                child: StickerImage(sticker: sticker),
-              ),
-              if (selected != null)
-                Positioned(
-                  top: 4,
-                  right: 4,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ColoredBox(
+              color: colors.surfaceAlt,
+              child: StickerImage(sticker: sticker),
+            ),
+            if (_pressed) const ColoredBox(color: Color(0x1F000000)),
+            if (selected == true)
+              const ColoredBox(color: Color(0x38FFFFFF)),
+            if (selected != null)
+              Positioned(
+                bottom: 5,
+                right: 5,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: selected ? Colors.white : Colors.transparent,
+                    shape: BoxShape.circle,
+                  ),
                   child: Icon(
                     selected
                         ? Icons.check_circle_rounded
                         : Icons.radio_button_unchecked_rounded,
-                    size: 18,
-                    color: selected ? colors.primary : colors.muted,
-                  ),
-                )
-              else if (sticker.tags.isEmpty)
-                Positioned(
-                  top: 6,
-                  right: 6,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: colors.toastWarning,
-                      shape: BoxShape.circle,
-                    ),
+                    size: 20,
+                    color: selected ? colors.primary : Colors.white,
+                    shadows: selected
+                        ? null
+                        : const [
+                            Shadow(blurRadius: 3, color: Color(0x73000000)),
+                          ],
                   ),
                 ),
-            ],
-          ),
+              )
+            else if (sticker.tags.isEmpty)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: colors.toastWarning,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.2),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

@@ -29,6 +29,90 @@ void main() {
   group('OpenAIAdapter.buildRequestBody', () {
     final adapter = OpenAIAdapter();
 
+    test(
+      'signature normalization uses the final model and messages after channel overrides',
+      () {
+        const signedMessage = {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {
+              'id': 'signed',
+              'type': 'function',
+              'function': {'name': 'read', 'arguments': '{}'},
+              'thoughtSignature': 'legacy-signature',
+              'extra_content': {
+                'google': {'thought_signature': 'official-signature'},
+              },
+            },
+          ],
+        };
+        final body = adapter.buildRequestBody(
+          model: 'gemini-3-flash-preview',
+          messages: const [],
+          customConfig: const {
+            'model': 'gpt-4o',
+            'messages': [signedMessage],
+          },
+        );
+        expect(body['messages'][0]['tool_calls'][0], {
+          'id': 'signed',
+          'type': 'function',
+          'function': {'name': 'read', 'arguments': '{}'},
+        });
+        final gemini = adapter.buildRequestBody(
+          model: 'gpt-4o',
+          messages: const [],
+          customConfig: const {
+            'model': 'gemini-3-flash-preview',
+            'messages': [signedMessage],
+          },
+        );
+        expect(gemini['messages'][0]['tool_calls'][0]['extra_content'], {
+          'google': {'thought_signature': 'official-signature'},
+        });
+        expect(signedMessage['tool_calls'], [
+          {
+            'id': 'signed',
+            'type': 'function',
+            'function': {'name': 'read', 'arguments': '{}'},
+            'thoughtSignature': 'legacy-signature',
+            'extra_content': {
+              'google': {'thought_signature': 'official-signature'},
+            },
+          },
+        ]);
+      },
+    );
+
+    test(
+      'request-owned toolChoice path cannot reintroduce internal signature keys',
+      () {
+        final body = adapter.buildRequestBody(
+          model: 'gpt-4o',
+          messages: const [
+            {
+              'role': 'assistant',
+              'content': '',
+              'tool_calls': [
+                {
+                  'id': 'a',
+                  'type': 'function',
+                  'function': {'name': 'read', 'arguments': '{}'},
+                  'thoughtSignature': 'native-signature',
+                },
+              ],
+            },
+          ],
+          requestOptions: const ProviderChatRequestOptions(toolChoice: 'auto'),
+        );
+        expect(
+          body['messages'][0]['tool_calls'][0].keys,
+          unorderedEquals(['id', 'type', 'function']),
+        );
+      },
+    );
+
     test('为 kimi-k2.5 默认注入安全 max_tokens，避免只返回 reasoning_content', () {
       final body = adapter.buildRequestBody(
         model: 'kimi-k2.5',

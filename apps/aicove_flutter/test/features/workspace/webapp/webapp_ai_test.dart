@@ -117,6 +117,7 @@ void main() {
       expect(await chat(request), '嗨');
       expect(seen!.modelFullId, contains('deepseek-flash'));
       expect(seen!.providerApiKey, _key);
+      expect(seen!.providerId, 'deepseek');
       expect(seen!.tools, isNull);
       expect(seen!.messages, [
         {'role': 'user', 'content': '你好'},
@@ -203,7 +204,7 @@ void main() {
       );
       await server.start();
       server.allow(ws);
-      client = HttpClient();
+      client = HttpClient()..findProxy = (_) => 'DIRECT';
     });
 
     tearDown(() async {

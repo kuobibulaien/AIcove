@@ -11,48 +11,52 @@ import 'image_plugin.dart';
 /// carries availability; each request builds its own snapshot from the
 /// request's drawing configuration and settings.
 AicovePlugin imageAgentPlugin(ImagePlugin registered) => AicovePlugin(
-      id: registered.id,
-      name: registered.name,
-      capabilities: const {AppCapability.request, AppCapability.responses},
-      setup: (registrar) {
-        registrar.add(AppContributions.requestScope, ImageRequestScope.new);
-        registrar.add(AppContributions.responseProcessor, (inputs) {
-          // A request reply records its drawing snapshot in the events; a
-          // cached reply has none and uses the registered instance.
-          final drawing = inputs.drawingConfig;
-          final plugin = drawing == null
-              ? registered
-              : ImagePlugin(
-                  drawing,
-                  inputs.ref,
-                  requestSettings: inputs.settings,
-                  isRequestSnapshot: true,
-                );
-          return ResponseFunction(
-            registered.id,
-            (text) async => plugin.convertInlineImageTags(text),
-          );
-        });
-      },
-    );
+  id: registered.id,
+  name: registered.name,
+  capabilities: const {AppCapability.request, AppCapability.responses},
+  setup: (registrar) {
+    registrar.add(AppContributions.requestScope, ImageRequestScope.new);
+    registrar.add(AppContributions.responseProcessor, (inputs) {
+      // A request reply records its drawing snapshot in the events; a
+      // cached reply has none and uses the registered instance.
+      final drawing = inputs.drawingConfig;
+      final plugin = drawing == null
+          ? registered
+          : ImagePlugin(
+              drawing,
+              inputs.ref,
+              requestSettings: inputs.settings,
+              isRequestSnapshot: true,
+              prompts: inputs.imagePrompts,
+            );
+      return ResponseFunction(
+        registered.id,
+        (text) async => plugin.convertInlineImageTags(text),
+      );
+    });
+  },
+);
 
 class ImageRequestScope extends PluginRequestScope {
   ImageRequestScope(this.inputs)
-      : snapshot = ImagePlugin(
-          inputs.imageConfig,
-          inputs.ref,
-          requestSettings: inputs.settings,
-          isRequestSnapshot: true,
-          prompts: inputs.imagePrompts,
-        ) {
+    : snapshot = ImagePlugin(
+        inputs.imageConfig,
+        inputs.ref,
+        requestSettings: inputs.settings,
+        isRequestSnapshot: true,
+        prompts: inputs.imagePrompts,
+      ) {
     // Computed once so the prompt and the reminder agree. A failure here
     // drops the reminder (and its prompt hint) instead of blocking the
     // request, like any other reminder.
     try {
       _failure = snapshot.buildImageFailureReminderContent(inputs.history);
     } catch (e) {
-      AppLogger.warning('ImagePlugin', '生图失败提醒构建失败，已跳过',
-          metadata: {'error': e.toString()});
+      AppLogger.warning(
+        'ImagePlugin',
+        '生图失败提醒构建失败，已跳过',
+        metadata: {'error': e.toString()},
+      );
       _failure = null;
     }
   }
@@ -82,8 +86,8 @@ class ImageRequestScope extends PluginRequestScope {
   @override
   List<PluginReminder> reminders(DateTime requestTime) =>
       _failure == null || _failure.isEmpty
-          ? const []
-          : [PluginReminder(20, _failure)];
+      ? const []
+      : [PluginReminder(20, _failure)];
 
   /// The fast route draws through inline tags, so `draw_image` is not
   /// offered.
@@ -91,7 +95,10 @@ class ImageRequestScope extends PluginRequestScope {
   List<AITool> tools() {
     final tools = snapshot.getTools();
     return inputs.useFastImageRoute
-        ? [for (final tool in tools) if (tool.name != 'draw_image') tool]
+        ? [
+            for (final tool in tools)
+              if (tool.name != 'draw_image') tool,
+          ]
         : tools;
   }
 

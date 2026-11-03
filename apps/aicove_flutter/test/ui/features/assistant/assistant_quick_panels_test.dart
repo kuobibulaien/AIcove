@@ -355,7 +355,7 @@ void main() {
     await tester.tap(find.text('纳西妲'));
     await tester.pumpAndSettle();
     expect(find.text('打开绘图预设'), findsOneWidget);
-    await tester.tap(find.text('交给 AIcove酱'));
+    await tester.tap(find.text('写进输入框'));
     expect(asked, ['帮我改一下「纳西妲」的绘图预设：']);
     expect(_calls, isEmpty);
   });
@@ -382,7 +382,7 @@ void main() {
       await _pump(tester, container, _host(container, _panel(_settings)));
 
       expect(find.text('深浅色'), findsOneWidget);
-      expect(find.text('启用消息分段'), findsOneWidget);
+      expect(find.text('新会话默认消息分段'), findsOneWidget);
       expect(find.textContaining('认不出的设置项：nope.key'), findsOneWidget);
       await tester.tap(find.text('深色'));
       await tester.pumpAndSettle();
@@ -417,7 +417,7 @@ void main() {
       _host(container, _panel(_drawing), actions: false),
     );
 
-    expect(find.textContaining('只在 AIcove酱的聊天里能用'), findsOneWidget);
+    expect(find.textContaining('只在 Agent 模式的聊天里能用'), findsOneWidget);
     expect(find.text('水彩'), findsNothing);
   });
 

@@ -8,8 +8,20 @@ import '../../domain/speech_recognizer_port.dart';
 typedef WebSocketConnector =
     Future<WebSocket> Function(Uri uri, Map<String, String> headers);
 
-Future<WebSocket> _defaultConnect(Uri uri, Map<String, String> headers) =>
-    WebSocket.connect(uri.toString(), headers: headers);
+Future<WebSocket> _defaultConnect(Uri uri, Map<String, String> headers) async {
+  final connecting = WebSocket.connect(uri.toString(), headers: headers);
+  try {
+    return await connecting.timeout(const Duration(seconds: 10));
+  } on TimeoutException {
+    // timeout 不会取消底层握手，迟到的连接也要关掉。
+    unawaited(
+      connecting.then<void>((socket) async {
+        await socket.close();
+      }, onError: (Object _) {}),
+    );
+    rethrow;
+  }
+}
 
 /// 云端流式识别的公共骨架：建连、等服务端就绪、句子状态、保活、收尾与断线判定。
 ///

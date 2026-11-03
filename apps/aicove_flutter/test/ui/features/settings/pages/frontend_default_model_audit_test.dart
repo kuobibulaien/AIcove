@@ -88,6 +88,60 @@ Finder _onlyModelRow() => find.byWidgetPredicate(
 );
 
 void main() {
+  test('reorderDefaultChatModels adjusts insertion index accurately', () {
+    final reordered = reorderDefaultChatModels(
+      <String>['audit:a', 'audit:b', 'audit:c'],
+      0,
+      2,
+    );
+    expect(reordered, <String>['audit:b', 'audit:c', 'audit:a']);
+  });
+
+  testWidgets('default model order list reorders and persists when multiple selected',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'aicove.ui_models.v1': jsonEncode({
+        'providers': [
+          {
+            'id': 'audit',
+            'displayName': 'Synthetic provider',
+            'apiKeys': <String>[],
+            'apiBaseUrl': 'https://example.invalid/v1',
+            'enabled': true,
+            'models': ['m1', 'm2', 'm3'],
+            'visible_models': ['m1', 'm2', 'm3'],
+            'hidden_models': <String>[],
+            'capabilities': ['chat'],
+          },
+        ],
+        'visible_models': ['audit:m1', 'audit:m2', 'audit:m3'],
+        'default_model': 'audit:m1',
+        'default_chat_models': ['audit:m1', 'audit:m2', 'audit:m3'],
+      }),
+    });
+    await tester.pumpWidget(
+      const ProviderScope(child: MaterialApp(home: DefaultModelSettingsPage())),
+    );
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DefaultModelSettingsPage)),
+    );
+    await container.read(appSettingsProvider.future);
+    await tester.pumpAndSettle();
+
+    expect(find.text('默认尝试顺序'), findsOneWidget);
+    final reorderable = tester.widget<ReorderableListView>(
+      find.byType(ReorderableListView),
+    );
+    reorderable.onReorderItem!(2, 0);
+    await tester.pumpAndSettle();
+
+    final updated = container
+        .read(appSettingsProvider)
+        .requireValue
+        .defaultChatModels;
+    expect(updated, <String>['audit:m3', 'audit:m1', 'audit:m2']);
+  });
+
   testWidgets('default model checkbox reflects normalized saved selection', (
     tester,
   ) async {

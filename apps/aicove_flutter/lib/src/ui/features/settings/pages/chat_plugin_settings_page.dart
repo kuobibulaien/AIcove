@@ -1,7 +1,7 @@
 /// 聊天插件设置页面
 ///
 /// 整合所有聊天相关插件的入口：
-/// - 记忆库、主动关怀、表情包、语音设置、绘图设置、时间感知、联网搜索、MCP 连接器、扩展包、酒馆相关
+/// - 记忆库、主动回复、表情包、语音设置、绘图设置、时间感知、联网搜索、MCP 连接器、扩展包、酒馆相关
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_page_scaffold.dart';
 import 'package:flutter/material.dart';
 
@@ -51,7 +51,7 @@ const chatPluginItems = [
   ),
   ChatPluginItem(
     id: 'trigger',
-    name: '主动关怀',
+    name: '主动回复',
     subtitle: '主动回复',
     icon: Icons.favorite_outline,
   ),
@@ -76,7 +76,7 @@ const chatPluginItems = [
   ChatPluginItem(
     id: 'time_awareness',
     name: '时间感知',
-    subtitle: '当前时间、消息时间线',
+    subtitle: '时间提示词',
     icon: Icons.schedule_outlined,
   ),
   ChatPluginItem(
@@ -168,8 +168,7 @@ class ChatPluginSettingsPage extends StatelessWidget {
                   _buildEntryTile(
                     colors: colors,
                     title: PluginPromptsPage.title,
-                    subdued: true,
-                    subtitle: '插件标签说明，所有角色共用',
+                    subtitle: '集中管理语音、绘图与各插件的提示词',
                     onTap: () => Navigator.of(context).push(
                       ParallaxSlidePageRoute(page: const PluginPromptsPage()),
                     ),

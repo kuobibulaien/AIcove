@@ -10,6 +10,21 @@ class CodemodeSearch {
   static List<String> _tokens(String text) => RegExp(
     r'[a-z0-9]+|[\u3400-\u9fff]',
   ).allMatches(text.toLowerCase()).map((m) => m[0]!).toList();
+  static Iterable<String> _schemaText(Object? value) sync* {
+    if (value is Map) {
+      if (value['description'] is String) yield value['description'] as String;
+      if (value['properties'] is Map) {
+        yield* (value['properties'] as Map).keys.cast<String>();
+      }
+      for (final child in value.values) {
+        yield* _schemaText(child);
+      }
+    } else if (value is List) {
+      for (final child in value) {
+        yield* _schemaText(child);
+      }
+    }
+  }
   List<Map<String, dynamic>> search(
     String query, {
     int limit = 8,
@@ -22,7 +37,8 @@ class CodemodeSearch {
     if (candidates.isEmpty) return [];
     final docs = [
       for (final tool in candidates)
-        _tokens('${tool.name.replaceAll('_', ' ')} ${tool.description}'),
+        _tokens('${tool.name.replaceAll('_', ' ')} ${tool.description} '
+            '${tool.namespace ?? ''} ${_schemaText(tool.parameterSchema).join(' ')}'),
     ];
     final avg = docs.fold<int>(0, (n, d) => n + d.length) / docs.length;
     final scores = <(int, double)>[];

@@ -121,7 +121,7 @@ code mode 让一次调用做更多事，执行层不稳时出错代价更大，�
 - 照 Pi 的曝光分级 `ToolExposure = direct | codemode | deferred`（Pi 还有 `model-only`、`hidden`，我们只需要这三种）：
   - `direct`：声明给模型，也能在脚本里调。`read/write/edit/bash/codemode`；`codemode` 自己是 `model-only`，脚本里不能再调 `codemode`。
   - `codemode`：不声明给模型，`codemode` 的说明里按预算列出 TypeScript 声明。
-  - `deferred`：不列声明，只能用 `searchTools()`／`describeTool()`／`ALL_TOOLS` 找到再调。MCP 工具默认 deferred（Pi 同）。
+  - `deferred`：初始不列声明；ADR0114 已补 `tool_search`，搜索命中后下一步模型请求直接声明，也保留 `searchTools()`／`describeTool()`／`ALL_TOOLS` 及脚本调用。MCP 在工具模式统一 deferred；不增加调用方式配置。此前只移植了 Pi 的脚本发现路径，未包含模型侧搜索加载，现已补齐。
 - 曝光放在 `AITool` 上（新字段 `exposure`，默认 `direct` 保持其他角色行为不变），**AIcove酱 和工具模式角色**切到上表；纯聊天模式角色不受影响。
 - 照 Pi 的 `codemode.mode`：默认 `on`（direct 工具照常声明，说明里写怎么从脚本调）。只做 `on`，不做 `only` 开关（YAGNI）。
 

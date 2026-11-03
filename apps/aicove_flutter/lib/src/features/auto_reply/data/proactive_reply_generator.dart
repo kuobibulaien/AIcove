@@ -4,14 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/database/database_provider.dart';
-import '../../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../chat/domain/conversation.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../chat/services/chat_send_service.dart';
-import '../../chat/services/chat_types.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
 import '../../settings/app_settings.dart';
+import '../../plugins/prompts/plugin_prompts.dart';
 import '../domain/proactive_action.dart';
 import 'auto_reply_agent_helpers.dart';
 import 'proactive_call.dart';
@@ -130,7 +129,9 @@ class ProactiveReplyGenerator {
     final history = await _ref
         .read(chatHistoryStoreProvider)
         .loadCanonicalContextMessages(conversation.id, limit: contextWindow);
-    if (history.isEmpty) throw StateError('proactive_context_empty');
+    if (history.isEmpty && (reminder?.trim().isEmpty ?? true)) {
+      throw StateError('proactive_context_empty');
+    }
     final settings = await _ref.read(appSettingsProvider.future);
     final config = await _ref
         .read(chatSendServiceProvider)
@@ -138,12 +139,26 @@ class ProactiveReplyGenerator {
           conv: conversation,
           history: history,
           userText: reminder,
-          overrideModel: resolveAutoReplyAgentModelRef(settings),
+          overrideModel: resolveAutoReplyAgentModelRef(settings, conversation),
           conversationId: conversation.id,
           requestTime: requestTime,
+          forceInlineImageRoute: true,
         );
+    final pluginPrompts = await _ref.read(pluginPromptsProvider.future);
+    var effectiveReminder = reminder;
+    if ((reminder?.trim().isNotEmpty ?? false) &&
+        !reminder!.contains('<image>') &&
+        config.messages.any(
+          (message) =>
+              message['role'] == 'system' &&
+              (message['content'] ?? '').toString().contains('<image>'),
+        )) {
+      effectiveReminder =
+          '$reminder\n'
+          '${pluginPrompts.of(PluginPromptSlot.proactiveImageHint)}';
+    }
     return disableNativeToolCallsForAutoReplyGeneration(
-      appendAutoReplyReminderAsLastUser(config, reminder),
+      appendAutoReplyReminderAsLastUser(config, effectiveReminder),
     );
   }
 
@@ -188,23 +203,43 @@ class ProactiveReplyGenerator {
         ),
       );
     }
+    final pluginPrompts = await _ref.read(pluginPromptsProvider.future);
     final withHint =
         '$reminder\n'
-        '${PromptBuiltinDefaults.requireTemplate('auto_reply.reach_out.call_hint')}';
+        '${pluginPrompts.of(PluginPromptSlot.proactiveCallHint)}';
     String? openingLine;
-    final tool = buildCallUserTool(onCall: (line) => openingLine ??= line);
-    final config = (await prepare(
+    bool Function({bool enabled})? yieldAtBoundary;
+    final tool = buildCallUserTool(
+      description: pluginPrompts.of(PluginPromptSlot.proactiveCallTool),
+      onCall: (line) {
+        openingLine ??= line;
+        yieldAtBoundary?.call();
+      },
+    );
+    final prepared = await prepare(
       conversation: conversation,
       reminder: withHint,
       requestTime: requestTime,
-    )).copyWith(tools: [tool.toOpenAISchema()], boundTools: [tool]);
+    );
+    final config = prepared.copyWith(
+      tools: [tool.toOpenAISchema()],
+      boundTools: [tool],
+      onYieldReady: (yieldHandle) {
+        yieldAtBoundary = yieldHandle;
+        prepared.onYieldReady?.call(yieldHandle);
+      },
+    );
     final result = await _ref.read(proactiveReplyExecutorProvider)(
       config: config,
       sessionId: conversation.id,
       userText: withHint,
       turnId: turnId,
     );
-    openingLine ??= openingLineFromToolCalls(result.toolCalls);
+    if (openingLine == null &&
+        result.toolResults.isEmpty &&
+        result.rawToolResults.isEmpty) {
+      openingLine = openingLineFromToolCalls(result.toolCalls);
+    }
     if (openingLine != null) {
       return ProactiveDraft(
         text: openingLine!,

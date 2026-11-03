@@ -17,7 +17,8 @@ import 'package:aicove_flutter/src/core/api/thinking/thinking_fallback.dart';
 import 'package:aicove_flutter/src/core/api/thinking/thinking_level_resolver.dart';
 
 final String? _apiKey = Platform.environment['DEEPSEEK_API_KEY'];
-const _model = 'openai:deepseek-flash';
+const _modelId = 'deepseek/deepseek-v4.1-flash-1017';
+const _model = 'openai:$_modelId';
 
 Future<SendMessageRichResult> _send(ProviderChatRequestOptions options) {
   return AgentApiClient(timeout: const Duration(seconds: 60)).sendMessageRich(
@@ -28,7 +29,7 @@ Future<SendMessageRichResult> _send(ProviderChatRequestOptions options) {
       {'role': 'user', 'content': '用一句话打个招呼。'},
     ],
     userText: '',
-    providerApiBase: 'https://api.deepseek.com',
+    providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
     providerApiKey: _apiKey,
     requestOptions: options,
   );
@@ -52,7 +53,7 @@ void main() {
   test('software default turns DeepSeek thinking off', () async {
     final effective = resolveEffectiveThinkingLevel(
       providerType: 'openai',
-      modelId: 'deepseek-flash',
+      modelId: _modelId,
     );
     final options = effective.applyTo(null);
     expect(options.thinkingScheme, ThinkingScheme.thinkingToggle);

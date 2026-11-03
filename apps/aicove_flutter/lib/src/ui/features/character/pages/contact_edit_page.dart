@@ -7,17 +7,17 @@ import '../../../shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/app_logger.dart';
 import '../../../../features/chat/conversation_providers.dart';
-import '../../../../features/plugins/prompts/prompt_pack_migration.dart';
+import '../../../../features/backup/backup_providers.dart';
+import '../../../../features/backup/models/export_format.dart';
+import '../../backup/pages/export_character_page.dart';
+import '../../backup/pages/import_file_page.dart';
 import '../../debug/pages/contact_context_page.dart';
 import '../../../../core/utils/avatar_helper.dart';
 import '../../../../core/utils/blurred_background_service.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../features/agent_context/data/silly_tavern_character_card_loader.dart';
 import '../../../../features/agent_context/domain/silly_tavern_character_card.dart';
-import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
-import '../../../../features/chat/application/chat_page_conversation_actions.dart';
 import '../../../../features/assistant/domain/assistant_onboarding.dart'
     show kAicoveAssistantId;
 import '../../../../features/chat/domain/conversation.dart';
@@ -35,18 +35,23 @@ import '../widgets/avatar_name_section.dart';
 import 'character_appearance_page.dart';
 import 'contact_memory_page.dart';
 import '../services/contact_edit_snapshot_store.dart';
+import '../../../../features/chat/application/contact_edit_role_actions.dart';
 
 import '../widgets/role_prompt_section.dart';
+import 'role_extra_prompt_page.dart';
 import '../widgets/character_agent_mode_section.dart';
 import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
 import '../widgets/tavern_greeting_picker_sheet.dart';
 import '../../../../features/plugins/mcp/mcp_connector.dart';
 import '../../../../features/plugins/packages/aicove_package.dart';
+import '../../../../features/plugins/time_awareness/time_awareness_role_options.dart';
 import '../../../../features/stickers/sticker_pack_grants.dart';
 import '../../../../features/workspace/domain/workspace_grants.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
+
+part 'contact_edit_page_sections.dart';
 
 /// 编辑模式枚举
 /// - editTemplate: template/favorite role card edit mode
@@ -87,9 +92,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descCtrl;
   late final TextEditingController _personaCtrl;
-  /// A drawing requirement not moved into the drawing preset yet (ADR0092);
-  /// kept so a save before the move does not drop it.
-  String _legacyDrawingPrompt = '';
+  late final TextEditingController _extraPromptCtrl;
+  late final TextEditingController _drawingPromptCtrl;
+  String? _drawingPromptPackId;
   String? _drawingPresetId;
   late PersonaPromptParts _legacyDrawingParts;
   bool _drawingBindingChanged = false;
@@ -103,6 +108,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   /// 为 null 表示没调过（有图取聊天默认值，跟随全局壁纸时沿用全局的）。
   late WallpaperStyle? _wallpaperStyle;
   bool _importingCard = false;
+  bool _exportingCard = false;
   bool _importingPreset = false;
   bool _submitting = false;
 
@@ -130,6 +136,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _refImageCtrl,
     _descCtrl,
     _personaCtrl,
+    _extraPromptCtrl,
+    _drawingPromptCtrl,
     _selfAddressCtrl,
     _addressUserCtrl,
     _chatBackgroundCtrl,
@@ -155,15 +163,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     final personaParts = PersonaPromptCodec.parse(conv.personaPrompt);
     _legacyDrawingParts = personaParts;
     _drawingPresetId = personaParts.drawingPresetId;
+    _drawingPromptPackId = personaParts.drawingPromptPackId;
 
     _nameCtrl = TextEditingController(text: conv.displayName);
     _descCtrl = TextEditingController(text: conv.description ?? '');
     _personaCtrl = TextEditingController(text: personaParts.userPrompt);
-    _legacyDrawingPrompt = personaParts.customDrawingPrompt;
-    if (_legacyDrawingPrompt.isNotEmpty &&
-        widget.editMode == EditMode.editConversation) {
-      unawaited(_moveDrawingPromptIntoPreset());
-    }
+    _extraPromptCtrl = TextEditingController(text: personaParts.extraPrompt);
+    _drawingPromptCtrl = TextEditingController(
+      text: personaParts.customDrawingPrompt,
+    );
     _selfAddressCtrl = TextEditingController(text: conv.selfAddress ?? '');
     _addressUserCtrl = TextEditingController(text: conv.addressUser ?? '');
     _avatarCtrl = TextEditingController(text: conv.avatarUrl ?? '');
@@ -190,7 +198,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
               AicovePackage.isPackagePluginId(id) ||
               // 本机没有的工作区也保留授权（ADR0087 第 1 条）
               WorkspaceGrants.isGrantId(id) ||
-              StickerPackGrants.isGrantId(id))
+              StickerPackGrants.isGrantId(id) ||
+              TimeAwarenessRoleOptions.isOptionId(id))
             id,
       };
     }
@@ -230,6 +239,8 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _personaCtrl.dispose();
+    _extraPromptCtrl.dispose();
+    _drawingPromptCtrl.dispose();
     _selfAddressCtrl.dispose();
     _addressUserCtrl.dispose();
     _avatarCtrl.dispose();
@@ -371,6 +382,9 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
                 voicePresets: voicePresets,
                 drawingPersonaPrompt: _drawingPersonaPrompt(),
                 selectedRecipeId: _selectedRecipeId,
+                conversationId: widget.editMode == EditMode.editConversation
+                    ? widget.conversation.id
+                    : null,
                 roleName: _nameCtrl.text,
                 memoryDocAvailable:
                     widget.editMode == EditMode.editConversation,
@@ -408,28 +422,54 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
 
             const SizedBox(height: 16),
 
-            // 角色提示词（绘图要求在绘图预设的提示词里）
+            // 角色提示词、附加提示词（含生图偏好）
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: RolePromptSection(
-                onEdit: () => _openFullScreenEditor(
+                onViewSystemPrompt: _isAssistant
+                    ? () => showCharacterTextEditorSheet(
+                        context: context,
+                        title: '系统提示词',
+                        initialValue: _personaCtrl.text,
+                        hint: '',
+                        readOnly: true,
+                      )
+                    : null,
+                onEditRolePrompt: () => _openFullScreenEditor(
                   title: '编辑角色提示词',
                   controller: _personaCtrl,
                   hint: '详细描述角色的性格、说话方式、行为边界和世界观...',
                 ),
+                onEditExtraPrompt: _openExtraPromptPage,
+              ),
+            ),
+
+            // 角色模式（ADR0097）
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: CharacterAgentModeSection(
+                mode: _agentMode,
+                locked: _agentModeLocked,
+                onChanged: (mode) {
+                  setState(() => _agentMode = mode);
+                  _scheduleAutoSave();
+                },
               ),
             ),
 
             if (widget.editMode == EditMode.create) ...[
               const SizedBox(height: 16),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _buildTavernCardImportButton(),
-                  _buildTavernPresetImportButton(),
-                ],
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildTavernCardImportButton(),
+                    const SizedBox(height: 8),
+                    _buildTavernPresetImportButton(),
+                  ],
+                ),
               ),
               if (_cardGreetings.length > 1) ...[
                 const SizedBox(height: 8),
@@ -454,20 +494,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
               ),
             ],
 
-            // 角色模式（ADR0097）单独一个容器，放在最底部
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: CharacterAgentModeSection(
-                mode: _agentMode,
-                locked: _agentModeLocked,
-                onChanged: (mode) {
-                  setState(() => _agentMode = mode);
-                  _scheduleAutoSave();
-                },
-              ),
-            ),
-
             // 底部留白
             const SizedBox(height: 48),
           ],
@@ -476,31 +502,10 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     );
   }
 
-  /// 标题栏内的角色名输入，取代固定的页面标题。
-  Widget _buildNameField(MoeColors colors) {
-    final style = TextStyle(
-      fontSize: 18,
-      fontWeight: FontWeight.w600,
-      color: colors.headerContentColor,
-    );
-    return TextField(
-      controller: _nameCtrl,
-      textAlign: TextAlign.center,
-      maxLines: 1,
-      style: style,
-      decoration: InputDecoration.collapsed(
-        hintText: '输入角色名称',
-        hintStyle: style.copyWith(
-          fontWeight: FontWeight.normal,
-          color: colors.muted,
-        ),
-      ),
-    );
-  }
-
   String _drawingPersonaPrompt() {
     return PersonaPromptCodec.compose(
       userPrompt: '',
+      drawingPromptPackId: _drawingPromptPackId,
       drawingPresetId: _drawingPresetId,
       drawingToolPresetName: _drawingBindingChanged
           ? null
@@ -511,584 +516,27 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     );
   }
 
-  /// Moves the old drawing requirement into the role's drawing preset, then
-  /// picks up the binding the move wrote.
-  Future<void> _moveDrawingPromptIntoPreset() async {
-    try {
-      await autoSave.flush();
-      await ref
-          .read(promptPackMigratorProvider)
-          .forRole(widget.conversation);
-      final roles = await ref.read(conversationsProvider.future);
-      final saved = roles
-          .where((r) => r.id == widget.conversation.id)
-          .firstOrNull;
-      if (saved == null || !mounted) return;
-      final parts = PersonaPromptCodec.parse(saved.personaPrompt);
-      if (parts.customDrawingPrompt.isNotEmpty) return;
-      setState(() {
-        _legacyDrawingPrompt = '';
-        _legacyDrawingParts = parts;
-        _drawingPresetId = parts.drawingPresetId;
-        _drawingBindingChanged = false;
-      });
-    } catch (e) {
-      AppLogger.warning(
-        'ContactEdit',
-        '角色绘图提示并入绘图预设失败',
-        metadata: {'error': e.toString()},
-      );
-    }
-  }
-
-  void _openContactContext() {
-    Navigator.of(context).push(
-      ParallaxSlidePageRoute(
-        page: ContactContextPage(
-          conversation:
-              ref.read(resolvedConversationByIdProvider(widget.conversation.id)) ??
-              widget.conversation,
-        ),
-      ),
-    );
-  }
-
-  void _openMemoryDoc() {
-    Navigator.of(context).push(
-      ParallaxSlidePageRoute(
-        page: ContactMemoryPage(
-          ownerId: widget.conversation.id,
-          displayName: _nameCtrl.text.trim(),
-        ),
-      ),
-    );
-  }
-
-  /// 页面背景：设置壁纸后与聊天页共用同一壁纸层（同一蒙层与模糊），
-  /// 宽屏由工作区整窗绘制，不与左侧列表的背景割裂。
-  Widget? _buildPageBackground(MoeColors colors) {
-    final raw = _chatBackgroundCtrl.text.trim();
-    if (_deferHeavyVisuals || raw.isEmpty) return null;
-    return ChatWallpaperLayer(
-      image: raw,
-      fallbackColor: colors.surfaceAlt,
-      style: _wallpaperStyle,
-    );
-  }
-
-  Widget _buildDeferredShell(MoeColors colors) {
-    return Builder(
-      builder: (context) => SingleChildScrollView(
-        padding: moeUnderBarPadding(context),
-        physics: const NeverScrollableScrollPhysics(),
-        child: Column(
-          children: [
-            const SizedBox(height: 24),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: _buildShellCard(colors, height: 320),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: _buildShellCard(colors, height: 384),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: _buildShellCard(colors, height: 60),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.text,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  '正在准备编辑界面',
-                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
-                ),
-              ],
-            ),
-            const SizedBox(height: 48),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShellCard(MoeColors colors, {required double height}) {
-    // 与真实卡片（ContactEditCard / MoeSettingsGroup）同色，避免骨架屏闪出第三种背景色
-    return MoeContentSurface(
-      border: BorderSide(
-        color: colors.border.withValues(alpha: 0.06),
-        width: 0.6,
-      ),
-      child: SizedBox(height: height),
-    );
-  }
-
   // ==================== 自动保存 ====================
 
   void _scheduleAutoSave() => autoSave.changed();
 
+  void _rebuild(VoidCallback fn) => setState(fn);
+
   Future<bool> _flushAutoSave() => autoSave.flush();
-
-  String _buildEditSignature(ContactEditResult result) {
-    final plugins = result.enabledPlugins?.join(',') ?? '__all__';
-    return moeAutoSaveSignature([
-      result.displayName,
-      result.avatarUrl ?? '',
-      result.characterImage ?? '',
-      result.chatBackgroundImage ?? '',
-      result.selfAddress ?? '',
-      result.addressUser ?? '',
-      result.voiceFile ?? '',
-      result.description ?? '',
-      result.personaPrompt,
-      plugins,
-      result.recipeId ?? '',
-      result.agentMode?.name ?? '',
-      _wallpaperStyle?.toJson(),
-      '${result.clearAvatarUrl}',
-      '${result.clearCharacterImage}',
-      '${result.clearChatBackgroundImage}',
-      '${result.clearSelfAddress}',
-      '${result.clearAddressUser}',
-      '${result.clearVoiceFile}',
-      '${result.clearDescription}',
-      '${result.clearEnabledPlugins}',
-      '${result.clearRecipeId}',
-    ]);
-  }
-
-  // ==================== 导航栏 ====================
-
-  List<Widget> _buildNavActions(MoeColors colors) {
-    switch (widget.editMode) {
-      case EditMode.create:
-        return [
-          _buildCircleButton(
-            icon: Icons.check,
-            onTap: _importingCard || _importingPreset || _submitting
-                ? null
-                : _onSave,
-            tooltip: '创建角色',
-          ),
-        ];
-      case EditMode.editConversation:
-        return [
-          _buildCircleButton(
-            icon: Icons.more_horiz,
-            onTap: () => _showMoreMenu(colors),
-          ),
-        ];
-      case EditMode.editTemplate:
-        return [
-          _buildCircleButton(
-            icon: Icons.copy_outlined,
-            onTap: _onSaveAsNewTemplate,
-            tooltip: '另存为',
-          ),
-        ];
-    }
-  }
-
-  void _showMoreMenu(MoeColors colors) {
-    showMoeActionSheet(
-      context: context,
-      actions: [
-        MoeSheetAction(
-          label: '保存为新角色卡',
-          icon: Icons.bookmark_add_outlined,
-          onTap: _onSaveAsNewTemplate,
-        ),
-      ],
-    );
-  }
-
-  /// Circular translucent action button
-  Widget _buildCircleButton({
-    required IconData icon,
-    required VoidCallback? onTap,
-    String? tooltip,
-  }) {
-    return MoeIconButton(
-      tooltip: tooltip ?? (icon == Icons.check ? '保存' : '更多'),
-      icon: icon,
-      color: context.moeColors.primary,
-      onTap: onTap,
-    );
-  }
-
-  // ==================== 退出处理 ====================
-
-  Future<void> _handleBack() async {
-    FocusScope.of(context).unfocus();
-    if (await autoSave.flush() && mounted) Navigator.of(context).pop();
-  }
 
   void _allowAndPop<T extends Object?>([T? result]) {
     Navigator.of(context).pop<T>(result);
   }
 
-  // ==================== 全屏编辑弹窗 ====================
-
-  Future<void> _openFullScreenEditor({
-    required String title,
-    required TextEditingController controller,
-    required String hint,
-  }) async {
-    final result = await showCharacterTextEditorSheet(
-      context: context,
-      title: title,
-      initialValue: controller.text,
-      onChanged: (value) {
-        if (mounted) controller.text = value;
-      },
-      hint: hint,
-    );
-
-    if (!mounted || result == null || result == controller.text) return;
-    controller.text = result;
-    setState(() {});
-  }
-
-  // ==================== 图片选择 ====================
-
-  /// 「自定义」：更换立绘与头像，并可进入聊天壁纸编辑页。
-  void _openAppearancePage() {
-    Navigator.of(context).push(
-      ParallaxSlidePageRoute(
-        page: CharacterAppearancePage(
-          nameCtrl: _nameCtrl,
-          avatarCtrl: _avatarCtrl,
-          refImageCtrl: _refImageCtrl,
-          onPickCharacterImage: _pickCharacterImage,
-          onCropAvatarFromCharacter: _cropAvatarFromCharacter,
-          onPickAvatar: _pickAvatar,
-          onEditWallpaper: _openWallpaperEditor,
-        ),
-      ),
-    );
-  }
-
-  /// 上传立绘（两步流程）：
-  /// 1. 选择原图 → 保存为立绘（characterImage）
-  /// 2. 自动弹出裁剪界面 → 裁剪结果保存为头像（avatarUrl）
-  Future<void> _pickCharacterImage() async {
-    final file = await _pickImageFile();
-    if (file == null) return;
-
-    // 第一步：原图保存为立绘
-    setState(() {
-      _refImageCtrl.text = buildDataImage(file.bytes!, fileName: file.name);
-    });
-
-    // 第二步：自动打开裁剪界面，裁剪为头像
-    await _cropAvatar(file.bytes!, file.name);
-    _scheduleAutoSave();
-  }
-
-  /// 从当前立绘重新裁剪头像。
-  Future<void> _cropAvatarFromCharacter() async {
-    final source = _refImageCtrl.text.trim();
-    if (source.isEmpty) return;
-    final bytes = await AvatarHelper(
-      characterImage: source,
-      displayName: _nameCtrl.text,
-    ).getAvatarBytes();
-    if (!mounted) return;
-    if (bytes == null) {
-      MoeToast.error(context, '读取立绘失败，请重新上传立绘');
-      return;
-    }
-    if (await _cropAvatar(bytes, 'avatar.png')) _scheduleAutoSave();
-  }
-
-  /// 单独上传一张图片裁剪为头像，不改立绘。
-  Future<void> _pickAvatar() async {
-    final file = await _pickImageFile();
-    if (file == null) return;
-    if (await _cropAvatar(file.bytes!, file.name)) _scheduleAutoSave();
-  }
-
-  Future<PlatformFile?> _pickImageFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      withData: true,
-    );
-    final file = result?.files.firstOrNull;
-    if (file?.bytes == null) return null;
-    return file;
-  }
-
-  /// 打开裁剪界面，确认后把结果写成头像；返回是否已更新头像。
-  Future<bool> _cropAvatar(Uint8List bytes, String fileName) async {
-    if (!mounted) return false;
-    final croppedBytes = await Navigator.of(context).push<Uint8List>(
-      PageRouteBuilder(
-        opaque: false,
-        barrierDismissible: false,
-        barrierColor: Colors.black,
-        transitionDuration: kAnim,
-        reverseTransitionDuration: kAnim,
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            ImageCropDialog(imageBytes: bytes, fileName: fileName),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final fadeAnimation = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOut,
-          );
-          final scaleAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(
-            CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-          );
-          return FadeTransition(
-            opacity: fadeAnimation,
-            child: ScaleTransition(scale: scaleAnimation, child: child),
-          );
-        },
-      ),
-    );
-    if (croppedBytes == null || !mounted) return false;
-    setState(() {
-      _avatarCtrl.text = buildDataImage(croppedBytes, fileName: fileName);
-    });
-    return true;
-  }
-
-  // ==================== 壁纸与样式 ====================
-
-  /// 编辑页示例里显示的头像与名字，取当前未保存的输入。
-  Conversation _buildPreviewConversation() {
-    final name = _nameCtrl.text.trim();
-    final avatar = _avatarCtrl.text.trim();
-    return widget.conversation.copyWith(
-      displayName: name.isEmpty ? null : name,
-      avatarUrl: avatar.isEmpty ? null : avatar,
-    );
-  }
-
-  /// 「自定义」：在共用的壁纸编辑页里换角色壁纸、调遮罩模糊与截取。
-  void _openWallpaperEditor() {
-    final raw = _chatBackgroundCtrl.text.trim();
-    MoeWorkspace.open(
-      context,
-      WallpaperEditorPage(
-        source: raw.isEmpty ? null : raw,
-        style:
-            _wallpaperStyle ??
-            (raw.isEmpty
-                ? MoeWallpaperTheme.maybeOf(context)?.style ??
-                      const WallpaperStyle()
-                : kDefaultChatWallpaperStyle),
-        defaultStyle: kDefaultChatWallpaperStyle,
-        followStyle: MoeWallpaperTheme.maybeOf(context)?.style,
-        kind: WallpaperPreviewKind.chat,
-        conversation: _buildPreviewConversation(),
-        canChangeImage: true,
-        onSave: (source, style) async {
-          if (!mounted) return;
-          setState(() {
-            _chatBackgroundCtrl.text = source?.trim() ?? '';
-            _wallpaperStyle = style;
-          });
-          if (_enableAutoSave) await autoSave.flush();
-        },
-      ),
-    );
-  }
-
-  // ==================== 导入酒馆角色卡 ====================
-
-  Widget _buildTavernCardImportButton() {
-    return MoeSecondaryButton(
-      onPressed: _importingCard ? null : _showTavernCardImportSheet,
-      icon: _importingCard ? null : Icons.file_download_outlined,
-      label: _importingCard ? '正在导入…' : '导入酒馆角色卡',
-      size: MoeSecondaryButtonSize.sm,
-    );
-  }
-
-  Widget _buildTavernPresetImportButton() {
-    return MoeSecondaryButton(
-      onPressed: _importTavernPresetAndBind,
-      icon: Icons.tune,
-      label: '导入绑定新预设',
-      size: MoeSecondaryButtonSize.sm,
-    );
-  }
-
-  /// 复用酒馆插件页的导入流程，导入后直接绑定到当前角色卡。
-  Future<void> _importTavernPresetAndBind() async {
-    setState(() => _importingPreset = true);
-    try {
-      await runTavernAction(context, () async {
-        final preset = await importTavernPresetWithPreview(context, ref);
-        if (preset == null || !mounted) return;
-        setState(() => _selectedRecipeId = preset.id);
-        _scheduleAutoSave();
-        MoeToast.success(context, '已导入并绑定「${preset.name}」');
-      });
-    } finally {
-      if (mounted) setState(() => _importingPreset = false);
-    }
-  }
-
-  void _showTavernCardImportSheet() {
-    showMoeActionSheet(
-      context: context,
-      actions: [
-        MoeSheetAction(
-          label: '从图片导入',
-          subtitle: 'PNG 角色卡或角色卡 JSON',
-          icon: Icons.image_outlined,
-          onTap: () => unawaited(_importTavernCardFromFile()),
-        ),
-        MoeSheetAction(
-          label: '从链接导入',
-          subtitle: '角色卡直链或 chub.ai 角色页',
-          icon: Icons.link,
-          onTap: () => unawaited(_importTavernCardFromUrl()),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _importTavernCardFromFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['png', 'json'],
-      withData: true,
-    );
-    final bytes = result?.files.firstOrNull?.bytes;
-    if (bytes == null) return;
-    await _runTavernCardImport(
-      () async => SillyTavernCharacterCard.parseBytes(bytes),
-    );
-  }
-
-  Future<void> _importTavernCardFromUrl() async {
-    final urlCtrl = TextEditingController();
-    final confirmed = await showMeoTalkDialog(
-      context: context,
-      title: '从链接导入',
-      confirmText: '导入',
-      content: MoeTextField(
-        controller: urlCtrl,
-        hint: 'https://…',
-        autofocus: true,
-        keyboardType: TextInputType.url,
-      ),
-    );
-    final url = urlCtrl.text.trim();
-    urlCtrl.dispose();
-    if (confirmed != true || url.isEmpty) return;
-    await _runTavernCardImport(
-      () => SillyTavernCharacterCardLoader().load(url),
-    );
-  }
-
-  Future<void> _runTavernCardImport(
-    Future<SillyTavernCharacterCard> Function() load,
-  ) async {
-    setState(() => _importingCard = true);
-    try {
-      final card = await load();
-      if (!mounted) return;
-      _applyTavernCard(card);
-      if (card.greetings.length > 1) await _pickGreeting();
-      if (!mounted) return;
-      MoeToast.success(context, _cardImportedMessage(card));
-    } catch (e) {
-      if (!mounted) return;
-      MoeToast.error(context, e is FormatException ? e.message : '导入失败：$e');
-    } finally {
-      if (mounted) setState(() => _importingCard = false);
-    }
-  }
-
-  static String _cardImportedMessage(SillyTavernCharacterCard card) {
-    final resources = [
-      if (card.regexScripts.isNotEmpty) '${card.regexScripts.length} 条正则',
-      if (card.characterBook != null) '世界书',
-    ];
-    if (resources.isEmpty) return '已导入「${card.name}」';
-    return '已导入「${card.name}」，创建时卡内${resources.join('和')}会放进角色专用预设';
-  }
-
-  /// 角色卡图片直接用作头像与聊天背景，背景默认叠一层薄模糊。
-  void _applyTavernCard(SillyTavernCharacterCard card) {
-    final image = card.imageBytes;
-    setState(() {
-      _importedCard = card;
-      _nameCtrl.text = card.name;
-      _personaCtrl.text = card.composePersonaPrompt();
-      _cardGreetings = card.greetings;
-      _greetingIndex = 0;
-      if (image != null) {
-        final dataUrl = buildDataImage(image, mimeType: _sniffImageMime(image));
-        _avatarCtrl.text = dataUrl;
-        _refImageCtrl.clear();
-        _chatBackgroundCtrl.text = dataUrl;
-        _wallpaperStyle = const WallpaperStyle(
-          mask: kDefaultChatWallpaperMask,
-          blur: _kImportedBackgroundBlurSigma,
-        );
-      }
-    });
-    _scheduleBlurEnsure();
-  }
-
-  Widget _buildGreetingPickerButton() {
-    return TextButton.icon(
-      onPressed: _pickGreeting,
-      icon: const Icon(Icons.chat_bubble_outline, size: 18),
-      label: Text(
-        '开场白：第 ${_greetingIndex + 1} 套（共 ${_cardGreetings.length} 套）',
-      ),
-    );
-  }
-
-  /// 关闭弹窗视为沿用当前所选（默认主开场白）。
-  Future<void> _pickGreeting() async {
-    final index = await showTavernGreetingPicker(
-      context,
-      greetings: _cardGreetings,
-      selectedIndex: _greetingIndex,
-    );
-    if (index == null || !mounted) return;
-    setState(() => _greetingIndex = index);
-  }
-
-  static String _sniffImageMime(Uint8List bytes) {
-    if (SillyTavernCharacterCard.isPng(bytes)) return 'image/png';
-    if (bytes.length > 2 && bytes[0] == 0xFF && bytes[1] == 0xD8) {
-      return 'image/jpeg';
-    }
-    if (bytes.length > 12 &&
-        String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
-      return 'image/webp';
-    }
-    if (bytes.length > 3 &&
-        String.fromCharCodes(bytes.sublist(0, 3)) == 'GIF') {
-      return 'image/gif';
-    }
-    return 'image/png';
-  }
-
   // ==================== 保存逻辑 ====================
 
-  bool get _agentModeLocked => widget.conversation.id == kAicoveAssistantId;
+  bool get _isAssistant => widget.conversation.id == kAicoveAssistantId;
 
-  ContactEditResult _buildEditResult() {
+  bool get _agentModeLocked => _isAssistant;
+
+  /// [mergeExtraPrompt]: fold the extra prompt into the editable persona when
+  /// copying a role whose base prompt is read-only (AIcove酱).
+  ContactEditResult _buildEditResult({bool mergeExtraPrompt = false}) {
     final name = _nameCtrl.text.trim();
     final avatar = _avatarCtrl.text.trim().isEmpty
         ? null
@@ -1109,9 +557,24 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     final description = _descCtrl.text.trim().isEmpty
         ? null
         : _descCtrl.text.trim();
+    final extraPrompt = PersonaPromptCodec.stripMarkers(
+      _extraPromptCtrl.text,
+    ).trim();
+    final customDrawingPrompt = PersonaPromptCodec.stripMarkers(
+      _drawingPromptCtrl.text,
+    ).trim();
+    final shouldMergeExtra = mergeExtraPrompt && _isAssistant;
     final personaPrompt = PersonaPromptCodec.compose(
-      userPrompt: _personaCtrl.text.trim(),
-      customDrawingPrompt: _legacyDrawingPrompt,
+      userPrompt: shouldMergeExtra
+          ? PersonaPromptParts(
+              userPrompt: _personaCtrl.text,
+              extraPrompt: extraPrompt,
+              customDrawingPrompt: '',
+            ).rolePrompt
+          : _personaCtrl.text.trim(),
+      extraPrompt: shouldMergeExtra ? null : extraPrompt,
+      customDrawingPrompt: customDrawingPrompt,
+      drawingPromptPackId: _drawingPromptPackId,
       drawingPresetId: _drawingPresetId,
       drawingToolPresetName: _drawingBindingChanged
           ? null
@@ -1239,75 +702,35 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   /// 创建角色；角色落库后，专用预设与开场白任一步失败只提示，不阻止进入聊天。
   Future<void> _createRole(ContactEditResult result) async {
     // 提交开始即冻结本次要用的卡与开场白，导入中途改动不影响这次提交。
-    final card = _importedCard;
     final greeting = _cardGreetings.isEmpty
         ? null
         : _cardGreetings[_greetingIndex];
-    final controller = ref.read(presetRecipeImportControllerProvider.notifier);
-    final withResources = card != null && card.hasPresetResources;
-
-    final notifier = ref.read(conversationsProvider.notifier);
-    final String id;
+    final ContactRoleCreation created;
     try {
-      id = _createdId ??= await notifier.createNew();
-      await _applyResult(id, result);
+      created = await ref
+          .read(contactEditRoleActionsProvider)
+          .createRole(
+            existingId: _createdId,
+            onCreated: (id) => _createdId = id,
+            applyEdit: (id) => _applyResult(id, result),
+            displayName: result.displayName,
+            recipeId: result.recipeId,
+            agentMode: result.agentMode,
+            isActive: () => mounted,
+            card: _importedCard,
+            greeting: greeting,
+          );
     } catch (e) {
       if (mounted) MoeToast.error(context, '创建角色失败，请重试：$e');
       return;
     }
 
-    final problems = <String>[];
-    var recipeId = result.recipeId;
-    if (withResources) {
-      try {
-        final created = await controller.createCardPreset(
-          explicitBaseId: result.recipeId,
-          name: '${result.displayName} 专用',
-          regexScripts: card.regexScripts,
-          characterBook: card.characterBook,
-          // 导入卡即视为要用卡内正则：直接允许运行，之后在预设里逐条管理。
-          regexAuthorized: card.regexScripts.isNotEmpty ? true : null,
-        );
-        try {
-          await notifier.applyContactEdit(id, recipeId: created.preset.id);
-          recipeId = created.preset.id;
-          problems.addAll(created.warnings);
-          if (created.skippedRegexCount > 0) {
-            problems.add('${created.skippedRegexCount} 条卡内正则与原预设重复或无效，已跳过');
-          }
-        } catch (e) {
-          await controller.deletePreset(created.preset.id).catchError((_) {});
-          problems.add('专用预设绑定失败：$e');
-        }
-      } catch (e) {
-        problems.add('专用预设未建立：$e');
-      }
-    }
-    if (card != null && card.hasHelperScripts) {
-      problems.add('卡内酒馆助手脚本（变量系统、状态栏）无法运行');
-    }
-    if (greeting != null) {
-      try {
-        await ref
-            .read(chatPageConversationActionsProvider)
-            .appendCharacterGreeting(
-              id,
-              greeting: greeting,
-              charName: result.displayName,
-              recipeId: recipeId,
-            );
-      } catch (e) {
-        problems.add('开场白未写入：$e');
-      }
-    }
-
-    ref.read(activeConversationIdProvider.notifier).state = id;
     if (!mounted) return;
-    if (problems.isNotEmpty) {
-      MoeToast.warning(context, '角色已创建。${problems.join('；')}');
+    if (created.problems.isNotEmpty) {
+      MoeToast.warning(context, '角色已创建。${created.problems.join('；')}');
     }
-    final conversation = ref.read(resolvedConversationByIdProvider(id));
-    context.replace('/chat/$id', extra: conversation);
+    final conversation = ref.read(resolvedConversationByIdProvider(created.id));
+    context.replace('/chat/${created.id}', extra: conversation);
   }
 
   Future<void> _onSaveAsNewTemplate() async {
@@ -1315,15 +738,64 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       if (!await _flushAutoSave()) return;
     }
     if (!_validateForm()) return;
-    final result = _buildEditResult();
+    final result = _buildEditResult(mergeExtraPrompt: true);
 
     final notifier = ref.read(conversationsProvider.notifier);
-    final id = await notifier.createNew();
+    final id = await ref
+        .read(contactEditRoleActionsProvider)
+        .createConversation(result.agentMode);
     await _applyResult(id, result);
     await notifier.updateConversationSettings(id, isFavorite: true);
 
     if (!mounted) return;
     MoeToast.success(context, '已保存到我的角色卡');
     _allowAndPop();
+  }
+
+  /// 只打包当前角色的角色卡（含头像、立绘），不带聊天记录。
+  Future<void> _onExportCharacterCard() async {
+    if (_exportingCard) return;
+    if (_enableAutoSave && !await _flushAutoSave()) return;
+    if (!mounted) return;
+    setState(() => _exportingCard = true);
+    try {
+      final result = await ref
+          .read(conversationExporterProvider)
+          .exportConversations(
+            conversationIds: [widget.conversation.id],
+            options: const ExportOptions(scopes: [SyncScope.characterCards]),
+          );
+      if (!mounted) return;
+      await showExportSuccessDialog(context, result, encrypted: false);
+    } catch (e) {
+      if (mounted) MoeToast.error(context, '导出失败: $e');
+    } finally {
+      if (mounted) setState(() => _exportingCard = false);
+    }
+  }
+
+  Future<void> _onImportCharacterCard() async {
+    if (_enableAutoSave && !await _flushAutoSave()) return;
+    if (!mounted) return;
+    final id = widget.conversation.id;
+    final before = ref.read(resolvedConversationByIdProvider(id));
+    await Navigator.of(
+      context,
+    ).push(ParallaxSlidePageRoute(page: const ImportFilePage()));
+    if (!mounted) return;
+    await ref.read(conversationsProvider.future);
+    if (!mounted) return;
+    final after = ref.read(resolvedConversationByIdProvider(id));
+    if (after == null || after == before) return;
+    // 导入合并或覆盖了当前角色：用新数据重开本页，避免旧表单经自动保存写回。
+    Navigator.of(context).pushReplacement(
+      ParallaxSlidePageRoute(
+        page: ContactEditPage(
+          conversation: after,
+          initialSnapshot: ContactEditSnapshot.fromConversation(after),
+          editMode: EditMode.editConversation,
+        ),
+      ),
+    );
   }
 }

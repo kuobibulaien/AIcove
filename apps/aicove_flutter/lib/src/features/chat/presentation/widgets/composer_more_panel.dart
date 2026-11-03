@@ -1,6 +1,6 @@
 /// Composer 更多面板
 ///
-/// 显示模型、思考、相册、附件与通话入口
+/// 显示模型、思考、相册、附件、通话与表情入口
 library;
 
 import 'dart:math' as math;
@@ -10,7 +10,7 @@ import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 更多面板操作类型
-enum ComposerAction { model, thinking, gallery, attachment, call }
+enum ComposerAction { model, thinking, gallery, attachment, call, sticker }
 
 /// Composer 更多面板
 class ComposerMorePanel extends StatelessWidget {
@@ -45,6 +45,11 @@ class ComposerMorePanel extends StatelessWidget {
         icon: Icons.call_outlined,
         label: '通话',
         onTap: () => onAction(ComposerAction.call),
+      ),
+      _MoreActionSpec(
+        icon: Icons.emoji_emotions_outlined,
+        label: '表情',
+        onTap: () => onAction(ComposerAction.sticker),
       ),
     ];
 

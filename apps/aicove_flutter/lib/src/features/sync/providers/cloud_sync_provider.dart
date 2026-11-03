@@ -38,7 +38,8 @@ final cloudSyncProvider =
     });
 
 class CloudSyncController extends StateNotifier<CloudProgress> {
-  CloudSyncController(this.ref) : super(const CloudProgress('登录后可开启云同步'));
+  CloudSyncController(this.ref)
+    : super(const CloudProgress('云同步默认关闭，日常推荐使用局域网同步'));
   final Ref ref;
   CloudSyncEngine? _engine;
   CloudSyncScheduler? _scheduler;
@@ -76,7 +77,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     _engine?.close();
     _engine = null;
     if (connection?.hasSession != true) {
-      state = const CloudProgress('登录后可继续同步，本地数据已保留');
+      state = const CloudProgress('云同步默认关闭，登录后可连接自建服务器');
       return Future.value();
     }
     return _connecting = () async {
@@ -93,6 +94,12 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
           documents,
           support,
         );
+        final clientState = await local.state();
+        if (!mounted || generation != _generation) return;
+        final isEnabled = clientState['enabled'] == 1;
+        state = isEnabled
+            ? const CloudProgress('云同步已开启，日常优先使用局域网同步', enabled: true)
+            : const CloudProgress('云同步默认关闭，需要时可手动开启');
         _api = CloudApi(connection!);
         _connected = connection;
         _engine = CloudSyncEngine(
@@ -113,6 +120,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
         await publishDeviceName(preferences, media.deviceId);
         final engine = _engine!;
         _scheduler = CloudSyncScheduler(local, () async {
+          if ((await local.state())['enabled'] != 1) return false;
           await engine.synchronize();
           return mounted && state.error == null;
         })..start();
@@ -187,7 +195,9 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
             canRefresh: (id) =>
                 mounted &&
                 generation == _generation &&
-                !ref.read(conversationSendingProvider(id)),
+                !ref.read(conversationSendingProvider(id)) &&
+                ref.read(conversationVoiceTaskCountProvider(id)) == 0 &&
+                ref.read(conversationImageTaskCountProvider(id)) == 0,
           );
       if (mounted && generation == _generation) {
         _pendingTimelineIds.addAll(deferred);

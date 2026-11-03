@@ -10,15 +10,18 @@ import '../../../theme/tokens.dart';
 
 /// 渠道详情里的「语音识别」分组：识别格式切换＋该格式要的额外凭证（AppID、SecretId 等）。
 ///
-/// 只在渠道有识别格式时出现；改动写进渠道 customConfig，由 [onSave] 合并保存。
+/// 渠道有识别格式或有识别模型时出现；改动写进渠道 customConfig，由 [onSave] 合并保存。
+/// 识别格式只由用户在这里选（或添加「识别」渠道时写入），选「不用于语音识别」删掉格式。
 class ProviderAsrSettingsGroup extends StatefulWidget {
   const ProviderAsrSettingsGroup({
     super.key,
     required this.provider,
+    required this.hasSpeechRecognitionModels,
     required this.onSave,
   });
 
   final ProviderAuth provider;
+  final bool hasSpeechRecognitionModels;
 
   /// 要合并进 customConfig 的键值；值为 null 表示删除该键。
   final Future<void> Function(Map<String, String?> values) onSave;
@@ -71,8 +74,13 @@ class _ProviderAsrSettingsGroupState extends State<ProviderAsrSettingsGroup> {
   }
 
   Future<void> _pickFormat() async {
-    final current = _format;
-    final picked = await showMoeBottomSheet<AsrRequestFormat>(
+    const none = '';
+    final current = _format?.value ?? none;
+    final options = <(String, String)>[
+      for (final format in AsrRequestFormat.all) (format.value, format.label),
+      (none, '不用于语音识别'),
+    ];
+    final picked = await showMoeBottomSheet<String>(
       context: context,
       title: '语音识别格式',
       showCloseButton: true,
@@ -83,15 +91,15 @@ class _ProviderAsrSettingsGroupState extends State<ProviderAsrSettingsGroup> {
           child: MoeSettingsGroup(
             margin: EdgeInsets.zero,
             children: [
-              for (final (index, format) in AsrRequestFormat.all.indexed)
+              for (final (index, (value, label)) in options.indexed)
                 MoeSettingsRow(
-                  label: format.label,
-                  showDivider: index != AsrRequestFormat.all.length - 1,
+                  label: label,
+                  showDivider: index != options.length - 1,
                   trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: format == current
+                  trailing: value == current
                       ? Icon(Icons.check, color: colors.primary, size: 18)
                       : const SizedBox.shrink(),
-                  onTap: () => Navigator.of(context).pop(format),
+                  onTap: () => Navigator.of(context).pop(value),
                 ),
             ],
           ),
@@ -101,7 +109,9 @@ class _ProviderAsrSettingsGroupState extends State<ProviderAsrSettingsGroup> {
     if (picked == null || picked == current) return;
     await _flush();
     try {
-      await widget.onSave({AsrRequestFormat.configKey: picked.value});
+      await widget.onSave({
+        AsrRequestFormat.configKey: picked == none ? null : picked,
+      });
     } catch (e) {
       if (mounted) MoeToast.error(context, '保存失败：$e');
     }
@@ -110,7 +120,22 @@ class _ProviderAsrSettingsGroupState extends State<ProviderAsrSettingsGroup> {
   @override
   Widget build(BuildContext context) {
     final format = _format;
-    if (format == null) return const SizedBox.shrink();
+    if (format == null) {
+      if (!widget.hasSpeechRecognitionModels) return const SizedBox.shrink();
+      return MoeSettingsGroup(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        title: '语音识别',
+        children: [
+          MoeSettingsRow(
+            label: '识别格式',
+            detailText: '不用于语音识别',
+            trailingType: MoeSettingsRowTrailing.text,
+            showDivider: false,
+            onTap: _pickFormat,
+          ),
+        ],
+      );
+    }
     final colors = context.moeColors;
     final fields = format.credentialFields;
     return MoeSettingsGroup(

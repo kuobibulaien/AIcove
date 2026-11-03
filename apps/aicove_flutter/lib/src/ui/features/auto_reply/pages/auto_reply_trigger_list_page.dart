@@ -10,11 +10,15 @@ import '../../../../features/auto_reply/data/auto_reply_trigger_controller.dart'
 import '../../../../features/auto_reply/presentation/widgets/auto_reply_trigger_form.dart';
 
 class AutoReplyTriggerListPage extends ConsumerWidget {
-  const AutoReplyTriggerListPage({super.key});
+  final String? conversationId;
+
+  const AutoReplyTriggerListPage({super.key, this.conversationId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.moeColors;
+    final scopedId = conversationId?.trim();
+    final filterByContact = scopedId != null && scopedId.isNotEmpty;
 
     ref.listen<AutoReplyTriggerEvent?>(autoReplyTriggerEventProvider, (
       previous,
@@ -42,7 +46,11 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
           icon: Icons.add,
           color: colors.text,
           minTouchTarget: 56,
-          onTap: () => showCreateAutoReplyTriggerSheet(context, ref),
+          onTap: () => showCreateAutoReplyTriggerSheet(
+            context,
+            ref,
+            initialConversationId: filterByContact ? scopedId : null,
+          ),
         ),
       ),
       backgroundColor: colors.surface,
@@ -62,8 +70,9 @@ class AutoReplyTriggerListPage extends ConsumerWidget {
                 triggers
                     .where(
                       (t) =>
-                          t.isActive ||
-                          t.status == AutoReplyTriggerStatus.paused,
+                          (t.isActive ||
+                              t.status == AutoReplyTriggerStatus.paused) &&
+                          (!filterByContact || t.conversationId == scopedId),
                     )
                     .toList()
                   ..sort((a, b) => a.nextFireAt.compareTo(b.nextFireAt));

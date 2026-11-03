@@ -9,8 +9,89 @@ import 'package:aicove_flutter/src/features/plugins/tts/synthesis/tts_synthesis_
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
+  group('Aliyun synthesis address and language', () {
+    for (final format in ['aliyun_qwen_tts', 'aliyun_cosyvoice']) {
+      final endpoint = format == 'aliyun_qwen_tts'
+          ? '/api/v1/services/aigc/multimodal-generation/generation'
+          : '/api/v1/services/aigc/text2audio/generation';
+      final cases = {
+        'https://my-proxy.example.com/v1':
+            'https://my-proxy.example.com$endpoint',
+        'http://my-proxy.example.com:8080/compatible-mode/v1':
+            'http://my-proxy.example.com:8080$endpoint',
+        'dashscope-intl.aliyuncs.com':
+            'https://dashscope-intl.aliyuncs.com$endpoint',
+        'https://my-proxy.example.com:8443$endpoint?ignored=true':
+            'https://my-proxy.example.com:8443$endpoint?ignored=true',
+        'https://[invalid': 'https://dashscope.aliyuncs.com$endpoint',
+        'https:///missing-host': 'https://dashscope.aliyuncs.com$endpoint',
+      };
+      for (final entry in cases.entries) {
+        test('$format uses ${entry.key}', () async {
+          final model = format == 'aliyun_qwen_tts'
+              ? 'qwen3-tts-flash'
+              : 'cosyvoice-v3-plus';
+          final service = TtsService(
+            config: TtsConfig(
+              model: model,
+              voicePresets: [
+                VoicePreset(
+                  id: 'aliyun',
+                  name: 'Aliyun',
+                  aliyunVoiceId: 'voice',
+                  aliyunTargetModel: model,
+                  aliyunVoiceStatus: 'OK',
+                ),
+              ],
+              selectedVoicePresetId: 'aliyun',
+            ),
+            apiKey: 'test-key',
+            requestUrl: entry.key,
+            requestFormat: format,
+          );
+          late http.Request sent;
+          final result = await http.runWithClient(
+            () => service.convert('Hello 世界'),
+            () => MockClient((request) async {
+              sent = request;
+              return http.Response.bytes(
+                [1, 2],
+                200,
+                headers: {'content-type': 'audio/mpeg'},
+              );
+            }),
+          );
+          expect(result.success, isTrue);
+          expect(sent.url.toString(), entry.value);
+          if (format == 'aliyun_qwen_tts') {
+            expect(jsonDecode(sent.body)['input']['language_type'], 'Auto');
+          }
+        });
+      }
+      test('$format still rejects an empty URL', () async {
+        final service = TtsService(
+          config: TtsConfig(),
+          requestUrl: ' ',
+          requestFormat: format,
+        );
+        await expectLater(
+          service.convert('hello'),
+          throwsA(
+            isA<TtsException>().having(
+              (e) => e.message,
+              'message',
+              'TTS API URL 未配置',
+            ),
+          ),
+        );
+      });
+    }
+  });
+
   group('OpenAiCompatibleTtsSynthesisAdapter', () {
     const adapter = OpenAiCompatibleTtsSynthesisAdapter();
 
@@ -89,10 +170,7 @@ void main() {
         apiKey: 'minimax-key',
       );
       final backupContext = TtsSynthesisContext(
-        config: TtsConfig(
-          model: 'speech-2.8-hd',
-          voice: 'male-qn-qingse',
-        ),
+        config: TtsConfig(model: 'speech-2.8-hd', voice: 'male-qn-qingse'),
         text: 'mini max',
         rawUrl: 'https://api-bj.minimaxi.com/v1/t2a_v2?foo=bar',
         providerId: 'minimax',
@@ -180,32 +258,31 @@ void main() {
       late String authorization;
       late Map<String, dynamic> requestBody;
 
-      unawaited(server.listen((request) async {
-        requestPath = request.uri.path;
-        authorization = request.headers.value('authorization') ?? '';
-        final bodyText = await utf8.decoder.bind(request).join();
-        requestBody = jsonDecode(bodyText) as Map<String, dynamic>;
-        request.response.statusCode = 200;
-        request.response.headers.contentType =
-            ContentType('application', 'json', charset: 'utf-8');
-        request.response.write(jsonEncode({
-          'data': {
-            'audio': '49443304',
-            'status': 2,
-          },
-          'extra_info': {
-            'audio_format': 'mp3',
-          },
-          'base_resp': {
-            'status_code': 0,
-            'status_msg': 'success',
-          },
-        }));
-        await request.response.close();
-        if (!requestReceived.isCompleted) {
-          requestReceived.complete();
-        }
-      }).asFuture<void>());
+      unawaited(
+        server.listen((request) async {
+          requestPath = request.uri.path;
+          authorization = request.headers.value('authorization') ?? '';
+          final bodyText = await utf8.decoder.bind(request).join();
+          requestBody = jsonDecode(bodyText) as Map<String, dynamic>;
+          request.response.statusCode = 200;
+          request.response.headers.contentType = ContentType(
+            'application',
+            'json',
+            charset: 'utf-8',
+          );
+          request.response.write(
+            jsonEncode({
+              'data': {'audio': '49443304', 'status': 2},
+              'extra_info': {'audio_format': 'mp3'},
+              'base_resp': {'status_code': 0, 'status_msg': 'success'},
+            }),
+          );
+          await request.response.close();
+          if (!requestReceived.isCompleted) {
+            requestReceived.complete();
+          }
+        }).asFuture<void>(),
+      );
 
       final service = TtsService(
         config: TtsConfig(
@@ -259,20 +336,22 @@ void main() {
       late String modelHeader;
       late Map<String, dynamic> requestBody;
 
-      unawaited(server.listen((request) async {
-        requestPath = request.uri.path;
-        authorization = request.headers.value('authorization') ?? '';
-        modelHeader = request.headers.value('model') ?? '';
-        final bodyText = await utf8.decoder.bind(request).join();
-        requestBody = jsonDecode(bodyText) as Map<String, dynamic>;
-        request.response.statusCode = 200;
-        request.response.headers.contentType = ContentType('audio', 'mpeg');
-        request.response.add([0xFF, 0xFB, 0x90, 0x64]); // dummy mp3 bytes
-        await request.response.close();
-        if (!requestReceived.isCompleted) {
-          requestReceived.complete();
-        }
-      }).asFuture<void>());
+      unawaited(
+        server.listen((request) async {
+          requestPath = request.uri.path;
+          authorization = request.headers.value('authorization') ?? '';
+          modelHeader = request.headers.value('model') ?? '';
+          final bodyText = await utf8.decoder.bind(request).join();
+          requestBody = jsonDecode(bodyText) as Map<String, dynamic>;
+          request.response.statusCode = 200;
+          request.response.headers.contentType = ContentType('audio', 'mpeg');
+          request.response.add([0xFF, 0xFB, 0x90, 0x64]); // dummy mp3 bytes
+          await request.response.close();
+          if (!requestReceived.isCompleted) {
+            requestReceived.complete();
+          }
+        }).asFuture<void>(),
+      );
 
       final service = TtsService(
         config: TtsConfig(
@@ -281,8 +360,7 @@ void main() {
           voice: '6ce7ea8ada884bf3889fa7c7fb206691',
         ),
         apiKey: 'sk-fish-test',
-        requestUrl:
-            'http://${server.address.address}:${server.port}/v1',
+        requestUrl: 'http://${server.address.address}:${server.port}/v1',
         requestFormat: 'fish_audio',
       );
 
@@ -312,17 +390,19 @@ void main() {
       late String apiKeyHeader;
       late Map<String, dynamic> requestBody;
 
-      unawaited(server.listen((request) async {
-        requestPath = request.uri.path;
-        apiKeyHeader = request.headers.value('x-api-key') ?? '';
-        requestBody =
-            jsonDecode(await utf8.decoder.bind(request).join())
-                as Map<String, dynamic>;
-        request.response.headers.contentType = ContentType('audio', 'mpeg');
-        request.response.add([0xFF, 0xFB, 0x90, 0x64]);
-        await request.response.close();
-        if (!requestReceived.isCompleted) requestReceived.complete();
-      }).asFuture<void>());
+      unawaited(
+        server.listen((request) async {
+          requestPath = request.uri.path;
+          apiKeyHeader = request.headers.value('x-api-key') ?? '';
+          requestBody =
+              jsonDecode(await utf8.decoder.bind(request).join())
+                  as Map<String, dynamic>;
+          request.response.headers.contentType = ContentType('audio', 'mpeg');
+          request.response.add([0xFF, 0xFB, 0x90, 0x64]);
+          await request.response.close();
+          if (!requestReceived.isCompleted) requestReceived.complete();
+        }).asFuture<void>(),
+      );
 
       final service = TtsService(
         config: TtsConfig(model: 'my-voice-model', voice: 'v-001', speed: 1.2),

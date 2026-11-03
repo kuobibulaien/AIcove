@@ -204,8 +204,6 @@ class CustomSkinPage extends ConsumerWidget {
       context: context,
       title: '选择主题色',
       showCloseButton: true,
-      isDismissible: false,
-      enableDrag: false,
       builder: (context) => MoeAutoSaveForm(
         snapshot: () => pickerColor.toARGB32(),
         save: () => ref

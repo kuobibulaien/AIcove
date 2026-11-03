@@ -14,7 +14,7 @@
 
 项目架构方向是 **Agent 上下文管理系统**（不是提示词管理系统）。核心公式：`Agent = 模型 + 上下文策略 + 工具策略 + 输出契约 + 后处理器`。
 
-五类 Agent（Chat / Proactive / Analyzer / Memory / Renderer）共享同一个 `AgentDefinition` 定义面，用 `AgentContextAssemblyPermissions` 限定各自能读取哪些上下文来源。前台聊天只是一个联系人级 `ChatAgent`。
+后台专用 Agent 使用 `AgentDefinition`、`ContextProfile`、`AgentOutputContract` 描述目标、历史窗口和输出格式；前台聊天直接按联系人 `Conversation` 与设置装配请求。`ContextProfile` 是上下文配置，不是权限门禁；读取范围、工具授权与交付检查必须在实际执行路径中落实。
 
 详细设计：[Agent 上下文管理总架构](apps/aicove_flutter/docs/02_前后端分离与架构规范/Agent上下文管理总架构.md)
 
@@ -32,24 +32,26 @@ UI / Page                       lib/src/ui/
         -> Service / Repository / API / DB
 ```
 
-Agent 链路按运行时视角理解：
+当前聊天主干：
 
 ```
-AgentDefinition
-  -> ContextProfile / AgentContextAssemblyPermissions
-    -> ProviderRenderer / ToolPolicy
-      -> AgentRuntime / AgentScheduler
-        -> AgentOutputContract / AgentDeliveryChannel
+ChatActions
+  -> ChatSendUseCase.executeTurn
+    -> ChatSendPort / ChatSendServiceAdapter
+      -> ChatSendService / ChatSendBackendService
+        -> KernelApiRunner -> AgentLoop
 ```
+
+后台／Task／网页模型入口通过 `ApiRunner` 接入同一内核，复用选号与失败归属；主动回复／任务转述生成阶段保留 Raw，响应插件在取得交付权后执行。上下文由现有请求组装器、插件请求 scope 与各专用窗口策略提供，展示投影保留工具轮次。新增能力沿这些真实入口接入，不再增加仅转发参数的调度／运行外壳。
 
 ### 当前已有关键契约（类名与代码一致）
 
 | 领域 | 契约 | 位置 | 说明 |
 |---|---|---|---|
-| Agent Runtime | `AgentDefinition` / `ContextProfile` / `AgentContextAssemblyPermissions` / `AgentOutputContract` / `AgentRuntime` / `AgentScheduler` / `AgentDeliveryChannel` | `apps/aicove_flutter/lib/src/features/agent_context/domain/agent_runtime_contracts.dart` | Agent 定义、上下文装配权限、执行、调度、输出投递 |
+| Agent Definition | `AgentDefinition` / `ContextProfile` / `ConversationWindowSpec` / `AgentOutputContract` / `AgentToolAuthorization` | `apps/aicove_flutter/lib/src/features/agent_context/domain/agent_runtime_contracts.dart` | 专用 Agent 描述与上下文／输出配置；`AgentDeliveryChannelKind` 仅标记用途，具体业务负责交付 |
 | Chat Application | `ChatSendPort` / `ChatHistoryPort` | `apps/aicove_flutter/lib/src/features/chat/application/chat_ports.dart` | UI 与聊天发送、历史读写之间的应用层端口 |
 | Provider Adapter | `ProviderAdapter` | `apps/aicove_flutter/lib/src/core/api/providers/provider_adapter.dart` | OpenAI / Claude / Gemini / 第三方兼容格式的统一适配接口 |
-| Plugin | `Plugin` / `BasePlugin` | `apps/aicove_flutter/lib/src/features/plugins/domain/` | 插件能力统一入口，用于文本、TTS、图片、表情包等扩展 |
+| Plugin Registry | `Plugin` / `BasePlugin` / `PluginManager` | `apps/aicove_flutter/lib/src/features/plugins/` | 元数据、配置与可用性注册表；不再由 Manager 协调旧生命周期或收集执行能力 |
 | Image Provider | `ImageProviderAdapter` | `apps/aicove_flutter/lib/src/core/api/image_providers/image_provider_adapter.dart` | 生图供应商适配接口 |
 | TTS | `TtsSynthesisAdapter` / `TtsVoiceProvider` | `apps/aicove_flutter/lib/src/features/plugins/tts/` | 语音合成与声音目录供应商接口 |
 | Agent Kernel | `PluginHost` / `KernelPlugin` | `apps/aicove_flutter/packages/aicove_agent_kernel/lib/src/plugin_host.dart` | 纯 Dart 内核的插件宿主与插件声明（ADR0064） |
@@ -60,7 +62,7 @@ AgentDefinition
 
 1. **跨层调用必须有契约**：UI 不直接依赖具体 Service；UseCase 依赖 Port，Port 再由 Adapter 接现有实现。
 2. **跨供应商能力必须有 Adapter**：模型、TTS、生图、Embedding 等外部能力统一走 Adapter。
-3. **新增 Agent 先定义契约再接执行**：先有 `AgentDefinition`、`ContextProfile`、装配权限（`AgentContextAssemblyPermissions`）、输出契约（`AgentOutputContract`）和投递通道（`AgentDeliveryChannel`），再写具体执行逻辑。只加 prompt 不算新增 Agent。
+3. **新增 Agent 先定执行边界**：明确目标、上下文来源、工具授权、输出格式及实际交付入口；适用的专用 Agent 用 `AgentDefinition`／`ContextProfile`／`AgentOutputContract` 描述配置。范围限制必须在运行路径执行并测试，不能用未检查的权限字段或通道标签代替。
 4. **同一能力被 2 个及以上 feature 使用时先抽 Port**，不继续散落调用（与宪法第 6 条"重复 ≥ 2 处先抽公共组件"同一口径）。
 5. **命名保持一致**：应用层用 `*Port`，运行时用 `*Contract` / `*Runtime` / `*Channel`，外部适配用 `*Adapter`，具体实现用 `*Service` / `*Repository`。
 
@@ -69,8 +71,8 @@ AgentDefinition
 前端页面与导航按全端共用界面规范重写，可整体重新设计并分批验收。以下渐进策略只约束业务／Agent 链路，不限制前端重写：
 
 - 聊天主链路继续强化 `ChatSendPort` / `ChatHistoryPort`，让 UI 只面对 UseCase。
-- Agent Context 继续以 `AgentRuntime` / `AgentOutputContract` / `AgentDeliveryChannel` 为核心契约。
-- 插件、工具、TTS、生图、记忆逐步改成可被 `AgentScheduler` 调度的能力接口。
+- 执行沿 `ApiRunner`／`KernelApiRunner`／`AgentLoop` 收口，保留真实的上下文、工具策略与逐轮记录。
+- 聊天与杂活插件贡献统一经 `PluginRuntime.requestScopes` 装配；杂活在角色筛选后仅收集联网搜索、MCP 与显式开启的扩展包，保留工具归属与预设缩窄。scope 先构建 prompt 再取 tools，装配资源在 finally 释放，返回工具／延迟回调自管执行资源；共享插件不可随装配销毁（ADR0118）。TTS、生图与记忆的具体交付保留认领、会话与持久化门禁。
 - 旧 Service 不强制立刻拆，只有在新增 Agent、主动回复、插件调度或多供应商兼容时再顺手收口。
 
 ## 插件配置架构（2026-09-06）

@@ -122,30 +122,40 @@ Future<_ToolExecutionOutcome> _executeToolCall({
         }),
       );
     }
-    final operation = ToolCallContext(
-      sessionId: sessionId,
-      turnId: turnId,
-      round: round,
-      toolCallId: toolCall.id,
-      isCancelled: isCancelled,
-      cancellation: callCancellation,
-      onProgress: onProgress,
-      scriptTools: scriptTools,
-      stateOwner: stateOwner,
-    ).run(() => tool.invoke(executionArgs));
+    late Future<ToolOutput> invocation;
+    final operation =
+        ToolCallContext(
+          sessionId: sessionId,
+          turnId: turnId,
+          round: round,
+          toolCallId: toolCall.id,
+          isCancelled: isCancelled,
+          cancellation: callCancellation,
+          onProgress: onProgress,
+          scriptTools: scriptTools,
+          stateOwner: stateOwner,
+        ).run(
+          () => RequestControl.run(callCancellation, () {
+            invocation = tool.invoke(executionArgs);
+            return invocation;
+          }),
+        );
+    // A cancelled wrapper is not evidence that the underlying tool settled.
+    // Self-managed/nested invocations retain ownership until their real exit.
+    operation.ignore();
     late ToolOutput output;
     try {
       if (tool.managesDeadline ||
           tool.executionTimeout != null ||
           invocationOwnsDeadline) {
-        output = await operation;
+        output = await invocation;
       } else {
         try {
           output = await operation.timeout(toolTimeout);
         } on TimeoutException {
           callCancellation.cancel();
           var settled = false;
-          await operation
+          await invocation
               .then<void>(
                 (_) {
                   settled = true;
@@ -381,10 +391,13 @@ List<PluginImageContent> _extractToolImageContents(String result) {
   void collect(dynamic value, {String? fallbackCaption}) {
     String localPath = '';
     String? caption;
+    int? width, height;
+    int? slotId = int.tryParse('${payload['id'] ?? ''}');
     ImageGenerationSnapshot? generationSnapshot;
 
     if (value is Map) {
       final map = _toStringDynamicMap(value);
+      slotId = int.tryParse('${map['id'] ?? slotId ?? ''}');
       localPath =
           (map['localPath'] ??
                   map['image_path'] ??
@@ -396,6 +409,9 @@ List<PluginImageContent> _extractToolImageContents(String result) {
       generationSnapshot = ImageGenerationSnapshot.tryRead(
         map['generationSnapshot'],
       );
+      final rawWidth = map['width'], rawHeight = map['height'];
+      width = rawWidth is num ? rawWidth.toInt() : null;
+      height = rawHeight is num ? rawHeight.toInt() : null;
       caption = map['caption']?.toString().trim();
       caption ??= map['prompt']?.toString().trim();
     } else if (value is String) {
@@ -415,6 +431,9 @@ List<PluginImageContent> _extractToolImageContents(String result) {
       PluginImageContent(
         localPath,
         caption: effectiveCaption,
+        width: width,
+        height: height,
+        slotId: slotId != null && slotId > 0 ? slotId : null,
         generationSnapshot: generationSnapshot,
       ),
     );
@@ -457,7 +476,7 @@ List<PluginImageContent> _selectStableReviewImages(
   List<PluginImageContent> images,
 ) {
   if (images.isEmpty) return const <PluginImageContent>[];
-  return <PluginImageContent>[images.first];
+  return images.take(4).toList(growable: false);
 }
 
 Future<List<Map<String, dynamic>>> _buildStableDrawImageReviewMessages(
@@ -467,7 +486,7 @@ Future<List<Map<String, dynamic>>> _buildStableDrawImageReviewMessages(
 
   final content = <Map<String, dynamic>>[];
 
-  for (final image in images) {
+  for (final image in _selectStableReviewImages(images)) {
     final imagePart = await _buildLocalImageInputPart(image.localPath);
     if (imagePart != null) {
       content.add(imagePart);
@@ -494,18 +513,12 @@ Future<Map<String, dynamic>?> _buildLocalImageInputPart(
   final trimmed = localPath.trim();
   if (trimmed.isEmpty) return null;
 
+  RequestControl.cancellation?.throwIfCancelled();
+  String? encoded;
   try {
-    final file = File(trimmed);
-    if (!await file.exists()) return null;
-    final bytes = await file.readAsBytes();
-    if (bytes.isEmpty) return null;
-    final mime = MimeUtils.guessImageMimeType(trimmed);
-    final base64 = base64Encode(bytes);
-    return <String, dynamic>{
-      'type': 'image_url',
-      'image_url': <String, dynamic>{'url': 'data:$mime;base64,$base64'},
-    };
+    encoded = await _readImageAsBase64InWorker(trimmed);
   } catch (e) {
+    RequestControl.cancellation?.throwIfCancelled();
     AppLogger.warning(
       ChatSendApiRunner._logTag,
       'Stable draw_image review image read failed',
@@ -513,6 +526,20 @@ Future<Map<String, dynamic>?> _buildLocalImageInputPart(
     );
     return null;
   }
+  RequestControl.cancellation?.throwIfCancelled();
+  if (encoded == null) return null;
+  final mime = MimeUtils.guessImageMimeType(trimmed);
+  return {
+    'type': 'image_url',
+    'image_url': {'url': 'data:$mime;base64,$encoded'},
+  };
+}
+
+String? _readImageAsBase64(String path) {
+  final file = File(path);
+  if (!file.existsSync()) return null;
+  final bytes = file.readAsBytesSync();
+  return bytes.isEmpty ? null : base64Encode(bytes);
 }
 
 bool _containsImagePlaceholder(String text) =>
@@ -830,3 +857,6 @@ class _ToolExecutionOutcome {
   final List<PluginImageContent> imageContents;
   final bool isAsyncAcceptedDrawImage;
 }
+
+Future<String?> _readImageAsBase64InWorker(String path) =>
+    Isolate.run(() => _readImageAsBase64(path));

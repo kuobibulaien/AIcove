@@ -12,21 +12,14 @@ void main() {
   late Directory dir;
   late FileChangeJournal journal;
   late AssistantPluginOptionTools tools;
-  var time = (messageTimestamp: true, currentTime: true);
   var search = const WebSearchConfig();
   var prompts = const PluginPrompts();
 
   setUp(() async {
-    time = (messageTimestamp: true, currentTime: true);
     search = const WebSearchConfig();
     prompts = const PluginPrompts();
     dir = await Directory.systemTemp.createTemp('assistant_options_');
     final options = assistantPluginOptions(
-      time: () => time,
-      setTime: ({messageTimestamp, currentTime}) async => time = (
-        messageTimestamp: messageTimestamp ?? time.messageTimestamp,
-        currentTime: currentTime ?? time.currentTime,
-      ),
       webSearch: () => search,
       setWebSearch: (config) async => search = config,
       prompts: () => prompts,
@@ -61,16 +54,16 @@ void main() {
           as Map<String, dynamic>;
 
   test('options change, refuse bad values and undo', () async {
-    expect((await set('time.current_time', false))['ok'], isTrue);
+    expect((await set('time.current_time', false))['error'], 'invalid');
+    expect((await set('time.message_timestamp', false))['error'], 'invalid');
+    expect(tools.options.map((o) => o.key).any((k) => k.startsWith('time.')), isFalse);
     expect((await set('web_search.num_results', 8))['ok'], isTrue);
     expect((await set('web_search.num_results', 99))['error'], 'invalid');
-    expect(time.currentTime, isFalse);
     expect(search.numResults, 8);
 
     for (final entry in await journal.recent()) {
       await journal.undo(entry.id);
     }
-    expect(time.currentTime, isTrue);
     expect(search.numResults, WebSearchConfig.defaultNumResults);
   });
 

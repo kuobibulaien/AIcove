@@ -69,13 +69,13 @@ class CharacterImageSection extends StatelessWidget {
                     radius: 10,
                     child: helper.buildCharacterWidget(
                       fit: BoxFit.cover,
-                      fallback: Container(
-                        color: colors.surface,
-                        alignment: Alignment.center,
-                        child: Icon(
-                          Icons.image_outlined,
-                          color: colors.muted,
-                          size: 28,
+                      fallback: MoeInsetSurface(
+                        child: Center(
+                          child: Icon(
+                            Icons.image_outlined,
+                            color: colors.muted,
+                            size: 28,
+                          ),
                         ),
                       ),
                     ),

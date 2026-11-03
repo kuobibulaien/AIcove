@@ -1,8 +1,9 @@
 /// 语音识别渠道格式注册表
 ///
-/// 语音识别的唯一协议入口：添加页、详情页、存储规整与识别器装配都从这里取格式。
+/// 语音识别的唯一协议入口：添加页、详情页与识别器装配都从这里取格式。
 /// 格式存在渠道 `customConfig.asrRequestFormat`，与对话／语音合成的 `requestFormat` 互不干扰，
-/// 同一个渠道（如阿里云）可以同时有合成模型和识别模型。识别只认这个字段，不按地址或模型名猜。
+/// 同一个渠道（如阿里云）可以同时有合成模型和识别模型。识别只认这个字段，不按地址或模型名猜，
+/// 只在添加「识别」渠道或用户在详情页选格式时写入。
 library;
 
 /// 除 API Key 外还要填的凭证，存在 `customConfig[key]`。
@@ -171,28 +172,6 @@ class AsrRequestFormat {
   /// 阿里云里走 realtime 协议（OpenAI 风格事件）的 Qwen3-ASR 实时模型。
   static bool isAliyunQwenRealtimeModel(String model) =>
       model.trim().toLowerCase().startsWith('qwen3-asr');
-
-  /// 渠道没写识别格式时补一次：只对有识别模型的渠道，按地址认厂商，认不出按 OpenAI。
-  /// 已写了合法格式就不改；返回 null 表示不写。
-  static String? normalizeStored({
-    required String? rawFormat,
-    required String apiBaseUrl,
-    required bool hasSpeechRecognitionModels,
-  }) {
-    final known = fromRaw(rawFormat);
-    if (known != null) return known.value;
-    if (!hasSpeechRecognitionModels) return null;
-    final host = Uri.tryParse(apiBaseUrl.trim())?.host.toLowerCase() ?? '';
-    if (host.contains('dashscope')) return aliyun.value;
-    if (host.contains('bytedance') || host.contains('volces')) {
-      return volcengine.value;
-    }
-    if (host.contains('tencent')) return tencent.value;
-    if (host.contains('xfyun') || host.contains('iflytek')) return xfyun.value;
-    if (host.contains('deepgram')) return deepgram.value;
-    if (host.contains('elevenlabs')) return elevenlabs.value;
-    return openai.value;
-  }
 
   /// 识别器连接地址：渠道地址是 ws(s):// 就照用；是 http(s):// 时换成同主机的识别地址
   /// （百炼国际站、OpenAI 兼容代理），其余用默认地址。

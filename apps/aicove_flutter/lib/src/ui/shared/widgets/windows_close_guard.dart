@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../features/settings/app_settings.dart';
+import '../../../features/plugins/mcp/mcp_http_client.dart';
 import '../../theme/tokens.dart';
 import 'meotalk_dialog.dart';
 
@@ -107,6 +108,7 @@ class _WindowsCloseGuardState extends ConsumerState<WindowsCloseGuard>
   }
 
   Future<void> _exit() async {
+    await McpClientPool.instance.closeAll();
     await trayManager.destroy();
     await windowManager.setPreventClose(false);
     await windowManager.destroy();

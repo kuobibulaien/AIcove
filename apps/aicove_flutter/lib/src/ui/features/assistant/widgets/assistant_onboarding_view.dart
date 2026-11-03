@@ -575,15 +575,24 @@ class _OtherProviderStepState extends ConsumerState<_OtherProviderStep> {
             runSpacing: 6,
             children: [
               for (final model in provider.visibleModels)
-                MoeChoiceChip(
-                  size: MoeChoiceChipSize.sm,
-                  label: _checkingRef == '${provider.id}:$model'
-                      ? '$model · 测试中…'
-                      : model,
-                  selected: _checkingRef == '${provider.id}:$model',
-                  onTap: _checkingRef == null
-                      ? () => _use(provider.id, model)
-                      : null,
+                Builder(
+                  builder: (_) {
+                    final label =
+                        settings?.getModelDisplayName(
+                          '${provider.id}:$model',
+                        ) ??
+                        model;
+                    return MoeChoiceChip(
+                      size: MoeChoiceChipSize.sm,
+                      label: _checkingRef == '${provider.id}:$model'
+                          ? '$label · 测试中…'
+                          : label,
+                      selected: _checkingRef == '${provider.id}:$model',
+                      onTap: _checkingRef == null
+                          ? () => _use(provider.id, model)
+                          : null,
+                    );
+                  },
                 ),
             ],
           ),

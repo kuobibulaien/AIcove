@@ -8,6 +8,8 @@ library;
 
 import 'dart:io';
 
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
+
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
 import 'package:aicove_flutter/src/features/agent_plugins/file_change_journal.dart';
 import 'package:aicove_flutter/src/features/agent_plugins/tool_policy.dart';
@@ -45,8 +47,8 @@ ApiConfig _deepSeek(
   AgentToolPolicy? policy,
 }) => ApiConfig(
   settings: mapUiModelsToAppSettings({}),
-  modelFullId: 'openai:deepseek-flash',
-  providerApiBase: 'https://api.deepseek.com',
+  modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+  providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
   providerApiKey: _apiKey,
   customConfig: const {},
   modelTemperature: 0.3,
@@ -95,7 +97,8 @@ class _Roles implements AssistantRoleStore {
   Future<List<Conversation>> load() async => roles;
 
   @override
-  Future<String> create() => throw UnimplementedError();
+  Future<String> create({RoleAgentMode mode = RoleAgentMode.chat}) =>
+      throw UnimplementedError();
 
   @override
   Future<void> delete(String roleId) => throw UnimplementedError();
@@ -203,8 +206,8 @@ void main() {
       final result = await createApiRunner().executeApiCall(
         config: ApiConfig(
           settings: mapUiModelsToAppSettings({}),
-          modelFullId: 'openai:deepseek-flash',
-          providerApiBase: 'https://api.deepseek.com',
+          modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+          providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
           providerApiKey: _apiKey,
           customConfig: const {},
           modelTemperature: 0.3,

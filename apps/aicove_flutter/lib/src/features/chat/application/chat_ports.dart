@@ -1,5 +1,7 @@
 library;
 
+import 'dart:async';
+
 import '../../../core/app_logger.dart' show TraceLogger;
 import '../../observability/trace_models.dart' show TraceContext;
 import '../../settings/app_settings.dart';
@@ -32,6 +34,8 @@ abstract interface class ChatHistoryPort {
     required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
+    bool updateSummary = true,
+    FutureOr<bool> Function()? shouldCommit,
   });
 
   Future<void> softDeleteMessages(
@@ -45,7 +49,8 @@ abstract interface class ChatHistoryPort {
     required String fromMessageId,
   });
 
-  Future<void> truncateAfterMessage({
+  /// 准备删除锚点之后的消息；调用返回的回调才真正删除。
+  Future<Future<void> Function()> prepareTruncateAfterMessage({
     required String conversationId,
     required String anchorMessageId,
   });

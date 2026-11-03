@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:aicove_flutter/src/core/database/database.dart';
+import 'package:aicove_flutter/src/core/media/media_index.dart';
 import 'package:aicove_flutter/src/core/storage/app_data_directory.dart';
 import 'package:drift/drift.dart' hide isNotNull;
 import 'package:drift/native.dart';
@@ -34,9 +35,13 @@ void main() {
         jsonDecode(rewrites.apply(stored))['path'],
         r'C:\Users\amy\AppData\Roaming\com.example\aicove_flutter\generated_images\p\m\1.png',
       );
+      // Built from the constants so the source never spells a forward-slash
+      // home path, which the public release sanitizer rewrites.
+      String fileUri(String dir, String rest) =>
+          'file:///${dir.replaceAll(r'\', '/')}/$rest';
       expect(
-        rewrites.apply('file:///C:/path/to/home/Documents/imported_files/x.jpg'),
-        'file:///C:/path/to/home/AppData/Roaming/com.example/aicove_flutter/imported_files/x.jpg',
+        rewrites.apply(fileUri(oldDocs, 'imported_files/x.jpg')),
+        fileUri(newDir, 'imported_files/x.jpg'),
       );
     });
 
@@ -301,6 +306,64 @@ void main() {
       expect(await Directory(p.join(from.path, 'cloud_media')).exists(), isFalse);
 
       await AppDataMigration.moveSupport(Directory(p.join(root.path, 'none')), to);
+    });
+
+    test('rewrites the moved media index independently of the main database', () async {
+      final root = await Directory.systemTemp.createTemp('media_index_move');
+      addTearDown(() => root.delete(recursive: true));
+      final oldSupport = Directory(p.join(root.path, 'container', 'support'));
+      final oldDocuments = Directory(p.join(root.path, 'container', 'Documents'));
+      final support = Directory(p.join(root.path, 'support'));
+      final mediaRoot = await Directory(p.join(oldSupport.path, 'cloud_media')).create(recursive: true);
+      final index = MediaIndex(mediaRoot);
+      final oldRecord = {
+        'original_path': '${mediaRoot.path}/assets/id/original.png',
+        'thumbnail_path': '${mediaRoot.path}/assets/id/thumbnail.jpg',
+      };
+      await index.put('assets', 'id', oldRecord);
+      await index.put('assets', 'generated', {
+        'original_path': '${oldDocuments.path}/generated_images/a.png',
+        'thumbnail_path': null,
+      });
+      await index.close();
+      await AppDataMigration.moveSupport(oldSupport, support);
+      final rewrites = PathRewrites(
+        oldDocuments.path,
+        support.path,
+        extra: [(oldSupport.path, support.path)],
+      );
+
+      await AppDataMigration.rewriteMediaIndex(support, rewrites);
+
+      final moved = MediaIndex(Directory(p.join(support.path, 'cloud_media')));
+      try {
+        expect(await moved.read('assets', 'id'), {
+          'original_path': '${support.path}/cloud_media/assets/id/original.png',
+          'thumbnail_path': '${support.path}/cloud_media/assets/id/thumbnail.jpg',
+        });
+        expect(await moved.read('assets', 'generated'), {
+          'original_path': '${support.path}/generated_images/a.png',
+          'thumbnail_path': null,
+        });
+        await moved.put('assets', 'later', oldRecord);
+      } finally {
+        await moved.close();
+      }
+      await AppDataMigration.rewriteMediaIndex(support, rewrites);
+      final again = MediaIndex(Directory(p.join(support.path, 'cloud_media')));
+      try {
+        expect(await again.read('assets', 'later'), oldRecord,
+            reason: 'uses the existing migration marker, not a new data migration');
+      } finally {
+        await again.close();
+      }
+    });
+
+    test('does not create a media index when there is none', () async {
+      final root = await Directory.systemTemp.createTemp('no_media_index');
+      addTearDown(() => root.delete(recursive: true));
+      await AppDataMigration.rewriteMediaIndex(root, PathRewrites(oldDocs, newDir));
+      expect(await Directory(p.join(root.path, 'cloud_media')).exists(), isFalse);
     });
   });
 }

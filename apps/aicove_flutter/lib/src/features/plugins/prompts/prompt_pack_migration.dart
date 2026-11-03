@@ -110,9 +110,12 @@ String _replaceSizeLines(
   required String height,
 }) => [
   for (final line in text.split('\n'))
-    if (line.startsWith('- 宽度 ')) width
-    else if (line.startsWith('- 高度 ')) height
-    else line,
+    if (line.startsWith('- 宽度 '))
+      width
+    else if (line.startsWith('- 高度 '))
+      height
+    else
+      line,
 ].join('\n');
 
 /// A drawing preset whose `draw_image` descriptions differ from the factory
@@ -146,8 +149,10 @@ String _replaceSizeLines(
       if (baseParams != null)
         PromptScopes.imageToolParams: _replaceSizeLines(
           baseParams.text,
-          width: '- 宽度 width：${blocks.widthDescription} 参考值 {default_width}，可省略。',
-          height: '- 高度 height：${blocks.heightDescription} 参考值 {default_height}，可省略。',
+          width:
+              '- 宽度 width：${blocks.widthDescription} 参考值 {default_width}，可省略。',
+          height:
+              '- 高度 height：${blocks.heightDescription} 参考值 {default_height}，可省略。',
         ),
     };
     if (library.byId(id) == null) {
@@ -198,6 +203,43 @@ List<PromptSection> roleDrawingSections(String text) => [
     text: '【角色专属生图要求】\n${text.trim()}',
   ),
 ];
+
+/// Returns the original text only when the legacy sections can be represented
+/// without losing their enabled state, scope or distinct content.
+String? extractRoleDrawingText(PresetPromptBinding binding) {
+  final sections = binding.ownSections
+      .where(
+        (s) =>
+            s.id == kRoleDrawingInlineSection ||
+            s.id == kRoleDrawingToolSection,
+      )
+      .toList();
+  if (sections.isEmpty ||
+      sections.map((s) => s.id).toSet().length != sections.length) {
+    return null;
+  }
+  String? result;
+  for (final section in sections) {
+    final inline = section.id == kRoleDrawingInlineSection;
+    final prefix = inline ? '角色专属生图要求：\n' : '【角色专属生图要求】\n';
+    final scope = inline
+        ? PromptScopes.imageInline
+        : PromptScopes.imageToolPrompt;
+    if (!section.enabled ||
+        section.scope != scope ||
+        !section.text.startsWith(prefix)) {
+      return null;
+    }
+    final text = section.text.substring(prefix.length);
+    if (text.isEmpty ||
+        text != text.trim() ||
+        (result != null && result != text)) {
+      return null;
+    }
+    result = text;
+  }
+  return result;
+}
 
 /// What moving one role's drawing requirement into a preset writes.
 class RoleDrawingMove {
@@ -268,6 +310,7 @@ RoleDrawingMove? planRoleDrawingMove(
       preset: current.copyWith(prompts: binding),
       personaPrompt: PersonaPromptCodec.compose(
         userPrompt: parts.userPrompt,
+        extraPrompt: parts.extraPrompt,
         drawingToolPresetName: parts.drawingToolPresetName,
         drawingArtistPresetName: parts.drawingArtistPresetName,
         drawingPresetId: parts.drawingPresetId,
@@ -280,7 +323,8 @@ RoleDrawingMove? planRoleDrawingMove(
   // The copy is named after its source too: if the role is rebound while a
   // move runs, the next run copies the new source instead of reusing a
   // copy of the old one.
-  final copyId = '${DrawingPresetCatalog.roleCopyPrefix}${role.id}_${current.id}';
+  final copyId =
+      '${DrawingPresetCatalog.roleCopyPrefix}${role.id}_${current.id}';
   return RoleDrawingMove(
     preset: current.copyWith(
       id: copyId,
@@ -289,6 +333,7 @@ RoleDrawingMove? planRoleDrawingMove(
     ),
     personaPrompt: PersonaPromptCodec.compose(
       userPrompt: parts.userPrompt,
+      extraPrompt: parts.extraPrompt,
       drawingPresetId: copyId,
     ),
     sourcePersona: role.personaPrompt,
@@ -311,10 +356,6 @@ class PromptPackMigrator {
 
   Future<void> ensure() => _all ??= _guard(() async {
     await ensurePacks();
-    final roles = await _ref.read(conversationsProvider.future);
-    for (final role in roles) {
-      await forRole(role);
-    }
     await _tidyDrawingPresets();
   }, () => _all = null);
 
@@ -342,37 +383,137 @@ class PromptPackMigrator {
     await _ref.read(drawingPresetCatalogProvider.notifier).transact(tidy);
   }
 
-  /// The moved drawing requirements are dropped (the user found them too
-  /// hidden to use): a role on its own copy goes back to the preset the copy
-  /// was made from, or to the default when that one is gone.
+  /// Restore role-owned data before removing old role copies or sections.
   Future<void> _unbindRoleCopies() async {
+    final prefs = await SharedPreferences.getInstance();
+    const nahidaKey = 'nahida_drawing_prompt_restored_v1';
+    final restoreNahida = prefs.getBool(nahidaKey) != true;
     final roles = await _ref.read(conversationsProvider.future);
     final catalog = await _ref.read(drawingPresetCatalogProvider.future);
+    final recovered = <String, String>{};
+    var nahidaDone = restoreNahida;
     for (final role in roles) {
       final parts = PersonaPromptCodec.parse(role.personaPrompt);
+      DrawingPreset? preset;
+      try {
+        preset = catalog.resolve(parts);
+      } on StateError {
+        // A missing preset cannot supply legacy data.
+      }
+      final binding = preset?.prompts;
+      final extracted = binding == null
+          ? null
+          : extractRoleDrawingText(binding);
+      final hasLegacy =
+          binding?.ownSections.any(
+            (s) =>
+                s.id == kRoleDrawingInlineSection ||
+                s.id == kRoleDrawingToolSection,
+          ) ??
+          false;
+      var drawing = parts.customDrawingPrompt;
+      if (drawing.trim().isEmpty && extracted != null) drawing = extracted;
+      if (restoreNahida &&
+          role.id == 'preset_nahida' &&
+          drawing.trim().isEmpty) {
+        drawing = 'nahida_(genshin_impact)';
+      }
+      if (role.id == 'preset_nahida' &&
+          drawing.trim() == 'danbooru 标签为 nahida_(genshin_impact)') {
+        drawing = 'nahida_(genshin_impact)';
+      }
+      var packId = parts.drawingPromptPackId;
+      final oldPack = binding?.packId;
       final copyPrefix = '${DrawingPresetCatalog.roleCopyPrefix}${role.id}_';
       final bound = parts.drawingPresetId;
-      if (bound == null || !bound.startsWith(copyPrefix)) continue;
-      final source = bound.substring(copyPrefix.length);
-      final keep =
-          source != catalog.defaultPresetId &&
-          catalog.presets.any((p) => p.id == source);
+      final isCopy = bound != null && bound.startsWith(copyPrefix);
+      if (packId == null &&
+          oldPack != null &&
+          (isCopy || !oldPack.startsWith('legacy.image.tools.'))) {
+        packId = oldPack;
+      }
+      var presetId = bound;
+      // A copy with divergent or disabled sections still owns unrecoverable
+      // data, so keep it bound until the user can resolve it.
+      if (isCopy && (!hasLegacy || extracted != null)) {
+        final source = bound.substring(copyPrefix.length);
+        presetId =
+            source != catalog.defaultPresetId &&
+                catalog.presets.any((p) => p.id == source)
+            ? source
+            : null;
+      }
       final persona = PersonaPromptCodec.compose(
         userPrompt: parts.userPrompt,
-        drawingPresetId: keep ? source : null,
+        extraPrompt: parts.extraPrompt,
+        customDrawingPrompt: drawing,
+        drawingPromptPackId: packId,
+        drawingPresetId: presetId,
+        drawingToolPresetName: parts.drawingToolPresetName,
+        drawingArtistPresetName: parts.drawingArtistPresetName,
       );
-      await _ref
-          .read(conversationsProvider.notifier)
-          .updateOne(
-            role.id,
-            (current) => current.personaPrompt != role.personaPrompt
-                ? current
-                : current.copyWith(
-                    personaPrompt: persona,
-                    updatedAt: DateTime.now(),
-                  ),
-          );
+      if (persona != role.personaPrompt) {
+        await _ref
+            .read(conversationsProvider.notifier)
+            .updateOne(
+              role.id,
+              (current) => current.personaPrompt != role.personaPrompt
+                  ? current
+                  : current.copyWith(
+                      personaPrompt: persona,
+                      updatedAt: DateTime.now(),
+                    ),
+            );
+      }
+      final current = (await _ref.read(
+        conversationsProvider.future,
+      )).where((r) => r.id == role.id).firstOrNull;
+      if (extracted != null &&
+          preset != null &&
+          current?.personaPrompt == persona &&
+          PersonaPromptCodec.parse(
+                current!.personaPrompt,
+              ).customDrawingPrompt ==
+              extracted) {
+        recovered[preset.id] = jsonEncode(preset.prompts.toJson());
+      }
+      if (restoreNahida &&
+          role.id == 'preset_nahida' &&
+          current != null &&
+          current.personaPrompt != persona &&
+          PersonaPromptCodec.parse(
+            current.personaPrompt,
+          ).customDrawingPrompt.isEmpty) {
+        nahidaDone = false;
+      }
     }
+    if (nahidaDone) await prefs.setBool(nahidaKey, true);
+    final currentRoles = await _ref.read(conversationsProvider.future);
+    await _ref.read(drawingPresetCatalogProvider.notifier).transact((current) {
+      var next = current;
+      for (final id in recovered.keys) {
+        final preset = next.presets.where((p) => p.id == id).firstOrNull;
+        if (preset == null ||
+            jsonEncode(preset.prompts.toJson()) != recovered[id]) {
+          continue;
+        }
+        final stillNeeded = currentRoles.any((role) {
+          final parts = PersonaPromptCodec.parse(role.personaPrompt);
+          if (parts.customDrawingPrompt.trim().isNotEmpty) return false;
+          try {
+            return next.resolve(parts).id == id;
+          } on StateError {
+            return false;
+          }
+        });
+        if (stillNeeded) continue;
+        final binding = preset.prompts
+            .removeSection(kRoleDrawingInlineSection)
+            .removeSection(kRoleDrawingToolSection);
+        next = next.upsert(preset.copyWith(prompts: binding));
+      }
+      return next;
+    });
   }
 
   Future<void> _guard(Future<void> Function() body, void Function() reset) =>
@@ -423,55 +564,8 @@ class PromptPackMigrator {
     await packs.transact(markDrawingToolsDone);
   }
 
-  final _roles = <String, Future<void>>{};
-
-  /// Moves [role]'s drawing requirement, if it still has one. Calls for the
-  /// same role while one runs share it.
-  Future<void> forRole(Conversation role) =>
-      _roles[role.id] ??= _forRole(role).whenComplete(() {
-        // A block, not `=> remove(...)`: whenComplete would wait for the
-        // removed future, which is this one.
-        _roles.remove(role.id);
-      });
-
-  Future<void> _forRole(Conversation role) async {
-    final roles = await _ref.read(conversationsProvider.future);
-    // Only stored roles are moved; the request falls back on its own.
-    final latest = roles.where((r) => r.id == role.id).firstOrNull;
-    if (latest == null) return;
-    final catalog = await _ref.read(drawingPresetCatalogProvider.future);
-    final RoleDrawingMove? move;
-    try {
-      move = planRoleDrawingMove(latest, catalog, roles);
-    } on StateError catch (e) {
-      AppLogger.warning(
-        'PromptPacks',
-        '角色绘图提示迁移跳过：绘图预设不可用',
-        metadata: {'roleId': role.id, 'error': e.message},
-      );
-      return;
-    }
-    if (move == null) return;
-    final planned = move;
-    // Preset first: if the role write fails the text is already safe there
-    // and the retry finds the same section ids.
-    await _ref
-        .read(drawingPresetCatalogProvider.notifier)
-        .transact(planned.applyTo);
-    // Only while the persona is still the one planned from: an edit made
-    // meanwhile keeps the role as it is, and the next run plans again.
-    await _ref
-        .read(conversationsProvider.notifier)
-        .updateOne(
-          latest.id,
-          (current) => current.personaPrompt != planned.sourcePersona
-              ? current
-              : current.copyWith(
-                  personaPrompt: planned.personaPrompt,
-                  updatedAt: DateTime.now(),
-                ),
-        );
-  }
+  /// Role requirements remain on the role; retained for existing callers.
+  Future<void> forRole(Conversation role) async {}
 }
 
 final promptPackMigratorProvider = Provider<PromptPackMigrator>(

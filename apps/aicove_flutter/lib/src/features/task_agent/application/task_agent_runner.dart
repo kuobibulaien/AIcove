@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../../workspace/application/codemode_declarations.dart';
+import '../../workspace/application/tool_search.dart';
 import '../../context/application/runtime_context_service.dart';
 import '../../context/domain/context_window_policy.dart';
 import '../../context/domain/context_summary.dart';
@@ -16,6 +17,7 @@ import '../../agent_plugins/tool_policy.dart';
 import '../../agent_context/domain/agent_runtime_contracts.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../chat/services/chat_types.dart';
+import '../../chat/services/provider_key_failure.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../settings/app_settings.dart';
 import '../../workspace/application/workspace_toolset.dart';
@@ -99,9 +101,11 @@ class TaskAgentRunner {
     ResolveBackgroundAgentRequestConfig? requestConfig,
     this.summarizerFactory,
     this.resultStore,
+    this.keyFailureRecorder,
   }) : _requestConfig =
            requestConfig ?? BackgroundAgentService.resolveRequestConfig;
 
+  final ProviderKeyFailureRecorder? keyFailureRecorder;
   final Future<AppSettings> Function() loadSettings;
   final TaskAgentExecutor executor;
   final ResolveBackgroundAgentRequestConfig _requestConfig;
@@ -174,7 +178,11 @@ class TaskAgentRunner {
       modelRef: preset.modelRef,
     );
     final workspacePrompt = await capabilities.workspaces?.prompt();
-    final schemas = directToolSchemas(tools);
+    final schemas = directToolSchemas(
+      tools,
+      activatedTools: calledMcpToolNames(contextMessages ?? const []),
+    );
+    final runtimeSchemas = List<Map<String, dynamic>>.of(schemas);
     final config = ApiConfig(
       toolResultStore: resultStore,
       toolResultOwner: taskId,
@@ -183,6 +191,9 @@ class TaskAgentRunner {
       onToolStep: onToolStep,
       onTranscript: onTranscript,
       onToolProgress: onToolProgress,
+      onToolSchemasChanged: (current) => runtimeSchemas
+        ..clear()
+        ..addAll(current),
       runtimeContext: RuntimeContextService(
         owner: taskId,
         resultStore: resultStore,
@@ -190,13 +201,14 @@ class TaskAgentRunner {
           configured: settings.contextWindowTokens,
           modelWindow: settings.getMaxContextTokens(request.modelFullId),
         ),
-        tools: schemas,
+        tools: runtimeSchemas,
         summarizerFactory:
             summarizerFactory ??
             () async => BackgroundContextSummarizer(
               BackgroundAgentService(
                 loadRecentMessages: (_, _) async => [],
                 loadSettings: loadSettings,
+                keyFailureRecorder: keyFailureRecorder,
               ),
               modelRef: settings.compactionModel.trim().isNotEmpty
                   ? settings.compactionModel
@@ -208,6 +220,11 @@ class TaskAgentRunner {
       modelFullId: request.modelFullId,
       providerApiBase: request.providerApiBase,
       providerApiKey: request.providerApiKey,
+      providerId: request.effectiveProviderId,
+      providerApiKeyItemId: request.providerApiKeyItemId,
+      providerApiKeyItemIndex: request.providerApiKeyItemIndex,
+      providerApiKeyStrategy: request.providerApiKeyStrategy,
+      cancellation: cancellation,
       customConfig: request.customConfig,
       messages: [
         {
@@ -232,11 +249,16 @@ class TaskAgentRunner {
           toolPolicy ??
           const AgentToolPolicy(authorization: AgentToolAuthorization.allowAll),
     );
-    final result = await executor(
+    final result = await executeWithProviderKeyFailureRecording(
       config: config,
-      tools: tools,
-      sessionId: runId,
+      recorder: keyFailureRecorder,
       cancellation: cancellation,
+      execute: () => executor(
+        config: config,
+        tools: tools,
+        sessionId: runId,
+        cancellation: cancellation,
+      ),
     );
     cancellation.throwIfCancelled();
     final reply =
@@ -263,6 +285,12 @@ class TaskAgentRunner {
             result: await (resultStore ?? ToolResultStore.shared).preserve(
               taskId,
               output.persistentText,
+              alreadyLimited:
+                  tools
+                      .where((tool) => tool.name == output.name)
+                      .firstOrNull
+                      ?.managesOutput ??
+                  false,
             ),
             isError: output.isError,
           ),
@@ -289,6 +317,7 @@ class TaskAgentRunner {
     terminationReason: tool.terminationReason,
     executionTimeout: tool.executionTimeout,
     managesDeadline: tool.managesDeadline,
+    managesOutput: tool.managesOutput,
     requiresHumanApproval: tool.requiresHumanApproval,
     richHandler: (args) async {
       cancellation.throwIfCancelled();

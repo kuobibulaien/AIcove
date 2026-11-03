@@ -32,14 +32,14 @@ void main() {
     root = await Directory.systemTemp.createTemp('sticker_preview');
     library = StickerLibrary(root);
     await library.load();
-    final asset = (String name) =>
-        File('assets/stickers/nahida/$name.png').readAsBytesSync();
+    Uint8List asset(String name) =>
+        File('assets/stickers/builtin/$name.webp').readAsBytesSync();
     final result = await library.importFiles([
-      StickerImportFile('贴贴.png', asset('hug_request')),
-      StickerImportFile('得意 叉腰.png', asset('yay_cheer')),
-      StickerImportFile('摸鱼-2.png', asset('slacking_fish')),
-      StickerImportFile('IMG_0412.png', asset('bush_peek')),
-    ], packName: '小草神日常', author: '示例作者');
+      StickerImportFile('贴贴.webp', asset('xiaokumao/459a6ca140046c4119aea0c038a3f742')),
+      StickerImportFile('得意 叉腰.webp', asset('zhegou/f4703a3fe296d0c814eec32e4c97dbbc')),
+      StickerImportFile('摸鱼-2.webp', asset('xiaokumao/b2cb23f85dc95dc1b610cc928da19243')),
+      StickerImportFile('IMG_0412.webp', asset('xiaokumao/dd3af701f8252f061f86bcb319aeeb1a')),
+    ], packName: '猫猫日常', author: '示例作者');
     importedPackId = result.packIds.single;
     StickerLibraryNotifier.open = () async => library;
 
@@ -67,9 +67,9 @@ void main() {
 
   // 文件图片的读取与解码要真实异步，多轮让出后再截图。
   Future<void> settleImages(WidgetTester tester) async {
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 8; i++) {
       await tester.runAsync(
-        () => Future.delayed(const Duration(milliseconds: 200)),
+        () => Future.delayed(const Duration(milliseconds: 150)),
       );
       await tester.pumpAndSettle();
     }
@@ -121,7 +121,7 @@ void main() {
           width: width,
           dark: dark,
         );
-        expect(find.text('小草神日常'), findsOneWidget);
+        expect(find.text('猫猫日常'), findsOneWidget);
         expect(find.text('4 张 · 示例作者 · 1 张未标注'), findsOneWidget);
         expect(find.text('纳西妲（内置）'), findsNothing);
         expect(
@@ -176,6 +176,31 @@ void main() {
         '../../scratch/sticker-settings/light-390-sheet.png',
       );
     }
+
+    // 点开「标签」编辑，防抖自动保存时不应中途把编辑框关掉，关闭后详情页与库同步刷新
+    await tester.tap(find.text('标签'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑标签'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, '贴贴，撒娇');
+    await tester.pump(const Duration(milliseconds: 500));
+    await settleImages(tester);
+    expect(find.text('编辑标签'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑标签'), findsNothing);
+    expect(find.text('贴贴、撒娇'), findsOneWidget);
+
+    // 再次点开编辑时应带出最新保存的标签，还原初始值以免影响其他用例
+    await tester.tap(find.text('标签'));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(field.controller?.text, '贴贴，撒娇');
+    await tester.enterText(find.byType(TextField).last, '贴贴');
+    await tester.pump(const Duration(milliseconds: 500));
+    await settleImages(tester);
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
   });
 }
 

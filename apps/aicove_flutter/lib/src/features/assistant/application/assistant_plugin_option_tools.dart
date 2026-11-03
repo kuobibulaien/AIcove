@@ -91,7 +91,7 @@ class AssistantPluginOptionTools extends AssistantToolGroup {
   List<AITool> tools() => [
     assistantTool(
       getTool,
-      '读插件的全局选项（时间感知、联网搜索、表情包说明等工具提示词）：当前值、取值范围、所在页面。',
+      '读插件的全局选项（联网搜索、表情包说明等工具提示词）：当前值、取值范围、所在页面。',
       const {},
       const [],
       ToolEffect.readDiagnostic,
@@ -215,9 +215,6 @@ class AssistantPluginOptionApplier extends CheckedChangeApplier {
 
 /// The plugin options the assistant may change, bound to their stores.
 List<AssistantPluginOption> assistantPluginOptions({
-  required ({bool messageTimestamp, bool currentTime}) Function() time,
-  required Future<void> Function({bool? messageTimestamp, bool? currentTime})
-  setTime,
   required WebSearchConfig Function() webSearch,
   required Future<void> Function(WebSearchConfig config) setWebSearch,
   required PluginPrompts Function() prompts,
@@ -240,20 +237,6 @@ List<AssistantPluginOption> assistantPluginOptions({
       writeIf: (expected, v) =>
           setPromptIf(slot, expected as String, v as String),
     ),
-  AssistantPluginOption(
-    key: 'time.message_timestamp',
-    label: '时间感知：历史消息带发送时间',
-    page: '设置 · 聊天插件 · 时间感知',
-    read: () => time().messageTimestamp,
-    write: (v) => setTime(messageTimestamp: v as bool),
-  ),
-  AssistantPluginOption(
-    key: 'time.current_time',
-    label: '时间感知：告诉模型现在几点',
-    page: '设置 · 聊天插件 · 时间感知',
-    read: () => time().currentTime,
-    write: (v) => setTime(currentTime: v as bool),
-  ),
   AssistantPluginOption(
     key: 'web_search.replace_builtin',
     label: '联网搜索：用本插件替代模型自带的搜索',

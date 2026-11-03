@@ -1,7 +1,7 @@
 name: aicove_flutter
 description: Flutter frontend for AIcove AI companion
 publish_to: 'none'
-version: 0.3.0+2026101602
+version: 0.5.0+2026110201
 
 environment:
   sdk: '>=3.12.2 <4.0.0'
@@ -32,6 +32,7 @@ dependencies:
   mp_audio_stream: 0.3.0 # 语音通话流式 PCM 播放
   file_picker: ^8.0.3
   image_picker: ^1.0.7
+  pasteboard: 0.5.0 # 输入框粘贴图片与文件
   image_gallery_saver_plus: ^4.0.1
   permission_handler: ^11.3.1
   crop_your_image: ^2.0.0
@@ -97,6 +98,9 @@ dev_dependencies:
 # 1.13.8 的 Web 插件要求 web ^1.1，与 share_plus 9 的 web ^0.5 冲突；web 包只在 Web 构建中编译，
 # 而 Web 不是目标平台（2026-07-20 裁决），覆盖不影响原生构建。
 dependency_overrides:
+  # 7.1.1 local patch: asynchronous Bonjour registration with a deadline.
+  bonsoir_darwin:
+    path: packages/bonsoir_darwin
   sherpa_onnx_android_arm64: 1.13.8
   sherpa_onnx_android_armeabi: 1.13.8
   sherpa_onnx_android_x86: 1.13.8
@@ -125,7 +129,6 @@ flutter:
     - assets/ui/
     - assets/wallpapers/
     - assets/emoji/
-    - assets/stickers/nahida/
     - assets/stickers/builtin/
     - assets/stickers/builtin/daimao_shuxiong/
     - assets/stickers/builtin/xiaokumao/

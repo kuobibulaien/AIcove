@@ -24,19 +24,40 @@
 /// ```
 library;
 
+import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/buttons/moe_button_surface.dart';
 import '../../../theme/tokens.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:photo_view/photo_view.dart';
 
+import '../../../../core/media/media_asset.dart';
+import '../../../../core/media/media_store.dart';
+import '../moe_floating_surface.dart';
+import '../moe_toast.dart';
+import 'image_save.dart';
+
 /// 画廊模式中每张图片的数据
+///
+/// 普通图片给 [provider]；存在共享媒体库里的图片给 [mediaId]，
+/// 预览时再解析本机文件，并在只有缩略图时提供「加载原图」。
 class ImagePreviewItem {
-  final ImageProvider provider;
+  final ImageProvider? provider;
+  final String? mediaId;
   final String heroTag;
 
-  const ImagePreviewItem({required this.provider, required this.heroTag});
+  const ImagePreviewItem({
+    required ImageProvider this.provider,
+    required this.heroTag,
+  }) : mediaId = null;
+
+  const ImagePreviewItem.media({
+    required String this.mediaId,
+    required this.heroTag,
+  }) : provider = null;
 }
 
 /// 图片全屏预览组件
@@ -156,8 +177,10 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
   late int _currentIndex;
   late PageController _pageController;
 
-  // 关闭按钮动画控制器
+  // 关闭、保存按钮动画控制器
   late final AnimationController _closeButtonController;
+
+  bool _saving = false;
 
   @override
   void initState() {
@@ -248,6 +271,81 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
     _closeButtonController.forward();
   }
 
+  /// 保存当前这张：点下去时就锁定图片，下载途中翻页也不会存错。
+  Future<void> _saveCurrent() async {
+    if (_saving) return;
+    final item = widget.images[_currentIndex];
+    setState(() => _saving = true);
+    try {
+      final mediaId = item.mediaId;
+      final provider = item.provider;
+      if (mediaId != null) {
+        final file = await (await MediaStore.shared).original(mediaId);
+        if (mounted) {
+          await saveImageFileToDevice(context, file, namePrefix: 'image');
+        }
+      } else if (provider is FileImage) {
+        await saveImageFileToDevice(
+          context,
+          provider.file,
+          namePrefix: 'image',
+        );
+      } else if (provider is MemoryImage) {
+        await saveImageBytesToDevice(
+          context,
+          provider.bytes,
+          namePrefix: 'image',
+        );
+      } else if (provider is CachedNetworkImageProvider) {
+        final file =
+            await (provider.cacheManager ??
+                    CachedNetworkImageProvider.defaultCacheManager)
+                .getSingleFile(
+                  provider.url,
+                  key: provider.cacheKey ?? provider.url,
+                  headers: provider.headers ?? const {},
+                );
+        if (mounted) {
+          await saveImageFileToDevice(context, file, namePrefix: 'image');
+        }
+      } else if (provider is AssetBundleImageProvider) {
+        final key = await provider.obtainKey(ImageConfiguration.empty);
+        final data = await key.bundle.load(key.name);
+        if (mounted) {
+          await saveImageBytesToDevice(
+            context,
+            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+            namePrefix: 'image',
+          );
+        }
+      } else if (mounted) {
+        MoeToast.show(context, '这张图片暂时无法保存');
+      }
+    } on OriginalMediaUnavailable catch (error) {
+      if (mounted) MoeToast.show(context, error.toString());
+    } catch (_) {
+      if (mounted) MoeToast.error(context, '保存失败，请重试');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// 跟关闭按钮一起淡入、拖动关闭时一起隐藏。
+  Widget _fadingControl({required Offset from, required Widget child}) {
+    return FadeTransition(
+      opacity: _closeButtonController,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: from, end: Offset.zero).animate(
+          CurvedAnimation(
+            parent: _closeButtonController,
+            curve: Curves.easeOut,
+          ),
+        ),
+        child: child,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bgColor =
@@ -307,25 +405,30 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
                   Positioned(
                     top: MediaQuery.of(context).padding.top + 16,
                     right: 16,
-                    child: FadeTransition(
-                      opacity: _closeButtonController,
-                      child: SlideTransition(
-                        position:
-                            Tween<Offset>(
-                              begin: const Offset(0, -0.5),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: _closeButtonController,
-                                curve: Curves.easeOut,
-                              ),
-                            ),
-                        child: _CloseButton(
-                          onTap: () => Navigator.of(context).pop(),
-                        ),
+                    child: _fadingControl(
+                      from: const Offset(0, -0.5),
+                      child: _RoundButton(
+                        icon: Icons.close,
+                        tooltip: '关闭',
+                        onTap: () => Navigator.of(context).pop(),
                       ),
                     ),
                   ),
+
+                // 保存按钮
+                Positioned(
+                  bottom: MediaQuery.of(context).padding.bottom + 16,
+                  right: 16,
+                  child: _fadingControl(
+                    from: const Offset(0, 0.5),
+                    child: _RoundButton(
+                      icon: Icons.download_rounded,
+                      tooltip: '保存图片',
+                      busy: _saving,
+                      onTap: _saveCurrent,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -335,33 +438,8 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
   }
 
   /// 构建单张 PhotoView
-  Widget _buildPhotoView(ImagePreviewItem item) {
-    return PhotoView(
-      imageProvider: item.provider,
-      heroAttributes: PhotoViewHeroAttributes(tag: item.heroTag),
-      backgroundDecoration: const BoxDecoration(color: Colors.transparent),
-      minScale: PhotoViewComputedScale.contained * widget.minScale,
-      maxScale: PhotoViewComputedScale.covered * widget.maxScale,
-      initialScale: PhotoViewComputedScale.contained,
-      scaleStateChangedCallback: (state) {
-        setState(() {
-          _scaleState = state;
-        });
-      },
-      loadingBuilder: (context, event) => Center(
-        child: CircularProgressIndicator(
-          value: event == null
-              ? null
-              : event.cumulativeBytesLoaded / (event.expectedTotalBytes ?? 1),
-          color: Colors.white54,
-          strokeWidth: 2,
-        ),
-      ),
-      errorBuilder: (context, error, stackTrace) => const Center(
-        child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
-      ),
-    );
-  }
+  Widget _buildPhotoView(ImagePreviewItem item) =>
+      _buildPhoto(item, withHero: true, index: 0);
 
   /// 构建画廊 PageView（左右滑动切换图片）
   Widget _buildGalleryPageView(List<ImagePreviewItem> images) {
@@ -381,45 +459,213 @@ class _MoeImagePreviewState extends State<MoeImagePreview>
             _scaleState = PhotoViewScaleState.initial;
           });
         },
-        itemBuilder: (context, index) {
-          final item = images[index];
-          // 只给当前页加 Hero，避免多个 Hero 同 tag 冲突
-          return PhotoView(
-            imageProvider: item.provider,
-            heroAttributes: index == widget.initialIndex
-                ? PhotoViewHeroAttributes(tag: item.heroTag)
-                : null,
-            backgroundDecoration: const BoxDecoration(
-              color: Colors.transparent,
-            ),
-            minScale: PhotoViewComputedScale.contained * widget.minScale,
-            maxScale: PhotoViewComputedScale.covered * widget.maxScale,
-            initialScale: PhotoViewComputedScale.contained,
-            scaleStateChangedCallback: (state) {
-              if (index == _currentIndex) {
-                setState(() {
-                  _scaleState = state;
-                });
-              }
-            },
-            loadingBuilder: (context, event) => Center(
-              child: CircularProgressIndicator(
-                value: event == null
-                    ? null
-                    : event.cumulativeBytesLoaded /
-                          (event.expectedTotalBytes ?? 1),
-                color: Colors.white54,
-                strokeWidth: 2,
-              ),
-            ),
-            errorBuilder: (context, error, stackTrace) => const Center(
-              child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
-            ),
-          );
-        },
+        // 只给当前页加 Hero，避免多个 Hero 同 tag 冲突
+        itemBuilder: (context, index) => _buildPhoto(
+          images[index],
+          withHero: index == widget.initialIndex,
+          index: index,
+        ),
       ),
     );
   }
+
+  Widget _buildPhoto(
+    ImagePreviewItem item, {
+    required bool withHero,
+    required int index,
+  }) {
+    Widget photo(ImageProvider provider) => PhotoView(
+      imageProvider: provider,
+      heroAttributes: withHero
+          ? PhotoViewHeroAttributes(tag: item.heroTag)
+          : null,
+      backgroundDecoration: const BoxDecoration(color: Colors.transparent),
+      minScale: PhotoViewComputedScale.contained * widget.minScale,
+      maxScale: PhotoViewComputedScale.covered * widget.maxScale,
+      initialScale: PhotoViewComputedScale.contained,
+      scaleStateChangedCallback: (state) {
+        if (index == _currentIndex) {
+          setState(() {
+            _scaleState = state;
+          });
+        }
+      },
+      loadingBuilder: (context, event) => Center(
+        child: CircularProgressIndicator(
+          value: event == null
+              ? null
+              : event.cumulativeBytesLoaded / (event.expectedTotalBytes ?? 1),
+          color: Colors.white54,
+          strokeWidth: 2,
+        ),
+      ),
+      errorBuilder: (context, error, stackTrace) => const _BrokenImage(),
+    );
+
+    final mediaId = item.mediaId;
+    if (mediaId != null) {
+      return _MediaPhoto(
+        key: ValueKey(mediaId),
+        mediaId: mediaId,
+        builder: photo,
+      );
+    }
+    return photo(item.provider!);
+  }
+}
+
+class _BrokenImage extends StatelessWidget {
+  const _BrokenImage();
+
+  @override
+  Widget build(BuildContext context) => const Center(
+    child: Icon(Icons.broken_image, color: Colors.white54, size: 64),
+  );
+}
+
+/// 共享媒体库里的图片：解析本机文件，文件到达时自动刷新；
+/// 只有缩略图在本机时提供「加载原图」。
+class _MediaPhoto extends StatefulWidget {
+  const _MediaPhoto({super.key, required this.mediaId, required this.builder});
+
+  final String mediaId;
+  final Widget Function(ImageProvider provider) builder;
+
+  @override
+  State<_MediaPhoto> createState() => _MediaPhotoState();
+}
+
+class _MediaPhotoState extends State<_MediaPhoto> {
+  StreamSubscription<String>? _arrivals;
+  late Future<(File?, bool, bool)> _image = _load();
+  bool _loadingOriginal = false;
+  bool _originalFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_watchArrivals());
+  }
+
+  Future<void> _watchArrivals() async {
+    final media = await MediaStore.shared;
+    if (!mounted) return;
+    _arrivals = media.arrivals.listen((id) {
+      if (mounted && id == widget.mediaId) {
+        setState(() {
+          _image = _load();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_arrivals?.cancel());
+    super.dispose();
+  }
+
+  /// (显示用文件, 原图是否在本机, 记录是否存在)
+  Future<(File?, bool, bool)> _load() async {
+    final media = await MediaStore.shared;
+    final record = await media.load(widget.mediaId);
+    final original =
+        record?.originalPath != null &&
+        await File(record!.originalPath!).exists();
+    return (await media.display(widget.mediaId), original, record != null);
+  }
+
+  Future<void> _loadOriginal() async {
+    if (_loadingOriginal) return;
+    setState(() {
+      _loadingOriginal = true;
+      _originalFailed = false;
+    });
+    try {
+      final media = await MediaStore.shared;
+      await media.original(widget.mediaId);
+      final loaded = await _load();
+      if (!mounted) return;
+      setState(() {
+        _image = Future.value(loaded);
+      });
+    } catch (_) {
+      if (mounted) setState(() => _originalFailed = true);
+    } finally {
+      if (mounted) setState(() => _loadingOriginal = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<(File?, bool, bool)>(
+    future: _image,
+    builder: (context, snapshot) {
+      final data = snapshot.data;
+      final file = data?.$1;
+      final waiting =
+          snapshot.connectionState == ConnectionState.waiting ||
+          (data != null && data.$3);
+      final photo = file != null
+          ? widget.builder(FileImage(file))
+          : waiting
+          ? const Center(
+              child: CircularProgressIndicator(
+                color: Colors.white54,
+                strokeWidth: 2,
+              ),
+            )
+          : const _BrokenImage();
+      if (data == null || !data.$3 || data.$2) return photo;
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          photo,
+          Positioned(
+            left: 16,
+            bottom: MediaQuery.of(context).padding.bottom + 16,
+            child: MoeFloatingSurface(
+              radius: 999,
+              child: TextButton(
+                onPressed: _loadingOriginal ? null : _loadOriginal,
+                style: TextButton.styleFrom(
+                  foregroundColor: context.moeColors.text,
+                  disabledForegroundColor: context.moeColors.textSecondary,
+                  backgroundColor: Colors.transparent,
+                  shape: const StadiumBorder(),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_loadingOriginal) ...[
+                      SizedBox.square(
+                        dimension: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: context.moeColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Text(
+                      _loadingOriginal
+                          ? '加载原图中…'
+                          : _originalFailed
+                          ? '加载失败，点击重试'
+                          : '加载原图',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 /// 透明路由（支持 Hero 动画 + 淡入效果）
@@ -497,21 +743,44 @@ class _MoeImagePreviewRoute extends PageRoute<void> {
   }
 }
 
-/// 关闭按钮
-class _CloseButton extends StatelessWidget {
+/// 看图页上的圆形按钮（关闭、保存）
+class _RoundButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
   final VoidCallback onTap;
-  const _CloseButton({required this.onTap});
+  final bool busy;
+  const _RoundButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.busy = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return MoeButtonSurface(
-      radius: 999,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Icon(Icons.close, color: context.moeColors.text, size: 22),
+    final color = context.moeColors.text;
+    return Tooltip(
+      message: tooltip,
+      child: MoeButtonSurface(
+        radius: 999,
+        child: InkWell(
+          onTap: busy ? null : onTap,
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: busy
+                ? SizedBox.square(
+                    dimension: 22,
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: color,
+                      ),
+                    ),
+                  )
+                : Icon(icon, color: color, size: 22),
+          ),
         ),
       ),
     );

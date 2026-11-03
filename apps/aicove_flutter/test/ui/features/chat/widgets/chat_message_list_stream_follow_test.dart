@@ -852,6 +852,131 @@ void main() {
         reason: '长正文应在下方长出，视口停在原处');
   });
 
+  for (final width in <double>[360, 1000]) {
+    for (final splitReplace in <bool>[true, false]) {
+      final mode = splitReplace ? '先撤旧回复再挂占位' : '同帧换成占位';
+      testWidgets('S8 ${width}px $mode：停在底部附近重新生成，回底并跟随新回复长高',
+          (tester) async {
+        final hostKey = GlobalKey<_HostState>();
+        await _pumpHost(tester, hostKey, width: width);
+        final host = hostKey.currentState!;
+        final history = host.messages.take(14).toList();
+        final base = history.last.createdAt;
+        final user = Message.text(
+          id: 'm_regen_user',
+          role: 'user',
+          content: '再讲一遍刚才那段',
+          createdAt: base.add(const Duration(seconds: 1)),
+          status: 'sent',
+        );
+        final oldReply = Message.text(
+          id: 'm_regen_old',
+          role: 'assistant',
+          content: _growingText(3),
+          createdAt: base.add(const Duration(seconds: 2)),
+          status: 'sent',
+        );
+        host.setMessages([...history, user, oldReply]);
+        await _settleStabilization(tester);
+        final list = find.byType(CustomScrollView);
+        final scroll = tester.widget<CustomScrollView>(list).controller!;
+        scroll.jumpTo(scroll.position.minScrollExtent);
+        host.viewportController.onViewportReachedLatest();
+        await _settleStabilization(tester);
+
+        // 手机上滑一小段后松手：停在底部附近，但已脱离跟随。
+        await tester.drag(list, const Offset(0, 220));
+        await _settleStabilization(tester);
+        expect(host.viewportController.isDetached, isTrue);
+        expect(_distanceToBottom(tester), greaterThan(0.5));
+
+        final viewport = tester.getRect(list);
+        final userBubble =
+            find.byKey(const ValueKey<String>('message_bubble_m_regen_user'));
+        // 回底请求在帧后才跳，帧后读 pixels 会掩盖错帧；逐帧记录渲染树里的
+        // 气泡位置，要求每一帧都已落在最终贴底的位置上。
+        Future<void> expectPinnedFrames(
+          String label,
+          String tailId, {
+          bool userVisible = true,
+        }) async {
+          final tailBubble =
+              find.byKey(ValueKey<String>('message_bubble_$tailId'));
+          final tailBottoms = <double>[];
+          final userTops = <double?>[];
+          for (var frame = 0; frame < 12; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            final reason = '$label 第 $frame 帧';
+            expect(_distanceToBottom(tester), lessThanOrEqualTo(0.5),
+                reason: '$reason：重新生成后要贴底');
+            expect(tailBubble, findsOneWidget, reason: '$reason：尾气泡要在');
+            final tailRect = tester.getRect(tailBubble);
+            expect(tailRect.bottom, lessThanOrEqualTo(viewport.bottom + 0.5),
+                reason: '$reason：尾气泡底边不能落到视口外');
+            expect(tailRect.bottom, greaterThan(viewport.top),
+                reason: '$reason：尾气泡要在视口内');
+            tailBottoms.add(tailRect.bottom);
+            final userShown = userBubble.evaluate().isNotEmpty;
+            if (userVisible) {
+              expect(userShown, isTrue, reason: '$reason：用户消息不能跳出');
+              expect(tester.getTopLeft(userBubble).dy,
+                  greaterThanOrEqualTo(viewport.top - 0.5),
+                  reason: '$reason：用户消息不能跳出视口');
+            }
+            userTops.add(userShown ? tester.getTopLeft(userBubble).dy : null);
+          }
+          for (var frame = 0; frame < tailBottoms.length; frame++) {
+            expect(tailBottoms[frame], closeTo(tailBottoms.last, 0.5),
+                reason: '$label 第 $frame 帧：尾气泡不能先错位再被拉回');
+            final userTop = userTops[frame];
+            if (userTop != null && userTops.last != null) {
+              expect(userTop, closeTo(userTops.last!, 0.5),
+                  reason: '$label 第 $frame 帧：用户消息不能跳变');
+            }
+          }
+        }
+
+        final placeholder = Message.text(
+          id: 'm_regen_placeholder',
+          role: 'assistant',
+          content: '生成中...',
+          createdAt: base.add(const Duration(seconds: 3)),
+          status: 'sending',
+        );
+        // 重新生成入口先回底（对齐 _forceChatListToBottom），同一帧里旧回复
+        // 就被撤掉或换成占位，此时视口还没回到底部。
+        host.viewportController.onUserSend();
+        if (splitReplace) {
+          host.setMessages([...history, user]);
+          await expectPinnedFrames('撤掉旧回复', user.id);
+        }
+        host.setMessages([...history, user, placeholder]);
+        await expectPinnedFrames('挂上占位', placeholder.id);
+        expect(host.viewportController.shouldPinLatestTail, isTrue);
+
+        Message next(int step) => Message.text(
+              id: 'm_regen_next',
+              role: 'assistant',
+              content: _growingText(step),
+              createdAt: base.add(const Duration(seconds: 4)),
+              status: 'sending',
+            );
+        host.setMessages([...history, user, next(1)]);
+        await expectPinnedFrames('新分段换掉占位', 'm_regen_next');
+        for (var step = 2; step <= 6; step++) {
+          host.setMessages([...history, user, next(step)]);
+          await expectPinnedFrames(
+            '新回复长到第 $step 轮',
+            'm_regen_next',
+            userVisible: false,
+          );
+        }
+        expect(host.viewportController.shouldFollowLatest, isTrue,
+            reason: '重新生成后应一直跟随新回复');
+      });
+    }
+  }
+
   testWidgets('S5 键盘/底部遮挡同帧变化：贴底不破、不遮输入区', (tester) async {
     final hostKey = GlobalKey<_HostState>();
     final container = await _pumpHost(tester, hostKey);

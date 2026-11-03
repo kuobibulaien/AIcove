@@ -24,6 +24,13 @@ String frontendLogTitle(LogEntry log) {
       return '离开聊天 · 停留 $time';
     case 'pageLeftBeforeLayout':
       return '离开时尚未完成布局 · 已等待 $time';
+    case 'frameSummary':
+      return '界面流畅度 · 画了 ${state['frames']} 帧，'
+          '明显卡顿 ${state['slowFrames']} 帧，响应延迟 ${state['stalls']} 次';
+    case 'slowFrame':
+      return '明显掉帧 · 这一帧用了 ${state['totalMs']}ms';
+    case 'uiStall':
+      return '界面响应延迟 · 约 ${state['stallMs']}ms';
     default:
       return elapsed is num ? '${log.message} · 累计 $time' : log.message;
   }
@@ -36,6 +43,9 @@ String frontendLogSummary(LogEntry log) {
     return '${state['animate'] == false ? '本次不播放入场动画。' : '本条记录的是是否播放动画的决定。'}'
         '\n${state['viewportClock'] == true ? '时间从本次视口创建开始计算。' : '旧记录沿用消息操作的累计计时。'}'
         '不是动画执行时长，也不是帧耗时。';
+  }
+  if (const {'frameSummary', 'slowFrame', 'uiStall'}.contains(meta['event'])) {
+    return '当时所在页面：${meta['pageName'] ?? '未知'}。';
   }
   if (meta['event'] != 'historyColdLoad' || meta['phase'] != 'end') {
     return '“累计／进入后／停留”表示距相应操作开始的时间，不是单阶段或单帧耗时。';

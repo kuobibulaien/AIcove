@@ -1,4 +1,4 @@
-/// 低频前端诊断契约。不得传聊天正文、URL、凭据或逐帧数据。
+/// 低频前端诊断契约。不得传聊天正文、URL、凭据或逐帧数据（卡顿只写汇总与限频样本）。
 library;
 
 enum FrontendStage {
@@ -37,6 +37,9 @@ enum FrontendStage {
   audioPlaying('播放器开始播放'),
   audioFailed('语音播放异常'),
   historyFailed('历史消息加载失败'),
+  frameSummary('界面流畅度汇总'),
+  slowFrame('明显掉帧'),
+  uiStall('界面响应延迟'),
   frameworkError('界面框架异常'),
   unhandledError('未处理的异步异常');
 
@@ -93,11 +96,15 @@ class DiagnosticFacts {
       this.reason,
       this.sourceMessageId,
       this.pageInstanceId,
+      this.pageName,
       this.state = const {}});
   final DiagnosticPhase phase;
   final DiagnosticReason? reason;
   final String? sourceMessageId;
   final String? pageInstanceId;
+
+  /// 页面的固定名称，不合格式的值不会写入。
+  final String? pageName;
   final Map<String, Object?> state;
 }
 

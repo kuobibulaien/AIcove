@@ -94,6 +94,47 @@ void main() {
       expect((streamEvents as List).isNotEmpty, isTrue);
     });
 
+    test(
+      'Gemini OpenAI stream retains late official signatures per call and in live follow-up raw',
+      () async {
+        final client = AgentApiClient(
+          client: _FakeStreamingClient(
+            statusCode: 200,
+            responseLines: const [
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"signed_call","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}',
+              '',
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"unsigned_call","type":"function","function":{"name":"read","arguments":"{}"}}]}}]}',
+              '',
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"extra_content":{"google":{"thought_signature":"stream-signature"}}}]}}]}',
+              '',
+              'data: [DONE]',
+              '',
+            ],
+          ),
+        );
+        final result = await client.sendMessageRichStream(
+          agentId: 'agent',
+          sessionId: 'session',
+          modelFullId: 'openai:gemini-3-flash-preview',
+          messages: const [],
+          userText: '读取文件',
+          providerApiBase: 'https://proxy.example/v1',
+          providerApiKey: 'test-key',
+        );
+        expect(result.toolCalls.map((c) => c.thoughtSignature), [
+          'stream-signature',
+          null,
+        ]);
+        final calls =
+            result.rawResponse!['choices'][0]['message']['tool_calls'] as List;
+        expect(calls.first['extra_content'], {
+          'google': {'thought_signature': 'stream-signature'},
+        });
+        expect(calls.first.containsKey('thoughtSignature'), isFalse);
+        expect(calls.last.containsKey('extra_content'), isFalse);
+      },
+    );
+
     test('aggregates reasoning_content into rawResponse assistant message',
         () async {
       final client = AgentApiClient(

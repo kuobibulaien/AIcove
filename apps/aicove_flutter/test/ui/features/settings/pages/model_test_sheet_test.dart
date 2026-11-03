@@ -49,7 +49,7 @@ final _testSettings = AppSettings(
   defaultPersonaPrompt: '',
   modelList: const <String>[],
   allKnownModels: const <String>[],
-  modelDisplayNames: const <String, String>{'model-00': 'Alpha Model'},
+  modelDisplayNames: const <String, String>{'provider_a:model-00': 'Alpha Model'},
   modelTypes: const <String, String>{},
   modelConfigs: const <String, ModelConfig>{},
   apiKey: '',
@@ -174,8 +174,9 @@ void main() {
   ) async {
     final settings = await pumpSheet(tester);
 
-    // 初始只显示视口内的行，底部模型需要滚动
-    expect(find.text('model-00'), findsOneWidget);
+    // 初始只显示视口内的行（有备注时只显示备注名），底部模型需要滚动
+    expect(find.text('Alpha Model'), findsOneWidget);
+    expect(find.text('model-00'), findsNothing);
     expect(find.text('model-13'), findsNothing);
     await tester.drag(
       find.byType(CustomScrollView),

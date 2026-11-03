@@ -34,6 +34,7 @@ import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_tts_handler.dart';
 import 'package:aicove_flutter/src/features/chat/services/conversation_short_window_store.dart';
@@ -381,13 +382,6 @@ class _ScriptedStreamingSendService extends ChatSendService {
     return all;
   }
 
-  @override
-  Future<List<Message>> prepareHistoryFromStore({
-    required Conversation conv,
-    required Message userMsg,
-  }) async {
-    return prepareHistory(conv: conv, userMsg: userMsg,);
-  }
 
   @override
   Future<ApiConfig> prepareApiConfig({
@@ -401,6 +395,7 @@ class _ScriptedStreamingSendService extends ChatSendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -462,15 +457,20 @@ class _ScriptedStreamingSendService extends ChatSendService {
       processedText: resolvedProcessed,
       pluginEvents: pluginEvents,
       toolResults: const <Map<String, dynamic>>[],
+      reasoning: reasoning,
     );
   }
+
+  /// Use the production builder, whose raw carries semantic fields.
+  bool realBuild = false;
+  String reasoning = '';
 
   @override
   AssistantMessageBuildResult buildAssistantMessages({
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
-    if (apiResult.status != ApiRunStatus.completed) {
+    if (realBuild || apiResult.status != ApiRunStatus.completed) {
       return super.buildAssistantMessages(apiResult: apiResult, settings: settings);
     }
     return _buildResult(
@@ -514,6 +514,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
     List<Message>? streamPendingTtsMessages,
     bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
     lastStreamTextMessageIds =
@@ -979,7 +980,7 @@ void main() {
         );
         addTearDown(harness.dispose);
         await harness.runSend();
-        expect(harness.container.read(errorProvider), isNull);
+        expect(harness.container.read(conversationErrorProvider(harness.conv.id)), isNull);
         final messages = await harness.loadTimeline();
         final body = messages.where((m) => m.role == 'assistant').toList();
         expect(body.map((m) => m.id).toSet(), hasLength(body.length));
@@ -1086,6 +1087,133 @@ void main() {
     });
   }
 
+  for (final (channel, reasoning) in [(false, ''), (true, ''), (true, '先想一想')]) {
+    test('plain stream commits the cold-reload projection channel=$channel reasoning=${reasoning.isNotEmpty}', () async {
+      const text = '早上好。今天天气不错。我们去公园吧。';
+      final settings = _buildTestSettings(enableChunking: true);
+      final harness = await _buildHarness(
+        convId: 'projection_commit_$channel',
+        settings: settings,
+        script: const [
+          _DeltaStep('早上好。'),
+          _DelayStep(Duration(milliseconds: 200)),
+          _DeltaStep('今天天气不错。'),
+          _DelayStep(Duration(milliseconds: 200)),
+          _DeltaStep('我们去公园吧。'),
+          _DelayStep(Duration(milliseconds: 200)),
+        ],
+        replyText: text,
+        extraOverrides: [
+          streamProjectionPolicyProvider.overrideWithValue(
+            StreamProjectionPolicy(useActiveStreamChannel: channel),
+          ),
+        ],
+      );
+      addTearDown(harness.dispose);
+      harness.sendService
+        ..realBuild = true
+        ..reasoning = reasoning;
+      harness.startSend();
+      DateTime? firstStreamAt;
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 70));
+        for (final m in await harness.loadTimeline()) {
+          if (m.role != 'assistant') continue;
+          if (firstStreamAt == null || m.createdAt.isBefore(firstStreamAt)) {
+            firstStreamAt = m.createdAt;
+          }
+        }
+      }
+      await harness.awaitActiveSend();
+      // Let any post-commit supplement delivery settle before comparing.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      final store = harness.container.read(chatHistoryStoreProvider);
+      final rawMessages = await store.loadAllRawMessages(harness.conv.id);
+      final raw = rawMessages.singleWhere((m) => m.role == 'assistant');
+      final user = rawMessages.singleWhere((m) => m.role == 'user');
+      final committed = (await harness.loadTimeline())
+          .where((m) => m.role == 'assistant')
+          .toList();
+      final cold = (await store.loadProjectedMessagesFromRawStore(harness.conv.id))
+          .where((m) => m.role == 'assistant')
+          .toList();
+      // One unchunked bubble; the list layer splits it at render time.
+      expect(committed, hasLength(1));
+      expect(committed.single.id, startsWith('${raw.id}__proj_r0_'));
+      expect(committed.single.displayText, text);
+      expect(
+        committed.single.blocks?.whereType<ThinkingBlock>().isNotEmpty ??
+            false,
+        reasoning.isNotEmpty,
+      );
+      expect(
+        ChatMessageProjectionCodec.serializeMessages(committed),
+        ChatMessageProjectionCodec.serializeMessages(cold),
+      );
+      expect(
+        MessageFormatter.formatAndChunkText(
+          committed.single.displayText,
+          settings.messageFormatConfig,
+        ),
+        ['早上好。', '今天天气不错。', '我们去公园吧。'],
+      );
+      // Raw keeps the first streamed bubble's time: no reorder, no replayed entrance.
+      expect(raw.createdAt, firstStreamAt);
+      expect(raw.createdAt.isAfter(user.createdAt), isTrue);
+      expect(raw.rawPayload!.containsKey('projectedMessages'), isFalse);
+      expect(
+        await harness.container
+            .read(messageProjectionMappingRepositoryProvider)
+            .getByRawMessage(raw.id),
+        isEmpty,
+      );
+    });
+  }
+
+  test('cancelled stream saves the cold-reload projection', () async {
+    final release = Completer<void>();
+    final harness = await _buildHarness(
+      convId: 'projection_partial',
+      settings: _buildTestSettings(enableChunking: true),
+      script: [
+        const _DeltaStep('先说一半。'),
+        const _DelayStep(Duration(milliseconds: 150)),
+        _BarrierStep(release.future),
+      ],
+      replyText: '先说一半。后面没说完。',
+    );
+    addTearDown(harness.dispose);
+    harness.sendService.realBuild = true;
+    harness.startSend();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final streamedAt = (await harness.loadTimeline())
+        .where((m) => m.role == 'assistant')
+        .map((m) => m.createdAt)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    await harness.interrupt();
+    release.complete();
+    await harness.awaitActiveSend();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    final store = harness.container.read(chatHistoryStoreProvider);
+    final raw = (await store.loadAllRawMessages(harness.conv.id))
+        .singleWhere((m) => m.role == 'assistant');
+    final committed = (await harness.loadTimeline())
+        .where((m) => m.role == 'assistant')
+        .toList();
+    final cold = (await store.loadProjectedMessagesFromRawStore(harness.conv.id))
+        .where((m) => m.role == 'assistant')
+        .toList();
+    expect(committed.map((m) => m.displayText), ['先说一半。']);
+    expect(raw.createdAt.isAfter(streamedAt), isFalse);
+    expect(
+      ChatMessageProjectionCodec.serializeMessages(committed),
+      ChatMessageProjectionCodec.serializeMessages(cold),
+    );
+    expect(raw.rawPayload!.containsKey('projectedMessages'), isFalse);
+  });
+
   for (final channel in [false, true]) {
     test('transport streams unfinished text with chunking on (channel=$channel)', () async {
       const fullText = '清晨花园里的露珠';
@@ -1133,6 +1261,42 @@ void main() {
       expect(harness.container.read(appSettingsProvider).requireValue.messageFormatConfig.enableChunking, isTrue);
     });
   }
+
+  test('streaming fold tag keeps growing in the timeline shell (channel on)', () async {
+    // 列表把含折叠标签的回复拆成片段展示，片段不读活跃流通道，只读时间线里的壳；
+    // 壳不跟着长，展开的折叠段就停在它刚出现时的那几个字。
+    final harness = await _buildHarness(
+      convId: 'stream_fold_tail',
+      settings: _buildTestSettings(enableChunking: false),
+      script: const [
+        _DeltaStep('<comic_plan>[Page 1]\n- 分级: NSFW（恋'),
+        _DelayStep(Duration(milliseconds: 350)),
+        _DeltaStep('爱向）\n- 页数: 6'),
+        _DelayStep(Duration(milliseconds: 350)),
+        _DeltaStep('\n- 场景: 茶室'),
+        _DelayStep(Duration(milliseconds: 350)),
+      ],
+      replyText: '<comic_plan>[Page 1]\n- 分级: NSFW（恋爱向）\n- 页数: 6\n- 场景: 茶室',
+      extraOverrides: [
+        streamProjectionPolicyProvider.overrideWithValue(
+          const StreamProjectionPolicy(useActiveStreamChannel: true),
+        ),
+      ],
+    );
+    addTearDown(harness.dispose);
+    harness.startSend(text: 'fold tail');
+    var sawGrownShell = false;
+    for (var i = 0; i < 20 && !sawGrownShell; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 70));
+      final timeline = await harness.loadTimeline();
+      sawGrownShell = timeline.any((m) =>
+          m.role == 'assistant' &&
+          m.status == 'sending' &&
+          m.displayText.contains('页数: 6'));
+    }
+    await harness.awaitActiveSend();
+    expect(sawGrownShell, isTrue);
+  });
 
   group('A) non-chunking mode — 10 unpunctuated deltas', () {
     test('window notifies roughly with flushes; single active tail; id stability',
@@ -1635,6 +1799,37 @@ void main() {
   });
 
   group('E) finalize/commit + pendingAudio', () {
+    for (final enabled in [false, true]) {
+      test('split TTS closing bracket survives reset (enabled=$enabled)', () async {
+        final harness = await _buildHarness(
+          convId: 'tts_split_reset_$enabled',
+          settings: _buildTestSettings(ttsEnabled: enabled),
+          script: const [
+            _DeltaStep('旧正文<tts>旧语音</tts>'),
+            _DelayStep(Duration(milliseconds: 240)),
+            _ResetStep(),
+            _DeltaStep('新正文<tts>  </tts><tts>新语音</tt'),
+            _DelayStep(Duration(milliseconds: 200)),
+            _DeltaStep('s'),
+            _DeltaStep('>'),
+            _DeltaStep('后续正文。'),
+            _DelayStep(Duration(milliseconds: 240)),
+          ],
+          replyText: '新正文<tts>  </tts><tts>新语音</tts>后续正文。',
+          processedText: '新正文后续正文。',
+          recordTts: true,
+        );
+        addTearDown(harness.dispose);
+        final probe = await harness.runSend();
+        final spoken = harness.ttsHandler!.recordedStreamPendingMessages
+            .map((m) => m.blocks!.whereType<AudioBlock>().single.text).toList();
+        expect(spoken, enabled ? ['旧语音', '新语音'] : isEmpty);
+        expect(probe.snapshots.last.any((m) => m.displayText.contains('旧正文')), isFalse);
+        expect(probe.snapshots.last.where((m) => m.role == 'assistant')
+            .map((m) => m.displayText).join(), contains('后续正文'));
+      });
+    }
+
     test('final sequence relation to stream; <tts> yields pendingAudio event',
         () async {
       final settings = _buildTestSettings(
@@ -1867,7 +2062,7 @@ void main() {
       // 流中按句 seal 的节奏与可见性由 J 组（segment reveal pacing）
       // 专项锁定；此处不做时机敏感断言（原条件自证恒真，见审查 S-06）。
 
-      // Persisted raw projection: single assistant raw body (existing contract).
+      // Raw rows stay canonical; history surfaces now share the same projection.
       final stored = await harness.container
           .read(chatHistoryStoreProvider)
           .loadProjectedMessagesFromRawStore(harness.conv.id);
@@ -1878,12 +2073,11 @@ void main() {
           .toList();
       expect(
         storedAssistant.length,
-        1,
-        reason: '现状：持久化层保留原始 assistant 消息（UI 决定分段），'
-            '与流中多 seal 气泡不必 1:1。',
+        3,
+        reason: '历史读取与首屏窗口使用同一投影，不再额外折叠缓存气泡。',
       );
       expect(
-        storedAssistant.single.displayText,
+        storedAssistant.map((m) => m.displayText).join(),
         '甲。乙。丙。',
         reason: '现状：DB 投影终态为完整 raw 正文。',
       );
@@ -2648,11 +2842,13 @@ void main() {
       final sw = Stopwatch()..start();
 
       harness.startSend(text: 'J pace');
+      // Sample before sleeping so the first sample lands inside the early
+      // window even when the full suite is loading the machine.
       for (var i = 0; i < 30; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 40));
         final snap = await harness.loadTimeline();
         sealedCounts.add(countExactSeals(snap));
         sampleTimesMs.add(sw.elapsedMilliseconds);
+        await Future<void>.delayed(const Duration(milliseconds: 40));
       }
 
       await harness.awaitActiveSend();

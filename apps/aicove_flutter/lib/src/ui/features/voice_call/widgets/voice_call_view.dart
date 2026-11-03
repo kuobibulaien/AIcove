@@ -120,9 +120,10 @@ class _VoiceCallViewState extends State<VoiceCallView>
     // 壁纸由聊天页画在下面，原样露出来。
     return DefaultTextStyle.merge(
       style: const TextStyle(shadows: _textShadow),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
+      child: MoeSharedBackdrop(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
           SafeArea(
             child: LayoutBuilder(
               builder: (context, box) {
@@ -266,6 +267,7 @@ class _VoiceCallViewState extends State<VoiceCallView>
           ),
         ],
       ),
+      ),
     );
   }
 }
@@ -289,6 +291,7 @@ class _CollapseButton extends StatelessWidget {
       label: '取消全屏，回到聊天',
       child: ClipOval(
         child: BackdropFilter(
+          backdropGroupKey: MoeSharedBackdrop.keyOf(context),
           filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Material(
             key: const ValueKey('voice-call-collapse'),
@@ -317,6 +320,7 @@ class _CollapseButton extends StatelessWidget {
 /// 头像外圈一圈圈扩散的波纹（角色说话、来电响铃时）。
 class VoiceCallPulsingAvatar extends StatelessWidget {
   const VoiceCallPulsingAvatar({
+    super.key,
     required this.animation,
     required this.size,
     required this.child,
@@ -409,6 +413,7 @@ class _NoticePill extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: BackdropFilter(
+          backdropGroupKey: MoeSharedBackdrop.keyOf(context),
           filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -498,6 +503,19 @@ class VoiceCallRoundButton extends StatelessWidget {
     final iconColor = color == null && active
         ? const Color(0xFF2C3440)
         : Colors.white;
+    final button = Material(
+      color: fill,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 60,
+          height: 60,
+          child: Icon(icon, color: iconColor, size: 28),
+        ),
+      ),
+    );
     return Semantics(
       button: true,
       label: label,
@@ -506,25 +524,16 @@ class VoiceCallRoundButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 毛玻璃圆钮（同 Telegram），背景渐变透过来。
-            ClipOval(
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                child: Material(
-                  color: fill,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: onTap,
-                    child: SizedBox(
-                      width: 60,
-                      height: 60,
-                      child: Icon(icon, color: iconColor, size: 28),
+            // 半透明圆钮走毛玻璃（同 Telegram）；挂断红、接听绿与已点亮白底本身完全不透明，不白算模糊。
+            fill.a >= 1.0
+                ? button
+                : ClipOval(
+                    child: BackdropFilter(
+                      backdropGroupKey: MoeSharedBackdrop.keyOf(context),
+                      filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                      child: button,
                     ),
                   ),
-                ),
-              ),
-            ),
             const SizedBox(height: 8),
             Text(
               label,

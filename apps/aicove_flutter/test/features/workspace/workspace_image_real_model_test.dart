@@ -19,7 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 final String? _apiKey = Platform.environment['DEEPSEEK_API_KEY'];
-const _model = 'openai:deepseek-flash';
+const _model = 'openai:deepseek/deepseek-v4.1-flash-1017';
 
 Future<(List<String>, String)> _ask({required bool vision}) async {
   final root = await Directory.systemTemp.createTemp('ws_image_real');
@@ -48,7 +48,7 @@ Future<(List<String>, String)> _ask({required bool vision}) async {
       config: ApiConfig(
         settings: settings,
         modelFullId: _model,
-        providerApiBase: 'https://api.deepseek.com',
+        providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
         providerApiKey: _apiKey,
         customConfig: const {},
         modelTemperature: 0,

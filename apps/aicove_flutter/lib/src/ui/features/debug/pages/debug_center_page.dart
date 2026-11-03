@@ -96,7 +96,7 @@ class DebugCenterPage extends StatelessWidget {
                   MoeSettingsRow(
                     icon: Icons.cloud_sync_outlined,
                     label: DataManagementPage.title,
-                    subtitle: '云同步账号、局域网同步、离线导入导出',
+                    subtitle: '局域网同步（首选）、自建云同步、离线导入导出',
                     trailingType: MoeSettingsRowTrailing.chevron,
                     onTap: () => Navigator.of(context).push(
                       ParallaxSlidePageRoute(page: const DataManagementPage()),

@@ -7,6 +7,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/thinking/thinking_fallback.dart';
 import '../../core/sync/cloud_local_write.dart';
@@ -17,6 +18,7 @@ import 'data/support/ui_models_store_support.dart'
     show buildDefaultUiModelsStoreData;
 import 'settings_models.dart';
 import 'ui_models_api.dart';
+import 'provider_detail/provider_detail_support.dart';
 
 // 重新导出模型类，保持向后兼容
 export 'settings_models.dart';
@@ -49,6 +51,7 @@ const kInterfaceSettingKeys = <String>[
   'chat_display_style',
   'auto_scroll_on_send',
   'auto_scroll_on_ai_reply',
+  'allow_multi_message_send',
   'bubble_show_thinking',
   'document_show_thinking',
   'document_show_tool_calls',
@@ -155,6 +158,7 @@ _ModelMeta _calculateModelMeta(
   final allKnown = <String>[];
   final providerMap = <String, String>{};
   final providerIds = <String>{};
+  final hiddenModels = <String>{};
 
   ModelType resolveModelType({
     required String providerId,
@@ -171,6 +175,9 @@ _ModelMeta _calculateModelMeta(
   for (final provider in providers) {
     // 禁用渠道不应参与“可用模型”汇总，避免在选择列表中继续出现。
     if (!provider.enabled) continue;
+    hiddenModels.addAll(provider.hiddenModels.map(
+      (model) => _buildProviderModelRef(provider.id, model),
+    ));
 
     // 按模型标签筛选 chat，避免把同渠道中的文本模型误过滤。
     for (final model in provider.models) {
@@ -217,14 +224,11 @@ _ModelMeta _calculateModelMeta(
       );
       if (modelRef.isNotEmpty &&
           providerMap.containsKey(modelRef) &&
+          !hiddenModels.contains(modelRef) &&
           !visible.contains(modelRef)) {
         visible.add(modelRef);
       }
     }
-  }
-
-  if (visible.isEmpty && allKnown.isNotEmpty) {
-    visible.add(allKnown.first);
   }
 
   final defaultModel = () {
@@ -241,7 +245,6 @@ _ModelMeta _calculateModelMeta(
       return candidate;
     }
     if (visible.isNotEmpty) return visible.first;
-    if (allKnown.isNotEmpty) return allKnown.first;
     return 'deepseek-reasoner';
   }();
 
@@ -391,6 +394,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       ChatDisplayStyle.bubble;
   final autoScrollOnSend = data['auto_scroll_on_send'] != false;
   final autoScrollOnAiReply = data['auto_scroll_on_ai_reply'] != false;
+  final allowMultiMessageSend = data['allow_multi_message_send'] == true;
   final bubbleShowThinking = data['bubble_show_thinking'] != false;
   final documentShowThinking = data['document_show_thinking'] != false;
   final documentShowToolCalls = data['document_show_tool_calls'] != false;
@@ -456,7 +460,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   // 解析默认聊天模型列表和图片识别模型
   final chatProviderIds = meta.providerIds;
   final defaultChatModels = <String>[];
-  final enabledChatModels = meta.allKnown.toSet();
+  final enabledChatModels = meta.visible.toSet();
   String? normalizeDefaultChatModelRef(String storedModel) {
     final modelRef = _normalizeStoredModelRef(
       storedModel,
@@ -464,21 +468,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
       providerIds: chatProviderIds,
     );
     if (modelRef.isEmpty) return null;
-    if (enabledChatModels.contains(modelRef)) return modelRef;
-
-    final separator = modelRef.indexOf(':');
-    final rawModelId = separator > 0 && separator < modelRef.length - 1
-        ? modelRef.substring(separator + 1).trim()
-        : modelRef;
-    if (rawModelId.isEmpty) return null;
-
-    final mappedProvider =
-        meta.providerMap[modelRef] ?? meta.providerMap[rawModelId];
-    if (mappedProvider == null || mappedProvider.isEmpty) return null;
-
-    final candidate = _buildProviderModelRef(mappedProvider, rawModelId);
-    if (!enabledChatModels.contains(candidate)) return null;
-    return candidate;
+    return enabledChatModels.contains(modelRef) ? modelRef : null;
   }
 
   for (final model in _cleanStrings(data['default_chat_models'])) {
@@ -502,12 +492,8 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     defaultModelName: primaryChatModelRef,
     // temperature 不设置，默认 null → 不发送，由云端使用默认值
     defaultPersonaPrompt: '',
-    modelList: meta.visible.isEmpty
-        ? <String>['deepseek-reasoner']
-        : meta.visible,
-    allKnownModels: meta.allKnown.isEmpty
-        ? <String>['deepseek-reasoner']
-        : meta.allKnown,
+    modelList: meta.visible,
+    allKnownModels: meta.allKnown,
     modelDisplayNames: displayNames,
     modelTypes: modelTypes,
     modelConfigs: modelConfigs,
@@ -563,6 +549,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     chatDisplayStyle: chatDisplayStyle,
     autoScrollOnSend: autoScrollOnSend,
     autoScrollOnAiReply: autoScrollOnAiReply,
+    allowMultiMessageSend: allowMultiMessageSend,
     bubbleShowThinking: bubbleShowThinking,
     documentShowThinking: documentShowThinking,
     documentShowToolCalls: documentShowToolCalls,
@@ -644,6 +631,9 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String? displayName,
   }) async {
     final normalizedModelId = _normalizeModelRefForPersist(modelId);
+    final rawModelId = normalizedModelId.contains(':')
+        ? normalizedModelId.substring(normalizedModelId.indexOf(':') + 1)
+        : normalizedModelId;
     await _commit(() async {
       final data = await _api.fetchAll();
       final names =
@@ -655,6 +645,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       if (displayName == null || displayName.trim().isEmpty) {
         names.remove(modelId);
         names.remove(normalizedModelId);
+        names.remove(rawModelId);
       } else {
         names[normalizedModelId] = displayName.trim();
       }
@@ -907,6 +898,41 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     );
   }
 
+  /// Record a failed request against the current credential, under the same
+  /// lock as user edits and sync. The caller establishes model-error origin.
+  Future<void> recordProviderMultiKeyFailure({
+    required String providerId,
+    required String failedKey,
+    required String? strategy,
+    String? failedItemId,
+    int? failedItemIndex,
+    required Object error,
+  }) async {
+    if (strategy != providerMultiKeyStrategyExhaust) return;
+    await transaction(() async {
+      // WorkManager and foreground isolates cache preferences independently.
+      // Match against native storage, not the request's stale prefs snapshot.
+      await (await SharedPreferences.getInstance()).reload();
+      final current = await readStored();
+      final provider = current.getProvider(providerId);
+      if (provider == null) return;
+      final patch = buildProviderMultiKeyFailurePatch(
+        provider: provider,
+        failedKey: failedKey,
+        failedItemId: failedItemId,
+        failedItemIndex: failedItemIndex,
+        error: error,
+      );
+      if (!patch.changed) return;
+      // Failure bookkeeping does not invalidate thinking capability probes.
+      await _commit(() => _api.updateProvider(
+        providerId: providerId,
+        apiKeys: patch.apiKeys,
+        customConfig: patch.customConfig,
+      ));
+    });
+  }
+
   Future<void> editProvider({
     required String providerId,
     String? displayName,
@@ -1066,7 +1092,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
 
     // 如果有显示名称，同时设置
     if (displayName != null && displayName.isNotEmpty) {
-      await setModelDisplayName(modelId: modelId, displayName: displayName);
+      await setModelDisplayName(
+        modelId: current.buildModelRef(providerId, modelId),
+        displayName: displayName,
+      );
     }
   }
 
@@ -1192,6 +1221,12 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   Future<void> setAutoScrollOnAiReply(bool enabled) async {
     await _commit(
       () => _api.updatePartial({'auto_scroll_on_ai_reply': enabled}),
+    );
+  }
+
+  Future<void> setAllowMultiMessageSend(bool enabled) async {
+    await _commit(
+      () => _api.updatePartial({'allow_multi_message_send': enabled}),
     );
   }
 

@@ -4,6 +4,8 @@
 /// attempted 状态，随后静默收敛；不在主线程解码、无 `Isolate.run` 路径。
 library;
 
+export 'probe_bytes.dart';
+
 import 'probe_types.dart';
 
 /// Web 桩实现：任何输入都返回 null，不抛异常。

@@ -67,6 +67,101 @@ void main() {
       expect(jsonEncode(live), isNot(contains('图片已省略')));
     });
   }
+  for (final provider in ['openai', 'claude', 'gemini']) {
+    test('$provider wire byte budget matches decoded size at the limit', () {
+      final oldest = toolImagePart(
+        image('oldest', bytes: 12 * 1024 * 1024 - 2),
+        claude: provider == 'claude',
+        gemini: provider == 'gemini',
+      );
+      for (final size in [1, 2, 3]) {
+        final live = <Map<String, dynamic>>[
+          {
+            'role': 'user',
+            'content': [
+              oldest,
+              toolImagePart(
+                image('newest', bytes: size),
+                claude: provider == 'claude',
+                gemini: provider == 'gemini',
+              ),
+            ],
+          },
+        ];
+        final sent = ToolMedia.wire(live);
+        final parts = sent.single['content'] as List;
+        expect(parts.first['text'], size > 2 ? '［图片已省略：oldest］' : null);
+        expect(oldest[toolImageSource], 'oldest');
+      }
+    });
+    test('$provider base64 byte counts match decoding for every padding', () {
+      for (final size in [0, 1, 2, 3, 4, 5, 1023, 1024, 1025]) {
+        final part = toolImagePart(
+          image('source', bytes: size),
+          claude: provider == 'claude',
+          gemini: provider == 'gemini',
+        );
+        final metadata = ToolMedia.log(part) as Map;
+        expect(
+          metadata['bytes'],
+          base64Decode(base64Encode(Uint8List(size))).length,
+        );
+        final live = <Map<String, dynamic>>[
+          {
+            'role': 'user',
+            'content': [part],
+          },
+        ];
+        expect(ToolMedia.wire(live, strip: false), live);
+      }
+    });
+    test('$provider log decodes only a bounded image prefix', () {
+      final png = img.encodePng(img.Image(width: 7, height: 5));
+      final bytes = Uint8List(128 * 1024)..setRange(0, png.length, png);
+      final encoded = base64Encode(bytes);
+      final part = toolImagePart(
+        image('source'),
+        claude: provider == 'claude',
+        gemini: provider == 'gemini',
+      );
+      // A bad tail must not make logging decode past its metadata budget.
+      final data = '${encoded.substring(0, encoded.length - 1)}!';
+      if (provider == 'openai') {
+        (part['image_url'] as Map)['url'] = 'data:image/png;base64,$data';
+      } else {
+        (part[provider == 'claude' ? 'source' : 'inlineData'] as Map)['data'] =
+            data;
+      }
+      part.remove(toolImageInfo);
+      final metadata = ToolMedia.log(part) as Map;
+      expect(metadata['dimensions'], {'width': 7, 'height': 5});
+      expect(jsonEncode(metadata), isNot(contains('base64')));
+    });
+  }
+  for (final format in ['png', 'jpeg', 'gif']) {
+    test(
+      'log preserves $format dimension recognition without explicit info',
+      () {
+        final pixels = img.Image(width: 7, height: 5);
+        final bytes = switch (format) {
+          'png' => img.encodePng(pixels),
+          'jpeg' => img.encodeJpg(pixels),
+          _ => img.encodeGif(pixels),
+        };
+        final part = toolImagePart(
+          ToolImage(
+            mimeType: 'image/$format',
+            bytes: Uint8List.fromList(bytes),
+            source: 'source',
+          ),
+        )..remove(toolImageInfo);
+        expect((ToolMedia.log(part) as Map)['dimensions'], {
+          'width': 7,
+          'height': 5,
+        });
+      },
+    );
+  }
   test(
     'legacy handler remains callable and rich errors/structure survive invoke',
     () async {

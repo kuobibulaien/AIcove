@@ -6,9 +6,8 @@ import 'package:aicove_flutter/src/core/api/agent_api.dart';
 import 'package:aicove_flutter/src/core/api_logger.dart';
 import 'package:aicove_flutter/src/core/api/providers/minimax_compat.dart';
 import 'package:aicove_flutter/src/core/api/providers/zai_compat.dart';
-import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
+import 'package:aicove_flutter/src/features/settings/data/remote/provider_probe_remote_data_source.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
-import 'package:aicove_flutter/src/features/plugins/tts/tts_request_format.dart';
 import 'package:aicove_flutter/src/features/voice_call/domain/asr_request_format.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -151,7 +150,7 @@ void main() {
             'v4_prompt': {
               'caption': {'base_caption': 'broken'},
             },
-            'qualityToggle': true,
+            'qualityToggle': false,
             'new_toggle': true,
           },
         },
@@ -159,13 +158,13 @@ void main() {
 
       final parameters =
           requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
-      expect(parameters['sampler'], 'k_euler_ancestral');
+      expect(parameters['sampler'], 'ddim');
       expect(
         ((parameters['v4_prompt'] as Map<String, dynamic>)['caption']
             as Map<String, dynamic>)['base_caption'],
         '1girl, solo',
       );
-      expect(parameters['qualityToggle'], isNull);
+      expect(parameters['qualityToggle'], isFalse);
       expect(parameters['new_toggle'], isTrue);
     });
 
@@ -238,7 +237,7 @@ void main() {
       expect(parameters['v4_negative_prompt'], isNull);
     });
 
-    test('NovelAI preview should return exact catalog order with zero requests',
+    test('NovelAI preview reports no model list with zero requests',
         () async {
       var requestCount = 0;
       final client = MockClient((request) async {
@@ -247,19 +246,20 @@ void main() {
       });
 
       final api = UiModelsApi(httpClient: client);
-      final models = await api.previewProvider(
-        providerId: 'novelai',
-        apiKey: 'nai-key',
-        apiBaseUrl: 'https://image.novelai.net',
-        customConfig: const {'requestFormat': 'novelai'},
+      await expectLater(
+        api.previewProvider(
+          providerId: 'novelai',
+          apiKey: 'nai-key',
+          apiBaseUrl: 'https://image.novelai.net',
+          customConfig: const {'requestFormat': 'novelai'},
+        ),
+        throwsA(isA<ProviderModelListUnsupported>()),
       );
 
       expect(requestCount, 0);
-      expect(models, kNovelAiDefaultModels);
-      expect(models.first, 'nai-diffusion-5-full');
     });
 
-    test('Fish Audio preview returns built-in models without /models request',
+    test('Fish Audio preview reports no model list without /models request',
         () async {
       var requestCount = 0;
       final client = MockClient((request) async {
@@ -268,18 +268,20 @@ void main() {
       });
 
       final api = UiModelsApi(httpClient: client);
-      final models = await api.previewProvider(
-        providerId: 'fish_audio',
-        apiKey: 'fish-key',
-        apiBaseUrl: 'https://api.fish.audio/v1',
-        customConfig: const {'requestFormat': 'fish_audio'},
+      await expectLater(
+        api.previewProvider(
+          providerId: 'fish_audio',
+          apiKey: 'fish-key',
+          apiBaseUrl: 'https://api.fish.audio/v1',
+          customConfig: const {'requestFormat': 'fish_audio'},
+        ),
+        throwsA(isA<ProviderModelListUnsupported>()),
       );
 
       expect(requestCount, 0);
-      expect(models, TtsRequestFormat.fishAudio.defaultModels);
     });
 
-    test('ASR channel preview returns registry models without request',
+    test('websocket ASR channel preview reports no model list without request',
         () async {
       var requestCount = 0;
       final client = MockClient((request) async {
@@ -288,15 +290,17 @@ void main() {
       });
 
       final api = UiModelsApi(httpClient: client);
-      final models = await api.previewProvider(
-        providerId: 'aliyun_asr',
-        apiKey: 'key',
-        apiBaseUrl: 'https://dashscope.aliyuncs.com/api/v1',
-        customConfig: const {AsrRequestFormat.configKey: 'aliyun_asr'},
+      await expectLater(
+        api.previewProvider(
+          providerId: 'aliyun_asr',
+          apiKey: 'key',
+          apiBaseUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+          customConfig: const {AsrRequestFormat.configKey: 'aliyun_asr'},
+        ),
+        throwsA(isA<ProviderModelListUnsupported>()),
       );
 
       expect(requestCount, 0);
-      expect(models, AsrRequestFormat.aliyun.defaultModels);
     });
 
     test('NovelAI V5 Full should build minimal structured v5 payload',
@@ -461,6 +465,130 @@ void main() {
       expect(parameters['seed'], 12345);
     });
 
+    test('NovelAI V5 compiles pipe segments, @page comic sections and caps concurrency at 1',
+        () async {
+      final bodies = <Map<String, dynamic>>[];
+      var inFlight = 0;
+      var maxObservedInFlight = 0;
+      final gate = Completer<void>();
+      final entered = Completer<void>();
+
+      final client = AgentApiClient(
+        client: _CapturingClient((request) async {
+          if (request is http.Request) {
+            bodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+          }
+          inFlight += 1;
+          if (inFlight > maxObservedInFlight) {
+            maxObservedInFlight = inFlight;
+          }
+          if (!entered.isCompleted) entered.complete();
+          await gate.future;
+          inFlight -= 1;
+          return _jsonResponse({
+            'image': base64Encode(
+              Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x00]),
+            ),
+          });
+        }),
+      );
+
+      final futures = <Future<ImageGenerationResult>>[
+        client.generateImage(
+          provider: 'novelai',
+          model: 'nai-diffusion-5-full',
+          prompt: '2persons, park | girl, target#hug | boy, source#hug',
+          width: 832,
+          height: 1216,
+          providerApiBase: 'https://image.novelai.net',
+          providerApiKey: 'test-key',
+        ),
+        client.generateImage(
+          provider: 'novelai',
+          model: 'nai-diffusion-5-full',
+          prompt: '''
+@position manual
+@page
+見開きページ, 2girls, full color
+@panel P1
+wide shot
+@character C1
+girl, white hair
+Text: 原来……梦是会留下痕迹的。
+@negative
+blonde hair
+@center 0.25,0.75
+''',
+          width: 832,
+          height: 1216,
+          providerApiBase: 'https://image.novelai.net',
+          providerApiKey: 'test-key',
+        ),
+        for (var i = 0; i < 4; i++)
+          client.generateImage(
+            provider: 'novelai',
+            model: 'nai-diffusion-5-full',
+            prompt: '1girl, page $i',
+            width: 832,
+            height: 1216,
+            providerApiBase: 'https://image.novelai.net',
+            providerApiKey: 'test-key',
+          ),
+      ];
+
+      await entered.future;
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(maxObservedInFlight, 1);
+      } finally {
+        gate.complete();
+        await Future.wait(futures);
+      }
+      expect(maxObservedInFlight, 1);
+      expect(bodies, hasLength(6));
+
+      final pipeParams = bodies[0]['parameters'] as Map<String, dynamic>;
+      final pipeCaption =
+          (pipeParams['v4_prompt'] as Map<String, dynamic>)['caption']
+              as Map<String, dynamic>;
+      expect(pipeCaption['base_caption'], '2persons, park');
+      expect(
+        (pipeCaption['char_captions'] as List)
+            .map((e) => (e as Map)['char_caption'])
+            .toList(),
+        ['girl, target#hug', 'boy, source#hug'],
+      );
+
+      final sectionParams = bodies[1]['parameters'] as Map<String, dynamic>;
+      expect(sectionParams['width'], 1216);
+      expect(sectionParams['height'], 832);
+      expect(sectionParams['use_coords'], isTrue);
+      final sectionPrompt = sectionParams['v4_prompt'] as Map<String, dynamic>;
+      expect(sectionPrompt['use_coords'], isTrue);
+      final sectionCaption =
+          sectionPrompt['caption'] as Map<String, dynamic>;
+      expect(
+        sectionCaption['base_caption'],
+        '見開きページ, 2girls, full color, wide shot',
+      );
+      expect(
+        (sectionCaption['char_captions'] as List).single,
+        {
+          'char_caption': 'girl, white hair\nText: 原来……梦是会留下痕迹的。',
+          'centers': [
+            {'x': 0.25, 'y': 0.75},
+          ],
+        },
+      );
+      final sectionNegCaption =
+          (sectionParams['v4_negative_prompt'] as Map<String, dynamic>)['caption']
+              as Map<String, dynamic>;
+      expect(
+        (sectionNegCaption['char_captions'] as List).single['char_caption'],
+        'blonde hair',
+      );
+    });
+
     test('NovelAI V5 image_parameters should not override protected core keys',
         () async {
       Map<String, dynamic>? requestBody;
@@ -512,22 +640,51 @@ void main() {
           requestBody?['parameters'] as Map<String, dynamic>? ?? const {};
       expect(parameters['params_version'], 4);
       expect(parameters['scale'], 7.0);
-      expect(parameters['sampler'], 'k_euler_ancestral');
+      expect(parameters['sampler'], 'ddim');
       expect(
         ((parameters['v4_prompt'] as Map<String, dynamic>)['caption']
             as Map<String, dynamic>)['base_caption'],
         '1girl, solo',
       );
-      expect(parameters['qualityToggle'], isNull);
-      expect(parameters['legacy'], isNull);
-      expect(parameters['sm'], isNull);
-      expect(parameters['sm_dyn'], isNull);
+      expect(parameters['qualityToggle'], isTrue);
+      expect(parameters['legacy'], isTrue);
+      expect(parameters['sm'], isTrue);
+      expect(parameters['sm_dyn'], isTrue);
       expect(
         ((parameters['v4_negative_prompt'] as Map<String, dynamic>)['caption']
             as Map<String, dynamic>)['base_caption'],
         'lowres',
       );
       expect(parameters['new_toggle'], isTrue);
+    });
+
+    test('NovelAI clamps scale and permits custom sampler for every family', () async {
+      for (final model in ['nai-diffusion-3', 'nai-diffusion-4-5-full', 'nai-diffusion-5-full']) {
+        Map<String, dynamic>? body;
+        final client = AgentApiClient(client: _CapturingClient((request) async {
+          body = jsonDecode((request as http.Request).body) as Map<String, dynamic>;
+          return _jsonResponse({'image': base64Encode([1, 2, 3])});
+        }));
+        await client.generateImage(provider: 'novelai', model: model,
+          prompt: '中文 日本語 한국어', guidanceScale: 15, steps: 90,
+          sampler: 'explicit', providerApiBase: 'https://image.novelai.net',
+          providerApiKey: 'test-key', customConfig: const {'image_parameters': {
+            'qualityToggle': false, 'sampler': 'custom',
+            'v4_prompt': {'broken': true}, 'use_coords': true,
+          }});
+        final params = body!['parameters'] as Map;
+        expect(body!['input'], '中文 日本語 한국어');
+        expect(params['scale'], 10);
+        expect(params['steps'], 50);
+        expect(params['sampler'], 'custom');
+        expect(params['qualityToggle'], false);
+        if (model == 'nai-diffusion-3') {
+          expect(params['v4_prompt'], isNull);
+        } else {
+          expect(params['v4_prompt'], isNot(containsPair('broken', true)));
+        }
+        if (model != 'nai-diffusion-3') expect(params['use_coords'], false);
+      }
     });
 
     test('NovelAI model enum errors should not fall back to another model',

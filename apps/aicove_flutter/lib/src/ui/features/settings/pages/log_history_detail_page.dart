@@ -8,7 +8,7 @@ import '../../../../core/api_logger.dart' show truncateLongText;
 import '../../../../core/app_logger.dart' show LogLevel;
 import '../../../../core/log_history_service.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
+import '../../../../ui/shared/widgets/moe_content_surface.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import 'collapsible_selectable_text.dart';
 import 'log_formatters.dart';
@@ -373,75 +373,74 @@ class _LogHistoryDetailPageState extends State<LogHistoryDetailPage> {
     }
     if (entry.isApiLog) levelColor = Colors.teal;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: MoeG2Decoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: MoeContentSurface(
         radius: 8,
-        color: colors.componentBackground,
-        border: Border.all(color: colors.borderLight, width: borderWidth),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  formatTime(entry.time),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        border: BorderSide(color: colors.borderLight, width: borderWidth),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    formatTime(entry.time),
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10,
+                      color: colors.muted,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    entry.title,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                      color: levelColor,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (needsFold) ...[
+              const SizedBox(height: 4),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: colors.surface.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: colors.borderLight,
+                    width: borderWidth,
+                  ),
+                ),
+                child: CollapsibleSelectableText(
+                  key: ValueKey(
+                    'history_${index}_${entry.extraContent.hashCode}',
+                  ),
+                  content: entry.extraContent!,
+                  collapsedLines: 10,
+                  toggleColor: colors.primary,
                   style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 10,
-                    color: colors.muted,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  entry.title,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: levelColor,
-                    height: 1.3,
+                    height: 1.35,
+                    color: colors.text,
                   ),
                 ),
               ),
             ],
-          ),
-          if (needsFold) ...[
-            const SizedBox(height: 4),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: colors.surface.withValues(alpha: 0.75),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: colors.borderLight,
-                  width: borderWidth,
-                ),
-              ),
-              child: CollapsibleSelectableText(
-                key: ValueKey(
-                  'history_${index}_${entry.extraContent.hashCode}',
-                ),
-                content: entry.extraContent!,
-                collapsedLines: 10,
-                toggleColor: colors.primary,
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 10,
-                  height: 1.35,
-                  color: colors.text,
-                ),
-              ),
-            ),
           ],
-        ],
+        ),
       ),
     );
   }

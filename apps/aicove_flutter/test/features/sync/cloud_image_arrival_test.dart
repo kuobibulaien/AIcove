@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:aicove_flutter/src/core/media/cloud_image.dart';
 import 'package:aicove_flutter/src/core/media/media_asset.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/media/moe_image_preview.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:aicove_flutter/src/core/media/media_store.dart';
@@ -88,12 +89,25 @@ void main() {
           ),
           home: Scaffold(
             body: Center(
-              child: RepaintBoundary(
-                key: boundary,
-                child: SizedBox(
-                  width: 340,
-                  height: 220,
-                  child: CloudImage(mediaId: record.asset.id),
+              child: Builder(
+                builder: (context) => GestureDetector(
+                  onTap: () => MoeImagePreview.showGallery(
+                    context,
+                    images: [
+                      ImagePreviewItem.media(
+                        mediaId: record.asset.id,
+                        heroTag: 'cloud_image_arrival',
+                      ),
+                    ],
+                  ),
+                  child: RepaintBoundary(
+                    key: boundary,
+                    child: SizedBox(
+                      width: 340,
+                      height: 220,
+                      child: CloudImage(mediaId: record.asset.id),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -129,7 +143,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 100));
       });
       await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byType(Dialog), findsOneWidget);
+      expect(find.byType(MoeImagePreview), findsOneWidget);
       for (var i = 0; i < 40 && find.text('加载原图').evaluate().isEmpty; i++) {
         await tester.runAsync(() async {
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -145,15 +159,15 @@ void main() {
         findsOneWidget,
       );
 
-      final dialogRect = tester.getRect(find.byType(Dialog));
+      final viewerRect = tester.getRect(find.byType(MoeImagePreview));
       final buttonRect = tester.getRect(find.text('加载原图'));
-      expect(buttonRect.center.dx, lessThan(dialogRect.center.dx));
-      expect(buttonRect.center.dy, greaterThan(dialogRect.center.dy));
+      expect(buttonRect.center.dx, lessThan(viewerRect.center.dx));
+      expect(buttonRect.center.dy, greaterThan(viewerRect.center.dy));
       await capture(
         'viewer',
         find
             .ancestor(
-              of: find.byType(Dialog),
+              of: find.byType(MoeImagePreview),
               matching: find.byType(RepaintBoundary),
             )
             .first,
@@ -216,7 +230,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('加载失败，点击重试'), findsNothing);
       expect(find.text('加载原图'), findsNothing);
-      await tester.tap(find.byTooltip('关闭'));
+      await tester.tap(find.byIcon(Icons.close));
       await tester.pump(const Duration(milliseconds: 300));
       await tester.runAsync(() async {
         await receiver.receive(record.asset, now: DateTime.utc(2026, 9, 13));

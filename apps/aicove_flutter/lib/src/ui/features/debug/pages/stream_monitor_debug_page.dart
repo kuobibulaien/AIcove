@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../../../../features/chat/services/stream_monitor_service.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 调试工具：流式监控可视化
@@ -113,13 +112,10 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                     padding: EdgeInsets.only(bottom: 12),
                     child: LinearProgressIndicator(minHeight: 2),
                   ),
-                Container(
+                MoeContentSurface(
                   padding: const EdgeInsets.all(12),
-                  decoration: MoeG2Decoration(
-                    radius: 12,
-                    color: colors.surface,
-                    border: Border.all(color: colors.borderLight),
-                  ),
+                  radius: 12,
+                  border: BorderSide(color: colors.borderLight),
                   child: Text(
                     '说明：这里只统计“尝试流式 -> 成功流式 / 回退整段”的结果。'
                     '如果回退次数增加，优先看失败原因和最近错误。',
@@ -189,13 +185,10 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                 ),
                 if ((snapshot.lastFailureError ?? '').trim().isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.all(12),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -221,13 +214,10 @@ class _StreamMonitorDebugPageState extends State<StreamMonitorDebugPage> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                Container(
+                MoeContentSurface(
                   padding: const EdgeInsets.all(12),
-                  decoration: MoeG2Decoration(
-                    radius: 12,
-                    color: colors.surface,
-                    border: Border.all(color: colors.borderLight),
-                  ),
+                  radius: 12,
+                  border: BorderSide(color: colors.borderLight),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

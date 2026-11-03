@@ -7,10 +7,12 @@ class PresetScriptSnapshot {
   final String json;
   final bool toolsAllowed;
   final bool modelSupportsTools;
+  final String? callerToolChoice;
   const PresetScriptSnapshot(
     this.json, {
     this.toolsAllowed = true,
     this.modelSupportsTools = true,
+    this.callerToolChoice,
   });
 
   /// Request-local display policy; never changes the user's chunking setting.
@@ -20,8 +22,13 @@ class PresetScriptSnapshot {
       final snapshot = jsonDecode(json);
       final transport = snapshot is Map ? snapshot['transport'] : null;
       return transport is Map &&
-          transport['protocol'] == 'content_tool_v1' &&
-          transport['enabled'] == true;
+          const {
+            'content_tool_v1',
+            'ate_buffer_v1',
+          }.contains(transport['protocol']) &&
+          transport['enabled'] == true &&
+          (transport['protocol'] != 'ate_buffer_v1' ||
+              transport['mode'] != 'NONE');
     } catch (_) {
       return false;
     }
@@ -65,9 +72,8 @@ class PresetScriptSnapshot {
 
 /// Opens a preset runtime for one request; the tavern compatibility plugin
 /// provides it as a service.
-typedef PresetRuntimeOpener = Future<PresetScriptRuntime> Function(
-  PresetScriptSnapshot snapshot,
-);
+typedef PresetRuntimeOpener =
+    Future<PresetScriptRuntime> Function(PresetScriptSnapshot snapshot);
 
 abstract interface class PresetScriptRuntime {
   /// Only business tools may enter the ordinary tool execution loop.
@@ -88,4 +94,13 @@ abstract interface class PresetScriptRuntime {
   Future<({String text, Set<String> consumedIds, Set<int> consumedIndexes})>
   response(String text, List<Map<String, dynamic>> calls);
   Future<void> close();
+}
+
+/// Optional request preparation for runtimes whose generated tools must avoid
+/// the current round's ordinary tool names. Existing runtimes keep their original preparation entry point.
+abstract interface class PresetToolAwareRuntime {
+  Future<List<Map<String, dynamic>>> prepareWithTools(
+    List<Map<String, dynamic>> messages, {
+    required List<Map<String, dynamic>> tools,
+  });
 }

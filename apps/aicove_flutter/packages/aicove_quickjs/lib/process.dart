@@ -10,27 +10,59 @@ class DesktopJob {
   DesktopJob._(this._job);
   final Pointer<Void> _job;
   bool _closed = false;
-  static DesktopJob start(String cwd, String command) {
+
+  /// Starts with inherited variables plus [environment], or the extras saved
+  /// by [setEnvironment] when no explicit map is supplied.
+  static DesktopJob start(
+    String cwd,
+    String command, {
+    Map<String, String>? environment,
+  }) {
     if (!Platform.isMacOS && !Platform.isLinux && !Platform.isWindows) {
       throw UnsupportedError('Desktop process required');
     }
     if (cwd.contains('\x00') || command.contains('\x00')) {
       throw ArgumentError('NUL in process arguments');
     }
+    final extras = environment ?? _environment;
+    _validateEnvironment(extras);
+    final merged = <String, String>{};
+    for (final entry in [...Platform.environment.entries, ...extras.entries]) {
+      if (Platform.isWindows) {
+        merged.removeWhere(
+          (key, _) => key.toUpperCase() == entry.key.toUpperCase(),
+        );
+      }
+      merged[entry.key] = entry.value;
+    }
+    final names = merged.keys.toList();
+    if (Platform.isWindows) {
+      names.sort((a, b) => a.toUpperCase().compareTo(b.toUpperCase()));
+    }
     return using((arena) {
+      final env = arena<Pointer<Char>>(names.length + 1);
+      for (var i = 0; i < names.length; i++) {
+        final name = names[i];
+        env[i] = '$name=${merged[name]}'.toNativeUtf8(allocator: arena).cast();
+      }
+      env[names.length] = nullptr;
       final error = arena<Int32>();
       final job = native.processStart(
         cwd.toNativeUtf8(allocator: arena).cast(),
         (Platform.isWindows ? windowsCommandLine(command) : command)
             .toNativeUtf8(allocator: arena)
             .cast(),
+        env,
         error,
       );
       if (job == nullptr) {
         throw ProcessException(
-          '/bin/sh',
-          ['-c', command],
-          'posix_spawn',
+          Platform.isWindows ? 'powershell' : '/bin/sh',
+          [
+            if (Platform.isWindows) ...['-NoProfile', '-Command'] else '-c',
+            command,
+          ],
+          Platform.isWindows ? 'CreateProcessW' : 'posix_spawn',
           error.value,
         );
       }
@@ -38,58 +70,26 @@ class DesktopJob {
     });
   }
 
-  static final _setNames = <String>{};
+  static Map<String, String> _environment = const {};
 
-  /// Makes [variables] the extra environment of jobs started afterwards;
-  /// names set by an earlier call and missing now are removed. Jobs inherit
-  /// the app process environment, so call this right before [start].
+  /// Saves extra variables for subsequent jobs in this isolate. This never
+  /// changes the app process environment; an explicit [start] map replaces it.
   static void setEnvironment(Map<String, String> variables) {
-    final names = {..._setNames, ...variables.keys};
-    using((arena) {
-      for (final name in names) {
-        final value = variables[name];
-        if (name.isEmpty || name.contains('=') || name.contains('\x00') ||
-            (value?.contains('\x00') ?? false)) {
-          throw ArgumentError('Invalid environment variable: $name');
-        }
-        if (Platform.isWindows) {
-          final ok = _setEnvW(
-            name.toNativeUtf16(allocator: arena),
-            value == null ? nullptr : value.toNativeUtf16(allocator: arena),
-          );
-          if (ok == 0) throw StateError('Cannot set environment: $name');
-        } else {
-          final rc = value == null
-              ? _unsetEnv(name.toNativeUtf8(allocator: arena))
-              : _setEnv(
-                  name.toNativeUtf8(allocator: arena),
-                  value.toNativeUtf8(allocator: arena),
-                  1,
-                );
-          if (rc != 0) throw StateError('Cannot set environment: $name');
-        }
-      }
-    });
-    _setNames
-      ..clear()
-      ..addAll(variables.keys);
+    _validateEnvironment(variables);
+    _environment = Map.of(variables);
   }
 
-  static final _setEnv = DynamicLibrary.process()
-      .lookupFunction<
-        Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Int32),
-        int Function(Pointer<Utf8>, Pointer<Utf8>, int)
-      >('setenv');
-  static final _unsetEnv = DynamicLibrary.process()
-      .lookupFunction<
-        Int32 Function(Pointer<Utf8>),
-        int Function(Pointer<Utf8>)
-      >('unsetenv');
-  static final _setEnvW = DynamicLibrary.open('kernel32.dll')
-      .lookupFunction<
-        Int32 Function(Pointer<Utf16>, Pointer<Utf16>),
-        int Function(Pointer<Utf16>, Pointer<Utf16>)
-      >('SetEnvironmentVariableW');
+  static void _validateEnvironment(Map<String, String> variables) {
+    for (final entry in variables.entries) {
+      final name = entry.key;
+      if (name.isEmpty ||
+          name.contains('=') ||
+          name.contains('\x00') ||
+          entry.value.contains('\x00')) {
+        throw ArgumentError('Invalid environment variable: $name');
+      }
+    }
+  }
 
   static String windowsCommandLine(String command) {
     // Windows CRT argument quoting, including quotes and trailing backslashes.

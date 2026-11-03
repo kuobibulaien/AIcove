@@ -88,20 +88,29 @@ class ToolCall {
       name: function['name']?.toString() ?? '',
       arguments: args,
       rawArguments: rawArgs is String ? rawArgs : null,
-      thoughtSignature: json['thoughtSignature']?.toString() ??
-          json['thought_signature']?.toString(),
+      thoughtSignature: readThoughtSignature(json),
     );
   }
 
-  /// 转换为 OpenAI 格式（用于追加到 messages）
+  /// Read the official Gemini OpenAI extension and legacy in-process keys.
+  static String? readThoughtSignature(Map call) {
+    final extra = call['extra_content'];
+    final google = extra is Map ? extra['google'] : null;
+    return (google is Map ? google['thought_signature']?.toString() : null) ??
+        call['thoughtSignature']?.toString() ??
+        call['thought_signature']?.toString();
+  }
+
+  /// Serialize a call; the destination adapter selects supported extensions.
   Map<String, dynamic> toOpenAIFormat() {
     return {
       'id': id,
       'type': 'function',
-      'function': {
-        'name': name,
-        'arguments': jsonEncode(arguments),
-      },
+      'function': {'name': name, 'arguments': jsonEncode(arguments)},
+      if (thoughtSignature != null)
+        'extra_content': {
+          'google': {'thought_signature': thoughtSignature},
+        },
     };
   }
 }

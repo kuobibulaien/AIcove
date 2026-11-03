@@ -590,7 +590,8 @@ void _runAll(RunnerFactory createRunner) {
         onStreamTextDelta: deltas.add,
       );
       expect(deltas.join(), visible);
-      expect(result.rawReplyText, raw);
+      expect(result.rawReplyText, raw.replaceAll(RegExp(r'<think>[\s\S]*?</think>'), ''));
+      if (raw.contains('<think>')) expect(result.reasoning, '内部');
     });
   }
 

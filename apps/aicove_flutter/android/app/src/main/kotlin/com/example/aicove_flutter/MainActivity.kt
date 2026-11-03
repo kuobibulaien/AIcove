@@ -5,6 +5,7 @@ import android.app.AlarmManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
@@ -14,8 +15,10 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
+import java.io.File
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -88,6 +91,24 @@ class MainActivity : FlutterActivity() {
                     named?.takeIf { it.isNotBlank() }
                         ?: "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
                 )
+            }
+
+        // 空间文件用系统默认应用查看；路径只来自应用缓存里的副本。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aicove/open_file")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "open") return@setMethodCallHandler result.notImplemented()
+                val path = call.argument<String>("path")
+                    ?: return@setMethodCallHandler result.error("bad_args", "path", null)
+                val uri = FileProvider.getUriForFile(this, "$packageName.workspace_files", File(path))
+                val intent = Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(uri, call.argument<String>("mime") ?: "*/*")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                try {
+                    startActivity(intent)
+                    result.success(true)
+                } catch (e: ActivityNotFoundException) {
+                    result.success(false)
+                }
             }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_PROXY_CHANNEL)

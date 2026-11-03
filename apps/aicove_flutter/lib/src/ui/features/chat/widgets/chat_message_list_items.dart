@@ -6,16 +6,19 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/media/media_asset.dart';
 import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/chat/domain/message.dart';
+import '../../../../features/chat/domain/tool_call_label.dart';
 import '../../../../features/content_tags/domain/tag_presentation.dart';
 import '../../../../features/dialogue_options/domain/dialogue_options.dart';
 import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../../features/chat/services/chat_message_processor.dart';
 import '../../../../features/chat/services/chat_request_message_builder.dart';
+import '../../../../features/stickers/sticker_library.dart';
 import '../../../../features/task_agent/application/delegate_task_plugin.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 
@@ -124,10 +127,7 @@ class ChatReplyActionsItem extends ChatMessageListItem {
 }
 
 class ChatTimeDividerItem extends ChatMessageListItem {
-  const ChatTimeDividerItem(
-    this.time, {
-    required this.associatedMessageId,
-  });
+  const ChatTimeDividerItem(this.time, {required this.associatedMessageId});
 
   final DateTime time;
   final String associatedMessageId;
@@ -208,6 +208,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
     }
     final currentMessage = stripDialogueOptionsForDisplay(
       stripMvuUpdatesForDisplay(source),
+      tagPresentation: tagPresentation,
     );
     final runStatus = ChatRunStatus.of(currentMessage);
     final runningItems = [
@@ -232,7 +233,8 @@ List<ChatMessageListItem> buildChatMessageListItems({
       continue;
     }
     // 时间小气泡属于时间感知插件：插件关掉时不显示，但隔了很久的消息照样重新露头像。
-    final hasTimeDivider = start == 0 ||
+    final hasTimeDivider =
+        start == 0 ||
         currentMessage.createdAt
                 .difference(messages[start - 1].createdAt)
                 .inMinutes >=
@@ -246,20 +248,23 @@ List<ChatMessageListItem> buildChatMessageListItems({
       );
     }
 
-    final showAvatar = hasTimeDivider ||
+    final showAvatar =
+        hasTimeDivider ||
         previousShown == null ||
         previousShown.role != currentMessage.role;
     previousShown = currentMessage;
 
     final chunkSourceText = _resolveChunkSourceText(currentMessage);
-    final shouldChunk = enableChunking &&
+    final shouldChunk =
+        enableChunking &&
         currentMessage.role == 'assistant' &&
         currentMessage.status != 'sending' &&
         !_hasNonTextBlocks(currentMessage) &&
         chunkSourceText.trim().isNotEmpty;
 
     // 预设语义标签：折叠标签单独成折叠气泡，正文标签去壳，其余照常分段。
-    final projectable = currentMessage.role == 'assistant' &&
+    final projectable =
+        currentMessage.role == 'assistant' &&
         !_hasNonTextBlocks(currentMessage);
     var tagParts = projectable
         ? _projectTagParts(
@@ -298,11 +303,12 @@ List<ChatMessageListItem> buildChatMessageListItems({
           ...switch (part) {
             TagFoldPart() => [(part.content, part)],
             TagBodyPart(:final text) => [
-                for (final chunk in shouldChunk && config != null
-                    ? _chunkTextMemoized(text, config)
-                    : [text])
-                  (chunk, null),
-              ],
+              for (final chunk
+                  in shouldChunk && config != null
+                      ? _chunkTextMemoized(text, config)
+                      : [text])
+                (chunk, null),
+            ],
           },
       ];
       for (var pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
@@ -369,10 +375,10 @@ List<ChatMessageListItem> buildChatMessageListItems({
 }
 
 Message? _itemMessage(ChatMessageListItem item) => switch (item) {
-      ChatMessageItem(:final message) => message,
-      ChatChunkedMessageItem(:final originalMessage) => originalMessage,
-      _ => null,
-    };
+  ChatMessageItem(:final message) => message,
+  ChatChunkedMessageItem(:final originalMessage) => originalMessage,
+  _ => null,
+};
 
 /// Appends a [ChatReplyActionsItem] after the last item of every assistant
 /// turn, i.e. right before the next user message or the end.
@@ -436,25 +442,51 @@ List<ImagePreviewItem> collectChatMessageListImages(List<Message> messages) {
     final blocks = message.blocks;
     if (blocks == null) continue;
     for (final block in blocks) {
-      final provider = resolveChatMessageListImageProvider(block);
-      if (provider == null) continue;
       final isSticker = block is EmojiBlock;
       final heroTag = isSticker ? 'sticker_${block.id}' : 'image_${block.id}';
+      final mediaId = _chatMessageListImageMediaId(block);
+      if (mediaId != null) {
+        result.add(ImagePreviewItem.media(mediaId: mediaId, heroTag: heroTag));
+        continue;
+      }
+      final provider = resolveChatMessageListImageProvider(block);
+      if (provider == null) continue;
       result.add(ImagePreviewItem(provider: provider, heroTag: heroTag));
     }
   }
   return result;
 }
 
+/// 存在共享媒体库里的图片／表情包，由预览页按媒体解析本机文件。
+String? _chatMessageListImageMediaId(MessageBlock block) {
+  if (block is ImageBlock) return block.mediaId;
+  if (block is EmojiBlock) {
+    return mediaIdFromReference(
+      StickerLibrary.resolveLocalPath(
+        block.path.trim(),
+        stickerId: block.emojiId,
+      ).replaceAll('\\', '/'),
+    );
+  }
+  return null;
+}
+
 ImageProvider? resolveChatMessageListImageProvider(MessageBlock block) {
   if (block is EmojiBlock) {
-    final path = block.path.trim().replaceAll('\\', '/');
-    if (path.isEmpty) return null;
+    final rawPath = StickerLibrary.resolveLocalPath(
+      block.path.trim(),
+      stickerId: block.emojiId,
+    );
+    final path = rawPath.replaceAll('\\', '/');
+    if (path.isEmpty || mediaIdFromReference(path) != null) return null;
     final isNetwork = path.startsWith('http://') || path.startsWith('https://');
     final isAsset = path.startsWith('assets/') || path.startsWith('packages/');
     if (isNetwork) return CachedNetworkImageProvider(path);
     if (isAsset) return AssetImage(path);
-    return FileImage(File(path));
+    final localPath = rawPath.startsWith('file://')
+        ? Uri.parse(rawPath).toFilePath()
+        : rawPath;
+    return FileImage(File(localPath));
   }
   if (block is ImageBlock) {
     if (block.localPath != null && block.localPath!.isNotEmpty) {
@@ -491,7 +523,12 @@ Set<String> collectUnknownReplyTags(
 }
 
 const Set<String> _echoedRoleTags = {
-  'user', 'char', 'system', 'assistant', 'human', 'model',
+  'user',
+  'char',
+  'system',
+  'assistant',
+  'human',
+  'model',
 };
 
 /// 文本里有映射到的语义标签时返回投影片段；没有可处理的标签时返回 null，
@@ -503,8 +540,9 @@ List<TagDisplayPart>? _projectTagParts(
 }) {
   if (!text.contains('<')) return null;
   // 无损兜底（ADR0048）：只剩一个未知外层标签且包着主要内容时去壳当正文。
-  final wrapper =
-      allowUnwrap ? soleUnknownBodyWrapper(text, tagPresentation) : null;
+  final wrapper = allowUnwrap
+      ? soleUnknownBodyWrapper(text, tagPresentation)
+      : null;
   final map = wrapper == null
       ? tagPresentation
       : {
@@ -562,7 +600,8 @@ void _writeCodemodeCalls(StringBuffer buffer, Object? calls) {
   if (calls is! List || calls.isEmpty) return;
   buffer.writeln('脚本里调用了 ${calls.length} 个工具');
   for (final call in calls.whereType<Map>()) {
-    final status = _kCodemodeCallStatusLabels[call['status']] ?? '${call['status']}';
+    final status =
+        _kCodemodeCallStatusLabels[call['status']] ?? '${call['status']}';
     final duration = call['durationMs'];
     final error = call['error'];
     final seconds = duration is! num
@@ -571,7 +610,7 @@ void _writeCodemodeCalls(StringBuffer buffer, Object? calls) {
         ? ' · ${duration.round()} 毫秒'
         : ' · ${(duration / 1000).toStringAsFixed(1)} 秒';
     final reason = error is String && error.isNotEmpty ? '：$error' : '';
-    final hint = _toolHint(_decodeCodemodeArgs(call['args']));
+    final hint = toolCallHint(_decodeCodemodeArgs(call['args']));
     final what = hint == null ? '' : ' ${hint.replaceAll('`', "'")}';
     buffer.writeln('- `${call['name']}$what` $status$seconds$reason');
   }
@@ -616,20 +655,11 @@ List<TagFoldPart> _toolCallFolds(Message message) {
   ];
 }
 
-typedef _ToolUse = ({String name, Map<String, dynamic>? arguments, bool failed});
-
-const int _kToolHintMaxChars = 40;
-
-/// Argument keys worth showing next to a tool name, most telling first.
-const _kToolHintKeys = [
-  'command',
-  'path',
-  'url',
-  'query',
-  'pattern',
-  'name',
-  'prompt',
-];
+typedef _ToolUse = ({
+  String name,
+  Map<String, dynamic>? arguments,
+  bool failed,
+});
 
 /// The tools a call actually used: a codemode script stands for the tools it
 /// called, any other call for itself.
@@ -661,21 +691,8 @@ Map<String, dynamic>? _decodeCodemodeArgs(Object? args) {
   }
 }
 
-/// The first line of the most telling argument, cut to a title-friendly length.
-String? _toolHint(Map<String, dynamic>? arguments) {
-  for (final key in _kToolHintKeys) {
-    final value = arguments?[key];
-    if (value is! String || value.trim().isEmpty) continue;
-    final chars = value.trim().split('\n').first.characters;
-    return chars.length > _kToolHintMaxChars
-        ? '${chars.take(_kToolHintMaxChars)}…'
-        : chars.toString();
-  }
-  return null;
-}
-
 String _toolUseLabel(_ToolUse use) {
-  final hint = _toolHint(use.arguments);
+  final hint = toolCallHint(use.arguments);
   return hint == null ? use.name : '${use.name} · $hint';
 }
 
@@ -733,7 +750,9 @@ bool _hasNonTextBlocks(Message message) {
   final blocks = message.blocks;
   return blocks?.any(
         (block) =>
-            block is! TextBlock && block is! ToolBlock && block is! ThinkingBlock,
+            block is! TextBlock &&
+            block is! ToolBlock &&
+            block is! ThinkingBlock,
       ) ??
       false;
 }

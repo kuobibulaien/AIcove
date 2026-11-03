@@ -116,7 +116,7 @@ void main() {
         expect(history.truncations, 1);
         expect(container.read(conversationSendingProvider(conv.id)), isFalse);
         expect(
-            container.read(errorProvider), contains('audit truncate failure'));
+            container.read(conversationErrorProvider(conv.id)), contains('audit truncate failure'));
         expect(find.text('测试旧回复'), findsOneWidget);
         expect(tester.takeException(), isNull);
       });

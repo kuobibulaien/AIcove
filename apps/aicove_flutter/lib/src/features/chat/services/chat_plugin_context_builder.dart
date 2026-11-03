@@ -1,9 +1,6 @@
 library;
 
 import '../../plugins/domain/handlers/ai_tool.dart';
-import '../../plugins/domain/plugin.dart';
-import '../../plugins/plugin_manager.dart';
-import '../../plugins/mcp/mcp_connector.dart';
 import '../../../core/app_logger.dart';
 import 'chat_types.dart' show isProviderRefreshTimingError;
 
@@ -83,34 +80,10 @@ class PluginPromptBuildResult {
 /// 插件上下文构建器。
 ///
 /// 负责：
-/// 1) 根据会话配置筛选有效插件（发送执行阶段，2c 前保留）
-/// 2) 按插件来源拼接 System Prompt 条目
-/// 3) 按插件来源收集工具定义
+/// 按已选插件来源拼接 System Prompt 条目与收集工具定义。
+/// 角色插件筛选由 PluginRuntime.selectForRole 负责。
 class ChatPluginContextBuilder {
   const ChatPluginContextBuilder();
-
-  List<Plugin> getEffectivePlugins({
-    required PluginManager pluginManager,
-    required Set<String>? enabledPluginIds,
-    Set<String> excludedPluginIds = const <String>{},
-  }) {
-    final globallyEnabled = pluginManager.getEnabledPlugins();
-    if (enabledPluginIds == null) {
-      // 「全部插件」只覆盖内置插件；MCP 连接器能操作外部服务，必须由角色显式开启。
-      return [
-        for (final plugin in globallyEnabled)
-          if (!excludedPluginIds.contains(plugin.id) &&
-              !McpToolNaming.isConnectorPluginId(plugin.id))
-            plugin,
-      ];
-    }
-    return [
-      for (final plugin in globallyEnabled)
-        if (enabledPluginIds.contains(plugin.id) &&
-            !excludedPluginIds.contains(plugin.id))
-          plugin,
-    ];
-  }
 
   /// Builds prompt entries from per-plugin sources in order. Only Riverpod
   /// provider-refresh timing errors are retried; other errors mark the entry

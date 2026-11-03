@@ -57,9 +57,7 @@ class ChatTurnExecutionOptions {
     this.prepareTurn,
     this.resolveModelsToTry,
     required this.executeWithFailover,
-    this.prepareStreaming,
     required this.onToolExecuting,
-    this.onProcessingResponse,
     required this.deliverResult,
     required this.isCurrent,
     this.onStreamTextDelta,
@@ -72,9 +70,7 @@ class ChatTurnExecutionOptions {
   final Future<ChatPreparedTurn> Function(AppSettings settings)? prepareTurn;
   final List<String> Function(AppSettings settings)? resolveModelsToTry;
   final ChatFailoverExecutor executeWithFailover;
-  final Future<void> Function(AppSettings settings)? prepareStreaming;
   final void Function(String toolName) onToolExecuting;
-  final void Function()? onProcessingResponse;
   final ChatResultDelivery deliverResult;
   final bool Function() isCurrent;
   final void Function(String delta)? onStreamTextDelta;
@@ -136,17 +132,6 @@ class ChatSendUseCase {
           );
     if (!options.isCurrent()) return null;
 
-    if (command.isStreaming) {
-      final prepareStreaming = options.prepareStreaming;
-      if (prepareStreaming == null) {
-        throw ArgumentError(
-          'prepareStreaming is required for streaming commands',
-        );
-      }
-      await prepareStreaming(settings);
-      if (!options.isCurrent()) return null;
-    }
-
     final modelsToTry = _normalizeModelsToTry(
       settings: settings,
       candidates: preparedTurn.modelsToTry ??
@@ -179,90 +164,6 @@ class ChatSendUseCase {
       ),
       deliverResult: options.deliverResult,
       isCurrent: options.isCurrent,
-    );
-  }
-
-  Future<ChatSendTurnResult?> executeNonStreamingTurn({
-    required Conversation conversation,
-    required Message userMessage,
-    required String sessionId,
-    required String apiText,
-    required TraceContext? traceContext,
-    required Future<AppSettings> Function() loadSettings,
-    Future<ChatPreparedTurn> Function(AppSettings settings)? prepareTurn,
-    required List<String> Function(AppSettings settings) resolveModelsToTry,
-    required ChatFailoverExecutor executeWithFailover,
-    required void Function(String toolName) onToolExecuting,
-    void Function()? onProcessingResponse,
-    required ChatResultDelivery deliverResult,
-    required bool Function() isCurrent,
-  }) {
-    return executeTurn(
-      command: ChatTurnCommand.nonStreaming(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: sessionId,
-        apiText: apiText,
-        traceContext: traceContext,
-      ),
-      options: ChatTurnExecutionOptions(
-        loadSettings: loadSettings,
-        prepareTurn: prepareTurn,
-        resolveModelsToTry: resolveModelsToTry,
-        executeWithFailover: executeWithFailover,
-        onToolExecuting: onToolExecuting,
-        onProcessingResponse: onProcessingResponse,
-        deliverResult: deliverResult,
-        isCurrent: isCurrent,
-      ),
-    );
-  }
-
-  Future<ChatSendTurnResult?> executeStreamingTurn({
-    required Conversation conversation,
-    required Message userMessage,
-    required String sessionId,
-    required String apiText,
-    required TraceContext? traceContext,
-    TraceLogger? trace,
-    required Future<AppSettings> Function() loadSettings,
-    List<String> Function(AppSettings settings)? resolveModelsToTry,
-    Future<ChatPreparedTurn> Function(AppSettings settings)? prepareTurn,
-    required ChatFailoverExecutor executeWithFailover,
-    required Future<void> Function(AppSettings settings) prepareStreaming,
-    required void Function(String toolName) onToolExecuting,
-    void Function()? onProcessingResponse,
-    required ChatResultDelivery deliverResult,
-    required bool Function() isCurrent,
-    void Function(String delta)? onStreamTextDelta,
-    void Function()? onStreamTextReset,
-    void Function()? onStreamToolCallObserved,
-    void Function()? onStreamingFallback,
-  }) {
-    return executeTurn(
-      command: ChatTurnCommand.streaming(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: sessionId,
-        apiText: apiText,
-        traceContext: traceContext,
-        trace: trace,
-      ),
-      options: ChatTurnExecutionOptions(
-        loadSettings: loadSettings,
-        prepareTurn: prepareTurn,
-        resolveModelsToTry: resolveModelsToTry,
-        executeWithFailover: executeWithFailover,
-        prepareStreaming: prepareStreaming,
-        onToolExecuting: onToolExecuting,
-        onProcessingResponse: onProcessingResponse,
-        deliverResult: deliverResult,
-        isCurrent: isCurrent,
-        onStreamTextDelta: onStreamTextDelta,
-        onStreamTextReset: onStreamTextReset,
-        onStreamToolCallObserved: onStreamToolCallObserved,
-        onStreamingFallback: onStreamingFallback,
-      ),
     );
   }
 

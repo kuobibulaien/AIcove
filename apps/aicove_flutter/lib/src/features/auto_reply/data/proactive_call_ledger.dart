@@ -99,6 +99,15 @@ class ProactiveCallLedger {
     ],
   );
 
+  /// Confirmed delivery survives answering, missing, and interrupted cleanup.
+  Future<bool> isConfirmed(String triggerId) async {
+    final rows = await _select(
+      'SELECT 1 FROM proactive_calls WHERE trigger_id = ? AND confirmed = 1',
+      [Variable.withString(triggerId)],
+    );
+    return rows.isNotEmpty;
+  }
+
   /// Gives the slot back when the trigger could not be delivered after all.
   Future<void> release(String triggerId) => _update(
     'DELETE FROM proactive_calls WHERE trigger_id = ? AND state = ?',

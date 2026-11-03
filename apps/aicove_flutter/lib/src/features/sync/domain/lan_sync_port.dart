@@ -21,6 +21,8 @@ class LanSyncState {
   const LanSyncState({
     this.enabled = false,
     this.busy = false,
+    this.progress,
+    this.progressLabel,
     this.name = '',
     this.deviceId = '',
     this.invitation,
@@ -33,6 +35,10 @@ class LanSyncState {
     this.error,
   });
   final bool enabled, busy;
+
+  /// Current phase only; null when its total is not known.
+  final double? progress;
+  final String? progressLabel;
   final String name, deviceId;
   final String? invitation, pin, notice, error;
   final List<LanPeerView> peers;

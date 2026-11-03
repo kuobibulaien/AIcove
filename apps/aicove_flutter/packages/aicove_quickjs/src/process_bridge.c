@@ -25,7 +25,7 @@ extern char **environ;
 
 typedef struct { pid_t pid, guardian; int output, control, status; } APJob;
 
-static void *start_job(const char *cwd, const char *command, int *error) {
+static void *start_job(const char *cwd, const char *command, const char * const *env, int *error) {
     int out[2], control[2], gate[2];
     *error = 0;
     if (pipe(out) < 0) { *error = errno; return NULL; }
@@ -52,7 +52,7 @@ static void *start_job(const char *cwd, const char *command, int *error) {
     /* The user body cannot run until its parent-death guardian exists.
        If the app dies in the spawn/fork interval, EOF exits this shell. */
     char *argv[] = { "/bin/sh", "-c", "read -r _ <&3 || exit 125; exec 3<&-; exec /bin/sh -c \"$1\"", "aicove", (char *)command, NULL };
-    if (!rc) rc = posix_spawn(&job->pid, "/bin/sh", &actions, &attr, argv, environ);
+    if (!rc) rc = posix_spawn(&job->pid, "/bin/sh", &actions, &attr, argv, env ? (char * const *)env : environ);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
     if (rc) { *error = rc; free(job); goto fail; }
@@ -107,9 +107,9 @@ fail:
 
 static pthread_mutex_t spawn_mutex = PTHREAD_MUTEX_INITIALIZER;
 __attribute__((visibility("default")))
-void *ap_start(const char *cwd, const char *command, int *error) {
+void *ap_start(const char *cwd, const char *command, const char * const *env, int *error) {
     pthread_mutex_lock(&spawn_mutex);
-    void *result = start_job(cwd, command, error);
+    void *result = start_job(cwd, command, env, error);
     pthread_mutex_unlock(&spawn_mutex);
     return result;
 }
@@ -163,12 +163,40 @@ static wchar_t *wide(const char *text) {
     if (result) MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, result, n);
     return result;
 }
-__declspec(dllexport) void *ap_start(const char *cwd, const char *command, int *error) {
+/* Dart supplies case-insensitively deduplicated/sorted UTF-8 KEY=VALUE entries.
+   Convert each separately: a Windows environment block includes interior NULs
+   and must end in two UTF-16 NULs, including for an empty environment. */
+static wchar_t *wide_environment(const char * const *env, int *error) {
+    size_t units = 1;
+    for (size_t i = 0; env[i]; ++i) {
+        int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, env[i], -1, NULL, 0);
+        if (!n) { *error = GetLastError(); return NULL; }
+        if ((size_t)n > SIZE_MAX / sizeof(wchar_t) - units) {
+            *error = ERROR_NOT_ENOUGH_MEMORY; return NULL;
+        }
+        units += (size_t)n;
+    }
+    if (units == 1) units = 2;
+    wchar_t *block = calloc(units, sizeof(wchar_t));
+    if (!block) { *error = ERROR_NOT_ENOUGH_MEMORY; return NULL; }
+    wchar_t *next = block;
+    for (size_t i = 0; env[i]; ++i) {
+        int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, env[i], -1, NULL, 0);
+        if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, env[i], -1, next, n)) {
+            *error = GetLastError(); free(block); return NULL;
+        }
+        next += n;
+    }
+    return block;
+}
+__declspec(dllexport) void *ap_start(const char *cwd, const char *command, const char * const *env, int *error) {
     HANDLE readPipe = NULL, writePipe = NULL;
     SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
     APJob *job = calloc(1, sizeof(*job));
     wchar_t *dir = wide(cwd), *cmd = wide(command);
     *error = 0;
+    wchar_t *environment = env ? wide_environment(env, error) : NULL;
+    if (env && !environment) goto fail;
     if (!job || !dir || !cmd) { *error = ERROR_NOT_ENOUGH_MEMORY; goto fail; }
     if (!CreatePipe(&readPipe, &writePipe, &sa, 0)) goto fail;
     SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
@@ -191,7 +219,8 @@ __declspec(dllexport) void *ap_start(const char *cwd, const char *command, int *
         UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &job->group, sizeof(HANDLE), NULL, NULL) &&
         UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), NULL, NULL);
     BOOL created = configured && CreateProcessW(NULL, cmd, NULL, NULL, TRUE,
-        EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, NULL, dir, &si.StartupInfo, &pi);
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+        environment, dir, &si.StartupInfo, &pi);
     if (!created) *error = GetLastError();
     if (initialized) DeleteProcThreadAttributeList(si.lpAttributeList);
     free(si.lpAttributeList); CloseHandle(si.StartupInfo.hStdInput);
@@ -199,12 +228,12 @@ __declspec(dllexport) void *ap_start(const char *cwd, const char *command, int *
     // Job membership is atomic with creation, before any command can run.
     job->process = pi.hProcess; job->pid = pi.dwProcessId;
     CloseHandle(pi.hThread); CloseHandle(writePipe);
-    job->output = readPipe; free(dir); free(cmd); return job;
+    job->output = readPipe; free(dir); free(cmd); free(environment); return job;
 fail:
     if (!*error) *error = GetLastError();
     if (readPipe) CloseHandle(readPipe); if (writePipe) CloseHandle(writePipe);
     if (job) { if (job->group) CloseHandle(job->group); if (job->process) CloseHandle(job->process); free(job); }
-    free(dir); free(cmd); return NULL;
+    free(dir); free(cmd); free(environment); return NULL;
 }
 __declspec(dllexport) int ap_pid(void *ptr) { return ((APJob *)ptr)->pid; }
 __declspec(dllexport) int ap_read(void *ptr, uint8_t *buffer, int size) {
@@ -244,7 +273,7 @@ __declspec(dllexport) void ap_unlock(void *lock) { CloseHandle(lock); }
 #undef AP_EXPORT
 #define AP_EXPORT __attribute__((visibility("default")))
 #endif
-AP_EXPORT void *ap_start(const char *cwd, const char *command, int *error) { *error = 38; return NULL; }
+AP_EXPORT void *ap_start(const char *cwd, const char *command, const char * const *env, int *error) { *error = 38; return NULL; }
 AP_EXPORT int ap_pid(void *p) { return -1; }
 AP_EXPORT int ap_read(void *p, uint8_t *b, int n) { return -1; }
 AP_EXPORT int64_t ap_status(void *p) { return -1; }

@@ -7,6 +7,7 @@ LOCAL_GENERAL_SETTINGS = {  # Keep in sync with localGeneralSettings (Dart).
     'message_chunking_enabled', 'message_format_config',
     'stream_segment_delay_seconds', 'chat_display_style',
     'auto_scroll_on_send', 'auto_scroll_on_ai_reply', 'bubble_show_thinking',
+    'allow_multi_message_send',
     'document_show_thinking', 'document_show_tool_calls',
     'text_scale_factor', 'ui_scale_factor',
     'image_preview_scale', 'windows_window_controls_side',

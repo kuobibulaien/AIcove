@@ -46,7 +46,7 @@ class _Harness {
 
 Future<_Harness> _harness(
   List<AITool> tools, {
-  String apiBase = 'https://api.deepseek.com',
+  String apiBase = 'https://api-gateway.merge.dev/v1/openai',
 }) async {
   final database = db.AppDatabase.forTesting(NativeDatabase.memory());
   addTearDown(database.close);
@@ -75,7 +75,7 @@ Future<_Harness> _harness(
       ),
       requestConfig: ({required settings, required modelRef}) async =>
           BackgroundAgentRequestConfig(
-            modelFullId: 'openai:deepseek-flash',
+            modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
             providerApiBase: apiBase,
             providerApiKey: _apiKey,
             customConfig: const <String, dynamic>{},
@@ -229,8 +229,8 @@ void main() {
       final call = _runner.executeApiCall(
         config: ApiConfig(
           settings: _settings,
-          modelFullId: 'openai:deepseek-flash',
-          providerApiBase: 'https://api.deepseek.com',
+          modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+          providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
           providerApiKey: _apiKey,
           customConfig: const {},
           messages: const [
@@ -294,7 +294,7 @@ void main() {
         }
         final out = await upstream.openUrl(
           request.method,
-          Uri.parse('https://api.deepseek.com${request.uri}'),
+          Uri.parse('https://api-gateway.merge.dev/v1/openai${request.uri}'),
         );
         request.headers.forEach((name, values) {
           if (name == 'host' || name == 'content-length') return;
@@ -318,7 +318,7 @@ void main() {
       final result = await _runner.executeApiCall(
         config: ApiConfig(
           settings: _settings,
-          modelFullId: 'openai:deepseek-flash',
+          modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
           providerApiBase: 'http://127.0.0.1:${server.port}',
           providerApiKey: _apiKey,
           customConfig: const {},

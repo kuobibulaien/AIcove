@@ -24,10 +24,25 @@ class FishAudioStreamingTts implements StreamingTtsPort {
     this.pingInterval = const Duration(seconds: 20),
     this.sampleRate = 24000,
     WebSocketConnector? connect,
-  }) : _connect =
-           connect ??
-           ((uri, headers) =>
-               WebSocket.connect(uri.toString(), headers: headers));
+  }) : _connect = connect ?? _defaultConnect;
+
+  static Future<WebSocket> _defaultConnect(
+    Uri uri,
+    Map<String, String> headers,
+  ) async {
+    final connecting = WebSocket.connect(uri.toString(), headers: headers);
+    try {
+      return await connecting.timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      // timeout 不会取消底层握手，迟到的连接也要关掉。
+      unawaited(
+        connecting.then<void>((socket) async {
+          await socket.close();
+        }, onError: (Object _) {}),
+      );
+      rethrow;
+    }
+  }
 
   static const defaultEndpoint = 'wss://api.fish.audio/v1/tts/live';
 
@@ -45,6 +60,7 @@ class FishAudioStreamingTts implements StreamingTtsPort {
   _FishConnection? _active;
   _FishConnection? _spare;
   bool _closed = false;
+  Future<void>? _closing;
 
   @override
   Stream<Uint8List> get audio => _audio.stream;
@@ -53,7 +69,12 @@ class FishAudioStreamingTts implements StreamingTtsPort {
   Future<void> open() async {
     _active = _newConnection();
     _spare = _newConnection();
-    await _active!.ready;
+    try {
+      await _active!.ready.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      await close();
+      rethrow;
+    }
   }
 
   @override
@@ -75,7 +96,9 @@ class FishAudioStreamingTts implements StreamingTtsPort {
   }
 
   @override
-  Future<void> close() async {
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
     final connections = [_active, _spare];
     _active = null;

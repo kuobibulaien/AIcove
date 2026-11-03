@@ -85,6 +85,20 @@ void main() {
     );
   });
 
+  test('an in-flight failure cannot mark the replacement key in the same item', () {
+    const provider = ProviderAuth(id: 'openai', apiBaseUrl: '', apiKeys: ['replacement'], customConfig: {
+      providerMultiKeyEnabledField: true,
+      providerMultiKeyStrategyField: providerMultiKeyStrategyExhaust,
+      providerMultiKeyItemsField: [
+        {'id': 'same-item', 'key': 'replacement', 'enabled': true},
+      ],
+    });
+    final patch = buildProviderMultiKeyFailurePatch(provider: provider,
+      failedKey: 'original', failedItemId: 'same-item', failedItemIndex: 0,
+      error: StateError('old request'));
+    expect(patch.changed, isFalse);
+  });
+
   test('buildProviderMultiKeyFailurePatch 会标记失败并推进到下一个可用 Key', () {
     const provider = ProviderAuth(
       id: 'openai',

@@ -1,0 +1,323 @@
+import 'dart:async';
+
+import 'package:aicove_flutter/src/core/database/database.dart' as db;
+import 'package:aicove_flutter/src/core/database/database_provider.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/analyzer_scheduler.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger_controller.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger_storage.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/context_analyzer.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/conversation_proactive_state.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/conversation_proactive_state_storage.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/proactive_message_pregenerator.dart';
+import 'package:aicove_flutter/src/features/auto_reply/domain/proactive_action.dart';
+import 'package:aicove_flutter/src/features/auto_reply/domain/proactive_decision.dart';
+import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
+import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:drift/native.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+const _id = 'stage3_scheduler';
+
+class _Conversations extends ConversationsNotifier {
+  @override
+  Future<List<Conversation>> build() async => [
+    Conversation(
+      id: _id,
+      title: 'Role',
+      displayName: 'Role',
+      createdAt: DateTime(2026),
+      updatedAt: DateTime(2026),
+      enabledPlugins: const ['trigger'],
+    ),
+  ];
+}
+
+class _Analyzer extends ContextAnalyzer {
+  _Analyzer(super.ref);
+  final started = Completer<void>();
+  final result = Completer<ContextAnalysisDecision?>();
+
+  @override
+  Future<ContextAnalysisDecision?> analyze(
+    Conversation conversation, {
+    required ConversationProactiveState proactiveState,
+  }) {
+    if (!started.isCompleted) started.complete();
+    return result.future;
+  }
+}
+
+class _Pregenerator extends ProactiveMessagePregenerator {
+  _Pregenerator(super.ref);
+  final started = Completer<void>();
+  final result = Completer<ProactiveDraft?>();
+
+  @override
+  Future<ProactiveDraft?> generate({
+    required Conversation conversation,
+    required String systemReminder,
+    required DateTime fireAt,
+    bool allowCall = false,
+  }) {
+    started.complete();
+    return result.future;
+  }
+}
+
+AutoReplyTrigger _trigger(
+  String id, {
+  AutoReplyTriggerPriority priority = AutoReplyTriggerPriority.medium,
+}) => AutoReplyTrigger(
+  id: id,
+  title: id,
+  type: AutoReplyTriggerType.delay,
+  status: AutoReplyTriggerStatus.pending,
+  createdAt: DateTime.now().subtract(const Duration(minutes: 10)),
+  nextFireAt: DateTime.now().add(const Duration(hours: 1)),
+  allowNight: true,
+  requireExact: false,
+  delayMinutes: 60,
+  manual: false,
+  source: TriggerSource.aiScheduler,
+  priority: priority,
+  conversationId: _id,
+);
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late db.AppDatabase database;
+  late ProviderContainer container;
+  late _Analyzer analyzer;
+  late _Pregenerator pregenerator;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await database
+        .into(database.conversations)
+        .insert(
+          db.ConversationsCompanion.insert(
+            id: _id,
+            title: 'Role',
+            displayName: 'Role',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+    container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+        conversationsProvider.overrideWith(_Conversations.new),
+        contextAnalyzerProvider.overrideWith(
+          (ref) => analyzer = _Analyzer(ref),
+        ),
+        proactiveMessagePregeneratorProvider.overrideWith(
+          (ref) => pregenerator = _Pregenerator(ref),
+        ),
+      ],
+    );
+    await container.read(conversationsProvider.future);
+    await container.read(autoReplyTriggersProvider.future);
+    container.read(contextAnalyzerProvider);
+    container.read(proactiveMessagePregeneratorProvider);
+  });
+
+  tearDown(() async {
+    container.dispose();
+    await database.close();
+  });
+
+  Future<void> drain() =>
+      Future<void>.delayed(const Duration(milliseconds: 80));
+  Future<void> startAnalysis() async {
+    container
+        .read(analyzerSchedulerProvider)
+        .scheduleAnalysis(conversationId: _id, delay: Duration.zero);
+    await analyzer.started.future.timeout(const Duration(seconds: 2));
+  }
+
+  test(
+    'new user activity preserves explicit high priority AI reminders',
+    () async {
+      await AutoReplyTriggerStorage().saveTriggers([
+        _trigger('high', priority: AutoReplyTriggerPriority.high),
+        _trigger('ordinary'),
+      ]);
+      await container
+          .read(autoReplyTriggersProvider.notifier)
+          .reloadFromStorage();
+      await container
+          .read(analyzerSchedulerProvider)
+          .handleUserMessageActivity(
+            conversationId: _id,
+            messageId: 'new',
+            occurredAt: DateTime.now(),
+          );
+      expect(
+        (await AutoReplyTriggerStorage().loadTriggers()).map((t) => t.id),
+        ['high'],
+      );
+    },
+  );
+
+  test(
+    'orphan pending pointer does not suppress analysis after resume',
+    () async {
+      await ConversationProactiveStateStorage().saveStates({
+        _id: ConversationProactiveState(
+          conversationId: _id,
+          pendingAutoTriggerId: 'gone',
+          lastUserAt: DateTime.now().subtract(const Duration(minutes: 10)),
+        ),
+      });
+      await startAnalysis();
+      analyzer.result.complete(
+        const ContextAnalysisDecision(contextMessages: []),
+      );
+      await drain();
+      expect(
+        (await ConversationProactiveStateStorage().loadStates())[_id]!
+            .pendingAutoTriggerId,
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'failed pregeneration still creates a live-generation trigger',
+    () async {
+      await startAnalysis();
+      analyzer.result.complete(
+        ContextAnalysisDecision(
+          contextMessages: const [],
+          triggerPlan: ContextAnalysisTriggerPlan(
+            kind: ProactiveReachOutKind.checkIn,
+            title: 'check in',
+            fireAt: DateTime.now().add(const Duration(hours: 1)),
+            allowNight: true,
+            priority: AutoReplyTriggerPriority.medium,
+            systemReminder: 'check in',
+          ),
+        ),
+      );
+      await pregenerator.started.future.timeout(const Duration(seconds: 2));
+      pregenerator.result.completeError(StateError('network unavailable'));
+      await drain();
+      final triggers = await AutoReplyTriggerStorage().loadTriggers();
+      expect(triggers, hasLength(1));
+      expect(triggers.single.cachedContent, isNull);
+      expect(triggers.single.status, AutoReplyTriggerStatus.pending);
+    },
+  );
+
+  test(
+    'analysis failure schedules a backoff rather than losing its wakeup',
+    () async {
+      await startAnalysis();
+      analyzer.result.completeError(StateError('temporary network failure'));
+      await drain();
+      final logs = await AutoReplyTriggerStorage().loadLogs();
+      expect(
+        logs.any(
+          (log) =>
+              log.event == 'analysis_scheduled' &&
+              log.metadata['reason'] == 'analysis_retry',
+        ),
+        isTrue,
+      );
+      expect(await AutoReplyTriggerStorage().loadTriggers(), isEmpty);
+    },
+  );
+
+  test(
+    'disabling care clears high and ordinary AI triggers but not manual reminders',
+    () async {
+      await AutoReplyTriggerStorage().saveTriggers([
+        _trigger('high', priority: AutoReplyTriggerPriority.high),
+        _trigger('ordinary'),
+        _trigger(
+          'manual',
+        ).copyWith(source: TriggerSource.userManual, manual: true),
+      ]);
+      final role = container.read(conversationsProvider).requireValue.single;
+      await container
+          .read(analyzerSchedulerProvider)
+          .syncConversationActivation(role.copyWith(enabledPlugins: const <String>[]));
+      expect(
+        (await AutoReplyTriggerStorage().loadTriggers()).map((t) => t.id),
+        ['manual'],
+      );
+    },
+  );
+
+  test(
+    'a reminder arriving during pregeneration is not deleted on draft failure',
+    () async {
+      await startAnalysis();
+      analyzer.result.complete(
+        ContextAnalysisDecision(
+          contextMessages: const [],
+          triggerPlan: ContextAnalysisTriggerPlan(
+            kind: ProactiveReachOutKind.checkIn,
+            title: 'check in',
+            fireAt: DateTime.now().add(const Duration(hours: 1)),
+            allowNight: true,
+            priority: AutoReplyTriggerPriority.medium,
+            systemReminder: 'check in',
+          ),
+        ),
+      );
+      await pregenerator.started.future.timeout(const Duration(seconds: 2));
+      await AutoReplyTriggerStorage().saveTriggers([_trigger('newer')]);
+      pregenerator.result.completeError(
+        StateError('temporary network failure'),
+      );
+      await drain();
+      expect(
+        (await AutoReplyTriggerStorage().loadTriggers()).map((t) => t.id),
+        ['newer'],
+      );
+    },
+  );
+
+  test(
+    'late delivery completion cannot put a replied conversation to sleep',
+    () async {
+      final trigger = _trigger('old');
+      final at = DateTime.now();
+      await database
+          .into(database.messages)
+          .insert(
+            db.MessagesCompanion.insert(
+              id: 'new_user',
+              conversationId: _id,
+              role: 'user',
+              content: 'I replied',
+              createdAt: at.millisecondsSinceEpoch,
+            ),
+          );
+      final scheduler = container.read(analyzerSchedulerProvider);
+      await scheduler.handleUserMessageActivity(
+        conversationId: _id,
+        messageId: 'new_user',
+        occurredAt: at,
+      );
+      await scheduler.onAutoTriggerSendCompleted(
+        trigger: trigger,
+        success: true,
+        retryable: false,
+        occurredAt: at,
+      );
+      final state = (await ConversationProactiveStateStorage()
+          .loadStates())[_id]!;
+      expect(state.mode, ConversationProactiveMode.active);
+      expect(state.unrepliedCount, 0);
+      expect(state.lastUserMessageId, 'new_user');
+      expect(state.silenceUntil, isNull);
+    },
+  );
+}

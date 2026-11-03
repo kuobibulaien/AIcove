@@ -1,4 +1,8 @@
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +13,9 @@ import 'package:aicove_flutter/src/ui/features/settings/pages/account_page.dart'
 import 'package:aicove_flutter/src/ui/features/backup/pages/data_management_page.dart';
 import 'package:aicove_flutter/src/ui/features/debug/pages/debug_center_page.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/settings_page.dart';
+import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
+import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 
 class FixtureAccount implements AccountPort {
   @override
@@ -61,10 +68,19 @@ void main() {
     expect(find.byType(DataManagementPage), findsOneWidget);
     expect(find.text('局域网同步'), findsOneWidget);
     expect(find.text('导出数据'), findsOneWidget);
+    expect(
+      tester.getRect(find.text('局域网同步')).top,
+      lessThan(tester.getRect(find.text('云同步')).top),
+    );
     await tester.tap(find.text('云同步'));
     await tester.pumpAndSettle();
     expect(find.byType(AccountPage), findsOneWidget);
     expect(find.text('登录你的账号'), findsOneWidget);
+    expect(find.text('去用局域网同步（首选）'), findsOneWidget);
+    expect(find.text('自建服务器与 AI 辅助部署'), findsOneWidget);
+    await tester.tap(find.text('自建服务器与 AI 辅助部署'));
+    await tester.pumpAndSettle();
+    expect(find.text('复制 AI 辅助部署提示词'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
   for (final size in [const Size(360, 780), const Size(1100, 820)]) {
@@ -107,4 +123,81 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('source rendered preview for sync entry and self-hosted guide', (
+    tester,
+  ) async {
+    const capture = bool.fromEnvironment('WRITE_SYNC_ENTRY_PREVIEW');
+    if (!capture) return;
+    await tester.runAsync(() async {
+      final loader = FontLoader('Preview')
+        ..addFont(
+          File(
+            '/System/Library/Fonts/STHeiti Medium.ttc',
+          ).readAsBytes().then(ByteData.sublistView),
+        );
+      await loader.load();
+      final icons = FontLoader('MaterialIcons')
+        ..addFont(
+          File(
+            '${Platform.environment['HOME']}/dev-sdks/flutter-3.44.6/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+          ).readAsBytes().then(ByteData.sublistView),
+        );
+      await icons.load();
+    });
+    final dir = Directory('../../scratch/sync-entry-previews')
+      ..createSync(recursive: true);
+
+    for (final (name, page, scrollY) in [
+      ('data_management', const DataManagementPage(), 0.0),
+      ('account_top', const AccountPage(), 0.0),
+      ('account_guide', const AccountPage(), -420.0),
+    ]) {
+      final key = GlobalKey();
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            accountRepositoryProvider.overrideWithValue(FixtureAccount()),
+          ],
+          child: SkinScope(
+            skin: const MoeTalkSkin(),
+            child: MaterialApp(
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData(
+                fontFamily: 'Preview',
+                extensions: [MoeColors.light()],
+              ),
+              home: RepaintBoundary(key: key, child: page),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      if (name == 'account_guide') {
+        await tester.tap(find.text('自建服务器与 AI 辅助部署'));
+        await tester.pumpAndSettle();
+      }
+      if (scrollY != 0) {
+        await tester.drag(
+          find.byType(Scrollable).first,
+          Offset(0, scrollY),
+        );
+        await tester.pumpAndSettle();
+      }
+      await tester.runAsync(() async {
+        final boundary =
+            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 2);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await File(
+          '${dir.path}/$name.png',
+        ).writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+    }
+  });
 }

@@ -33,14 +33,14 @@ void main() {
         runId: 'seed',
       );
       final settings = mapUiModelsToAppSettings({}).copyWith(
-        defaultChatModels: const ['deepseek:deepseek-flash'],
-        defaultModelName: 'deepseek:deepseek-flash',
+        defaultChatModels: const ['deepseek:deepseek/deepseek-v4.1-flash-1017'],
+        defaultModelName: 'deepseek:deepseek/deepseek-v4.1-flash-1017',
         providers: [
           ProviderAuth(
             id: 'deepseek',
             apiKeys: [_apiKey!],
-            apiBaseUrl: 'https://api.deepseek.com',
-            models: const ['deepseek-flash'],
+            apiBaseUrl: 'https://api-gateway.merge.dev/v1/openai',
+            models: const ['deepseek/deepseek-v4.1-flash-1017'],
           ),
         ],
       );

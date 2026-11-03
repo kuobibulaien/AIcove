@@ -1,5 +1,6 @@
 import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_segmented_control.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_liquid_glass.dart';
+import 'package:aicove_flutter/src/ui/theme/moe_frosted_material.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -106,5 +107,44 @@ void main() {
     await tester.tap(find.text('B'));
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.byType(MoeLiquidGlass), findsNothing);
+  });
+
+  testWidgets('skips resting BackdropFilter inside MoeSolidBackdropScope', (
+    tester,
+  ) async {
+    await pump(tester, glass: true);
+    // Without MoeSolidBackdropScope (e.g. over wallpaper), resting thumb blurs.
+    expect(find.byType(BackdropFilter), findsOneWidget);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(extensions: [MoeColors.light()]),
+        builder: (context, child) => MoeGlassTheme(
+          enabled: true,
+          useLiquidGlass: true,
+          blurSigma: 16,
+          child: child!,
+        ),
+        home: Scaffold(
+          body: MoeSolidBackdropScope(
+            color: MoeColors.light().surface,
+            child: Center(
+              child: SizedBox(
+                width: 300,
+                child: MoeSegmentedControl<String>(
+                  value: 'a',
+                  segments: const [
+                    MoeSegment(value: 'a', label: 'A'),
+                    MoeSegment(value: 'b', label: 'B'),
+                  ],
+                  onChanged: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(BackdropFilter), findsNothing);
   });
 }

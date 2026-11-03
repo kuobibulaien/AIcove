@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/utils/token_estimator.dart';
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
@@ -48,11 +49,17 @@ class _Paths extends PathProviderPlatform {
 class _Settings extends AppSettingsNotifier {
   static int? maxTokens;
   static int window = 272000;
+  static String? extraModel;
   @override
   Future<AppSettings> build() async {
-    final settings = mapUiModelsToAppSettings({
-      'context_window_tokens': window,
-    });
+    var settings = mapUiModelsToAppSettings({'context_window_tokens': window});
+    final extra = extraModel;
+    if (extra != null) {
+      settings = settings.copyWith(
+        modelList: [...settings.modelList, extra],
+        allKnownModels: [...settings.allKnownModels, extra],
+      );
+    }
     return maxTokens == null
         ? settings
         : settings.copyWith(
@@ -191,6 +198,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     _Settings.maxTokens = null;
+    _Settings.extraModel = null;
     _Settings.window = 272000;
     root = await Directory.systemTemp.createTemp('topic_compaction_');
     oldPaths = PathProviderPlatform.instance;
@@ -464,10 +472,7 @@ void main() {
     await database.customStatement(
       "CREATE TRIGGER fail_boundary BEFORE UPDATE OF context_start_message_id ON conversations BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END",
     );
-    await expectLater(
-      service.commit(draft, draft.summary),
-      throwsA(anything),
-    );
+    await expectLater(service.commit(draft, draft.summary), throwsA(anything));
     expect(await boundary('a'), isNull);
     expect(
       await database.customSelect('SELECT * FROM context_summaries').get(),
@@ -520,10 +525,7 @@ void main() {
         .prepareApiConfig(conv: conv, history: history, userText: '继续当前任务');
     expect(summary.seen, isNull);
     expect(jsonEncode(again.messages), contains('用户怕冷'));
-    expect(
-      await store.loadAuto('a', null, history.take(3).toList()),
-      isNull,
-    );
+    expect(await store.loadAuto('a', null, history.take(3).toList()), isNull);
     await (database.update(database.messages)
           ..where((m) => m.id.equals('long_0')))
         .write(const db.MessagesCompanion(content: Value('修改了原始内容')));
@@ -531,6 +533,75 @@ void main() {
         .read(chatHistoryStoreProvider)
         .loadAllRawMessages('a');
     expect(await store.loadAuto('a', null, edited), isNull);
+  });
+
+  test('自动压缩后重新装配仍使用调用方指定的请求时间', () async {
+    _Settings.maxTokens = 1000000;
+    await owner('a');
+    for (var i = 0; i < 120; i++) {
+      await message(
+        'long_$i',
+        text: 'a' * 9200,
+        at: i + 1,
+        role: i.isEven ? 'user' : 'assistant',
+      );
+    }
+    await message('latest', text: '继续当前任务', at: 121);
+    container
+        .read(pluginManagerProvider)
+        .updatePlugin(TimeAwarenessPlugin(TimeAwarenessConfig()));
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    );
+    final history = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+
+    final config = await container
+        .read(chatSendServiceProvider)
+        .prepareApiConfig(
+          conv: conv,
+          history: history,
+          userText: '继续当前任务',
+          requestTime: DateTime(2031, 1, 2, 3, 4),
+        );
+
+    expect(summary.seen, isNotNull);
+    expect(jsonEncode(config.messages), contains('2031-01-02 03:04:00'));
+  });
+
+  test('自动压缩保留量不计助手正文和文本块中的草稿', () async {
+    await owner('a');
+    await message('u1');
+    await message('u2', at: 2);
+    await message(
+      'a2',
+      role: 'assistant',
+      text: '<thinking>${'x' * 10000}</thinking>答复',
+      at: 3,
+    );
+    await message('u3', text: '继续', at: 4);
+    final history = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    final i = history.indexWhere((m) => m.id == 'a2');
+    history[i] = history[i].copyWith(
+      blocks: [
+        TextBlock(
+          messageId: 'a2',
+          content: '<comic_plan>${'x' * 10000}</comic_plan>答复',
+        ),
+      ],
+    );
+    await service.compactAuto(
+      ownerId: 'a',
+      topicBoundary: null,
+      history: history,
+      previous: null,
+      keepOnlyLatestTurn: false,
+      retainTokens: 1000,
+    );
+    expect(summary.seen!.messages.map((m) => m.id), ['u1']);
   });
 
   test('刚好到阈值必定压缩，低于阈值不压缩', () async {
@@ -577,6 +648,112 @@ void main() {
     expect(summary.seen, isNotNull);
   });
 
+  test('预设窗口只截断发送内容，自动压缩仍按本地模型窗口判断', () async {
+    _Settings.maxTokens = 100000;
+    _Settings.window = 50000;
+    await owner('a');
+    await message('old', text: '旧内容' * 1200);
+    await message('reply', role: 'assistant', text: '收到', at: 2);
+    await message('latest', text: '继续', at: 3);
+    final preset = await container
+        .read(sillyTavernPresetStoreProvider)
+        .importSource(
+          jsonEncode({
+            'openai_max_context': 8000,
+            'openai_max_tokens': 60000,
+            'prompts': [
+              {'identifier': 'worldInfoBefore', 'marker': true},
+              {'identifier': 'chatHistory', 'marker': true},
+            ],
+            'prompt_order': [
+              {
+                'order': [
+                  {'identifier': 'worldInfoBefore', 'enabled': true},
+                  {'identifier': 'chatHistory', 'enabled': true},
+                ],
+              },
+            ],
+          }),
+          sourceFileName: 'window.json',
+        );
+    await container
+        .read(sillyTavernPresetStoreProvider)
+        .importWorldBook(
+          preset.id,
+          '{"entries":{"0":{"constant":true,"content":"世界书内容保留","position":0}}}',
+          'world.json',
+        );
+    await (database.update(database.conversations)
+          ..where((c) => c.id.equals('a')))
+        .write(db.ConversationsCompanion(recipeId: Value(preset.id)));
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    );
+    final sender = container.read(chatSendServiceProvider);
+    final preview = await sender.previewContext(conv);
+    expect(preview.inputLimit, 40000);
+    expect(preview.notes, contains(contains('最大输出超过')));
+    expect(preview.notes, contains(contains('聊天记录中仍保留')));
+    expect(jsonEncode(preview.messages), isNot(contains('旧内容')));
+    expect(jsonEncode(preview.messages), contains('继续'));
+    expect(jsonEncode(preview.messages), contains('世界书内容保留'));
+    final history = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    final config = await sender.prepareApiConfig(
+      conv: conv,
+      history: history,
+      userText: '继续',
+    );
+    expect(summary.seen, isNull);
+    expect(jsonEncode(config.messages), isNot(contains('旧内容')));
+    expect(history, hasLength(3));
+  });
+
+  test('完整历史达到本地阈值时先压缩，即使预设滑窗很小', () async {
+    _Settings.maxTokens = 100000;
+    _Settings.window = 10000;
+    await owner('a');
+    await message('old', text: 'a' * 40000);
+    await message('reply', role: 'assistant', text: '收到', at: 2);
+    await message('latest', text: '继续', at: 3);
+    final preset = await container
+        .read(sillyTavernPresetStoreProvider)
+        .importSource(
+          jsonEncode({
+            'openai_max_context': 3000,
+            'openai_max_tokens': 500,
+            'prompts': [
+              {'identifier': 'chatHistory', 'marker': true},
+            ],
+            'prompt_order': [
+              {
+                'order': [
+                  {'identifier': 'chatHistory', 'enabled': true},
+                ],
+              },
+            ],
+          }),
+          sourceFileName: 'compact-window.json',
+        );
+    await (database.update(database.conversations)
+          ..where((c) => c.id.equals('a')))
+        .write(db.ConversationsCompanion(recipeId: Value(preset.id)));
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    );
+    final sender = container.read(chatSendServiceProvider);
+    final preview = await sender.previewContext(conv);
+    expect(preview.inputLimit, 7952);
+    expect(preview.notes, contains(contains('自动压缩')));
+    final history = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    await sender.prepareApiConfig(conv: conv, history: history, userText: '继续');
+    expect(summary.seen, isNotNull);
+    expect(summary.seen!.messages.map((m) => m.id), contains('old'));
+  });
+
   test('联系人上下文预览只读：超阈值不压缩，边界缺摘要只提示不补整理', () async {
     _Settings.maxTokens = 1000000;
     _Settings.window = 1000;
@@ -607,6 +784,23 @@ void main() {
       isNot(contains(contains('m1：'))),
     );
     expect('${preview.messages.last['content']}', contains('a' * 100));
+  });
+
+  test('没指定模型时（如上下文预览）按会话自己选的模型装配', () async {
+    await owner('a');
+    const other = 'openai:session-only-model';
+    _Settings.extraModel = other;
+    container.invalidate(appSettingsProvider);
+    final settings = await container.read(appSettingsProvider.future);
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    ).copyWith(sessionProvider: other);
+
+    final config = await container
+        .read(chatSendServiceProvider)
+        .prepareApiConfig(conv: conv, history: const [], userText: null);
+
+    expect(config.modelFullId, settings.toModelFullId(other));
   });
 
   test('请求使用全局插件提示词，而不是插件配置里的旧副本', () async {
@@ -873,11 +1067,7 @@ void main() {
           modelContextMessageLimit: 30,
         ),
     executor:
-        ({
-          required config,
-          required availableTools,
-          required sessionId,
-        }) async {
+        ({required config, required availableTools, required sessionId}) async {
           expect(availableTools, isEmpty);
           expect(config.tools, isNull);
           return respond(config);
@@ -895,6 +1085,38 @@ void main() {
 
   Map summaryInput(ApiConfig config) =>
       jsonDecode(config.messages.last['content'] as String) as Map;
+
+  test('手动和自动整理都不把助手草稿发送给整理模型', () async {
+    await owner('a');
+    await message('u', text: '用户<think>保留</think>');
+    await message(
+      'a1',
+      role: 'assistant',
+      text: '<thinking>秘密</thinking>正文<comic_plan>草稿</comic_plan>',
+      at: 2,
+    );
+    for (final kind in [ContextSummaryKind.manual, ContextSummaryKind.auto]) {
+      final inputs = <ApiConfig>[];
+      await BackgroundContextSummarizer(
+        summaryAgent((config) {
+          inputs.add(config);
+          return facts();
+        }),
+        modelRef: 'fake',
+        contextTokens: 32000,
+      ).summarize(
+        await store.manualSnapshot('a'),
+        kind: kind,
+        onProgress: (_, __) {},
+        isCancelled: () => false,
+      );
+      final text = jsonEncode(summaryInput(inputs.first)['raw_messages']);
+      expect(text, contains('正文'));
+      expect(text, contains('用户<think>保留</think>'));
+      expect(text, isNot(contains('秘密')));
+      expect(text, isNot(contains('草稿')));
+    }
+  });
 
   for (final window in [200000, 1000000]) {
     test('模型预算 $window：超过旧32块的历史一次压缩，完整且预留输出', () async {
@@ -1337,7 +1559,10 @@ void main() {
       onProgress: (_, __) {},
       isCancelled: () => cancelled,
     );
-    final check = expectLater(future, throwsA(isA<ContextCompactionException>()));
+    final check = expectLater(
+      future,
+      throwsA(isA<ContextCompactionException>()),
+    );
     await started.future;
     cancelled = true;
     response.complete(facts());
@@ -1389,6 +1614,34 @@ void main() {
         previous: '- 已有约定',
       ),
       '- 已有约定',
+    );
+    expect(
+      BackgroundContextSummarizer.normalize(
+        '{"summary":{"relationship":["刚和好"],"promises":["周五看日落"]}}',
+        headings: BackgroundContextSummarizer.companionHeadings,
+      ),
+      '## 关系与情绪\n- 刚和好\n## 约定与称呼\n- 周五看日落',
+    );
+    expect(
+      BackgroundContextSummarizer.normalize(
+        '{"relationship":["刚和好"],"scene":[]}',
+        headings: BackgroundContextSummarizer.companionHeadings,
+      ),
+      '## 关系与情绪\n- 刚和好',
+    );
+    expect(
+      () => BackgroundContextSummarizer.normalize(
+        '{"relationship":["刚和好"],"unknown":["注入"]}',
+        headings: BackgroundContextSummarizer.companionHeadings,
+      ),
+      throwsA(isA<ContextCompactionException>()),
+    );
+    expect(
+      () => BackgroundContextSummarizer.normalize(
+        '{"relationship":["刚和好"],"pending":["待办"]}',
+        headings: BackgroundContextSummarizer.companionHeadings,
+      ),
+      throwsA(isA<ContextCompactionException>()),
     );
   });
 
@@ -1495,7 +1748,10 @@ void main() {
     expect(second.revision, first.revision);
     final result = await store.commitManual(first, '- 保留原始事实');
     await Future<void>.delayed(const Duration(milliseconds: 5));
-    expect((await store.manualFor('a', result.boundaryId))?.summary, '- 保留原始事实');
+    expect(
+      (await store.manualFor('a', result.boundaryId))?.summary,
+      '- 保留原始事实',
+    );
     await store.undoManual('a');
     final stale = await store.manualSnapshot('a');
     block['content'] = '实际修改后的正文';

@@ -99,6 +99,56 @@ void main() {
     expect(missing['coverage']['limits'], contains('log_directory_missing'));
   });
 
+  test('older days cannot evict today from the same budget lane', () async {
+    final dir = await Directory.systemTemp.createTemp('diagnostic_newest_');
+    addTearDown(() => dir.delete(recursive: true));
+    final today = DateTime(2026, 10, 30, 20);
+    String line(DateTime time, String event) => '${jsonEncode({
+          'time': time.toIso8601String(),
+          'level': 'INFO',
+          'metadata': {'category': 'frontend', 'event': event},
+        })}\n';
+    final yesterday = today.subtract(const Duration(days: 1));
+    await File('${dir.path}/app_2026-10-30.jsonl')
+        .writeAsString(line(today, 'uiStall') * 3);
+    await File('${dir.path}/app_2026-10-29.jsonl')
+        .writeAsString(line(yesterday, 'historyReady') * 40);
+    await File('${dir.path}/api_2026-10-30.jsonl')
+        .writeAsString(line(today, 'apiNoise') * 40);
+
+    final bundle = jsonDecode(utf8.decode(
+      await createDiagnosticBundle(dir.path, now: today, maxRecords: 8),
+    ));
+    final files = bundle['files'] as Map;
+    expect(
+      RegExp('uiStall').allMatches(files['app_2026-10-30.jsonl'] as String),
+      hasLength(3),
+    );
+    expect(bundle['coverage']['limits'], contains('bundle_budget_reached'));
+  });
+
+  test('input budget reads the newest logs first', () async {
+    final dir = await Directory.systemTemp.createTemp('diagnostic_input_');
+    addTearDown(() => dir.delete(recursive: true));
+    final today = DateTime(2026, 10, 30, 20);
+    final line = '${jsonEncode({
+      'time': today.toIso8601String(),
+      'level': 'INFO',
+    })}\n';
+    await File('${dir.path}/app_2026-10-30.jsonl').writeAsString(line * 4);
+    await File('${dir.path}/app_2026-10-29.jsonl').writeAsString(line * 4);
+
+    final bundle = jsonDecode(utf8.decode(await createDiagnosticBundle(
+      dir.path,
+      now: today,
+      maxInput: line.length * 4,
+    )));
+    final files = bundle['files'] as Map;
+    expect(files.keys, contains('app_2026-10-30.jsonl'));
+    expect(files.keys, isNot(contains('app_2026-10-29.jsonl')));
+    expect(bundle['coverage']['limits'], contains('bundle_budget_reached'));
+  });
+
   test(
     'history flood cannot evict later errors, background delivery or sync',
     () async {

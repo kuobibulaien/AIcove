@@ -6,6 +6,7 @@
 /// - 2026-02-20: 创建
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,27 @@ import 'context_memory_settings_page.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
+
+@visibleForTesting
+List<String> reorderDefaultChatModels(
+  List<String> modelQueue,
+  int oldIndex,
+  int newIndex,
+) {
+  if (oldIndex < 0 || oldIndex >= modelQueue.length) {
+    return List<String>.from(modelQueue);
+  }
+
+  final reordered = List<String>.from(modelQueue);
+  final targetIndex = newIndex.clamp(0, reordered.length - 1);
+  if (targetIndex == oldIndex) {
+    return reordered;
+  }
+
+  final moved = reordered.removeAt(oldIndex);
+  reordered.insert(targetIndex.clamp(0, reordered.length), moved);
+  return reordered;
+}
 
 /// 默认模型设置页面
 class DefaultModelSettingsPage extends ConsumerStatefulWidget {
@@ -77,6 +99,62 @@ class _DefaultModelSettingsPageState
           const EdgeInsets.fromLTRB(16, 12, 16, 24),
         ),
         children: [
+          if (selectedChatModels.length > 1) ...[
+            _buildSectionHeader(
+              colors,
+              '默认尝试顺序',
+              '排在前面的优先使用，失败时自动顺延；拖动右侧把手调整顺序',
+            ),
+            const SizedBox(height: 8),
+            MoeSettingsGroup(
+              margin: EdgeInsets.zero,
+              padding: EdgeInsets.zero,
+              children: [
+                ReorderableListView.builder(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: selectedChatModels.length,
+                  buildDefaultDragHandles: false,
+                  onReorderItem: _savingChatModels
+                      ? (_, __) {}
+                      : (oldIndex, newIndex) =>
+                          _reorderChatModels(oldIndex, newIndex, settings),
+                  itemBuilder: (context, index) {
+                    final modelRef = selectedChatModels[index];
+                    final providerId = settings.getModelProviderId(modelRef);
+                    final providerName =
+                        providerId == null || providerId.isEmpty
+                            ? ''
+                            : settings.getProviderDisplayName(providerId);
+                    final isLast = index == selectedChatModels.length - 1;
+                    return MoeSettingsRow(
+                      key: ValueKey<String>('default_order_$modelRef'),
+                      enabled: !_savingChatModels,
+                      iconWidget: _buildOrderBadge(true, index, colors),
+                      iconContainerWidth: 28,
+                      label: settings.getModelDisplayName(modelRef),
+                      subtitle:
+                          providerName.isEmpty ? null : providerName,
+                      trailingType: MoeSettingsRowTrailing.custom,
+                      trailing: ReorderableDragStartListener(
+                        index: index,
+                        enabled: !_savingChatModels,
+                        child: Icon(
+                          Icons.drag_handle_rounded,
+                          color: colors.muted,
+                          size: 20,
+                        ),
+                      ),
+                      showDivider: !isLast,
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+          ],
+
           // ============ 默认聊天模型 ============
           _buildSectionHeader(colors, '默认聊天模型', '可多选，失败后自动尝试下一个模型'),
           const SizedBox(height: 8),
@@ -334,6 +412,39 @@ class _DefaultModelSettingsPageState
       if (mounted) {
         setState(() {
           // Persisted normalization may retain a fallback when all were cleared.
+          _localChatModels = null;
+          _savingChatModels = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _reorderChatModels(
+    int oldIndex,
+    int newIndex,
+    AppSettings settings,
+  ) async {
+    if (_savingChatModels) return;
+    final current = List<String>.from(
+      _localChatModels ?? settings.defaultChatModels,
+    );
+    final reordered = reorderDefaultChatModels(current, oldIndex, newIndex);
+    if (listEquals(current, reordered)) return;
+
+    setState(() {
+      _localChatModels = reordered;
+      _savingChatModels = true;
+    });
+
+    try {
+      await ref
+          .read(appSettingsProvider.notifier)
+          .setDefaultChatModels(reordered);
+    } catch (error) {
+      if (mounted) MoeToast.error(context, '保存默认模型顺序失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() {
           _localChatModels = null;
           _savingChatModels = false;
         });

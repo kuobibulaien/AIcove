@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/storage/app_data_directory.dart';
+import 'application/workspace_file_opener.dart';
 import 'data/workspace_store.dart';
 import 'domain/workspace_models.dart';
 
@@ -23,6 +24,12 @@ final workspaceStoreProvider = FutureProvider<WorkspaceStore>((ref) async {
   );
   return store;
 });
+
+/// Opens workspace files in the device's default apps.
+final workspaceFileOpenerProvider = FutureProvider<WorkspaceFileOpener>(
+  (ref) async =>
+      WorkspaceFileOpener(await ref.watch(workspaceStoreProvider.future)),
+);
 
 /// Workspaces registered on this device.
 final workspacesProvider = FutureProvider<List<WorkspaceInfo>>((ref) async {

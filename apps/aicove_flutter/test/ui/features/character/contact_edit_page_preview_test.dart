@@ -15,6 +15,7 @@ import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_config.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/character_appearance_page.dart';
 import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page.dart';
+import 'package:aicove_flutter/src/ui/features/plugins/pages/prompt_pack_pages.dart';
 import 'package:aicove_flutter/src/ui/features/wallpaper/pages/wallpaper_editor_page.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:file_picker/file_picker.dart';
@@ -85,7 +86,11 @@ void main() {
           name: '默认绘图',
           config: ImageConfig(),
         ),
-        DrawingPreset(id: 'preset_anime', name: '二次元立绘', config: ImageConfig()),
+        DrawingPreset(
+          id: 'preset_anime',
+          name: '二次元立绘',
+          config: ImageConfig(selectedProviderId: 'novelai'),
+        ),
       ],
       defaultPresetId: 'drawing_default',
       legacyConfig: const ImageConfig(),
@@ -120,7 +125,7 @@ void main() {
       description: '须弥的小吉祥草王',
       personaPrompt: PersonaPromptCodec.compose(
         userPrompt: '你是须弥的小吉祥草王纳西妲，温柔聪慧，喜欢用比喻解释事物。',
-        customDrawingPrompt: 'nahida_(genshin_impact)，白色长发侧马尾，绿瞳',
+        customDrawingPrompt: 'nahida_(genshin_impact)',
         drawingPresetId: 'preset_anime',
       ),
       enabledPlugins: const ['tts', 'image', 'memory', 'sticker', 'trigger'],
@@ -187,6 +192,16 @@ void main() {
       await _capture(tester, boundaryKey, 'contact-edit');
     }
 
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    expect(find.text('导出角色卡'), findsOneWidget);
+    expect(find.text('导入角色卡'), findsOneWidget);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-edit-more-menu');
+    }
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
     // 立绘海报：不再有更换/清空按钮，底部「自定义」进入立绘与头像编辑页。
     expect(find.text('更换立绘'), findsNothing);
     expect(find.text('清空立绘'), findsNothing);
@@ -218,11 +233,47 @@ void main() {
 
     await tester.ensureVisible(find.text('角色提示词'));
     await tester.pumpAndSettle();
-    // ADR0092: the drawing requirement lives in the drawing preset now.
-    expect(find.text('绘图提示'), findsNothing);
+    expect(find.text('附加提示词'), findsOneWidget);
+    expect(find.text('生图偏好'), findsNothing);
     if (capture) {
       await _capture(tester, boundaryKey, 'contact-edit-scrolled');
     }
+
+    await tester.tap(find.text('附加提示词'));
+    await tester.pumpAndSettle();
+    expect(find.text('补充设定'), findsOneWidget);
+    expect(find.text('生图提示词'), findsOneWidget);
+    expect(find.text('NovelAI 分镜漫画'), findsOneWidget);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-edit-extra-prompt');
+    }
+    await tester.scrollUntilVisible(
+      find.text('管理生图方案'),
+      150,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    if (capture) {
+      await _capture(tester, boundaryKey, 'contact-edit-extra-prompt-bottom');
+    }
+    await tester.tap(find.text('管理生图方案'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PromptPackListPage), findsOneWidget);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'image-prompt-pack-list');
+    }
+    await tester.tap(find.text('NovelAI 分镜漫画').last);
+    await tester.pumpAndSettle();
+    expect(find.byType(PromptPackDetailPage), findsOneWidget);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'image-prompt-pack-detail');
+    }
+    navigator.pop();
+    await tester.pumpAndSettle();
+    navigator.pop();
+    await tester.pumpAndSettle();
+    navigator.pop();
+    await tester.pumpAndSettle();
 
     // ADR0092 batch: the contact's context sits at the bottom of the page.
     await tester.scrollUntilVisible(
@@ -254,6 +305,74 @@ void main() {
     }
 
     // BlurredBackgroundService.ensureBlur 内部有 3s 超时定时器，结束前排空。
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('assistant prompt split preview', (tester) async {
+    addTearDown(tester.view.reset);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(420, 900);
+    SharedPreferences.setMockInitialValues({});
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[],
+          ),
+        ],
+        child: MaterialApp(
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFFFC96AA),
+              primary: const Color(0xFFFC96AA),
+            ),
+            scaffoldBackgroundColor: moeSurface,
+            fontFamily: capture ? 'EditPreview' : null,
+            extensions: [MoeColors.light()],
+          ),
+          builder: (context, child) =>
+              RepaintBoundary(key: boundaryKey, child: child!),
+          home: ContactEditPage(
+            conversation: Conversation(
+              id: 'aicove_assistant',
+              title: 'AIcove酱',
+              displayName: 'AIcove酱',
+              personaPrompt: PersonaPromptCodec.compose(
+                userPrompt: '# AIcove酱\n\n你是 AIcove 的内置助手，帮用户配置模型、创建角色……',
+                extraPrompt: '回答尽量简短。',
+              ),
+              createdAt: DateTime(2026, 10, 24),
+              updatedAt: DateTime(2026, 10, 24),
+            ),
+            editMode: EditMode.editConversation,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('附加提示词'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    if (capture) {
+      await _capture(tester, boundaryKey, 'assistant-prompt-rows');
+    }
+    await tester.tap(find.text('系统提示词'));
+    await tester.pumpAndSettle();
+    if (capture) {
+      await _capture(tester, boundaryKey, 'assistant-system-prompt-readonly');
+    }
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('附加提示词'));
+    await tester.pumpAndSettle();
+    if (capture) {
+      await _capture(tester, boundaryKey, 'assistant-extra-prompt-edit');
+    }
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
   });

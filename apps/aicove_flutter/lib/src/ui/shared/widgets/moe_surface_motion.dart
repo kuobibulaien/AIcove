@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'moe_scroll_behavior.dart';
+import 'sheets/moe_bottom_sheet.dart';
 
 /// Marks content inside a scroll view whose scrolling is only an overflow
 /// fallback (for example a fixed action grid under a very large text scale).
@@ -55,6 +56,7 @@ bool moeSurfaceMovesWithContent(
     }
     if (!ignoreScrollables) {
       moves =
+          (widget is MoeBottomSheet && widget.enableDrag) ||
           (widget is BottomSheet &&
               (widget.enableDrag ||
                   (widget.showDragHandle ??

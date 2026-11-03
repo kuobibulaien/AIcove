@@ -1,6 +1,6 @@
 # AIcove 协作说明
 
-所有 agent（Claude Code、Codex、Pi 等）的共用入口，回复全程中文。AIcove 是本地运行、隐私优先的 AI 陪伴聊天客户端（Flutter）＋用户自部署的云同步服务（`cloud_backend/`）；不是治疗产品，不做心理监控或内容审核（ADR0066）；不支持 Web 端。
+所有 agent（Claude Code、Codex、Pi、Gemini 等）的共用入口。AIcove 是本地运行、隐私优先的 AI 陪伴聊天客户端（Flutter）＋用户自部署的云同步服务（`cloud_backend/`）；不是治疗产品，不做心理监控或内容审核（ADR0066）；不支持 Web 端。
 
 ## 资料在哪
 
@@ -22,16 +22,17 @@
 - 范围内的本地改动、测试、修错直接做；删除文件、数据／schema 迁移、核心依赖、公开 API、全局配置、生产环境，先说明再动。
 - 写完要验证，方式见 `DEVELOPMENT.md` 宪法第 7 条（默认 Mac 窄屏，不占用户手机）；修 bug 先写复现测试；不顺手扩大范围。
 - 改了用户可见界面，汇报附基于修改后源码的 Flutter 渲染预览图，标明「源码渲染预览」。
-- 默认主会话独立完成，外部模型和子代理只在用户点名时用。
+- 子代理按全局规则 `~/.config/agents/subagent-rules.md`，合适时可开，小任务用小模型。
 - 有实际改动时收工：补需求日志本次条目的「结果」一句；状态变了就原地改写 README 那一行；架构级决定写 ADR 并加索引；「表面原因≠真实原因」的 bug 记进经验教训。hook 实现在 `hooks/memory.py`。
 - 编码：KISS、YAGNI、DRY，跟随现有风格；改公共组件同步 `公共组件总览.md`。
+- 界面：优先复用公共组件，不加无意义的包装框、徽标和层级；界面文案不用工程术语，不懂技术的人也能一眼看懂。
 
 ## 环境
 
 - Flutter 只用 `apps/aicove_flutter/tool/flutterw`；node 用前 `. ~/.nvm/nvm.sh`。Dart MCP 工具可见不等于已连上应用。
 - 手机问题先在 `apps/aicove_flutter/` 跑 `python3 tool/collect_diagnostics.py --release --since 2h --print` 抓日志，先保全现场再重启或重装。装手机用 `adb -s <id> install -r <apk>`，`flutter install` 会先卸载清数据。用户说「直接安装」时装上即可。
 - Mac 界面验收不抢前台：不调 `activateIgnoringOtherApps`／`AXRaise`／全局鼠标键盘事件；Computer Use 须用户当次授权，否则启动调试会话后列测试步骤给用户。
-- 真实模型测试：DeepSeek `deepseek-flash`（`https://api.deepseek.com`，OpenAI 格式），Key 是 `~/.zshenv` 里的 `DEEPSEEK_API_KEY`，不写进仓库。
+- 真实模型测试：DeepSeek `deepseek/deepseek-v4.1-flash-1017`（`https://api-gateway.merge.dev/v1/openai`，OpenAI 格式），Key 是 `~/.zshenv` 里的 `DEEPSEEK_API_KEY`，不写进仓库。
 - 部分文件是 CRLF，脚本改写时保留原换行（Python 用 `newline=''`），改完看 `git diff --stat`。
 
 ## Git 与公开发布

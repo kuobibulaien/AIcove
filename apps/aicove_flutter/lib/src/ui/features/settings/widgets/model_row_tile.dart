@@ -48,11 +48,14 @@ class ModelRowTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.moeColors;
     final cs = Theme.of(context).colorScheme;
-    final hasDisplayName = displayName != null && displayName!.isNotEmpty;
-
     // 获取模型类型和配置
     final settings = ref.watch(appSettingsProvider).valueOrNull;
     final modelRef = settings?.buildModelRef(providerId, model) ?? model;
+    final resolvedDisplayName = (displayName != null && displayName!.isNotEmpty)
+        ? displayName
+        : settings?.getCustomModelDisplayName(model, providerId: providerId);
+    final hasDisplayName =
+        resolvedDisplayName != null && resolvedDisplayName.isNotEmpty;
     final modelType = settings?.getModelType(modelRef) ?? ModelType.chat;
     final modelConfig =
         settings?.getModelConfig(modelRef) ?? const ModelConfig();
@@ -66,14 +69,9 @@ class ModelRowTile extends ConsumerWidget {
         : const <ModelFeature>[];
 
     return MoeSettingsRow(
-      label: hasDisplayName ? displayName! : model,
+      label: hasDisplayName ? resolvedDisplayName : model,
       labelMaxLines: 1,
-      subtitleWidget: _buildSubtitle(
-        colors,
-        hasDisplayName,
-        modelType,
-        features,
-      ),
+      subtitleWidget: _buildSubtitle(modelType, features),
       trailingType: MoeSettingsRowTrailing.custom,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -99,7 +97,7 @@ class ModelRowTile extends ConsumerWidget {
               ref: ref,
               modelId: model,
               modelRef: modelRef,
-              currentDisplayName: displayName,
+              currentDisplayName: resolvedDisplayName,
               currentType: modelType,
               currentConfig: modelConfig,
             ),
@@ -116,7 +114,7 @@ class ModelRowTile extends ConsumerWidget {
               ref: ref,
               providerId: providerId,
               modelId: model,
-              displayName: displayName,
+              displayName: resolvedDisplayName,
             ),
           ),
         ],
@@ -126,7 +124,7 @@ class ModelRowTile extends ConsumerWidget {
         ref: ref,
         modelId: model,
         modelRef: modelRef,
-        currentDisplayName: displayName,
+        currentDisplayName: resolvedDisplayName,
         currentType: modelType,
         currentConfig: modelConfig,
       ),
@@ -141,10 +139,8 @@ class ModelRowTile extends ConsumerWidget {
     MoeToast.brief(context, '已复制: $modelId');
   }
 
-  /// 构建副标题区域（模型ID + 类型标签 + 特性标签）
+  /// 构建副标题区域（类型标签 + 特性标签）
   Widget? _buildSubtitle(
-    MoeColors colors,
-    bool hasDisplayName,
     ModelType modelType,
     List<ModelFeature> features,
   ) {
@@ -152,40 +148,21 @@ class ModelRowTile extends ConsumerWidget {
     final showTypeTag = modelType != ModelType.chat;
     final hasFeatures = features.isNotEmpty;
 
-    if (!hasDisplayName && !hasFeatures && !showTypeTag) return null;
+    if (!hasFeatures && !showTypeTag) return null;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    return Row(
       children: [
-        // 第一行：模型ID（如果有备注名）
-        if (hasDisplayName)
-          Text(
-            model,
-            style: TextStyle(fontSize: 12, color: colors.muted),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        // 第二行：类型标签 + 特性标签
-        if (showTypeTag || hasFeatures)
-          Padding(
-            padding: EdgeInsets.only(top: hasDisplayName ? 4 : 0),
-            child: Row(
-              children: [
-                // 模型类型标签（非 chat 类型才显示）
-                if (showTypeTag) ...[
-                  _ModelTypeChip(type: modelType),
-                  if (hasFeatures) const SizedBox(width: 4),
-                ],
-                // 模型特性标签
-                if (hasFeatures)
-                  ModelFeatureChips(
-                    modelId: model,
-                    maxShow: 2,
-                    features: features,
-                  ),
-              ],
-            ),
+        // 模型类型标签（非 chat 类型才显示）
+        if (showTypeTag) ...[
+          _ModelTypeChip(type: modelType),
+          if (hasFeatures) const SizedBox(width: 4),
+        ],
+        // 模型特性标签
+        if (hasFeatures)
+          ModelFeatureChips(
+            modelId: model,
+            maxShow: 2,
+            features: features,
           ),
       ],
     );
@@ -199,7 +176,7 @@ class ModelRowTile extends ConsumerWidget {
     String? displayName,
   }) async {
     final label = (displayName != null && displayName.isNotEmpty)
-        ? '「$displayName」($modelId)'
+        ? '「$displayName」'
         : '「$modelId」';
 
     final confirmed = await showMeoTalkDialog(
@@ -342,8 +319,6 @@ class ModelRowTile extends ConsumerWidget {
       context: context,
       title: '编辑模型',
       showCloseButton: true,
-      isDismissible: false,
-      enableDrag: false,
       builder: (context) => MoeAutoSaveForm(
         disposeFields: true,
         save: saveModel,

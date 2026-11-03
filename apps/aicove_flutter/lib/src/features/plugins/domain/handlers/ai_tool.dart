@@ -49,6 +49,11 @@ class AITool {
   final Duration? executionTimeout;
   final bool managesDeadline;
 
+  /// The tool bounds its own output and supplies continuation metadata or an
+  /// artifact. Do not apply the generic inline cap again. Context-pressure
+  /// pruning may still shorten a later request copy.
+  final bool managesOutput;
+
   /// This call needs explicit human consent, regardless of risk defaults.
   final bool requiresHumanApproval;
 
@@ -88,6 +93,7 @@ class AITool {
     this.controlledHandler,
     this.executionTimeout,
     this.managesDeadline = false,
+    this.managesOutput = false,
     this.requiresHumanApproval = false,
     this.terminationReason,
     this.effect = ToolEffect.external,
@@ -128,6 +134,7 @@ class AITool {
     controlledHandler: controlledHandler,
     executionTimeout: executionTimeout,
     managesDeadline: managesDeadline,
+    managesOutput: managesOutput,
     requiresHumanApproval: requiresHumanApproval,
     terminationReason: terminationReason,
     effect: effect,

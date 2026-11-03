@@ -41,6 +41,7 @@ class ContentTagSpec {
     this.display = ContentTagDisplay.text,
     this.displayRequiresBareTag = false,
     this.jsonPayload = false,
+    this.wrapsRestWhenUnclosed = false,
   });
 
   /// 小写标签名。
@@ -62,6 +63,9 @@ class ContentTagSpec {
 
   /// 正文是 JSON 数据（如 `<JSONPatch>`）：字符串字面量里出现的闭标签不算结束。
   final bool jsonPayload;
+
+  /// 未闭合时其后内容都算在它里面，后文的完整标签也不会把它退回普通文字。
+  final bool wrapsRestWhenUnclosed;
 
   static const String builtinOwnerId = 'builtin';
 

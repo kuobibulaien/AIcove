@@ -319,8 +319,111 @@ Color _hexToColor(String hex) {
   return value == null ? const Color(0xFFFC96AA) : Color(value);
 }
 
-/// 自动回复设置
+/// 主动回复频率档位
+enum AutoReplyFrequency {
+  normal('default', '默认'),
+  frequent('frequent', '频繁');
+
+  final String value;
+  final String label;
+
+  const AutoReplyFrequency(this.value, this.label);
+
+  static AutoReplyFrequency fromValue(String? raw) {
+    return switch (raw?.trim()) {
+      'frequent' => AutoReplyFrequency.frequent,
+      _ => AutoReplyFrequency.normal,
+    };
+  }
+}
+
+/// 单个联系人的主动回复覆盖设置（未设置的字段继承全局默认）
+class ContactAutoReplySettings {
+  final AutoReplyFrequency? frequency;
+  final bool? quietHoursEnabled;
+  final String? quietHoursStart;
+  final String? quietHoursEnd;
+  final bool? allowAiSetReminders;
+  final bool? allowProactiveCalls;
+
+  const ContactAutoReplySettings({
+    this.frequency,
+    this.quietHoursEnabled,
+    this.quietHoursStart,
+    this.quietHoursEnd,
+    this.allowAiSetReminders,
+    this.allowProactiveCalls,
+  });
+
+  bool get isEmpty =>
+      frequency == null &&
+      quietHoursEnabled == null &&
+      quietHoursStart == null &&
+      quietHoursEnd == null &&
+      allowAiSetReminders == null &&
+      allowProactiveCalls == null;
+
+  ContactAutoReplySettings copyWith({
+    AutoReplyFrequency? frequency,
+    bool? quietHoursEnabled,
+    String? quietHoursStart,
+    String? quietHoursEnd,
+    bool? allowAiSetReminders,
+    bool? allowProactiveCalls,
+  }) {
+    return ContactAutoReplySettings(
+      frequency: frequency ?? this.frequency,
+      quietHoursEnabled: quietHoursEnabled ?? this.quietHoursEnabled,
+      quietHoursStart: quietHoursStart ?? this.quietHoursStart,
+      quietHoursEnd: quietHoursEnd ?? this.quietHoursEnd,
+      allowAiSetReminders: allowAiSetReminders ?? this.allowAiSetReminders,
+      allowProactiveCalls: allowProactiveCalls ?? this.allowProactiveCalls,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    if (frequency != null) 'frequency': frequency!.value,
+    if (quietHoursEnabled != null) 'quiet_hours_enabled': quietHoursEnabled,
+    if (quietHoursStart != null) 'quiet_hours_start': quietHoursStart,
+    if (quietHoursEnd != null) 'quiet_hours_end': quietHoursEnd,
+    if (allowAiSetReminders != null)
+      'allow_ai_set_reminders': allowAiSetReminders,
+    if (allowProactiveCalls != null)
+      'allow_proactive_calls': allowProactiveCalls,
+  };
+
+  factory ContactAutoReplySettings.fromJson(Map<String, dynamic> json) {
+    String? normalizeOptionalTime(String? value) {
+      if (value == null || value.isEmpty) return null;
+      final parts = value.split(':');
+      if (parts.length != 2) return null;
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h == null || m == null) return null;
+      final hh = h.clamp(0, 23).toInt().toString().padLeft(2, '0');
+      final mm = m.clamp(0, 59).toInt().toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+
+    final rawFreq = json['frequency'] as String?;
+    return ContactAutoReplySettings(
+      frequency: rawFreq == null || rawFreq.trim().isEmpty
+          ? null
+          : AutoReplyFrequency.fromValue(rawFreq),
+      quietHoursEnabled: json['quiet_hours_enabled'] as bool?,
+      quietHoursStart: normalizeOptionalTime(
+        json['quiet_hours_start'] as String?,
+      ),
+      quietHoursEnd: normalizeOptionalTime(json['quiet_hours_end'] as String?),
+      allowAiSetReminders: json['allow_ai_set_reminders'] as bool?,
+      allowProactiveCalls: json['allow_proactive_calls'] as bool?,
+    );
+  }
+}
+
+/// 主动回复设置
 class AutoReplySettings {
+  final AutoReplyFrequency frequency;
   final int dailyLimit;
   final int minIntervalMinutes;
   final bool quietHoursEnabled;
@@ -333,11 +436,13 @@ class AutoReplySettings {
   final bool allowProactiveCalls;
   final String? analyzerModel;
   final String? analyzerProvider;
+  final Map<String, ContactAutoReplySettings> contactSettings;
 
   const AutoReplySettings({
+    this.frequency = AutoReplyFrequency.normal,
     this.dailyLimit = 3,
     this.minIntervalMinutes = 120,
-    this.quietHoursEnabled = true,
+    this.quietHoursEnabled = false,
     this.quietHoursStart = '22:00',
     this.quietHoursEnd = '08:00',
     this.allowExactAlarm = false,
@@ -345,9 +450,81 @@ class AutoReplySettings {
     this.allowProactiveCalls = false,
     this.analyzerModel,
     this.analyzerProvider,
+    this.contactSettings = const <String, ContactAutoReplySettings>{},
   });
 
+  bool hasContactOverride(String? conversationId) {
+    final id = conversationId?.trim() ?? '';
+    if (id.isEmpty) return false;
+    final override = contactSettings[id];
+    return override != null && !override.isEmpty;
+  }
+
+  /// 解析指定联系人的生效设置（未单独设置的项继承全局默认）。
+  AutoReplySettings forContact(String? conversationId) {
+    final id = conversationId?.trim() ?? '';
+    if (id.isEmpty) return this;
+    final override = contactSettings[id];
+    if (override == null || override.isEmpty) return this;
+    return copyWith(
+      frequency: override.frequency ?? frequency,
+      quietHoursEnabled: override.quietHoursEnabled ?? quietHoursEnabled,
+      quietHoursStart: override.quietHoursStart ?? quietHoursStart,
+      quietHoursEnd: override.quietHoursEnd ?? quietHoursEnd,
+      allowAiSetReminders: override.allowAiSetReminders ?? allowAiSetReminders,
+      allowProactiveCalls: override.allowProactiveCalls ?? allowProactiveCalls,
+    );
+  }
+
+  /// 按作用域修改设置：`conversationId` 为空时改全局默认，非空时只改该联系人的覆盖项。
+  AutoReplySettings applyScoped(
+    String? conversationId, {
+    AutoReplyFrequency? frequency,
+    bool? quietHoursEnabled,
+    String? quietHoursStart,
+    String? quietHoursEnd,
+    bool? allowAiSetReminders,
+    bool? allowProactiveCalls,
+  }) {
+    final id = conversationId?.trim() ?? '';
+    if (id.isEmpty) {
+      return copyWith(
+        frequency: frequency,
+        quietHoursEnabled: quietHoursEnabled,
+        quietHoursStart: quietHoursStart,
+        quietHoursEnd: quietHoursEnd,
+        allowAiSetReminders: allowAiSetReminders,
+        allowProactiveCalls: allowProactiveCalls,
+      );
+    }
+    final current = contactSettings[id] ?? const ContactAutoReplySettings();
+    final updated = current.copyWith(
+      frequency: frequency,
+      quietHoursEnabled: quietHoursEnabled,
+      quietHoursStart: quietHoursStart,
+      quietHoursEnd: quietHoursEnd,
+      allowAiSetReminders: allowAiSetReminders,
+      allowProactiveCalls: allowProactiveCalls,
+    );
+    final nextMap = Map<String, ContactAutoReplySettings>.from(contactSettings);
+    if (updated.isEmpty) {
+      nextMap.remove(id);
+    } else {
+      nextMap[id] = updated;
+    }
+    return copyWith(contactSettings: nextMap);
+  }
+
+  AutoReplySettings clearContactOverride(String conversationId) {
+    final id = conversationId.trim();
+    if (id.isEmpty || !contactSettings.containsKey(id)) return this;
+    final nextMap = Map<String, ContactAutoReplySettings>.from(contactSettings)
+      ..remove(id);
+    return copyWith(contactSettings: nextMap);
+  }
+
   AutoReplySettings copyWith({
+    AutoReplyFrequency? frequency,
     int? dailyLimit,
     int? minIntervalMinutes,
     bool? quietHoursEnabled,
@@ -360,8 +537,10 @@ class AutoReplySettings {
     String? analyzerProvider,
     bool clearAnalyzerModel = false,
     bool clearAnalyzerProvider = false,
+    Map<String, ContactAutoReplySettings>? contactSettings,
   }) {
     return AutoReplySettings(
+      frequency: frequency ?? this.frequency,
       dailyLimit: dailyLimit ?? this.dailyLimit,
       minIntervalMinutes: minIntervalMinutes ?? this.minIntervalMinutes,
       quietHoursEnabled: quietHoursEnabled ?? this.quietHoursEnabled,
@@ -376,10 +555,12 @@ class AutoReplySettings {
       analyzerProvider: clearAnalyzerProvider
           ? null
           : (analyzerProvider ?? this.analyzerProvider),
+      contactSettings: contactSettings ?? this.contactSettings,
     );
   }
 
   Map<String, dynamic> toJson() => {
+    'frequency': frequency.value,
     'daily_limit': dailyLimit,
     'min_interval_minutes': minIntervalMinutes,
     'quiet_hours_enabled': quietHoursEnabled,
@@ -390,6 +571,11 @@ class AutoReplySettings {
     'allow_proactive_calls': allowProactiveCalls,
     'analyzer_model': analyzerModel,
     'analyzer_provider': analyzerProvider,
+    if (contactSettings.isNotEmpty)
+      'contact_settings': {
+        for (final entry in contactSettings.entries)
+          if (!entry.value.isEmpty) entry.key: entry.value.toJson(),
+      },
   };
 
   factory AutoReplySettings.fromJson(Map<String, dynamic> json) {
@@ -413,7 +599,24 @@ class AutoReplySettings {
       return v;
     }
 
+    final contacts = <String, ContactAutoReplySettings>{};
+    final rawContacts = json['contact_settings'];
+    if (rawContacts is Map) {
+      for (final entry in rawContacts.entries) {
+        final key = entry.key.toString().trim();
+        final value = entry.value;
+        if (key.isEmpty || value is! Map) continue;
+        final parsed = ContactAutoReplySettings.fromJson(
+          value.cast<String, dynamic>(),
+        );
+        if (!parsed.isEmpty) {
+          contacts[key] = parsed;
+        }
+      }
+    }
+
     return AutoReplySettings(
+      frequency: AutoReplyFrequency.fromValue(json['frequency'] as String?),
       dailyLimit: clampInt(json['daily_limit'] as num?, 1, 10, 3),
       minIntervalMinutes: clampInt(
         json['min_interval_minutes'] as num?,
@@ -421,7 +624,7 @@ class AutoReplySettings {
         720,
         120,
       ),
-      quietHoursEnabled: json['quiet_hours_enabled'] != false,
+      quietHoursEnabled: json['quiet_hours_enabled'] == true,
       quietHoursStart: normalizeTime(
         json['quiet_hours_start'] as String?,
         '22:00',
@@ -432,6 +635,7 @@ class AutoReplySettings {
       allowProactiveCalls: json['allow_proactive_calls'] == true,
       analyzerModel: json['analyzer_model'] as String?,
       analyzerProvider: json['analyzer_provider'] as String?,
+      contactSettings: contacts,
     );
   }
 }
@@ -769,7 +973,7 @@ class ProviderAuth {
           (json['apiBaseUrl'] as String?) ?? 'https://api.openai.com/v1',
       enabled: (json['enabled'] as bool?) ?? true,
       models: combinedModels,
-      visibleModels: visible.isEmpty && combinedModels.isNotEmpty
+      visibleModels: visible.isEmpty && combinedModels.isNotEmpty && hidden.isEmpty
           ? [combinedModels.first]
           : visible,
       hiddenModels: hidden.where((e) => !visible.contains(e)).toList(),
@@ -1076,6 +1280,9 @@ class AppSettings {
   /// 停在底部时 AI 回复是否跟着往下滚；关闭后停在原处，新内容在下方长出。
   final bool autoScrollOnAiReply;
 
+  /// 是否允许在 AI 回复前连续发送多条消息。
+  final bool allowMultiMessageSend;
+
   /// 气泡模式是否显示思维链折叠气泡。
   final bool bubbleShowThinking;
 
@@ -1140,6 +1347,7 @@ class AppSettings {
     this.chatDisplayStyle = ChatDisplayStyle.bubble,
     this.autoScrollOnSend = true,
     this.autoScrollOnAiReply = true,
+    this.allowMultiMessageSend = false,
     this.bubbleShowThinking = true,
     this.documentShowThinking = true,
     this.documentShowToolCalls = true,
@@ -1219,6 +1427,7 @@ class AppSettings {
     ChatDisplayStyle? chatDisplayStyle,
     bool? autoScrollOnSend,
     bool? autoScrollOnAiReply,
+    bool? allowMultiMessageSend,
     bool? bubbleShowThinking,
     bool? documentShowThinking,
     bool? documentShowToolCalls,
@@ -1287,6 +1496,7 @@ class AppSettings {
     chatDisplayStyle: chatDisplayStyle ?? this.chatDisplayStyle,
     autoScrollOnSend: autoScrollOnSend ?? this.autoScrollOnSend,
     autoScrollOnAiReply: autoScrollOnAiReply ?? this.autoScrollOnAiReply,
+    allowMultiMessageSend: allowMultiMessageSend ?? this.allowMultiMessageSend,
     bubbleShowThinking: bubbleShowThinking ?? this.bubbleShowThinking,
     documentShowThinking: documentShowThinking ?? this.documentShowThinking,
     documentShowToolCalls:
@@ -1355,22 +1565,19 @@ class AppSettings {
     return '$providerId:$rawId';
   }
 
+  String? getCustomModelDisplayName(String modelId, {String? providerId}) {
+    return resolveCustomModelDisplayName(
+      modelDisplayNames,
+      modelId,
+      providerId: providerId,
+    );
+  }
+
   String getModelDisplayName(String modelId) {
     final ref = modelId.trim();
     if (ref.isEmpty) return ref;
 
-    final direct = modelDisplayNames[ref];
-    if (direct != null && direct.trim().isNotEmpty) {
-      return direct;
-    }
-
-    final rawId = getRawModelId(ref);
-    final raw = modelDisplayNames[rawId];
-    if (raw != null && raw.trim().isNotEmpty) {
-      return raw;
-    }
-
-    return rawId;
+    return getCustomModelDisplayName(ref) ?? getRawModelId(ref);
   }
 
   ProviderAuth? getProvider(String providerId) {
@@ -1380,6 +1587,13 @@ class AppSettings {
       if (provider.id == normalized) return provider;
     }
     return null;
+  }
+
+  String getProviderDisplayName(String providerId) {
+    final normalized = providerId.trim();
+    if (normalized.isEmpty) return '';
+    final displayName = getProvider(normalized)?.displayName?.trim() ?? '';
+    return displayName.isNotEmpty ? displayName : normalized;
   }
 
   List<String> getProviderModelsByType(String providerId, {ModelType? type}) {
@@ -1517,4 +1731,39 @@ class AppSettings {
     //    真超出模型上限时由服务商报错，发送链路按超限压缩重试。
     return contextWindowTokens;
   }
+}
+
+/// 从 [modelDisplayNames] 中解析模型的自定义备注名（优先匹配 `providerId:rawId`，
+/// 其次匹配传入引用，最后回退匹配纯 `rawId`；未设置备注时返回 `null`）。
+String? resolveCustomModelDisplayName(
+  Map<String, String> modelDisplayNames,
+  String modelId, {
+  String? providerId,
+}) {
+  final ref = modelId.trim();
+  if (ref.isEmpty) return null;
+
+  final separator = ref.indexOf(':');
+  final rawId = (separator > 0 && separator < ref.length - 1)
+      ? ref.substring(separator + 1).trim()
+      : ref;
+  final pid = providerId?.trim() ?? '';
+  if (pid.isNotEmpty && rawId.isNotEmpty) {
+    final byProvider = modelDisplayNames['$pid:$rawId'];
+    if (byProvider != null && byProvider.trim().isNotEmpty) {
+      return byProvider;
+    }
+  }
+
+  final direct = modelDisplayNames[ref];
+  if (direct != null && direct.trim().isNotEmpty) {
+    return direct;
+  }
+
+  final raw = modelDisplayNames[rawId];
+  if (raw != null && raw.trim().isNotEmpty) {
+    return raw;
+  }
+
+  return null;
 }

@@ -87,5 +87,5 @@ Nahida:
 你已经做得很好很好了，剩下的疲惫都交给我来抱紧抚平吧，摸摸头~
 
 <<AICOVE_DRAWING_PROMPT_START>>
-danbooru 标签为 nahida_(genshin_impact)
+nahida_(genshin_impact)
 <<AICOVE_DRAWING_PROMPT_END>>

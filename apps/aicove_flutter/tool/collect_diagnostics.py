@@ -70,7 +70,7 @@ def normalize(entry, origin, tz):
                 output[key] = value
         for key in ('appRunId', 'event', 'operationId', 'parentOperationId', 'conversationId',
                     'traceId', 'turnId', 'messageId', 'sourceMessageId', 'pageInstanceId',
-                    'phase', 'reason', 'errorType'):
+                    'pageName', 'phase', 'reason', 'errorType'):
             value = atom(meta.get(key))
             if value is not None:
                 output[key] = value

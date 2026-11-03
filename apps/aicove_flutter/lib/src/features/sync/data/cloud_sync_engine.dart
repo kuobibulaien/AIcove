@@ -199,6 +199,7 @@ class CloudSyncEngine {
           );
         },
       );
+      await local.prepareSchemaFingerprints();
       await local.captureExternal(trackSettingTimes: _settingTimes);
       await local.pruneUnchangedReceiverEdits(trackSettingTimes: _settingTimes);
       if (_indexedRead && (await local.state())['mode'] == 'receive') {
@@ -502,13 +503,46 @@ class CloudSyncEngine {
     if (sequences != null) {
       ordered.removeWhere((row) => !sequences.contains(row['seq']));
     }
-    for (final row in ordered.where(
-      (row) => row['kind'] == '_conflicts' && row['deleted'] == 1,
-    )) {
-      await local.execute(
-        'UPDATE cloud_versions SET conflict_id=NULL WHERE conflict_id=?',
-        [row['entity_id']],
+    final retiredConflicts = ordered
+        .where((row) => row['kind'] == '_conflicts' && row['deleted'] == 1)
+        .toList();
+    for (final row in retiredConflicts) {
+      await cloudLocalWrite(
+        () => local.db.transaction(() async {
+          final cleared = await local.rows(
+            'SELECT cloud_json FROM cloud_versions WHERE conflict_id=?',
+            [row['entity_id']],
+          );
+          await local.execute(
+            'UPDATE cloud_versions SET conflict_id=NULL WHERE conflict_id=?',
+            [row['entity_id']],
+          );
+          // A conflict receipt may be the last business document we received.
+          // Its tombstone can therefore heal an edit without another inbox row.
+          for (final known in cleared) {
+            final document = Map<String, dynamic>.from(
+              jsonDecode(known['cloud_json'] as String) as Map,
+            );
+            // Successful snapshot receipts retain only a compact cloud summary.
+            // Those use the saved local baseline in receiver pruning below.
+            if (cloudTables.containsKey(document['kind']) &&
+                (document['payload'] as Map)['row'] is! Map) {
+              continue;
+            }
+            if (await _acceptMatchingInboxEdit(document)) {
+              ordered.removeWhere(
+                (pending) =>
+                    pending['kind'] == document['kind'] &&
+                    pending['entity_id'] == document['entity_id'] &&
+                    (pending['seq'] as int) <= (document['seq'] as int),
+              );
+            }
+          }
+        }),
       );
+    }
+    if (retiredConflicts.isNotEmpty) {
+      await local.pruneUnchangedReceiverEdits(trackSettingTimes: _settingTimes);
     }
     ordered.sort((a, b) {
       final ad = a['deleted'] == 1, bd = b['deleted'] == 1;
@@ -558,7 +592,7 @@ class CloudSyncEngine {
                 continue;
               }
             }
-            await _acceptMatchingInboxEdit(document);
+            if (await _acceptMatchingInboxEdit(document)) continue;
             final known = await _version(kind, id);
             if (kind == '_conflicts' ||
                 (known != null &&
@@ -568,6 +602,34 @@ class CloudSyncEngine {
               continue;
             }
             if (known?['conflict_id'] != null) continue;
+            // Keep the tombstone pending while locally retained messages still
+            // reference this parent. Other inbox rows must remain applicable.
+            if (kind == 'conversations' &&
+                document['deleted'] == true &&
+                (await local.rows(
+                  'SELECT 1 FROM messages WHERE conversation_id=? LIMIT 1',
+                  [id],
+                )).isNotEmpty) {
+              // A message the deleting device knew, still settled here, is
+              // awaiting its own tombstone. Anything else is local work the
+              // deleter never saw: keep the conversation instead of waiting
+              // for a message deletion that will never arrive.
+              if ((await local.rows(
+                '''SELECT 1 FROM messages m WHERE m.conversation_id=? AND (
+                  EXISTS (SELECT 1 FROM cloud_inbox i
+                    WHERE i.kind='messages' AND i.entity_id=m.id)
+                  OR (NOT EXISTS (SELECT 1 FROM cloud_dirty d
+                      WHERE d.kind='messages' AND d.entity_id=m.id)
+                    AND EXISTS (SELECT 1 FROM cloud_versions v
+                      WHERE v.kind='messages' AND v.entity_id=m.id
+                      AND json_extract(v.cloud_json,'\$.seq')<?))) LIMIT 1''',
+                [id, document['seq']],
+              )).isEmpty) {
+                await local.mark(kind, id);
+                await _clearInbox(kind, id, document['seq'] as int);
+              }
+              continue;
+            }
             if ((await local.rows(
               'SELECT 1 FROM cloud_dirty WHERE kind=? AND entity_id=?',
               [kind, id],
@@ -649,35 +711,49 @@ class CloudSyncEngine {
 
   /// An old comparison baseline can disagree even when every current field is
   /// identical to the incoming version. Repair only exact matches, under the
-  /// same database transaction, and never consume a frozen or conflicted edit.
-  Future<void> _acceptMatchingInboxEdit(Map<String, dynamic> document) async {
-    if (document['deleted'] == true || document['kind'] == '_conflicts') return;
+  /// same database transaction, and never consume a frozen edit.
+  Future<bool> _acceptMatchingInboxEdit(Map<String, dynamic> document) async {
+    if (document['deleted'] == true || document['kind'] == '_conflicts') {
+      return false;
+    }
     final kind = document['kind'] as String,
         id = document['entity_id'] as String;
     final pending = await local.rows(
-      'SELECT d.revision,v.version FROM cloud_dirty d JOIN cloud_versions v USING(kind,entity_id) LEFT JOIN cloud_outbox o USING(kind,entity_id) WHERE d.kind=? AND d.entity_id=? AND v.conflict_id IS NULL AND o.op_id IS NULL',
+      'SELECT d.revision,v.version FROM cloud_versions v LEFT JOIN cloud_dirty d USING(kind,entity_id) LEFT JOIN cloud_outbox o USING(kind,entity_id) WHERE v.kind=? AND v.entity_id=? AND o.op_id IS NULL',
       [kind, id],
     );
     if (pending.isEmpty ||
         (pending.single['version'] as int) > (document['version'] as int)) {
-      return;
+      return false;
     }
     final current = await local.read(kind, id);
-    if (current == null || current.isSendingMessage) return;
+    if (current == null || current.isSendingMessage) return false;
     final incoming = await codec.decode(
       kind,
       Map<String, dynamic>.from(document['payload'] as Map),
     );
-    if (canonicalJson(current.payload) != canonicalJson(incoming)) return;
-    if ((await local.read(kind, id))?.localJson != current.localJson) return;
-    await local.execute(
-      'UPDATE cloud_versions SET local_json=? WHERE kind=? AND entity_id=?',
-      [current.localJson, kind, id],
-    );
-    await local.execute(
-      'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=? AND revision=?',
-      [kind, id, pending.single['revision']],
-    );
+    await local.validateRowPayload(kind, id, incoming);
+    Map<String, dynamic> content(Map<String, dynamic> payload) => {...payload}
+      ..remove('client_schema')
+      ..remove('setting_times_version')
+      ..remove('setting_times');
+    if (canonicalJson(content(current.payload)) !=
+        canonicalJson(content(incoming))) {
+      return false;
+    }
+    if ((await local.read(kind, id))?.localJson != current.localJson) {
+      return false;
+    }
+    await local.rememberSettingTimes(kind, id, incoming);
+    await _remember(document, current.localJson, conflict: null);
+    if (pending.single['revision'] != null) {
+      await local.execute(
+        'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=? AND revision=?',
+        [kind, id, pending.single['revision']],
+      );
+    }
+    await _clearInbox(kind, id, document['seq'] as int);
+    return true;
   }
 
   Future<Map<String, dynamic>> _inboxDocument(Map<String, dynamic> row) async =>
@@ -1149,8 +1225,7 @@ class CloudSyncEngine {
     for (var index = 0; index < pending.length; index++) {
       _checkOpen();
       if ((await local.state())['enabled'] != 1) return;
-      final item = pending[index],
-          kind = pending[index]['kind'] as String,
+      final kind = pending[index]['kind'] as String,
           id = pending[index]['entity_id'] as String;
       if (retiredCloudKinds.contains(kind)) {
         await local.execute(
@@ -1159,15 +1234,49 @@ class CloudSyncEngine {
         );
         continue;
       }
-      final document = await local.read(kind, id);
+      // Capture content and its clocks under one publication lock and SQLite
+      // snapshot. Media encoding may yield for file I/O after this point.
+      final snapshot = await cloudLocalWrite(
+        () => local.db.transaction(() async {
+          final dirty = await local.rows(
+            'SELECT revision FROM cloud_dirty WHERE kind=? AND entity_id=?',
+            [kind, id],
+          );
+          if (dirty.isEmpty) return null;
+          final document = await local.read(kind, id);
+          final times =
+              _settingTimes &&
+                  document != null &&
+                  const {
+                    'conversations',
+                    'providers',
+                    'settings',
+                  }.contains(kind)
+              ? await local.settingTimes(
+                  kind,
+                  id,
+                  media.deviceId,
+                  document: document,
+                )
+              : null;
+          return (
+            document: document,
+            known: await _version(kind, id),
+            times: times,
+            revision: dirty.single['revision'],
+          );
+        }),
+      );
+      if (snapshot == null) continue;
+      final document = snapshot.document;
       // Recheck the snapshot: status may change after the pending query.
       // Do not freeze, acknowledge, or mistake a deferred row for a deletion.
       if (document?.isSendingMessage == true) continue;
-      final known = await _version(kind, id);
+      final known = snapshot.known;
       if (document == null && known == null) {
         await local.execute(
           'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=? AND revision=?',
-          [kind, id, item['revision']],
+          [kind, id, snapshot.revision],
         );
         continue;
       }
@@ -1181,15 +1290,9 @@ class CloudSyncEngine {
         'payload_version': 1,
         'payload': {
           ...?wire?.payload,
-          if (_settingTimes &&
-              document != null &&
-              const {
-                'conversations',
-                'providers',
-                'settings',
-              }.contains(kind)) ...{
+          if (snapshot.times != null) ...{
             'setting_times_version': 1,
-            'setting_times': await local.settingTimes(kind, id, media.deviceId),
+            'setting_times': snapshot.times,
           },
         },
         'blob_ids': <String>[],
@@ -1204,7 +1307,7 @@ class CloudSyncEngine {
         operation['op_id'],
         kind,
         id,
-        item['revision'],
+        snapshot.revision,
         encoded,
         document?.localJson,
       ]);

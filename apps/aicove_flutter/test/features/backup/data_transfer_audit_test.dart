@@ -8,7 +8,7 @@ import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:aicove_flutter/src/core/database/database.dart' hide SyncScope;
+import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/database/repositories/repositories.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_exporter.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_importer.dart';

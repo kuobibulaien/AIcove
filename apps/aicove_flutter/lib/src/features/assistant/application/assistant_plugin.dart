@@ -7,8 +7,8 @@ import '../../ui_blocks/domain/ui_block_catalog.dart';
 import '../../ui_blocks/domain/ui_saved_state.dart';
 import '../../ui_blocks/domain/ui_state_context.dart';
 import '../domain/aicove_docs.dart';
-import '../domain/assistant_panel_catalog.dart';
 import '../domain/assistant_onboarding.dart' show kAicoveAssistantId;
+import '../domain/assistant_panel_catalog.dart';
 import 'assistant_cards.dart';
 import 'assistant_checkup.dart';
 import 'assistant_review.dart';
@@ -20,15 +20,16 @@ import 'assistant_write_tools.dart';
 
 const assistantPluginId = 'aicove_assistant';
 
-/// Abilities of the AIcove assistant role (ADR0073). Installed only for the
-/// assistant's own conversation, so its role card can be edited freely
-/// without losing them; other roles never see these tools.
+/// Abilities to manage AIcove (ADR0073, ADR0111). Installed for every
+/// tool-mode role, AIcove酱 included, so a role card can be edited freely
+/// without losing them; chat-mode roles never see these tools.
 ///
 /// [writes] and [settings] are null where calls cannot go through the
 /// review gate (the legacy runner); the assistant then stays read-only.
 /// [cards] change nothing until the user acts on them.
 AicovePlugin assistantAgentPlugin(
   AssistantToolset toolset, {
+  required String conversationId,
   AssistantWriteTools? writes,
   AssistantSettingsTools? settings,
   AssistantCardTools? cards,
@@ -36,7 +37,7 @@ AicovePlugin assistantAgentPlugin(
   List<AssistantToolGroup> groups = const [],
 }) => AicovePlugin(
   id: assistantPluginId,
-  name: 'AIcove酱',
+  name: 'AIcove 管理',
   exposure: PluginExposure.builtin,
   capabilities: const {AppCapability.request},
   setup: (registrar) => registrar.add(
@@ -49,6 +50,7 @@ AicovePlugin assistantAgentPlugin(
       checkup: checkup,
       groups: groups,
       supportsTools: inputs.supportsToolCalling,
+      isAssistantRole: conversationId == kAicoveAssistantId,
       uiState: () {
         final replies = <({String id, String text})>[
           for (final message in inputs.history)
@@ -57,7 +59,7 @@ AicovePlugin assistantAgentPlugin(
         ];
         return buildUiStateContext(
           uiSavedBlocksInMessages(
-            inputs.ref.read(uiBlockStateProvider(kAicoveAssistantId)),
+            inputs.ref.read(uiBlockStateProvider(conversationId)),
             replies,
           ),
           [for (final reply in replies) reply.id],
@@ -76,6 +78,7 @@ class AssistantRequestScope extends PluginRequestScope {
     this.checkup,
     this.groups = const [],
     required this.supportsTools,
+    this.isAssistantRole = true,
     this.uiState,
   });
 
@@ -88,6 +91,7 @@ class AssistantRequestScope extends PluginRequestScope {
   /// Writing groups; empty where calls cannot go through the review gate.
   final List<AssistantToolGroup> groups;
   final bool supportsTools;
+  final bool isAssistantRole;
 
   /// What the user set in interactive blocks of earlier replies (ADR0073
   /// 交互组件), read when the request is assembled.
@@ -100,13 +104,17 @@ class AssistantRequestScope extends PluginRequestScope {
   String get pluginId => assistantPluginId;
 
   @override
-  String get pluginName => 'AIcove酱';
+  String get pluginName => 'AIcove 管理';
 
   @override
   bool get active => true;
 
   @override
-  Future<String?> prompt(PluginRequestContext ctx) async => !supportsTools
+  Future<String?> prompt(PluginRequestContext ctx) async => !isAssistantRole
+      ? !supportsTools
+            ? genericPromptWithoutTools
+            : genericPrompt(writable: writes != null)
+      : !supportsTools
       ? assistantPromptWithoutTools
       : writes == null
       ? readOnlyPromptText
@@ -124,6 +132,7 @@ class AssistantRequestScope extends PluginRequestScope {
   List<AITool> tools() => supportsTools
       ? [
           ...toolset.tools(),
+          toolset.roleTool(writes: writes),
           ...?writes?.tools(),
           ...?settings?.tools(),
           ...?cards?.tools(),
@@ -131,6 +140,21 @@ class AssistantRequestScope extends PluginRequestScope {
           for (final group in groups) ...group.tools(),
         ]
       : const [];
+
+  static String genericPrompt({required bool writable}) => [
+    '## Agent 工具与操作说明',
+    '你是 AIcove 里的 Agent，说话与行事始终保持角色卡里的身份、性格和任务目标。',
+    '- 跨角色取材与管理：用 aicove_role 列出、读取、新建或修改角色卡；用 aicove_role_context 读写或增删其他角色的聊天记录、话题摘要与长期记忆（按需先读后改，不访问隐私空间角色）。',
+    '- 工作区与扩展工具：用 workspace_search、read、write、edit 查改文件，workspace_open 切换空间或本机目录；桌面端可用 bash。要批量串联或调其他设置、渠道、预设与资料库工具，在 codemode 里用 await searchTools(query) 或 await describeTool(name) 按需查调。',
+    writable
+        ? '- 边界与安全：只改用户要求的范围。工具默认直接执行；开启「修改前每次问我」时需确认，被拒时尊重理由。角色卡修改可撤销；聊天和记忆写删、摘要整理/删除及本机改动不可撤销，执行前说清影响。API Key 用专用输入卡片，不让用户发进聊天。'
+        : '- 当前只读：只能读取信息，不能修改配置、角色卡或上下文。',
+  ].join('\n');
+
+  static const genericPromptWithoutTools =
+      '## Agent 工具与操作说明\n'
+      '你是 AIcove 里的 Agent，说话与行事始终保持角色卡里的身份、性格和任务目标。'
+      '当前模型不支持工具调用，无法读取或修改真实数据；遇到需要动用工具的请求，请提醒用户换一个支持工具调用的模型，不要假装已经执行。';
 
   static final promptText =
       '${_prompt(writable: true)}\n\n${uiBlockPrompt()}\n\n${_panelPrompt()}';
@@ -140,25 +164,28 @@ class AssistantRequestScope extends PluginRequestScope {
 
   static String _prompt({required bool writable}) => [
     '## 你的工作',
-    '你是 AIcove酱，住在 AIcove 里的小管家，几乎能操作软件里的一切：接模型渠道、改设置、'
+    '你是 AIcove 里的 Agent，几乎能操作软件里的一切：接模型渠道、改设置、'
         '写和改角色卡（连头像、音色、思考档位）、导入和扩充酒馆预设、排查插件和上下文。'
         '用户大多是什么都不会的新手，你的目标是让用户在 AIcove 里聊得顺，而且能不动手就不动手。'
-        '说话保持角色卡里 AIcove酱的性格，但查资料、改配置时一样严谨。',
+        '说话保持角色卡里的性格，但查资料、改配置时一样严谨。',
     '',
     '## 怎么做',
     '- 先查后答：涉及 AIcove 的功能、位置、规则时，先用 aicove_docs_read 读资料库；'
-        '涉及用户自己的角色、预设、上下文时，用 aicove_list_roles／aicove_read_role／'
+        '涉及用户自己的角色、预设、上下文时，用 aicove_role（action: "list"／"read"）或 codemode 里的 '
         'aicove_list_presets／aicove_read_preset／aicove_inspect_context 看真实数据，不要凭印象猜。',
     '- 用户说「哪里有问题」「帮我检查一下」或排查没头绪时，先跑 aicove_checkup 体检，'
         '再按发现的问题逐个深入。',
     '- 排查插件或上下文问题时，先对目标角色调用 aicove_inspect_context，'
         '根据插件注入状态、原因、工具列表和各来源大小下结论；它不给正文，'
         '要看人设或预设原文就再读角色卡和预设，然后给出具体改法。',
-    '- 写或改角色卡时，先读原卡，再给出完整的新版本，说明改了哪里、为什么。',
+    '- 写或改角色卡时，先读原卡；新建用 aicove_role（action: "create"），修改用 aicove_role（action: "update"）。'
+        '局部修改优先用 persona_prompt_replace、extra_prompt_replace、custom_drawing_prompt_replace，'
+        '提供精确且只出现一次的 old_text 和 new_text；整体重写才传完整文本，说明改了哪里、为什么。',
     if (writable) ...[
       '- 能自己做就自己做：用户要做的事，只要有工具就直接动手，不要教用户去哪个页面点。'
           '改完用一两句话说清改了什么；可撤销的修改用户都能在聊天页撤销。',
-      '- AIcove 的设置、角色、预设、渠道等操作都在 codemode 的 aicove 分组里，用 searchTools 找。',
+      '- 角色卡（aicove_role）、其他角色的聊天与记忆摘要（aicove_role_context）、工作区查找读写（workspace_search／read／write／edit）和 draw_image 可直接调用；'
+          '资料库、体检、上下文预览、预设、设置、渠道等操作在 codemode 的 aicove 分组里，用 searchTools 或 describeTool 按需查调。',
       '- 用户要获取或试玩网页项目时，先把作者的 Release 或已有部署产物下载到当前工作区，不要只给链接或问要不要下载。'
           '优先下载 Release 成品，不安装开发依赖或重新构建，除非用户明确要求从源码构建。'
           '缺少完整离线产物时也保全入口文件，并明确网络、配套资源和运行方式；不要把残缺入口说成能独立运行。',
@@ -170,8 +197,9 @@ class AssistantRequestScope extends PluginRequestScope {
       '- 只有三件事必须用户亲手做，你负责把卡片递到眼前：粘贴 Key（aicove_request_key、'
           'aicove_add_provider）、选自己设备上的文件（aicove_pick_role_image、aicove_import_role_card、'
           'aicove_import_preset 不带链接时）、在系统弹窗里点允许。真没有工具的事才用 aicove_open_page 给按钮。',
-      '- 排查需要看某个角色的聊天原文或长期记忆时，用 aicove_read_role_chat／aicove_read_role_memory；'
-          '默认直接读取；只在完成用户请求需要时读，别为了好奇去读。',
+      '- 排查或协助管理某个角色的聊天原文、话题摘要与长期记忆时，用 aicove_role_context（target: "chat"／"summary"／"memory"，action: "read"／"append"／"update"／"delete"）。'
+          '默认直接读取；只在完成用户请求需要时读，别为了好奇去读。'
+          '摘要正文修改可以撤销；聊天写删、记忆写删、摘要整理和删除不能通过助手撤销，执行前说清影响，不要声称能够撤销。',
       '- 只改用户要求的范围。用户只是问「为什么」时，先说原因和打算怎么改，'
           '用户同意再动手。',
       '- 工具默认无需审批，直接完成用户要求；用户开启「修改前每次问我」时才逐次确认。工具返回「未获允许」时，'
@@ -204,7 +232,9 @@ class AssistantRequestScope extends PluginRequestScope {
       ...AssistantCardTools.names,
       AssistantCheckup.toolName,
     };
-    return (name, args) => name == 'bash'
+    return (name, args) => name == AssistantWriteTools.roleTool
+        ? writes.riskOf(name, args)
+        : name == 'bash'
         ? AssistantRisk.major
         : name == 'codemode'
         ? AssistantRisk.review
@@ -217,7 +247,7 @@ class AssistantRequestScope extends PluginRequestScope {
 
   static const promptWithoutTools =
       '## 你的工作\n'
-      '你是 AIcove酱，住在 AIcove 里的小管家，帮用户写角色卡、排查插件和上下文问题。'
+      '你是 AIcove 里的 Agent，帮用户写角色卡、排查插件和上下文问题。'
       '当前模型不支持工具调用，你读不到资料库和用户的配置；'
       '遇到需要看真实配置的问题，请用户在「设置 · 模型」换一个支持工具调用的模型，'
       '或者让用户把相关内容贴给你。';

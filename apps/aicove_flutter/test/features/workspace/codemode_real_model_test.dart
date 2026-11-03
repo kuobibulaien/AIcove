@@ -54,10 +54,10 @@ Future<Map<String, dynamic>> _run(String id, {bool chain = false}) async {
       (n, messages) => actual.sendMessageRich(
         agentId: 'default',
         sessionId: id,
-        modelFullId: 'openai:deepseek-flash',
+        modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
         messages: messages,
         userText: '',
-        providerApiBase: 'https://api.deepseek.com',
+        providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
         providerApiKey: _key,
         temperature: 0.2,
         tools: directToolSchemas(tools),
@@ -70,8 +70,8 @@ Future<Map<String, dynamic>> _run(String id, {bool chain = false}) async {
         ).executeApiCall(
           config: ApiConfig(
             settings: mapUiModelsToAppSettings({}),
-            modelFullId: 'openai:deepseek-flash',
-            providerApiBase: 'https://api.deepseek.com',
+            modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+            providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
             providerApiKey: _key,
             customConfig: const {},
             modelTemperature: 0.2,

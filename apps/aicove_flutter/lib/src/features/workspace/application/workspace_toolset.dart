@@ -1,3 +1,8 @@
+import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart' show loadYaml;
+import '../domain/workspace_file_access.dart';
+import '../data/managed_workspace_files.dart';
+import '../data/local_workspace_files.dart';
 import '../data/workspace_read_only_mount.dart' show stickerViewReadOnly;
 import 'package:mime/mime.dart';
 import 'dart:convert';
@@ -22,33 +27,73 @@ import '../webapp/webapp_server.dart' show WebAppServer;
 /// run's effective grant; anything else fails as unauthorized. Writes are
 /// recorded under [runId] so the run can be undone as a whole.
 ///
-/// Not exposed to the chat model: W1 registers these only in tests, the
-/// errand agent (ADR0088, batch W2) takes them over.
+/// Shared by tool-mode chat roles and the errand agent.
 class WorkspaceToolset {
   WorkspaceToolset({
     required this.store,
     required Set<String> workspaceIds,
     required this.runId,
     this.onCreated,
+    this.onWorkspaceChanged,
+    this.onLocalDirectoryChanged,
+    this.enableLocalFiles = false,
+    this.userSkillRoots = const <String>[],
+    String? currentLocalDirectory,
     this.isCancelled,
     this.enableScripts = false,
     this.enableShell = false,
     this.platform,
     this.runWebApp,
+    this.runLocalWebApp,
     this.shellEnvironment,
     String? currentWorkspaceId,
-  }) : _granted = {...workspaceIds},
+  }) : _localDirectory = currentLocalDirectory,
+       _granted = {...workspaceIds},
        _currentWorkspaceId =
-           currentWorkspaceId ??
+           (workspaceIds.contains(currentWorkspaceId)
+               ? currentWorkspaceId
+               : null) ??
            (workspaceIds.contains('aicove')
                ? 'aicove'
-               : workspaceIds.firstOrNull);
+               : workspaceIds.firstOrNull) {
+    if (!_localEnabled) _localDirectory = null;
+  }
 
   final WorkspaceStore store;
   final String runId;
 
   /// Adds a workspace the agent created to its role's grants.
   final Future<void> Function(WorkspaceInfo workspace)? onCreated;
+
+  /// Persists the selection for the caller's conversation, not for this run.
+  final Future<void> Function(String workspaceId)? onWorkspaceChanged;
+  final Future<void> Function(String? directory)? onLocalDirectoryChanged;
+  final bool enableLocalFiles;
+  final List<String> userSkillRoots;
+  String? _localDirectory;
+  String? _fallbackNotice;
+  static final _directoryInvocationKey = Object();
+  _WorkspaceDirectoryInvocation? get _directoryInvocation {
+    final invocation = Zone.current[_directoryInvocationKey];
+    return invocation is _WorkspaceDirectoryInvocation &&
+            identical(invocation.owner, this)
+        ? invocation
+        : null;
+  }
+
+  String? get _executionDirectory {
+    final invocation = _directoryInvocation;
+    return invocation == null ? _localDirectory : invocation.directory;
+  }
+
+  bool get _localEnabled =>
+      enableLocalFiles &&
+      [
+        'macos',
+        'windows',
+        'linux',
+      ].contains(platform ?? Platform.operatingSystem);
+  String? get currentLocalDirectory => _localDirectory;
 
   /// Checked right before every commit; a cancelled run writes nothing more.
   final bool Function()? isCancelled;
@@ -59,11 +104,15 @@ class WorkspaceToolset {
   /// Serves a workspace page on AIcove's loopback host and opens it in the
   /// default browser (ADR0105); returns the page URL. Null hides `workspace_run`.
   final Future<Uri> Function(String workspaceId, String path)? runWebApp;
+  final Future<Uri> Function(String root, String page)? runLocalWebApp;
 
   /// Channel keys for `bash`, read at every command (ADR0109 补充二).
   final Map<String, String> Function()? shellEnvironment;
   String? _currentWorkspaceId;
-  String? get currentWorkspaceId => _currentWorkspaceId;
+
+  /// Existing approval/context labels accept a workspace ID or a native path.
+  /// Managed storage and artifacts continue to use [_currentWorkspaceId].
+  String? get currentWorkspaceId => _localDirectory ?? _currentWorkspaceId;
 
   final Set<String> _granted;
 
@@ -84,9 +133,10 @@ class WorkspaceToolset {
 
   Set<String> get workspaceIds => Set.unmodifiable(_granted);
 
-  /// System prompt section: only names and descriptions; contents load on
-  /// `workspace_open`, like package skills.
+  /// Available workspaces, current project instructions, and local skill
+  /// descriptions. Skill contents load on demand through `read`.
   Future<String?> prompt() async {
+    await _ensureDirectory();
     final lines = [
       for (final info in await store.list())
         if (_granted.contains(info.id))
@@ -94,9 +144,245 @@ class WorkspaceToolset {
               '${info.description.isEmpty ? '' : '：${info.description}'}',
     ];
 
-    return '$codemodeGuidance\n当前工作区：${_currentWorkspaceId ?? '未选择'}。可用工作区：\n'
+    final base =
+        '$codemodeGuidance\n当前工作区：${_localDirectory ?? _currentWorkspaceId ?? '未选择'}。可用工作区：\n'
         '${lines.join('\n')}\n路径都相对当前工作区。用 workspace_open({id}) 切换；workspace_create 新建后自动切换。'
+        '${_localEnabled ? '\nworkspace_open({path}) 或 {id:目录路径} 可切换本机目录，支持绝对路径、~、相对路径。文件工具可直接使用绝对路径。本机改动不参与内部撤销和同步。bash 中 cd 只影响该条命令。' : ''}'
+        '${_localEnabled && platform != null ? '\n当前平台：$platform。' : ''}'
+        '${_fallbackNotice == null ? '' : '\n$_fallbackNotice'}'
         '${runWebApp == null ? '' : '\n$_webAppHint'}';
+    final directories = _localEnabled && _localDirectory != null
+        ? await _instructionDirectories()
+        : const <String>[];
+    final rules = await _projectInstructions(directories);
+    final skills = directories.isEmpty
+        ? ''
+        : await _availableSkills(directories);
+    return '$base$rules$skills';
+  }
+
+  static const _ruleFileNames = [
+    'AGENTS.override.md',
+    'AGENTS.md',
+    'CLAUDE.md',
+  ];
+  static const _ruleBytes = 32 * 1024;
+
+  LocalWorkspaceFiles _localAccess(String directory) => LocalWorkspaceFiles(
+    directory,
+    protectedRoot: store.root.path,
+    beforeCommit: _beforeCommit,
+  );
+
+  /// Shallow to deep; outside HOME, ancestors are used only if a repo is found.
+  Future<List<String>> _instructionDirectories() async {
+    final current = await canonicalLocalPath(_executionDirectory!);
+    String? home;
+    try {
+      final raw =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (raw != null && raw.isNotEmpty) home = await canonicalLocalPath(raw);
+    } on Object {
+      // A missing home directory does not prevent project-local instructions.
+    }
+    String key(String path) =>
+        (platform ?? Platform.operatingSystem) == 'windows'
+        ? path.toLowerCase()
+        : path;
+    final inHome =
+        home != null &&
+        (p.equals(key(home), key(current)) ||
+            p.isWithin(key(home), key(current)));
+    final directories = <String>[];
+    var directory = current;
+    while (true) {
+      directories.add(directory);
+      try {
+        if (await FileSystemEntity.type(p.join(directory, '.git')) !=
+            FileSystemEntityType.notFound) {
+          return directories.reversed.toList();
+        }
+      } on Object {
+        // An inaccessible ancestor cannot supply a repository boundary.
+      }
+      if (home != null && p.equals(key(directory), key(home))) break;
+      final parent = p.dirname(directory);
+      if (parent == directory) break;
+      directory = parent;
+    }
+    return inHome ? directories.reversed.toList() : [current];
+  }
+
+  Future<(String, String)?> _directoryRule(WorkspaceFileAccess access) async {
+    for (final name in _ruleFileNames) {
+      try {
+        if (await access.stat(name) == null) continue;
+        final text = _decode((await access.read(name)).$1);
+        if (text != null && text.trim().isNotEmpty) {
+          return (access.isLocal ? p.join(access.rootPath, name) : name, text);
+        }
+      } on Object {
+        // Each candidate is independent: unreadable or invalid UTF-8 is skipped.
+      }
+    }
+    return null;
+  }
+
+  static String _utf8Prefix(String text, int limit) {
+    final out = StringBuffer();
+    var size = 0;
+    for (final rune in text.runes) {
+      final char = String.fromCharCode(rune);
+      size += utf8.encode(char).length;
+      if (size > limit) break;
+      out.write(char);
+    }
+    return out.toString();
+  }
+
+  static String _boundedRule(String text, String path, int limit) {
+    if (utf8.encode(text).length <= limit) return text;
+    final note = _ruleTruncationNote(path);
+    return '${_utf8Prefix(text, limit - utf8.encode(note).length)}$note';
+  }
+
+  static String _ruleTruncationNote(String path) =>
+      '\n[已截断，完整内容请用 read 读取 $path]';
+
+  Future<String> _projectInstructions(List<String> directories) async {
+    final accesses = <WorkspaceFileAccess>[
+      if (_localDirectory == null && _currentWorkspaceId != null)
+        ManagedWorkspaceFiles(store, _currentWorkspaceId!, runId),
+      for (final directory in directories) _localAccess(directory),
+    ];
+    final out = StringBuffer();
+    final sources = <(int, String)>[];
+    var noteBytes = 0;
+    for (final access in accesses) {
+      final rule = await _directoryRule(access);
+      if (rule == null) continue;
+      final (path, text) = rule;
+      final header =
+          '${out.isEmpty ? '\nProject instructions (from workspace files; system and user instructions take precedence):' : ''}\n--- $path ---\n';
+      sources.add((out.length, path));
+      final size = utf8.encode(_ruleTruncationNote(path)).length;
+      if (size > noteBytes) noteBytes = size;
+      final section = '$out$header$text';
+      if (utf8.encode(section).length > _ruleBytes) {
+        final prefix = _utf8Prefix(section, _ruleBytes - noteBytes);
+        final source = sources
+            .lastWhere((entry) => entry.$1 <= prefix.length)
+            .$2;
+        return '$prefix${_ruleTruncationNote(source)}';
+      }
+      out.write('$header$text');
+    }
+    return out.toString();
+  }
+
+  Future<String> _availableSkills(List<String> directories) async {
+    final roots = [
+      ...userSkillRoots,
+      for (final directory in directories) ...[
+        p.join(directory, '.agents', 'skills'),
+        p.join(directory, '.claude', 'skills'),
+      ],
+    ];
+    final seen = <String>{};
+    final skills = <String, (String, String)>{};
+    for (final root in roots) {
+      List<FileSystemEntity> children;
+      try {
+        children = await Directory(root).list(followLinks: false).toList();
+        children.sort((a, b) => a.path.compareTo(b.path));
+      } on Object {
+        continue;
+      }
+      for (final child in children) {
+        try {
+          if (await FileSystemEntity.type(child.path) !=
+              FileSystemEntityType.directory) {
+            continue;
+          }
+          final file = File(p.join(child.path, 'SKILL.md'));
+          final real = file.resolveSymbolicLinksSync();
+          if (!seen.add(real)) continue;
+          final handle = await file.open();
+          late List<int> bytes;
+          try {
+            bytes = await handle.read(4096);
+          } finally {
+            await handle.close();
+          }
+          // Locate delimiters as bytes, then decode only the complete frontmatter.
+          final prefix = latin1.decode(bytes);
+          final match = RegExp(
+            r'^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)',
+          ).firstMatch(prefix);
+          if (match == null) continue;
+          final metadata = loadYaml(utf8.decode(latin1.encode(match[1]!)));
+          if (metadata is! Map ||
+              metadata['disable-model-invocation'] == true) {
+            continue;
+          }
+          final name = metadata['name'] ?? p.basename(child.path);
+          final description = metadata['description'];
+          if (name is! String ||
+              name.trim().isEmpty ||
+              description is! String ||
+              description.trim().isEmpty) {
+            continue;
+          }
+          skills[name] = (
+            description.trim().replaceAll(RegExp(r'\s+'), ' '),
+            real,
+          );
+        } on Object {
+          // Malformed metadata, broken links, and unreadable files are optional.
+        }
+      }
+    }
+    if (skills.isEmpty) return '';
+    return '\n<available_skills>\n'
+        "Use `read` to load a skill's SKILL.md when the task matches its description:\n"
+        '${skills.entries.take(50).map((e) => '- ${e.key}: ${e.value.$1} (${e.value.$2})').join('\n')}\n'
+        '</available_skills>';
+  }
+
+  static List<int> _occurrences(String text, String old) => [
+    for (var i = 0; i <= text.length - old.length; i++)
+      if (text.startsWith(old, i)) i,
+  ];
+
+  static final _specialHorizontal = RegExp(
+    r'[\u00A0\u2002-\u200A\u202F\u205F\u3000]',
+  );
+  static final _trailingHorizontal = RegExp(
+    r'[ \t\u00A0\u2002-\u200A\u202F\u205F\u3000]+(?=\r?\n|$)',
+  );
+
+  static (String, List<int>) _normalizeEdit(String text) {
+    final out = StringBuffer();
+    final origin = <int>[];
+    final trailing = _trailingHorizontal.allMatches(text).iterator;
+    var next = trailing.moveNext() ? trailing.current : null;
+    for (var i = 0; i < text.length; i++) {
+      if (next != null && i == next.start) {
+        i = next.end - 1;
+        next = trailing.moveNext() ? trailing.current : null;
+        continue;
+      }
+      final char = text[i];
+      out.write(switch (char) {
+        '‘' || '’' || '‚' || '‛' => "'",
+        '“' || '”' || '„' || '‟' => '"',
+        '‐' || '‑' || '‒' || '–' || '—' || '―' || '−' => '-',
+        _ when _specialHorizontal.hasMatch(char) => ' ',
+        _ => char,
+      });
+      origin.add(i);
+    }
+    return (out.toString(), origin);
   }
 
   List<AITool> tools() => [
@@ -127,6 +413,7 @@ class WorkspaceToolset {
         effect: ToolEffect.external,
         concurrent: true,
         managesDeadline: true,
+        managesOutput: true,
         outputSchema: WorkspaceShell.outputSchema,
         handler: (args) async => (await _runShell(args)).persistentText,
         richHandler: _runShell,
@@ -147,18 +434,22 @@ class WorkspaceToolset {
         },
         effect: ToolEffect.external,
         managesDeadline: true,
+        managesOutput: true,
         handler: (args) async => (await _runScript(args)).persistentText,
         richHandler: _runScript,
       ),
     _tool(
       'workspace_open',
-      '打开工作区：返回它的 AGENTS.md 说明和顶层目录。',
-      {'id': _workspaceParam},
-      ['id'],
+      _localEnabled
+          ? '打开内部空间 ID 或本机目录路径，切换后返回 AGENTS.md 和顶层目录；id/path 二选一。'
+          : '打开工作区：返回它的 AGENTS.md 说明和顶层目录。',
+      {'id': _workspaceParam, if (_localEnabled) 'path': _pathParam},
+      _localEnabled ? [] : ['id'],
       ToolEffect.readDiagnostic,
       _open,
+      managesOutput: true,
     ),
-    if (runWebApp != null)
+    if (runWebApp != null || (_localEnabled && runLocalWebApp != null))
       _tool(
         'workspace_run',
         '用 AIcove 自带的本机服务运行当前工作区里的 .html／.htm 网页，并在用户的默认浏览器里打开。'
@@ -181,7 +472,7 @@ class WorkspaceToolset {
     ),
     _tool(
       'read',
-      '按行读取文本或查看图片；offset 从 1 开始，最多 2000 行或 50 KiB，返回续读行号与 revision。',
+      '按行读取文本或查看图片；offset 从 1 开始，最多 2000 行或 50 KiB，返回续读行号与 revision（codemode 中读图仅返回 revision，看图请直接调用 read 或用 ws.readBytes）。',
       {
         'path': _pathParam,
         'offset': {'type': 'integer', 'description': '起始行，从 1 开始'},
@@ -190,13 +481,17 @@ class WorkspaceToolset {
       ['path'],
       ToolEffect.readDiagnostic,
       _read,
+      managesOutput: true,
     ),
     _tool(
       'write',
-      '写入文本文件，整文件覆盖并自动建目录；expected_revision 可选，冲突时重新读取。',
+      '写入文本文件，整文件覆盖并自动建目录；expected_revision 可选，冲突时重新读取。本机文件不可内部撤销。',
       {
         'path': _pathParam,
-        'content': {'type': 'string', 'description': '文件全部内容，最多 1 MiB'},
+        'content': {
+          'type': 'string',
+          'description': '文件全部内容，内部空间最多 1 MiB，本机目录无此限制',
+        },
         'expected_revision': _revisionParam,
       },
       ['path', 'content'],
@@ -228,26 +523,64 @@ class WorkspaceToolset {
       _edit,
     ),
     _tool(
+      'workspace_search',
+      '浏览与搜索工作区文件。mode 传 list 列出目录内容（默认）；传 glob 按 pattern 通配符匹配文件路径；'
+          '传 grep 按 pattern 正则表达式搜索文本内容（可搭配 glob 限定文件范围）。'
+          '未传 mode 时，有 pattern 默认按 glob 找文件，无 pattern 默认按 list 列目录。',
+      {
+        'mode': {
+          'type': 'string',
+          'enum': ['list', 'glob', 'grep'],
+          'description': '搜索方式：list 列目录、glob 按通配符找文件名、grep 按正则搜文件内容',
+        },
+        'path': _pathParam,
+        'pattern': {
+          'type': 'string',
+          'description': 'glob 模式下为路径通配符（如 **/*.md），grep 模式下为正则表达式',
+        },
+        'glob': {
+          'type': 'string',
+          'description': 'grep 模式下只搜索匹配该通配符的文件',
+        },
+        'include_ignored': {
+          'type': 'boolean',
+          'description': '是否包含默认忽略的目录（如 .git、node_modules、build）',
+        },
+        'cursor': _cursorParam,
+      },
+      [],
+      ToolEffect.readDiagnostic,
+      _search,
+      managesOutput: true,
+    ),
+    _tool(
       'workspace_list',
       '列出目录下的文件和子目录。',
       {
-        'path': {'type': 'string', 'description': '目录的相对路径，默认根目录'},
+        'path': {'type': 'string', 'description': '目录路径，默认当前目录'},
         'cursor': _cursorParam,
       },
       [],
       ToolEffect.readDiagnostic,
       _list,
+      managesOutput: true,
     ),
     _tool(
       'workspace_glob',
       '按通配符找文件，例如 **/*.md、notes/*.txt。',
       {
         'pattern': {'type': 'string', 'description': '通配符，* 不跨目录，** 跨目录'},
+        'path': _pathParam,
+        'include_ignored': {
+          'type': 'boolean',
+          'description': '本机搜索包含 .git/node_modules/.dart_tool/build，默认跳过',
+        },
         'cursor': _cursorParam,
       },
       ['pattern'],
       ToolEffect.readDiagnostic,
       _glob,
+      managesOutput: true,
     ),
     _tool(
       'workspace_grep',
@@ -255,15 +588,18 @@ class WorkspaceToolset {
       {
         'pattern': {'type': 'string', 'description': '正则表达式'},
         'glob': {'type': 'string', 'description': '只搜匹配这个通配符的文件'},
+        'path': _pathParam,
+        'include_ignored': {'type': 'boolean'},
         'cursor': _cursorParam,
       },
       ['pattern'],
       ToolEffect.readDiagnostic,
       _grep,
+      managesOutput: true,
     ),
     _tool(
       'workspace_move',
-      '移动或重命名文件；目标不能已存在。',
+      _localEnabled ? '移动或重命名文件；目标不能已存在（本机目录改动不可撤销）。' : '移动或重命名文件；目标不能已存在。',
       {
         'from': _pathParam,
         'to': _pathParam,
@@ -275,7 +611,7 @@ class WorkspaceToolset {
     ),
     _tool(
       'workspace_delete',
-      '删除文件（可以撤销）。',
+      _localEnabled ? '删除文件（内部空间可撤销，本机目录直接删除且不可撤销）。' : '删除文件（可以撤销）。',
       {'path': _pathParam, 'expected_revision': _revisionParam},
       ['path'],
       ToolEffect.write,
@@ -288,6 +624,7 @@ class WorkspaceToolset {
     return CodemodeScript(
       store: store,
       workspace: () => _currentWorkspaceId,
+      resolveFile: _localEnabled ? resolveFile : null,
       runId: runId,
       owner: context?.stateOwner ?? context?.sessionId ?? runId,
       callId: context?.toolCallId ?? 'codemode',
@@ -300,11 +637,14 @@ class WorkspaceToolset {
   }
 
   Future<ToolOutput> _runShell(Map<String, dynamic> args) async {
+    final directory = _localDirectory;
     try {
+      await _ensureDirectory(rejectFallback: true, consumeNotice: true);
       final context = ToolCallContext.current;
       return await WorkspaceShell(
         store: store,
         workspace: _workspace(args),
+        localDirectory: directory,
         runId: runId,
         isCancelled: () =>
             (isCancelled?.call() ?? false) ||
@@ -314,6 +654,8 @@ class WorkspaceToolset {
         _string(args, 'command'),
         timeout: WorkspaceShell.deadline(args['timeout']),
       );
+    } on WorkspaceException catch (error) {
+      return ToolOutput(text: '${error.code}: ${error.message}', isError: true);
     } on Object catch (error) {
       return ToolOutput(
         text: WorkspaceScriptOutput.modelTail('$error').trimRight(),
@@ -328,10 +670,13 @@ class WorkspaceToolset {
       '要把 Key 填进网页设置或配置文件时，在命令或脚本里直接读环境变量写进去（如 python3 的 os.environ），'
       '不要 echo 或打印 Key，输出里的 Key 会被打码；也不要让用户把 Key 发到聊天里。';
 
-  static const _workspaceParam = {'type': 'string', 'description': '工作区 ID'};
+  static const _workspaceParam = {
+    'type': 'string',
+    'description': '内部空间 ID；桌面本机能力启用时也接受本机目录路径',
+  };
   static const _pathParam = {
     'type': 'string',
-    'description': '相对工作区根目录的路径，用 / 分隔',
+    'description': '相对当前工作目录的路径；桌面本机能力启用时也接受绝对路径和 ~',
   };
   static const _revisionParam = {
     'type': 'string',
@@ -342,14 +687,106 @@ class WorkspaceToolset {
     'description': '上次结果给出的 next_cursor',
   };
 
+  static const _stringSchema = {'type': 'string'};
+  static const _boolSchema = {'type': 'boolean'};
+  static const _stringsSchema = {'type': 'array', 'items': _stringSchema};
+  static const _listingProperties = {
+    'truncated': _boolSchema,
+    'next_cursor': {'type': 'integer'},
+    'skipped_count': {'type': 'integer'},
+    'skipped': _stringsSchema,
+    'notice': _stringSchema,
+  };
+  static const _outputSchemas = <String, Map<String, dynamic>>{
+    'workspace_open': {
+      'type': 'object',
+      'properties': {
+        'directory': _stringSchema,
+        'name': _stringSchema,
+        'description': _stringSchema,
+        'agents_md': {
+          'type': ['string', 'null'],
+        },
+        'instructions': _stringSchema,
+        'available_skills': _stringSchema,
+        'notice': _stringSchema,
+        'entries': _stringsSchema,
+        'skipped': _stringsSchema,
+        'webapp_guide': _stringSchema,
+      },
+      'required': ['entries', 'webapp_guide'],
+    },
+    'workspace_run': {
+      'type': 'object',
+      'properties': {
+        'url': _stringSchema,
+        'ai_base_url': _stringSchema,
+        'note': _stringSchema,
+      },
+      'required': ['url', 'ai_base_url', 'note'],
+    },
+    'workspace_create': {
+      'type': 'object',
+      'properties': {
+        'workspace': _stringSchema,
+        'name': _stringSchema,
+        'notice': _stringSchema,
+      },
+      'required': ['workspace', 'name'],
+    },
+    'write': {
+      'type': 'object',
+      'properties': {
+        'path': _stringSchema,
+        'revision': _stringSchema,
+        'undoable': _boolSchema,
+      },
+      'required': ['path', 'revision'],
+    },
+    'workspace_list': {
+      'type': 'object',
+      'properties': {'items': _stringsSchema, ..._listingProperties},
+      'required': ['items'],
+    },
+    'workspace_glob': {
+      'type': 'object',
+      'properties': {
+        'items': _stringsSchema,
+        ..._listingProperties,
+        'scope': _stringSchema,
+      },
+      'required': ['items'],
+    },
+    'workspace_grep': {
+      'type': 'object',
+      'properties': {
+        'matches': _stringsSchema,
+        ..._listingProperties,
+        'scope': _stringSchema,
+      },
+      'required': ['matches'],
+    },
+    'workspace_move': {
+      'type': 'object',
+      'properties': {'path': _stringSchema, 'undoable': _boolSchema},
+      'required': ['path'],
+    },
+    'workspace_delete': {
+      'type': 'object',
+      'properties': {'deleted': _boolSchema, 'undoable': _boolSchema},
+      'required': ['deleted'],
+    },
+  };
+
   AITool _tool(
     String name,
     String description,
     Map<String, Object> properties,
     List<String> required,
     ToolEffect effect,
-    Future<Object> Function(Map<String, dynamic> args) run,
-  ) => AITool(
+    Future<Object> Function(Map<String, dynamic> args) run, {
+    bool managesOutput = false,
+  }) => AITool(
     name: name,
     description: description,
     parameters: const {},
@@ -359,11 +796,25 @@ class WorkspaceToolset {
       'required': required,
     },
     effect: effect,
-    handler: (args) async => (await _invoke(run, args)).persistentText,
-    richHandler: (args) => _invoke(run, args),
+    outputSchema: name == 'workspace_search'
+        ? {
+            'anyOf': [
+              for (final key in [
+                'workspace_list',
+                'workspace_glob',
+                'workspace_grep',
+              ])
+                _outputSchemas[key]!,
+            ],
+          }
+        : _outputSchemas[name],
+    managesOutput: managesOutput,
+    handler: (args) async =>
+        (await _invoke(run, args, name: name)).persistentText,
+    richHandler: (args) => _invoke(run, args, name: name),
     controlledHandler: (args, control) async {
       control.progress('Starting $name');
-      final result = await _invoke(run, args);
+      final result = await _invoke(run, args, name: name);
       control.progress('Finished $name');
       return result;
     },
@@ -371,25 +822,69 @@ class WorkspaceToolset {
 
   Future<ToolOutput> _invoke(
     Future<Object> Function(Map<String, dynamic>) run,
+    Map<String, dynamic> args, {
+    required String name,
+  }) {
+    final invocation = _WorkspaceDirectoryInvocation(
+      owner: this,
+      directory: _localDirectory,
+      rejectFallback: const {
+        'write',
+        'edit',
+        'workspace_move',
+        'workspace_delete',
+      }.contains(name),
+    );
+    return runZoned(
+      () => _invokeChecked(run, args, invocation),
+      zoneValues: {_directoryInvocationKey: invocation},
+    );
+  }
+
+  Future<ToolOutput> _invokeChecked(
+    Future<Object> Function(Map<String, dynamic>) run,
     Map<String, dynamic> args,
+    _WorkspaceDirectoryInvocation invocation,
   ) async {
+    ToolOutput failure(String text) => ToolOutput(
+      text:
+          '$text${invocation.notice == null ? '' : '\nnotice: ${invocation.notice}'}',
+      isError: true,
+    );
     try {
+      await _ensureDirectory();
       final result = await run(args);
-      return result is ToolOutput
+      final notice = invocation.notice;
+      if (result is ToolOutput) {
+        return notice == null
+            ? result
+            : ToolOutput(
+                text: '${result.text}\nnotice: $notice',
+                images: result.images,
+                isError: result.isError,
+                structured: result.structured,
+              );
+      }
+      final structured = notice == null || result is! Map
           ? result
-          : ToolOutput(text: _format(result), structured: result);
+          : {
+              ...result,
+              'notice': [
+                notice,
+                if (result['notice'] != null) result['notice'],
+              ].join('\n'),
+            };
+      return ToolOutput(text: _format(structured), structured: structured);
     } on WorkspaceException catch (error) {
-      return ToolOutput(
-        text: error.message == stickerViewReadOnly
+      return failure(
+        error.message == stickerViewReadOnly
             ? stickerViewReadOnly
             : '${error.code}: ${error.message}',
-        isError: true,
       );
+    } on FileSystemException catch (error) {
+      return failure('filesystem_error: ${error.message}: ${error.path ?? ''}');
     } on FormatException catch (error) {
-      return ToolOutput(
-        text: 'invalid_argument: ${error.message}',
-        isError: true,
-      );
+      return failure('invalid_argument: ${error.message}');
     }
   }
 
@@ -433,20 +928,90 @@ class WorkspaceToolset {
 
   // ---------------------------------------------------------------------
 
+  Future<void> _selectWorkspace(String id) async {
+    _beforeCommit();
+    await onWorkspaceChanged?.call(id);
+    _currentWorkspaceId = id;
+    _localDirectory = null;
+    _directoryInvocation?.directory = null;
+    _fallbackNotice = null;
+    await onLocalDirectoryChanged?.call(null);
+  }
+
+  static const _workspaceChangedNotice = '当前工作区已切换，此前工作区的项目规则不再适用';
+
   Future<Map<String, Object?>> _open(Map<String, dynamic> args) async {
-    final ws = _string(args, 'id');
-    if (!_granted.contains(ws))
-      throw WorkspaceException.unauthorized('没有使用工作区 $ws 的授权');
-    final info = (await store.get(ws))!;
-    _currentWorkspaceId = ws;
-    String? guide;
-    if (await store.stat(ws, 'AGENTS.md') != null) {
-      final text = _decode((await store.read(ws, 'AGENTS.md')).$1);
-      guide = text == null ? null : _page(text, 1).$1;
+    if (args['id'] != null && args['path'] != null)
+      throw const FormatException('id/path 只能提供一个');
+    final ws = _optionalString(args, 'id') ?? _optionalString(args, 'path');
+    if (ws == null) throw const FormatException('缺少 id 或 path');
+    final previous = _executionDirectory == null
+        ? _currentWorkspaceId
+        : await canonicalLocalPath(_executionDirectory!);
+    if (args.containsKey('path') || !_granted.contains(ws)) {
+      if (!_localEnabled)
+        throw WorkspaceException.unauthorized('没有使用工作区 $ws 的授权');
+      await _ensureDirectory();
+      final expanded = _expandPath(ws);
+      final base =
+          _executionDirectory ?? store.directoryOf(_workspace(const {})).path;
+      final target = await resolveFile(
+        p.isAbsolute(expanded) ? expanded : p.join(base, expanded),
+        directory: true,
+      );
+      if (!target.access.isLocal) {
+        if (target.path.isNotEmpty)
+          throw const WorkspaceException.invalidPath('内部空间请用空间 ID 打开');
+        return _open({'id': target.access.workspaceId});
+      }
+      final directory = await canonicalLocalPath(
+        (target.access as LocalWorkspaceFiles).absolute(target.path),
+      );
+      await Directory(directory).list().take(1).drain<void>();
+      final access = LocalWorkspaceFiles(
+        directory,
+        protectedRoot: store.root.path,
+        beforeCommit: _beforeCommit,
+      );
+      final skipped = <String>[];
+      final entries = await access.listDirectory('', skipped: skipped);
+      final rule = await _directoryRule(access);
+      final guide = rule == null
+          ? null
+          : _boundedRule(rule.$2, rule.$1, _ruleBytes);
+      _beforeCommit();
+      await onLocalDirectoryChanged?.call(directory);
+      _localDirectory = directory;
+      _directoryInvocation?.directory = directory;
+      _fallbackNotice = null;
+      final directories = await _instructionDirectories();
+      final instructions = await _projectInstructions(directories);
+      final skills = await _availableSkills(directories);
+      return {
+        'directory': directory,
+        if (previous != directory) 'notice': _workspaceChangedNotice,
+        if (skipped.isNotEmpty) 'skipped': skipped.take(20).toList(),
+        'agents_md': guide,
+        if (instructions.isNotEmpty) 'instructions': instructions.trimLeft(),
+        if (skills.isNotEmpty) 'available_skills': skills.trimLeft(),
+        'entries': _entryNames(
+          entries,
+        ).take(WorkspaceLimits.maxResults).toList(),
+        'webapp_guide':
+            '用 workspace_run({path}) 运行 HTML，以当前本机目录为根；绝对路径在目录外时以 HTML 所在目录为根。AI 接口与内部空间一致，存档在页面同目录 .save.json，本机改动不可内部撤销。',
+      };
     }
+    final info = await store.get(ws);
+    if (info == null) throw const WorkspaceException.notFound('工作区不存在');
+    final rule = await _directoryRule(ManagedWorkspaceFiles(store, ws, runId));
+    final guide = rule == null
+        ? null
+        : _boundedRule(rule.$2, rule.$1, _ruleBytes);
     final entries = await store.listDirectory(ws, '');
+    await _selectWorkspace(ws);
     return {
       'name': info.name,
+      if (previous != ws) 'notice': _workspaceChangedNotice,
       'description': info.description,
       'agents_md': guide,
       'webapp_guide':
@@ -478,8 +1043,26 @@ class WorkspaceToolset {
       '具体写法和改存档的方法见 workspace_open 返回的 webapp_guide。';
 
   Future<Map<String, Object?>> _run(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
-    final uri = await runWebApp!(ws, _string(args, 'path'));
+    final target = await resolveFile(_string(args, 'path'));
+    late Uri uri;
+    if (target.access.isLocal) {
+      if (runLocalWebApp == null)
+        throw const WorkspaceException('unavailable', '本机网页预览不可用');
+      final absolute = (target.access as LocalWorkspaceFiles).absolute(
+        target.path,
+      );
+      var root = p.isWithin(target.access.rootPath, absolute)
+          ? target.access.rootPath
+          : p.dirname(absolute);
+      final protected = await canonicalLocalPath(store.root.path);
+      if (p.equals(root, protected) || p.isWithin(root, protected))
+        root = p.dirname(absolute);
+      uri = await runLocalWebApp!(root, p.relative(absolute, from: root));
+    } else {
+      if (runWebApp == null)
+        throw const WorkspaceException('unavailable', '内部空间网页预览不可用');
+      uri = await runWebApp!(target.access.workspaceId!, target.path);
+    }
     return {
       'url': '$uri',
       'ai_base_url': '${uri.origin}/__aicove/v1',
@@ -495,15 +1078,21 @@ class WorkspaceToolset {
     );
     _beforeCommit();
     _granted.add(info.id);
-    _currentWorkspaceId = info.id;
     await onCreated?.call(info);
-    return {'workspace': info.id, 'name': info.name};
+    await _selectWorkspace(info.id);
+    return {
+      'workspace': info.id,
+      'name': info.name,
+      'notice': _workspaceChangedNotice,
+    };
   }
 
   Future<ToolOutput> _read(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
-    final path = _string(args, 'path');
-    final (bytes, revision) = await store.read(ws, path);
+    final target = await resolveFile(_string(args, 'path'));
+    final access = target.access, path = target.path;
+    if (access.isLocal) return _readLocal(access, path, args);
+    final ws = access.workspaceId!;
+    final (bytes, revision) = await access.read(path);
     final image = await prepareWorkspaceImage(bytes, '$ws/$path');
     if (image != null) {
       return ToolOutput(text: 'revision: $revision', images: [image]);
@@ -527,37 +1116,31 @@ class WorkspaceToolset {
   }
 
   Future<Map<String, Object?>> _write(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
-    final path = _string(args, 'path');
-    store.checkWritablePath(ws, path);
+    final target = await resolveFile(_string(args, 'path'));
+    final access = target.access, path = target.path;
+    access.checkWritable(path);
     final bytes = utf8.encode(_string(args, 'content'));
-    if (bytes.length > WorkspaceLimits.maxWriteBytes) {
+    if (!access.isLocal && bytes.length > WorkspaceLimits.maxWriteBytes) {
       throw const WorkspaceException.limit('单次写入不能超过 1 MiB');
     }
     final expected =
         _optionalString(args, 'expected_revision') ??
-        await _currentRevision(ws, path);
+        await access.revision(path);
     _beforeCommit();
-    final file = await store.write(
-      ws,
-      path,
-      bytes,
-      expectedRevision: expected,
-      runId: runId,
-    );
-    _record(ws, file.path);
-    return {'path': file.path, 'revision': file.revision};
+    final file = await access.write(path, bytes, expectedRevision: expected);
+    if (!access.isLocal) _record(access.workspaceId!, file.path);
+    return {
+      'path': file.path,
+      'revision': file.revision,
+      if (access.isLocal) 'undoable': false,
+    };
   }
 
-  Future<String?> _currentRevision(String ws, String path) async =>
-      await store.stat(ws, path) == null
-      ? null
-      : (await store.read(ws, path)).$2;
-
   Future<ToolOutput> _edit(Map<String, dynamic> args) async {
-    final ws = _workspace(args), path = _string(args, 'path');
-    store.checkWritablePath(ws, path);
-    final (bytes, revision) = await store.read(ws, path);
+    final target = await resolveFile(_string(args, 'path'));
+    final access = target.access, path = target.path;
+    access.checkWritable(path);
+    final (bytes, revision) = await access.read(path);
     final expected = _optionalString(args, 'expected_revision') ?? revision;
     if (expected != revision) {
       throw const WorkspaceException.revisionMismatch('文件刚被改过，请重新读取');
@@ -592,16 +1175,42 @@ class WorkspaceToolset {
       final old = normalize(edit['oldText'] as String),
           value = normalize(edit['newText'] as String);
       if (old.isEmpty) throw const FormatException('oldText 不能为空');
-      final positions = <int>[];
-      for (var start = 0; start <= text.length - old.length; start++) {
-        if (text.startsWith(old, start)) positions.add(start);
+      final positions = _occurrences(text, old);
+      if (positions.length > 1) {
+        throw WorkspaceException(
+          'ambiguous',
+          'oldText 必须在文件里唯一（匹配到 ${positions.length} 处）',
+        );
       }
-      if (positions.length != 1) {
-        throw const WorkspaceException('ambiguous', 'oldText 必须在文件里唯一');
+      if (positions.isNotEmpty) {
+        replacements.add((
+          positions.single,
+          positions.single + old.length,
+          value,
+        ));
+        continue;
       }
+      final (normText, origin) = _normalizeEdit(text);
+      final normOld = _normalizeEdit(old).$1;
+      final fuzzyPositions = normOld.isEmpty
+          ? const <int>[]
+          : _occurrences(normText, normOld);
+      if (fuzzyPositions.isEmpty) {
+        throw const WorkspaceException(
+          'not_found',
+          '在文件里找不到 oldText，请先 read 确认最新内容',
+        );
+      }
+      if (fuzzyPositions.length > 1) {
+        throw WorkspaceException(
+          'ambiguous',
+          'oldText 必须在文件里唯一（宽松匹配到 ${fuzzyPositions.length} 处）',
+        );
+      }
+      final start = fuzzyPositions.single;
       replacements.add((
-        positions.single,
-        positions.single + old.length,
+        origin[start],
+        origin[start + normOld.length - 1] + 1,
         value,
       ));
     }
@@ -619,18 +1228,12 @@ class WorkspaceToolset {
       ...(bom ? [239, 187, 191] : <int>[]),
       ...utf8.encode(updated),
     ];
-    if (encoded.length > WorkspaceLimits.maxWriteBytes) {
+    if (!access.isLocal && encoded.length > WorkspaceLimits.maxWriteBytes) {
       throw const WorkspaceException.limit('编辑后的文件超过 1 MiB');
     }
     _beforeCommit();
-    final file = await store.write(
-      ws,
-      path,
-      encoded,
-      expectedRevision: expected,
-      runId: runId,
-    );
-    _record(ws, file.path);
+    final file = await access.write(path, encoded, expectedRevision: expected);
+    if (!access.isLocal) _record(access.workspaceId!, file.path);
     final firstLine =
         '\n'.allMatches(text.substring(0, replacements.first.$1)).length + 1;
     // One valid unified hunk; bounded presentation, not a patch transport.
@@ -662,31 +1265,71 @@ class WorkspaceToolset {
     ];
     return ToolOutput(
       text:
-          '${diff.take(200).join('\n')}${diff.length > 200 ? '\n(diff 已截断)' : ''}\nfirst_changed_line: $firstLine\nrevision: ${file.revision}',
+          '${diff.take(200).join('\n')}${diff.length > 200 ? '\n(diff 已截断)' : ''}\nfirst_changed_line: $firstLine\nrevision: ${file.revision}${access.isLocal ? '\nundoable: false' : ''}',
     );
   }
 
+  Future<Map<String, Object?>> _search(Map<String, dynamic> args) =>
+      switch (args['mode'] ?? (args.containsKey('pattern') ? 'glob' : 'list')) {
+        'list' => _list(args),
+        'glob' => _glob(args),
+        'grep' => _grep(args),
+        _ => throw const FormatException('mode 必须是 list、glob 或 grep'),
+      };
+
   Future<Map<String, Object?>> _list(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
-    final entries = await store.listDirectory(
-      ws,
+    final target = await resolveFile(
       _optionalString(args, 'path') ?? '',
+      directory: true,
     );
-    return _paged(_entryNames(entries).toList(), _int(args, 'cursor'));
+    final skipped = <String>[];
+    final entries = await target.access.listDirectory(
+      target.path,
+      skipped: skipped,
+    );
+    return {
+      ..._paged(_entryNames(entries).toList(), _int(args, 'cursor')),
+      if (skipped.isNotEmpty) ...{
+        'skipped_count': skipped.length,
+        'skipped': skipped.take(20).toList(),
+      },
+    };
   }
 
   Future<Map<String, Object?>> _glob(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
+    final target = await resolveFile(
+      _optionalString(args, 'path') ?? '',
+      directory: true,
+    );
+    final skipped = <String>[];
     final pattern = globToRegExp(_string(args, 'pattern'));
     final paths = [
-      for (final file in await store.files(ws))
+      for (final file in await target.access.files(
+        path: target.path,
+        includeIgnored: args['include_ignored'] == true,
+        skipped: skipped,
+      ))
         if (pattern.hasMatch(file.path)) file.path,
     ];
-    return _paged(paths, _int(args, 'cursor'));
+    return {
+      ..._paged(paths, _int(args, 'cursor')),
+      if (target.access.isLocal)
+        'scope':
+            '默认跳过 .git/node_modules/.dart_tool/build/.venv/venv/__pycache__，默认遵守目录内 .gitignore；include_ignored=true 可包含',
+      if (skipped.isNotEmpty) ...{
+        'skipped_count': skipped.length,
+        'skipped': skipped.take(20).toList(),
+      },
+    };
   }
 
   Future<Map<String, Object?>> _grep(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
+    final target = await resolveFile(
+      _optionalString(args, 'path') ?? '',
+      directory: true,
+    );
+    final access = target.access;
+    final skipped = <String>[];
     final RegExp pattern;
     try {
       pattern = RegExp(_string(args, 'pattern'));
@@ -699,66 +1342,286 @@ class WorkspaceToolset {
     final hits = <String>[];
     var bytes = 0;
     var seen = 0;
-    for (final file in await store.files(ws)) {
+    for (final file in await access.files(
+      path: target.path,
+      includeIgnored: args['include_ignored'] == true,
+      skipped: skipped,
+    )) {
       if (filter != null && !filter.hasMatch(file.path)) continue;
-      if (file.size > WorkspaceLimits.maxWriteBytes) continue;
-      final text = _decode((await store.read(ws, file.path)).$1);
-      if (text == null) continue;
-      final lines = const LineSplitter().convert(text);
-      for (final (index, line) in lines.indexed) {
-        if (!pattern.hasMatch(line)) continue;
-        if (seen++ < cursor) continue;
-        final chars = line.runes;
-        final shown = chars.length > WorkspaceLimits.maxGrepLineChars
-            ? '${String.fromCharCodes(chars.take(WorkspaceLimits.maxGrepLineChars - 1))}…'
-            : line;
-        final hit = '${file.path}:${index + 1}: $shown';
-        bytes += utf8.encode(hit).length + 1;
-        if (hits.length >= WorkspaceLimits.maxResults ||
-            bytes > WorkspaceLimits.maxResultBytes) {
-          return {'matches': hits, 'truncated': true, 'next_cursor': seen - 1};
+      if (!access.isLocal && file.size > WorkspaceLimits.maxFileBytes) {
+        skipped.add('${file.path}: 超过内部空间 32 MiB 读取上限');
+        continue;
+      }
+      var index = -1;
+      try {
+        await for (final line
+            in access
+                .openRead(file.path)
+                .transform(utf8.decoder)
+                .transform(const LineSplitter())) {
+          index++;
+          if (line.contains('\x00')) {
+            if (access.isLocal) skipped.add('${file.path}: 二进制文件');
+            break;
+          }
+          if (!pattern.hasMatch(line)) continue;
+          if (seen++ < cursor) continue;
+          final chars = line.runes;
+          final shown = chars.length > WorkspaceLimits.maxGrepLineChars
+              ? '${String.fromCharCodes(chars.take(WorkspaceLimits.maxGrepLineChars - 1))}…'
+              : line;
+          final hit = '${file.path}:${index + 1}: $shown';
+          bytes += utf8.encode(hit).length + 1;
+          if (hits.length >= WorkspaceLimits.maxResults ||
+              bytes > WorkspaceLimits.maxResultBytes) {
+            return {
+              'matches': hits,
+              'truncated': true,
+              'next_cursor': seen - 1,
+              if (skipped.isNotEmpty) ...{
+                'skipped_count': skipped.length,
+                'skipped': skipped.take(20).toList(),
+              },
+            };
+          }
+          hits.add(hit);
         }
-        hits.add(hit);
+      } on FormatException {
+        if (access.isLocal) skipped.add('${file.path}: 非 UTF-8 文本');
+      } on FileSystemException catch (e) {
+        skipped.add('${file.path}: ${e.message}');
+      } on WorkspaceException catch (e) {
+        skipped.add('${file.path}: ${e.message}');
       }
     }
-    return {'matches': hits};
+    return {
+      'matches': hits,
+      if (access.isLocal)
+        'scope':
+            '默认跳过 .git/node_modules/.dart_tool/build/.venv/venv/__pycache__，默认遵守目录内 .gitignore；include_ignored=true 可包含',
+      if (skipped.isNotEmpty) ...{
+        'skipped_count': skipped.length,
+        'skipped': skipped.take(20).toList(),
+      },
+    };
   }
 
   Future<Map<String, Object?>> _move(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
-    final to = _string(args, 'to');
-    store.checkWritablePath(ws, _string(args, 'from'));
-    store.checkWritablePath(ws, to);
+    final source = await resolveFile(_string(args, 'from'));
+    final target = await resolveFile(_string(args, 'to'));
+    await _checkManagedLinkMutation(_string(args, 'from'), source);
+    final access = source.access;
+    if (access.isLocal != target.access.isLocal ||
+        access.workspaceId != target.access.workspaceId) {
+      throw const WorkspaceException.invalidPath('不能跨内部空间与本机目录移动');
+    }
+    access.checkWritable(source.path);
+    target.access.checkWritable(target.path);
     final expected =
         _optionalString(args, 'expected_revision') ??
-        (await store.read(ws, _string(args, 'from'))).$2;
+        await access.revision(source.path);
+    if (expected == null) throw const WorkspaceException.notFound('源文件不存在');
     _beforeCommit();
-    await store.move(
-      ws,
-      _string(args, 'from'),
-      to,
-      expectedRevision: expected,
-      runId: runId,
-    );
-    final target = WorkspacePathRules.normalize(to);
-    _record(ws, target);
-    return {'path': target};
+    await access.move(source.path, target.path, expectedRevision: expected);
+    if (!access.isLocal)
+      _record(access.workspaceId!, WorkspacePathRules.normalize(target.path));
+    return {'path': target.path, if (access.isLocal) 'undoable': false};
   }
 
   Future<Map<String, Object?>> _delete(Map<String, dynamic> args) async {
-    final ws = _workspace(args);
-    store.checkWritablePath(ws, _string(args, 'path'));
+    final target = await resolveFile(_string(args, 'path'));
+    await _checkManagedLinkMutation(_string(args, 'path'), target);
+    final access = target.access;
+    access.checkWritable(target.path);
     final expected =
         _optionalString(args, 'expected_revision') ??
-        (await store.read(ws, _string(args, 'path'))).$2;
+        await access.revision(target.path);
+    if (expected == null) throw const WorkspaceException.notFound('文件不存在');
     _beforeCommit();
-    await store.delete(
-      ws,
-      _string(args, 'path'),
-      expectedRevision: expected,
-      runId: runId,
+    await access.delete(target.path, expectedRevision: expected);
+    return {'deleted': true, if (access.isLocal) 'undoable': false};
+  }
+
+  Future<void> _checkManagedLinkMutation(
+    String input,
+    WorkspaceFileTarget target,
+  ) async {
+    if (!_localEnabled || target.access.isLocal) return;
+    final expanded = _expandPath(input);
+    final requested = p.isAbsolute(expanded)
+        ? expanded
+        : p.join(
+            _executionDirectory ?? store.directoryOf(_workspace(const {})).path,
+            expanded,
+          );
+    if (await FileSystemEntity.type(requested, followLinks: false) ==
+        FileSystemEntityType.link) {
+      throw const WorkspaceException.invalidPath('不能通过文件链接移动或删除内部空间的目标文件');
+    }
+  }
+
+  Future<String?> _ensureDirectory({
+    bool rejectFallback = false,
+    bool consumeNotice = false,
+  }) async {
+    if (!_localEnabled || _executionDirectory == null) return null;
+    final invocation = _directoryInvocation;
+    final previous = _executionDirectory!;
+    try {
+      final access = LocalWorkspaceFiles(
+        previous,
+        protectedRoot: store.root.path,
+        beforeCommit: _beforeCommit,
+      );
+      await access.checked('');
+      await Directory(previous).list().take(1).drain<void>();
+    } on Object {
+      await store.ensureDefault();
+      _granted.add('aicove');
+      await _selectWorkspace('aicove');
+      final notice = '上次的本机目录 $previous 已不可用，已切回默认空间';
+      _fallbackNotice = consumeNotice || invocation != null ? null : notice;
+      if (rejectFallback || (invocation?.rejectFallback ?? false)) {
+        throw WorkspaceException(
+          'directory_unavailable',
+          '$notice；请重新确认目标空间或路径后再执行修改',
+        );
+      }
+      invocation?.notice = notice;
+      return notice;
+    }
+    return null;
+  }
+
+  String _expandPath(String path) {
+    if (path == '~' || path.startsWith('~/') || path.startsWith('~\\')) {
+      final home =
+          Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+      if (home == null) throw const WorkspaceException.invalidPath('无法取得用户主目录');
+      return path == '~' ? home : p.join(home, path.substring(2));
+    }
+    return path;
+  }
+
+  Future<WorkspaceFileTarget> resolveFile(
+    String input, {
+    bool directory = false,
+    bool rejectFallback = false,
+  }) async {
+    await _ensureDirectory(
+      rejectFallback: rejectFallback,
+      consumeNotice: rejectFallback,
     );
-    return {'deleted': true};
+    final path = _localEnabled ? _expandPath(input) : input;
+    if (!_localEnabled ||
+        (_executionDirectory == null && !p.isAbsolute(path))) {
+      return WorkspaceFileTarget(
+        ManagedWorkspaceFiles(store, _workspace(const {}), runId),
+        path,
+      );
+    }
+    final base =
+        _executionDirectory ?? store.directoryOf(_workspace(const {})).path;
+    final requested = p.isAbsolute(path) ? path : p.join(base, path);
+    final absolute = await canonicalLocalPath(requested);
+    final managed = await canonicalLocalPath(store.root.path);
+    if (p.equals(absolute, managed) || p.isWithin(managed, absolute)) {
+      for (final info in await store.list()) {
+        final root = await canonicalLocalPath(store.directoryOf(info.id).path);
+        if (p.equals(root, absolute) || p.isWithin(root, absolute)) {
+          if (!_granted.contains(info.id))
+            throw const WorkspaceException.unauthorized('没有使用这个内部空间的授权');
+          final relative = p.equals(root, absolute)
+              ? ''
+              : p.relative(absolute, from: root).split(p.separator).join('/');
+          return WorkspaceFileTarget(
+            ManagedWorkspaceFiles(store, info.id, runId),
+            relative,
+          );
+        }
+      }
+      throw const WorkspaceException.invalidPath('应用管理目录不能通过本机文件工具访问');
+    }
+    final localRoot = directory
+        ? (await Directory(absolute).exists() ? absolute : p.dirname(absolute))
+        : base;
+    return WorkspaceFileTarget(
+      LocalWorkspaceFiles(
+        localRoot,
+        protectedRoot: store.root.path,
+        beforeCommit: _beforeCommit,
+      ),
+      requested,
+    );
+  }
+
+  Future<ToolOutput> _readLocal(
+    WorkspaceFileAccess access,
+    String path,
+    Map<String, dynamic> args,
+  ) async {
+    final stat = await access.stat(path);
+    if (stat == null) throw const WorkspaceException.notFound('文件不存在');
+    final prefix = await access.readRange(path, offset: 0, length: 512);
+    final mime = lookupMimeType(path, headerBytes: prefix);
+    if (mime?.startsWith('image/') ?? false) {
+      final (bytes, revision) = await access.read(path);
+      final image = await prepareWorkspaceImage(bytes, path);
+      if (image != null)
+        return ToolOutput(text: 'revision: $revision', images: [image]);
+    }
+    final offset = args.containsKey('offset') ? _int(args, 'offset') : 1;
+    final limit = args.containsKey('limit') ? _int(args, 'limit') : 2000;
+    if (offset < 1 || limit < 1)
+      throw const FormatException('offset 和 limit 必须大于 0');
+    final revision = await access.revision(path);
+    String content;
+    int? next;
+    try {
+      if (prefix.contains(0)) throw const FormatException('二进制');
+      (content, next) = await _localTextPage(access, path, offset, limit);
+    } on FormatException {
+      return ToolOutput(
+        text:
+            '二进制文件（${mime ?? 'application/octet-stream'}），${stat.size} 字节。可用 codemode 的 ws.readBytes 分段处理。\nrevision: $revision',
+      );
+    }
+    if (revision != await access.revision(path))
+      throw const WorkspaceException.revisionMismatch('读取期间文件变化，请重新读取');
+    return ToolOutput(
+      text:
+          '$content\nrevision: $revision${next == null ? '' : '\n内容已截断，下次 offset: $next'}',
+    );
+  }
+
+  Future<(String, int?)> _localTextPage(
+    WorkspaceFileAccess access,
+    String path,
+    int offset,
+    int limit,
+  ) async {
+    var index = 1, bytes = 0, count = 0;
+    final output = StringBuffer();
+    await for (final line
+        in access
+            .openRead(path)
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+      if (line.contains('\x00')) throw const FormatException('二进制文件');
+      if (index++ < offset) continue;
+      final size = utf8.encode(line).length + 1;
+      if (count >= limit.clamp(1, WorkspaceLimits.maxReadLines) ||
+          bytes + size > WorkspaceLimits.maxReadBytes) {
+        if (count == 0) {
+          return ('单行超过 50 KiB，可用 codemode 的 ws.readBytes 按字节分段读取。', null);
+        }
+        return (output.toString(), index - 1);
+      }
+      output.writeln(line);
+      bytes += size;
+      count++;
+    }
+    return (output.toString(), null);
   }
 
   // ---------------------------------------------------------------------
@@ -813,6 +1676,20 @@ class WorkspaceToolset {
     }
     return {'items': page};
   }
+}
+
+/// Per-call state keeps nested checks and concurrent reads/writes independent.
+class _WorkspaceDirectoryInvocation {
+  _WorkspaceDirectoryInvocation({
+    required this.owner,
+    required this.directory,
+    required this.rejectFallback,
+  });
+
+  final WorkspaceToolset owner;
+  final bool rejectFallback;
+  String? directory;
+  String? notice;
 }
 
 /// `*` stays inside one directory, `**` crosses directories, `?` is one

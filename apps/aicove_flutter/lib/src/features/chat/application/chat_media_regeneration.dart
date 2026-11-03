@@ -15,12 +15,17 @@ abstract interface class ChatMediaRegenerationPort {
     required String conversationId,
     required String messageId,
     required String blockId,
+    String? customPrompt,
   });
 }
 
 abstract interface class ChatMediaGenerationPort {
-  Future<GeneratedChatMedia> generate(String conversationId, String input,
-      {ImageGenerationSnapshot? imageSnapshot});
+  Future<GeneratedChatMedia> generate(
+    String conversationId,
+    String input, {
+    ImageGenerationSnapshot? imageSnapshot,
+    String? customPrompt,
+  });
 }
 
 /// A persisted media block and its raw-message revision, captured before generation.
@@ -39,30 +44,37 @@ class MediaRegenerationTarget {
   String get input => inputOf(block)!;
 
   static RegeneratableMediaKind? kindOf(MessageBlock block) => switch (block) {
-        ImageBlock() => RegeneratableMediaKind.image,
-        AudioBlock() => RegeneratableMediaKind.audio,
-        _ => null,
-      };
+    ImageBlock() => RegeneratableMediaKind.image,
+    AudioBlock() => RegeneratableMediaKind.audio,
+    _ => null,
+  };
 
   static String? inputOf(MessageBlock block) => switch (block) {
-        ImageBlock() => block.prompt,
-        AudioBlock() => block.text,
-        _ => null,
-      };
+    ImageBlock() => block.prompt,
+    AudioBlock() => block.text,
+    _ => null,
+  };
 
   static bool canRegenerate(Message message, MessageBlock block) =>
       message.role == 'assistant' &&
       message.status != 'sending' &&
       (block.status == BlockStatus.success ||
           block.status == BlockStatus.error) &&
-      (inputOf(block)?.trim().isNotEmpty ?? false);
+      ((inputOf(block)?.trim().isNotEmpty ?? false) ||
+          (block is ImageBlock &&
+              block.status == BlockStatus.error &&
+              block.prompt == '' &&
+              block.generationSnapshot?.prompt == '' &&
+              block.generationSnapshot?.basePrompt == ''));
 
   static bool sameSource(MessageBlock left, MessageBlock right) =>
       switch ((left, right)) {
-        (ImageBlock a, ImageBlock b) => a.localPath == b.localPath &&
-            a.url == b.url &&
-            a.base64 == b.base64 &&
-            a.prompt == b.prompt,
+        (ImageBlock a, ImageBlock b) =>
+          ((a.versions.isNotEmpty || b.versions.isNotEmpty) && a.id == b.id) ||
+              (a.localPath == b.localPath &&
+                  a.url == b.url &&
+                  a.base64 == b.base64 &&
+                  a.prompt == b.prompt),
         (AudioBlock a, AudioBlock b) => a.url == b.url && a.text == b.text,
         _ => false,
       };
@@ -70,15 +82,22 @@ class MediaRegenerationTarget {
 
 /// Replacement metadata only; identities and source text stay with the target.
 class GeneratedChatMedia {
-  const GeneratedChatMedia.image(this.location, {this.imageSnapshot})
-      : kind = RegeneratableMediaKind.image,
-        durationSeconds = null;
+  const GeneratedChatMedia.image(
+    this.location, {
+    this.imageSnapshot,
+    this.width,
+    this.height,
+  }) : kind = RegeneratableMediaKind.image,
+       durationSeconds = null;
   const GeneratedChatMedia.audio(this.location, {this.durationSeconds})
-      : kind = RegeneratableMediaKind.audio,
-        imageSnapshot = null;
+    : kind = RegeneratableMediaKind.audio,
+      imageSnapshot = null,
+      width = null,
+      height = null;
 
   final RegeneratableMediaKind kind;
   final String location;
+  final int? width, height;
   final ImageGenerationSnapshot? imageSnapshot;
   final double? durationSeconds;
 
@@ -90,19 +109,23 @@ class GeneratedChatMedia {
       throw StateError('生成结果无效，原媒体已保留');
     }
     return switch (original) {
-      ImageBlock() => ImageBlock(
-          id: original.id,
-          messageId: original.messageId,
+      ImageBlock() => original.withAddedVersion(
+        ImageVersionEntry(
           localPath: location,
+          width: width,
+          height: height,
           prompt: imageSnapshot?.prompt ?? original.prompt,
-          generationSnapshot: imageSnapshot ?? original.generationSnapshot),
+          generationSnapshot: imageSnapshot ?? original.generationSnapshot,
+        ),
+      ),
       AudioBlock() => AudioBlock(
-          id: original.id,
-          messageId: original.messageId,
-          url: location,
-          text: original.text,
-          durationSeconds: durationSeconds,
-          unread: original.unread),
+        id: original.id,
+        messageId: original.messageId,
+        url: location,
+        text: original.text,
+        durationSeconds: durationSeconds,
+        unread: original.unread,
+      ),
       _ => throw StateError('不支持重新生成此类媒体'),
     };
   }

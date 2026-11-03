@@ -7,6 +7,7 @@ import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/plugin_prompts.dart';
 import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_config.dart';
 import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_plugin.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_role_options.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/voice_request.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +23,7 @@ void main() {
   PluginRequestInputs inputs({
     PluginPrompts prompts = const PluginPrompts(),
     DateTime? previous,
+    Set<String>? rolePluginIds,
   }) =>
       PluginRequestInputs(
         ref: container.read(_refProvider),
@@ -30,6 +32,7 @@ void main() {
         voiceRequest: VoiceRequest(ownerId: 'role'),
         pluginPrompts: prompts,
         history: const [],
+        rolePluginIds: rolePluginIds,
         previousUserMessageTime: previous,
         useFastImageRoute: false,
         useStableImageRoute: true,
@@ -43,6 +46,28 @@ void main() {
         .requestScopes(runtime.snapshot(), runtime.selectForRole(null), i)
         .single;
   }
+
+  test('current time follows each role, independent of the global snapshot', () {
+    final plugin = TimeAwarenessPlugin(
+      TimeAwarenessConfig(includeCurrentTime: false),
+    );
+    final now = DateTime(2026, 10, 30, 12, 30);
+    final previous = DateTime(2026, 10, 29, 18);
+    for (final ids in <Set<String>?>[
+      { 'time_awareness', TimeAwarenessRoleOptions.noCurrentTimeId },
+      { 'time_awareness' },
+      null,
+    ]) {
+      final scope = scopeOf(plugin, inputs(previous: previous, rolePluginIds: ids));
+      final content = scope.reminders(now).single.content;
+      final includeCurrent = TimeAwarenessRoleOptions.currentTime(ids);
+      expect(content.contains('2026-10-30 12:30'), includeCurrent);
+      expect(content.contains('当前时间:'), includeCurrent);
+      expect(content, contains('用户上一次发消息的时间为2026-10-29 18:00'));
+      expect(scope.timeContextTrace!.config['includeCurrentTime'], includeCurrent);
+    }
+    expect(plugin.config.includeCurrentTime, isFalse);
+  });
 
   test('installs natively and declares only the request capability', () {
     final plugin = TimeAwarenessPlugin(TimeAwarenessConfig());

@@ -1,24 +1,8 @@
 import 'kaomoji_parser.dart';
 import 'markdown_fence.dart';
 
-/// 已删除的旧「默认」档标点，只用于把老配置迁移到「保守」档。
-const List<String> _kLegacyDefaultChunkPunctuations = [
-  '\u3002',
-  '\uff01',
-  '\uff1f',
-  '\uff0c',
-  '\u3001',
-  '\uff1b',
-  '\u2026',
-];
-
-const List<String> _kSimpleChunkPunctuations = [
-  '\u3002',
-  '\uff01',
-  '\uff1f',
-];
-
-const List<String> _kDetailedChunkPunctuations = [
+/// 「激进」方案在这些标点后分段。
+const List<String> _kAggressiveChunkPunctuations = [
   '\u3002',
   '\uff01',
   '\uff1f',
@@ -27,6 +11,12 @@ const List<String> _kDetailedChunkPunctuations = [
   '\uff1b',
   '\uff1a',
   '\u2026',
+  '\uff5e',
+  '!',
+  '?',
+  ',',
+  ';',
+  '~',
 ];
 
 const List<String> _kDefaultFilterPunctuations = [
@@ -39,15 +29,26 @@ const List<String> _kDefaultFilterPunctuations = [
   ';',
 ];
 
+/// Consecutive spaces that start a new chunk unless a set says otherwise.
+const int kDefaultChunkSpaceRun = 3;
+
 class MessageChunkPunctuationSet {
   final String id;
   final String? name;
   final List<String> punctuations;
 
+  /// Whether a line break starts a new chunk.
+  final bool splitOnNewline;
+
+  /// This many consecutive spaces start a new chunk; 0 turns it off.
+  final int spaceRun;
+
   const MessageChunkPunctuationSet({
     required this.id,
     this.name,
     required this.punctuations,
+    this.splitOnNewline = true,
+    this.spaceRun = kDefaultChunkSpaceRun,
   });
 
   String get displayName {
@@ -59,11 +60,15 @@ class MessageChunkPunctuationSet {
     String? id,
     String? name,
     List<String>? punctuations,
+    bool? splitOnNewline,
+    int? spaceRun,
   }) {
     return MessageChunkPunctuationSet(
       id: id ?? this.id,
       name: name ?? this.name,
       punctuations: punctuations ?? this.punctuations,
+      splitOnNewline: splitOnNewline ?? this.splitOnNewline,
+      spaceRun: spaceRun ?? this.spaceRun,
     );
   }
 
@@ -72,6 +77,8 @@ class MessageChunkPunctuationSet {
       'id': id,
       'name': name,
       'punctuations': punctuations,
+      'splitOnNewline': splitOnNewline,
+      'spaceRun': spaceRun,
     };
   }
 
@@ -81,6 +88,9 @@ class MessageChunkPunctuationSet {
       name: (json['name'] as String?)?.trim(),
       punctuations:
           (json['punctuations'] as List<dynamic>?)?.cast<String>() ?? const [],
+      splitOnNewline: json['splitOnNewline'] as bool? ?? true,
+      spaceRun: ((json['spaceRun'] as num?)?.toInt() ?? kDefaultChunkSpaceRun)
+          .clamp(0, 99),
     );
   }
 
@@ -90,31 +100,38 @@ class MessageChunkPunctuationSet {
     return other is MessageChunkPunctuationSet &&
         other.id == id &&
         other.name == name &&
-        _listContentEquals(other.punctuations, punctuations);
+        _listContentEquals(other.punctuations, punctuations) &&
+        other.splitOnNewline == splitOnNewline &&
+        other.spaceRun == spaceRun;
   }
 
   @override
-  int get hashCode => Object.hash(id, name, Object.hashAll(punctuations));
+  int get hashCode => Object.hash(
+    id,
+    name,
+    Object.hashAll(punctuations),
+    splitOnNewline,
+    spaceRun,
+  );
 }
 
-const String _kDefaultChunkPunctuationSetId = 'conservative';
-const String _kLegacyDefaultChunkPunctuationSetId = 'default';
+const String _kDefaultChunkPunctuationSetId = 'standard';
 
+/// Bumped when the built-in sets are rewritten; older configs are migrated
+/// in [MessageFormatConfig.fromJson].
+const int _kChunkPunctuationSetsVersion = 2;
+
+/// 「默认」只在换行和连续空格处分段，「激进」再加上标点。
 const List<MessageChunkPunctuationSet> _kDefaultChunkPunctuationSets = [
   MessageChunkPunctuationSet(
     id: _kDefaultChunkPunctuationSetId,
-    name: '保守',
+    name: '默认',
     punctuations: [],
   ),
   MessageChunkPunctuationSet(
-    id: 'simple',
-    name: '精简',
-    punctuations: _kSimpleChunkPunctuations,
-  ),
-  MessageChunkPunctuationSet(
-    id: 'detailed',
-    name: '详细',
-    punctuations: _kDetailedChunkPunctuations,
+    id: 'aggressive',
+    name: '激进',
+    punctuations: _kAggressiveChunkPunctuations,
   ),
 ];
 
@@ -184,6 +201,13 @@ class MessageFormatConfig {
         minSegmentLength,
         protectQuotes,
       );
+
+  /// Whether a line break starts a new chunk under the active set.
+  bool get splitOnNewline => activeChunkPunctuationSet?.splitOnNewline ?? true;
+
+  /// Consecutive spaces that start a new chunk under the active set; 0 is off.
+  int get chunkSpaceRun =>
+      activeChunkPunctuationSet?.spaceRun ?? kDefaultChunkSpaceRun;
 
   List<String> get effectiveChunkPunctuations {
     final active = activeChunkPunctuationSet;
@@ -279,6 +303,7 @@ class MessageFormatConfig {
           chunkPunctuationSets.map((item) => item.toJson()).toList(),
       'activeChunkPunctuationSetId': activeChunkPunctuationSetId,
       'filterPunctuations': filterPunctuations,
+      'chunkPunctuationSetsVersion': _kChunkPunctuationSetsVersion,
       'minSegmentLength': minSegmentLength,
       'protectQuotes': protectQuotes,
     };
@@ -296,44 +321,45 @@ class MessageFormatConfig {
             MessageChunkPunctuationSet.fromJson(item.cast<String, dynamic>()))
         .toList();
 
-    final hasStructuredSets = rawSets.isNotEmpty;
     var activeSetId = (json['activeChunkPunctuationSetId'] as String?)?.trim();
-    if ((activeSetId == null || activeSetId.isEmpty) && !hasStructuredSets) {
-      activeSetId =
-          _listEquals(rawChunkPunctuations, _kLegacyDefaultChunkPunctuations)
-              ? _kLegacyDefaultChunkPunctuationSetId
-              : 'legacy';
-    }
-    // 旧「默认」档已删除：未改过的内置「默认」档从列表移除，选中它的改选「保守」。
-    final droppedLegacyDefault = hasStructuredSets
-        ? rawSets.any(_isUntouchedLegacyDefaultSet)
-        : activeSetId == _kLegacyDefaultChunkPunctuationSetId;
-    final sets = hasStructuredSets
-        ? _sanitizeSets(
-            rawSets
-                .where((item) => !_isUntouchedLegacyDefaultSet(item))
-                .toList(),
-          )
-        : _buildSetsFromLegacy(rawChunkPunctuations);
-    final migrateActiveSet = droppedLegacyDefault &&
-        activeSetId == _kLegacyDefaultChunkPunctuationSetId;
-    if (migrateActiveSet) {
-      activeSetId = _kDefaultChunkPunctuationSetId;
+    final current =
+        json['chunkPunctuationSetsVersion'] == _kChunkPunctuationSetsVersion;
+    final hasRuntime = json['chunkPunctuations'] != null;
+    final List<MessageChunkPunctuationSet> sets;
+    // 迁移后仍选着原来那套时，原样保留运行时标点（可能与方案本身不同）。
+    var keepRuntime = current && hasRuntime;
+    if (current) {
+      sets = _sanitizeSets(rawSets);
+    } else {
+      // 旧的内置方案（保守、精简、详细、当前）换成「默认」「激进」两套，用户
+      // 新建的方案保留；原来选的方案还在就沿用，否则按实际生效的标点有无
+      // 归到两套之一。
+      sets = _sanitizeSets([
+        ..._kDefaultChunkPunctuationSets,
+        ...rawSets.where((s) => s.id.trim().startsWith('set_')),
+      ]);
+      if (sets.any((s) => s.id == activeSetId)) {
+        keepRuntime = hasRuntime;
+      } else {
+        final oldActive = rawSets.where((s) => s.id == activeSetId).firstOrNull;
+        final inEffect = hasRuntime
+            ? rawChunkPunctuations
+            : _sanitizePunctuations(oldActive?.punctuations ?? const []);
+        activeSetId = inEffect.isEmpty
+            ? _kDefaultChunkPunctuationSetId
+            : _kDefaultChunkPunctuationSets[1].id;
+      }
     }
     final resolvedActiveSetId = _resolveActiveSetId(activeSetId, sets);
     final activePunctuations =
         _findSetById(sets, resolvedActiveSetId)?.punctuations ??
             rawChunkPunctuations;
-    // 不变量：序列化里显式带了 chunkPunctuations 就原样恢复（保证
-    // fromJson(toJson()) 值相等）；缺省时才落到激活集合。
-    final hasExplicitChunkPunctuations = json['chunkPunctuations'] != null;
 
     return MessageFormatConfig(
       enableChunking: json['enableChunking'] as bool? ?? true,
       filterPunctuation: json['filterPunctuation'] as bool? ?? false,
-      chunkPunctuations: hasExplicitChunkPunctuations && !migrateActiveSet
-          ? rawChunkPunctuations
-          : activePunctuations,
+      chunkPunctuations:
+          keepRuntime ? rawChunkPunctuations : activePunctuations,
       chunkPunctuationSets: sets,
       activeChunkPunctuationSetId: resolvedActiveSetId,
       filterPunctuations: _sanitizePunctuations(
@@ -343,31 +369,6 @@ class MessageFormatConfig {
       minSegmentLength: json['minSegmentLength'] as int? ?? 5,
       protectQuotes: json['protectQuotes'] as bool? ?? true,
     );
-  }
-
-  static bool _isUntouchedLegacyDefaultSet(MessageChunkPunctuationSet set) {
-    return set.id.trim() == _kLegacyDefaultChunkPunctuationSetId &&
-        _listEquals(
-          _sanitizePunctuations(set.punctuations),
-          _kLegacyDefaultChunkPunctuations,
-        );
-  }
-
-  static List<MessageChunkPunctuationSet> _buildSetsFromLegacy(
-    List<String> legacyPunctuations,
-  ) {
-    if (legacyPunctuations.isEmpty ||
-        _listEquals(legacyPunctuations, _kLegacyDefaultChunkPunctuations)) {
-      return _kDefaultChunkPunctuationSets;
-    }
-    return <MessageChunkPunctuationSet>[
-      MessageChunkPunctuationSet(
-        id: 'legacy',
-        name: '当前',
-        punctuations: legacyPunctuations,
-      ),
-      ..._kDefaultChunkPunctuationSets,
-    ];
   }
 
   static List<String> _sanitizePunctuations(List<String> source) {
@@ -453,6 +454,8 @@ String buildMessageFormatProjectionSignature(MessageFormatConfig config) {
     config.enableChunking,
     config.filterPunctuation,
     activePunctuations,
+    config.splitOnNewline,
+    config.chunkSpaceRun,
     filterPunctuations,
     config.minSegmentLength,
     config.protectQuotes,
@@ -479,6 +482,9 @@ class MessageChunk {
 }
 
 /// Message formatter for chunk display logic.
+/// Stands in for a line break that stays inside its chunk.
+const String _keptNewline = '\u0001';
+
 class MessageFormatter {
   // Matches paired quotes/brackets to protect quoted text from splitting.
   static final _quotePattern = RegExp(
@@ -593,8 +599,17 @@ class MessageFormatter {
   ) {
     // Normalize escaped newline.
     var processedText = text.replaceAll('\\n', '\n');
-    // Treat 4+ consecutive spaces as paragraph breaks.
-    processedText = processedText.replaceAll(RegExp(r'[^\S\r\n]{4,}'), '\n');
+    // Line breaks the set does not split on ride along inside a chunk.
+    if (!config.splitOnNewline) {
+      processedText = processedText.replaceAll('\n', _keptNewline);
+    }
+    final spaceRun = config.chunkSpaceRun;
+    if (spaceRun > 0) {
+      processedText = processedText.replaceAll(
+        RegExp('[^\\S\\r\\n]{$spaceRun,}'),
+        '\n',
+      );
+    }
     final segments = processedText.split('\n');
     final rawChunks = <String>[];
 
@@ -661,7 +676,7 @@ class MessageFormatter {
       final punctuationPattern =
           punctuationTokens.map((p) => RegExp.escape(p)).join('|');
       final splitPattern = RegExp(
-        '((?:$punctuationPattern)+)(?:[^\\S\\r\\n]+)?(?=[\\u4e00-\\u9fffa-zA-Z])',
+        '((?:$punctuationPattern)+)(?:[^\\S\\r\\n]|$_keptNewline)*(?=[\\u4e00-\\u9fffa-zA-Z])',
       );
       sentences = protected
           .replaceAllMapped(splitPattern, (m) => '${m.group(1)}\n')
@@ -680,9 +695,8 @@ class MessageFormatter {
         sentence =
             sentence.replaceAll('$kaomojiPlaceholder$i\x00', kaomojis[i]);
       }
-      if (sentence.trim().isNotEmpty) {
-        restored.add(sentence.trim());
-      }
+      sentence = sentence.replaceAll(_keptNewline, '\n').trim();
+      if (sentence.isNotEmpty) restored.add(sentence);
     }
 
     return restored;

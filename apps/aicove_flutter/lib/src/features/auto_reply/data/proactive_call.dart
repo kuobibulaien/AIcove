@@ -28,7 +28,10 @@ bool proactiveCallsSupported(TargetPlatform platform) =>
 final proactiveCallGateProvider = Provider<ProactiveCallGate>(
   (ref) => (conversation) async {
     final settings = await ref.read(appSettingsProvider.future);
-    if (!settings.autoReplySettings.allowProactiveCalls) return '没有开启主动来电';
+    final contactSettings = settings.autoReplySettings.forContact(
+      conversation.id,
+    );
+    if (!contactSettings.allowProactiveCalls) return '没有开启主动来电';
     if (!proactiveCallsSupported(defaultTargetPlatform)) {
       return '这个平台不支持主动来电';
     }
@@ -43,12 +46,15 @@ final proactiveCallGateProvider = Provider<ProactiveCallGate>(
 
 /// The `call_user` tool offered while writing ahead. Calling it only records
 /// the opening line through [onCall]; the call rings at fire time.
-AITool buildCallUserTool({required void Function(String line) onCall}) =>
+AITool buildCallUserTool({
+  required void Function(String line) onCall,
+  String? description,
+}) =>
     AITool(
       name: ProactiveAction.callUser.id,
-      description: PromptBuiltinDefaults.requireTemplate(
-        'auto_reply.tool.call_user',
-      ),
+      description: description == null || description.trim().isEmpty
+          ? PromptBuiltinDefaults.requireTemplate('auto_reply.tool.call_user')
+          : description,
       parameters: {
         callUserOpeningLineArg: ToolParameter(
           type: 'string',
@@ -58,7 +64,7 @@ AITool buildCallUserTool({required void Function(String line) onCall}) =>
           required: true,
         ),
       },
-      effect: ToolEffect.write,
+      effect: ToolEffect.readPrivate,
       handler: (args) async {
         final line = openingLineOf(args);
         if (line == null) return '缺少 $callUserOpeningLineArg，没有打出去。';

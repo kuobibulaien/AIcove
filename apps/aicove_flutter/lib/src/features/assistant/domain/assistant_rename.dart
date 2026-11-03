@@ -2,9 +2,12 @@ import 'dart:convert';
 
 import '../../chat/domain/conversation.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
+import '../../chat/domain/role_agent_mode.dart';
 
-/// Fields AIcove酱 takes from the shipped preset. While she is in beta a
-/// changed preset overwrites them on every install, user edits included.
+const kMangakaPresetId = 'preset_mangaka';
+
+/// Fields AIcove酱 takes from the shipped preset. The user-owned extra prompt
+/// is excluded from preset replacement, not from this fingerprint.
 String assistantPresetFingerprint(Conversation preset) => jsonEncode([
   preset.title,
   preset.displayName,
@@ -15,19 +18,41 @@ String assistantPresetFingerprint(Conversation preset) => jsonEncode([
   preset.personaPrompt,
 ]);
 
-/// [current] with every preset-owned field replaced by [preset]'s; chat
-/// history and per-conversation state stay.
-Conversation overwrittenAssistant(Conversation current, Conversation preset) =>
-    current.copyWith(
-      title: preset.title,
-      displayName: preset.displayName,
-      description: preset.description,
-      characterImage: preset.characterImage,
-      avatarUrl: preset.avatarUrl,
-      voiceFile: preset.voiceFile,
-      personaPrompt: preset.personaPrompt,
-      updatedAt: DateTime.now(),
-    );
+/// [current] with every preset-owned field replaced by [preset]'s; the extra
+/// prompt, chat history and per-conversation state stay.
+Conversation overwrittenAssistant(Conversation current, Conversation preset) {
+  final currentParts = PersonaPromptCodec.parse(current.personaPrompt);
+  final presetParts = PersonaPromptCodec.parse(preset.personaPrompt);
+  final persona =
+      currentParts.extraPrompt.isEmpty &&
+          presetParts.extraPrompt.isEmpty &&
+          currentParts.drawingPromptPackId == null
+      ? preset.personaPrompt
+      : PersonaPromptCodec.compose(
+          userPrompt: presetParts.userPrompt,
+          extraPrompt: currentParts.extraPrompt,
+          customDrawingPrompt: presetParts.customDrawingPrompt.isNotEmpty
+              ? presetParts.customDrawingPrompt
+              : currentParts.customDrawingPrompt,
+          drawingPromptPackId:
+              currentParts.drawingPromptPackId ??
+              presetParts.drawingPromptPackId,
+          drawingToolPresetName: presetParts.drawingToolPresetName,
+          drawingArtistPresetName: presetParts.drawingArtistPresetName,
+          drawingPresetId:
+              presetParts.drawingPresetId ?? currentParts.drawingPresetId,
+        );
+  return current.copyWith(
+    title: preset.title,
+    displayName: preset.displayName,
+    description: preset.description,
+    characterImage: preset.characterImage,
+    avatarUrl: preset.avatarUrl,
+    voiceFile: preset.voiceFile,
+    personaPrompt: persona,
+    updatedAt: DateTime.now(),
+  );
+}
 
 /// Untouched factory Nahida userPrompt from 2026-10-16.
 const legacyNahidaUserPrompt = '''# 纳西妲
@@ -72,7 +97,9 @@ Conversation? updatedNahidaPersona(Conversation current, Conversation preset) {
             : '');
   final nextPersona = PersonaPromptCodec.compose(
     userPrompt: presetParts.userPrompt,
+    extraPrompt: currentParts.extraPrompt,
     customDrawingPrompt: nextDrawing,
+    drawingPromptPackId: currentParts.drawingPromptPackId,
     drawingToolPresetName: currentParts.drawingToolPresetName,
     drawingArtistPresetName: currentParts.drawingArtistPresetName,
     drawingPresetId: currentParts.drawingPresetId,
@@ -80,6 +107,30 @@ Conversation? updatedNahidaPersona(Conversation current, Conversation preset) {
   if (nextPersona == current.personaPrompt) return null;
   return current.copyWith(
     personaPrompt: nextPersona,
+    updatedAt: DateTime.now(),
+  );
+}
+
+/// Only empty bodies are known to predate the shipped Mangaka prompt.
+/// No historical factory body has been shipped, so nonempty text is user-owned.
+Conversation? updatedMangakaPersona(Conversation current, Conversation preset) {
+  final parts = PersonaPromptCodec.parse(current.personaPrompt);
+  final shipped = PersonaPromptCodec.parse(preset.personaPrompt);
+  if (parts.userPrompt.isNotEmpty || shipped.userPrompt.isEmpty) return null;
+  return current.copyWith(
+    personaPrompt: PersonaPromptCodec.compose(
+      userPrompt: shipped.userPrompt,
+      extraPrompt: parts.extraPrompt,
+      customDrawingPrompt: parts.customDrawingPrompt,
+      drawingPromptPackId: parts.drawingPromptPackId,
+      drawingToolPresetName: parts.drawingToolPresetName,
+      drawingArtistPresetName: parts.drawingArtistPresetName,
+      drawingPresetId: parts.drawingPresetId,
+    ),
+    agentMode:
+        current.agentMode == null || current.agentMode == RoleAgentMode.chat
+        ? RoleAgentMode.tool
+        : current.agentMode,
     updatedAt: DateTime.now(),
   );
 }

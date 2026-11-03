@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 调试工具：增强对话
@@ -99,13 +98,10 @@ class _EnhancedDialoguePageState extends ConsumerState<EnhancedDialoguePage>
               builder: (context) => ListView(
                 padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
                 children: [
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.all(12),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Text(
                       '开启后，消息菜单会出现“增强生成”。增强生成会用你配置的系统提示词 + 第一条任务消息 + 最近N轮上下文来重新生成回复。',
                       style: TextStyle(
@@ -151,16 +147,13 @@ class _EnhancedDialoguePageState extends ConsumerState<EnhancedDialoguePage>
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

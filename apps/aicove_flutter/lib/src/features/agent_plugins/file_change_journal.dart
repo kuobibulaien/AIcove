@@ -115,10 +115,37 @@ class FileChangeJournal implements ChangeJournal {
   /// Writes the entry's `before` state back, marks it undone and logs the
   /// reverse change, which is returned.
   @override
-  Future<JournalEntry> undo(String entryId) => _locked(() => _undo(entryId));
+  Future<JournalEntry> undo(String entryId) => _locked(() async {
+        final entries = await _read();
+        final reverse = await _undoIn(entries, entryId);
+        await _write(entries);
+        return reverse;
+      });
 
-  Future<JournalEntry> _undo(String entryId) async {
-    final entries = await _read();
+  /// Undoes [entryIds] in order under one lock and one write, so the reverse
+  /// records added along the way never push a pending entry out of the
+  /// journal. Returns the reason for each entry that could not be undone.
+  Future<Map<String, String>> undoAll(List<String> entryIds) =>
+      _locked(() async {
+        final entries = await _read();
+        final failures = <String, String>{};
+        for (final id in entryIds) {
+          try {
+            await _undoIn(entries, id);
+          } on StateError catch (error) {
+            failures[id] = error.message;
+          } catch (_) {
+            failures[id] = '撤销失败';
+          }
+        }
+        await _write(entries);
+        return failures;
+      });
+
+  Future<JournalEntry> _undoIn(
+    List<JournalEntry> entries,
+    String entryId,
+  ) async {
     final index = entries.indexWhere((e) => e.id == entryId);
     if (index < 0) throw StateError('撤销记录不存在：$entryId');
     final entry = entries[index];
@@ -154,7 +181,6 @@ class FileChangeJournal implements ChangeJournal {
       createdAt: now,
     );
     entries.add(reverse);
-    await _write(entries);
     return reverse;
   }
 

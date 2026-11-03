@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../../plugins/domain/handlers/ai_tool.dart';
+import 'tool_search.dart';
 
 // Ported from pi-mono packages/codemode/src/declarations.ts (MIT, 476a303).
 String toCodemodeIdentifier(String name) {
@@ -221,13 +222,21 @@ Map<String, dynamic> describeCodemodeTool(AITool tool) => {
   'description':
       '${tool.description}\n\ncodemode tool declaration:\n```ts\ndeclare const tools: { ${renderToolSignature(tool)} };\n```',
 };
-List<Map<String, dynamic>> directToolSchemas(Iterable<AITool> tools) => [
+List<Map<String, dynamic>> directToolSchemas(
+  Iterable<AITool> tools, {
+  Set<String> activatedTools = const {},
+}) => [
   for (final tool in tools)
-    if (tool.exposure == ToolExposure.direct) tool.toOpenAISchema(),
+    if (tool.exposure == ToolExposure.direct ||
+        (tool.exposure == ToolExposure.deferred &&
+            activatedTools.contains(tool.name)))
+      tool.toOpenAISchema(),
+  if (tools.any((tool) => tool.exposure == ToolExposure.deferred))
+    createToolSearch().toOpenAISchema(),
 ];
 
 const codemodeGuidance =
-    '独立的多个工具调用（Promise.allSettled）、要串起来的调用、要过滤的大结果，用 codemode 一次做完，不要一个个分开调。';
+    '单次基础操作直接调用工具；需要批量并行（Promise.allSettled）、串联调用或过滤大结果时，用 codemode 一次完成。';
 
 const codemodeIntro =
     '''Run JavaScript that calls other tools. Supply code as raw JavaScript in the code field, not a code fence. QuickJS async function body: top-level await and return work. No Node, file system, or timers. fetch and ws byte helpers are available.
@@ -241,52 +250,64 @@ Globals:
 
 Nested tools:''';
 
-String createCodemodeDescription(
-  Iterable<AITool> tools, {
-  int inlineBudget = 3000,
-}) {
-  final groups = <String, List<(String, String)>>{};
+String createCodemodeDescription(Iterable<AITool> tools) {
+  const indexBudget = 1500;
+  const lookup =
+      'Use await searchTools(query) or await describeTool(name) for parameters and signatures.';
+  final groups = <String, List<String>>{};
   for (final tool in tools) {
-    if (tool.name == 'codemode' || tool.exposure != ToolExposure.codemode)
+    if (tool.name == 'codemode' || tool.exposure != ToolExposure.codemode) {
       continue;
-    final section =
-        '### `${toCodemodeIdentifier(tool.name)}`\n${docComment(tool.description)}\n${renderToolSignature(tool)}';
-    groups.putIfAbsent(toolNamespace(tool), () => []).add((tool.name, section));
+    }
+    groups.putIfAbsent(toolNamespace(tool), () => []).add(tool.name);
   }
   final keys = groups.keys.toList()..sort();
-  final selected = <String>{};
-  // Reserve all headings and the omission marker before namespace round-robin.
+  final selected = <String, List<String>>{for (final key in keys) key: []};
+  const omitted = '(some tools not listed)';
   var remaining =
-      inlineBudget * 4 -
-      codemodeIntro.length -
-      keys.fold<int>(0, (n, k) => n + k.length + 34);
+      indexBudget -
+      lookup.length -
+      omitted.length -
+      8 -
+      keys.fold<int>(0, (n, key) => n + key.length + 6);
+  // Round-robin keeps small namespaces visible even beside a large catalog.
   for (var index = 0; ; index++) {
     var any = false;
     for (final key in keys) {
-      final group = groups[key]!;
-      if (index >= group.length) continue;
+      if (index >= groups[key]!.length) continue;
       any = true;
-      final item = group[index];
-      if (item.$2.length + 2 <= remaining) {
-        selected.add(item.$1);
-        remaining -= item.$2.length + 2;
+      final name = groups[key]![index];
+      if (name.length + 2 <= remaining) {
+        selected[key]!.add(name);
+        remaining -= name.length + 2;
       }
     }
     if (!any) break;
   }
   return [
     codemodeIntro,
-    for (final key in keys) ...[
-      '## $key${groups[key]!.every((e) => selected.contains(e.$1)) ? '' : ' (some tools not listed)'}',
-      for (final item in groups[key]!)
-        if (selected.contains(item.$1)) item.$2,
-    ],
+    lookup,
+    for (final key in keys)
+      if (selected[key]!.isNotEmpty) '## $key: ${selected[key]!.join(', ')}',
+    if (keys.any((key) => selected[key]!.length < groups[key]!.length)) omitted,
   ].join('\n\n');
 }
 
 /// Only tool-mode runs opt into the compact loadout; ordinary chat is unchanged.
 List<AITool> assembleCodemodeTools(Iterable<AITool> tools) {
-  const direct = {'read', 'write', 'edit', 'bash', 'codemode'};
+  const direct = {
+    'read',
+    'write',
+    'edit',
+    'bash',
+    'codemode',
+    'workspace_open',
+    'workspace_search',
+    'aicove_role',
+    'aicove_role_context',
+    'web_search',
+    'draw_image',
+  };
   final loadout = [
     for (final tool in tools)
       tool.copyWith(
@@ -301,11 +322,6 @@ List<AITool> assembleCodemodeTools(Iterable<AITool> tools) {
     for (final tool in loadout)
       if (tool.name == 'codemode')
         tool.copyWith(description: createCodemodeDescription(loadout))
-      else if (tool.exposure == ToolExposure.direct)
-        tool.copyWith(
-          description:
-              '${tool.description}\n\nCodemode: `tools.${toCodemodeIdentifier(tool.name)}(args)` resolves to ${tool.outputSchema == null ? 'a string' : '`${schemaToType(tool.outputSchema)}`'}.',
-        )
       else
         tool,
   ];

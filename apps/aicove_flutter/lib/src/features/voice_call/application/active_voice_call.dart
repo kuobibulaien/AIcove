@@ -18,6 +18,7 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
     required Future<VoiceCallSession> Function() createSession,
     required VoiceCallArchiver archiver,
     required String Function(Object error) describeError,
+    this.outgoing = true,
     void Function(String message)? log,
     VoidCallback? onFinished,
   }) : _createSession = createSession,
@@ -27,6 +28,9 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
        _onFinished = onFinished;
 
   final String conversationId;
+
+  /// 用户拨出的电话；接听角色来电时为 false。
+  final bool outgoing;
   final Future<VoiceCallSession> Function() _createSession;
   final VoiceCallArchiver _archiver;
   final String Function(Object error) _describeError;
@@ -38,6 +42,9 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
   final _clock = Stopwatch();
   Timer? _ticker;
   Future<void>? _finishing;
+
+  /// 是用户挂的（不是接通失败或通话自己结束），拨出没接通时据此记「已取消」。
+  bool _hungUpByUser = false;
 
   /// 每秒走一次的通话时长，单独通知，免得计时带着整页重建。
   @override
@@ -148,7 +155,7 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
       _error = _describeError(e);
       _phase = VoiceCallPhase.ended;
       notifyListeners();
-      unawaited(hangUp());
+      unawaited(_end());
     }
   }
 
@@ -157,7 +164,7 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
     if (phase != VoiceCallPhase.listening) _partial = '';
     notifyListeners();
     // 识别出错等原因由会话自己挂断时，同样存档收尾。
-    if (phase == VoiceCallPhase.ended) unawaited(hangUp());
+    if (phase == VoiceCallPhase.ended) unawaited(_end());
   }
 
   @override
@@ -194,9 +201,14 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
     return _session?.sendText(text) ?? false;
   }
 
-  /// 挂断并存档；重复调用返回同一次收尾。
+  /// 用户挂断并存档；重复调用返回同一次收尾。
   @override
-  Future<void> hangUp() => _finishing ??= _finish();
+  Future<void> hangUp() {
+    if (_finishing == null) _hungUpByUser = true;
+    return _end();
+  }
+
+  Future<void> _end() => _finishing ??= _finish();
 
   Future<void> _finish() async {
     notifyListeners();
@@ -214,20 +226,18 @@ class ActiveVoiceCall extends ChangeNotifier implements VoiceCallControls {
         _log('挂断出错：$e');
       }
       _lastTranscript = session.transcript;
-      _phase = VoiceCallPhase.ended;
-      notifyListeners();
-      try {
-        await _archiver.archive(
-          conversationId: conversationId,
-          connectedAt: session.connectedAt,
-          turns: session.transcript,
-        );
-      } catch (e) {
-        _log('通话记录保存失败：$e');
-      }
-    } else {
-      _phase = VoiceCallPhase.ended;
-      notifyListeners();
+    }
+    _phase = VoiceCallPhase.ended;
+    notifyListeners();
+    try {
+      await _archiver.archive(
+        conversationId: conversationId,
+        connectedAt: session?.connectedAt,
+        turns: session?.transcript ?? const [],
+        cancelled: outgoing && _hungUpByUser,
+      );
+    } catch (e) {
+      _log('通话记录保存失败：$e');
     }
     // 气泡写进聊天之后再撤掉聊天页里的临时显示，中间不留空档。
     _onFinished?.call();

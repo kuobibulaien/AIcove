@@ -1,4 +1,4 @@
-/// TTS 失败回退通知服务
+/// 媒体生成失败通知服务
 /// 
 /// 管理 TTS 生成失败时的用户通知。
 /// 使用 StreamController 实现 UI 层与业务层的解耦。
@@ -40,15 +40,27 @@ enum TtsFallbackReason {
 class TtsFallbackEvent {
   final TtsFallbackReason reason;
   final DateTime timestamp;
+  final bool isImageFailure;
 
-  TtsFallbackEvent(this.reason) : timestamp = DateTime.now();
+  TtsFallbackEvent(this.reason)
+      : isImageFailure = false,
+        timestamp = DateTime.now();
 
-  String get message => '${reason.description}，已显示文本';
+  TtsFallbackEvent.imageFailure()
+      : reason = TtsFallbackReason.error,
+        isImageFailure = true,
+        timestamp = DateTime.now();
+
+  String get message => isImageFailure
+      ? '图片生成失败，可稍后重试或检查绘图渠道'
+      : '${reason.description}，已显示文本';
 }
 
 /// TTS 失败通知服务
 class TtsFallbackNotificationService {
   final _controller = StreamController<TtsFallbackEvent>.broadcast();
+
+  final _notifiedImageTurns = <(String, Object)>{};
 
   /// 事件流
   Stream<TtsFallbackEvent> get stream => _controller.stream;
@@ -57,6 +69,15 @@ class TtsFallbackNotificationService {
   void notify(String reason) {
     final event =  TtsFallbackEvent(TtsFallbackReason.fromString(reason));
     _controller.add(event);
+  }
+
+  /// 同一会话的一轮生成，无论多少张图片失败都只通知一次。
+  void notifyImageFailure({
+    required String conversationId,
+    required Object turnId,
+  }) {
+    if (!_notifiedImageTurns.add((conversationId, turnId))) return;
+    _controller.add(TtsFallbackEvent.imageFailure());
   }
 
   /// 销毁
@@ -106,11 +127,17 @@ class _TtsFallbackNotificationListenerState
   Future<void> _showNotification(TtsFallbackEvent event) async {
     try {
       if (!mounted) return;
-      final shouldShow =
-          await dismissibleNoticeService.shouldShowNotice('tts_fallback');
-      if (!mounted || !shouldShow) return;
+      if (!event.isImageFailure) {
+        final shouldShow =
+            await dismissibleNoticeService.shouldShowNotice('tts_fallback');
+        if (!mounted || !shouldShow) return;
+      }
       if (Overlay.maybeOf(context) == null) {
         AppLogger.warning('TtsFallbackNotification', '没有可用浮层，跳过语音回退提示');
+        return;
+      }
+      if (event.isImageFailure) {
+        MoeToast.show(context, event.message);
         return;
       }
       MoeToast.showDismissible(

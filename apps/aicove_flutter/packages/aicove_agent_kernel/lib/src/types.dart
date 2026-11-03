@@ -76,7 +76,8 @@ enum KernelStopReason {
   length('length'),
   waitingForUser('waitingForUser'),
   fastModeStop('fast mode stop'),
-  policy('policy');
+  policy('policy'),
+  steered('steered');
 
   const KernelStopReason(this.wireValue);
   final String wireValue;

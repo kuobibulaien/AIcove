@@ -88,6 +88,18 @@ void main() {
     expect(await store.renew('t', token), isFalse);
   });
 
+  test('delivery anchor attaches only to its completed owner and only once', () async {
+    final token = (await store.tryClaim(triggerId: 't', claimedBy: fg))!;
+    await store.attachDeliveryMessage('t', token, 'too-early');
+    expect(await store.beginDelivery('t', token), isTrue);
+    await store.attachDeliveryMessage('t', 'wrong-owner', 'wrong');
+    expect((await store.stateOf('t') as AutoReplyClaimDelivered).messageId, isNull);
+    await store.attachDeliveryMessage('t', token, 'raw');
+    await store.attachDeliveryMessage('t', token, 'replacement');
+    expect((await store.stateOf('t') as AutoReplyClaimDelivered).messageId, 'raw');
+    expect(await store.tryClaim(triggerId: 't', claimedBy: bg), isNull);
+  });
+
   test('a delivered claim is never taken over', () async {
     final token = (await store.tryClaim(triggerId: 't', claimedBy: bg, now: t0))!;
     expect(await store.beginDelivery('t', token), isTrue);

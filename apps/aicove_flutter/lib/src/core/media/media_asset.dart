@@ -109,8 +109,9 @@ String mediaFileExtension(String mime) {
 }
 
 class OriginalMediaUnavailable implements Exception {
-  const OriginalMediaUnavailable(this.mediaId);
+  const OriginalMediaUnavailable(this.mediaId, {this.message});
   final String mediaId;
+  final String? message;
   @override
-  String toString() => '原图尚未加载，请加载原图后再执行此操作。';
+  String toString() => message ?? '原图尚未加载，请加载原图后再执行此操作。';
 }

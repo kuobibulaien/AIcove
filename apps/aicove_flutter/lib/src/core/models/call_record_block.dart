@@ -46,43 +46,59 @@ class CallTurn {
   };
 }
 
+/// 没接通的电话是谁打的、怎么没接上。
+enum MissedCall {
+  /// 角色打来，用户没接或拒接（方案 12 §4.8）。
+  incoming,
+
+  /// 用户拨出，还没接通就自己挂了。
+  cancelled,
+
+  /// 用户拨出，角色没接或拒接。角色拒接还没做，暂时没有来源。
+  unanswered,
+}
+
 /// 聊天里的语音通话气泡（ADR0074）。逐句记录跟着气泡存、随聊天同步（[turns]），
 /// 但不是正式消息：文字内容只有给模型看的标签和挂断后补上的通话摘要（决定 4）。
 class CallRecordBlock extends TextBlock {
   CallRecordBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.callId,
     required this.duration,
     this.summary,
     List<CallTurn> turns = const [],
-    this.missed = false,
+    this.missedCall,
     super.status,
   }) : turns = List.unmodifiable(turns),
        super(
-         content: missed
-             ? missedCallLabel
+         content: missedCall != null
+             ? missedCallLabel(missedCall)
              : summary == null || summary.trim().isEmpty
              ? callRecordLabel(duration)
              : '${callRecordLabel(duration)}\n通话摘要：${summary.trim()}',
        );
 
-  /// 角色主动打来、用户没接的电话（方案 12 §4.8）：时长为 0，没有逐句记录。
+  /// 没接通的电话：时长为 0，没有逐句记录。
   factory CallRecordBlock.missed({
     required String messageId,
     required String callId,
+    MissedCall kind = MissedCall.incoming,
   }) => CallRecordBlock(
     messageId: messageId,
     callId: callId,
     duration: Duration.zero,
-    missed: true,
+    missedCall: kind,
   );
 
   final String callId;
   final Duration duration;
 
-  /// 没接通的来电。模型只看到 [missedCallLabel]，知道自己打过、对方没接。
-  final bool missed;
+  /// 没接通时的情形；接通过的电话为 null。模型只看到 [missedCallLabel]。
+  final MissedCall? missedCall;
+
+  bool get missed => missedCall != null;
 
   /// 挂断后由后台整理的摘要；还没整理好或整理失败时为空。
   final String? summary;
@@ -92,12 +108,13 @@ class CallRecordBlock extends TextBlock {
 
   CallRecordBlock withSummary(String summary) => CallRecordBlock(
     id: id,
+    createdAt: createdAt,
     messageId: messageId,
     callId: callId,
     duration: duration,
     summary: summary,
     turns: turns,
-    missed: missed,
+    missedCall: missedCall,
     status: status,
   );
 
@@ -105,6 +122,7 @@ class CallRecordBlock extends TextBlock {
     final record = Map<String, dynamic>.from(json['callRecord'] as Map);
     return CallRecordBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       callId: record['callId'] as String,
       duration: Duration(milliseconds: (record['durationMs'] as num).toInt()),
@@ -113,7 +131,11 @@ class CallRecordBlock extends TextBlock {
         for (final turn in record['turns'] as List? ?? const [])
           CallTurn.fromJson(Map<String, dynamic>.from(turn as Map)),
       ],
-      missed: record['missed'] == true,
+      missedCall:
+          MissedCall.values
+              .where((value) => value.name == record['missedCall'])
+              .firstOrNull ??
+          (record['missed'] == true ? MissedCall.incoming : null),
       status: BlockStatus.values.firstWhere(
         (value) => value.name == json['status'],
         orElse: () => BlockStatus.success,
@@ -129,13 +151,22 @@ class CallRecordBlock extends TextBlock {
       'durationMs': duration.inMilliseconds,
       if (summary != null) 'summary': summary,
       if (turns.isNotEmpty) 'turns': [for (final turn in turns) turn.toJson()],
-      if (missed) 'missed': true,
+      // 来电照旧只写 missed；拨出没接通的只写 missedCall，旧版本读到时
+      // 显示成 00:00 的通话，不会误当成角色打来的未接来电。
+      if (missedCall == MissedCall.incoming) 'missed': true,
+      if (missedCall != null && missedCall != MissedCall.incoming)
+        'missedCall': missedCall!.name,
     },
   };
 }
 
-/// 未接来电在聊天记录里的文字，模型和会话预览都看这个。
-const String missedCallLabel = '[未接的语音通话]';
+/// 没接通的电话在聊天记录里的文字，模型和会话预览都看这个。来电那条以角色
+/// 名义写，拨出的以用户名义写，模型据此知道是谁打的。
+String missedCallLabel(MissedCall kind) => switch (kind) {
+  MissedCall.incoming => '[未接的语音通话]',
+  MissedCall.cancelled => '[语音通话 已取消]',
+  MissedCall.unanswered => '[语音通话 未接听]',
+};
 
 /// 聊天列表和气泡预览里的通话标签。
 String callRecordLabel(Duration duration) =>

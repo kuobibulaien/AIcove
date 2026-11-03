@@ -56,3 +56,7 @@ date: 2026-10-22
 ## 验收
 
 离线和真实模型的逐步提交、命令、计数及产物路径见本次 `codex-backend-report.md`；源测试包括 agent_execution_audit、transcript、codemode、workspace_cwd、chat_run_status_persistence、unified_api_runner 及调用方契约 fixtures。Mac 原生 QuickJS／进程／HTTP 已在测试中执行；手机实机与 Windows 未验。源码渲染预览由界面负责人交付。
+
+## 修订（2026-10-30）：默认工具瘦身
+
+默认工具二十多个，占大量提示词空间。桌面默认直出 `read`、`write`、`edit`、`bash`、`codemode`、`workspace_open`、`workspace_search`、`aicove_role`、`aicove_role_context`、`web_search`、`draw_image`，手机无 `bash`。原子工具不删，收进 `codemode`，描述只留分组索引，用 `searchTools`／`describeTool` 按需查。能力、授权和撤销不变。

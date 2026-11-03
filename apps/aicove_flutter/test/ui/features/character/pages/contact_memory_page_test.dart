@@ -17,7 +17,9 @@ class _Store implements MemoryStorePort {
   @override
   Future<List<MemoryItem>> list(String ownerId, {MemoryLayer? layer}) async =>
       items
-          .where((i) => i.ownerId == ownerId && (layer == null || i.layer == layer))
+          .where(
+            (i) => i.ownerId == ownerId && (layer == null || i.layer == layer),
+          )
           .toList();
   @override
   Future<MemoryItem?> get(String ownerId, String id) async =>
@@ -30,7 +32,9 @@ class _Store implements MemoryStorePort {
     required String title,
     required String content,
   }) async {
-    if (title.trim().isEmpty) throw const MemoryException('记忆标题须为 1–120 字的单行文字。');
+    if (title.trim().isEmpty) {
+      throw const MemoryException('记忆标题须为 1–120 字的单行文字。');
+    }
     items.removeWhere((i) => i.id == id);
     final item = MemoryItem(
       id: id ?? 'i${_next++}',
@@ -63,18 +67,23 @@ class _Store implements MemoryStorePort {
   noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-MemoryItem _item(String owner, String id, MemoryLayer layer, {bool locked = false}) =>
-    MemoryItem(
-      id: id,
-      ownerId: owner,
-      layer: layer,
-      title: '$owner-$id',
-      content: '$owner 的 $id',
-      sourceIds: const [],
-      locked: locked,
-      createdAt: DateTime(2026),
-      updatedAt: DateTime(2026),
-    );
+MemoryItem _item(
+  String owner,
+  String id,
+  MemoryLayer layer, {
+  bool locked = false,
+  String? content,
+}) => MemoryItem(
+  id: id,
+  ownerId: owner,
+  layer: layer,
+  title: '$owner-$id',
+  content: content ?? '$owner 的 $id',
+  sourceIds: const [],
+  locked: locked,
+  createdAt: DateTime(2026),
+  updatedAt: DateTime(2026),
+);
 
 Widget _app(_Store store, Widget home, {bool allowed = true}) => ProviderScope(
   overrides: [
@@ -96,13 +105,15 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   for (final width in [360.0, 1000.0]) {
-    testWidgets('$width 宽：分常驻与档案展示，新增的记忆自动锁定且只写指定角色', (tester) async {
+    testWidgets('$width 宽：分核心印象与往事日记全文展示，新增的记忆自动锁定且只写指定角色', (tester) async {
       await tester.binding.setSurfaceSize(Size(width, 1200));
       addTearDown(() => tester.binding.setSurfaceSize(null));
+      const longDiary =
+          '2026-05-12 这天一起聊了大疆 Pocket 4 的拍摄计划，还约好毕业旅行去海边看日落，散步时聊了很多未来的打算与期待，整篇日记都可以直接完整读完。';
       final store = _Store()
         ..items.addAll([
           _item('a', 'c1', MemoryLayer.core),
-          _item('a', 'r1', MemoryLayer.archive),
+          _item('a', 'r1', MemoryLayer.archive, content: longDiary),
           _item('b', 'r2', MemoryLayer.archive),
         ]);
       await tester.pumpWidget(
@@ -110,20 +121,26 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('角色A的记忆'), findsOneWidget);
+      expect(find.textContaining('核心印象'), findsWidgets);
+      expect(find.textContaining('往事日记'), findsWidgets);
       expect(find.text('a-c1'), findsOneWidget);
       expect(find.text('a-r1'), findsOneWidget);
+      expect(find.text(longDiary), findsOneWidget);
+      final diaryText = tester.widget<Text>(find.text(longDiary));
+      expect(diaryText.maxLines, isNull);
+      expect(diaryText.overflow, isNull);
       expect(find.text('b-r2'), findsNothing);
       expect(find.textContaining('已是最新'), findsOneWidget);
 
-      await tester.ensureVisible(find.text('添加档案记忆'));
-      await tester.tap(find.text('添加档案记忆'));
+      await tester.ensureVisible(find.text('添加往事日记'));
+      await tester.tap(find.text('添加往事日记'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).at(0), '雨中散步');
+      await tester.enterText(find.byType(TextField).at(0), '2026-05-13 雨中散步');
       await tester.enterText(find.byType(TextField).at(1), '一起撑着紫色雨伞散步');
       await tester.tap(find.text('保存'));
       await tester.pumpAndSettle();
-      expect(find.text('雨中散步'), findsOneWidget);
-      final saved = store.items.singleWhere((i) => i.title == '雨中散步');
+      expect(find.text('2026-05-13 雨中散步'), findsOneWidget);
+      final saved = store.items.singleWhere((i) => i.title == '2026-05-13 雨中散步');
       expect(saved.ownerId, 'a');
       expect(saved.layer, MemoryLayer.archive);
       expect(saved.locked, isTrue);
@@ -165,7 +182,8 @@ void main() {
         store,
         ValueListenableBuilder<String>(
           valueListenable: owner,
-          builder: (_, id, __) => ContactMemoryPage(ownerId: id, displayName: id),
+          builder: (_, id, __) =>
+              ContactMemoryPage(ownerId: id, displayName: id),
         ),
       ),
     );

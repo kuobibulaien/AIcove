@@ -281,58 +281,57 @@ class _ConversationTurnCard extends StatelessWidget {
             ? '最终展示给用户的回复（耗时：${formatDurationLabel(finalDeliveryDurationMs)}）'
             : '最终展示给用户的回复');
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: MoeG2Decoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: MoeContentSurface(
         radius: 10,
-        color: colors.componentBackground,
-        border: Border.all(
+        padding: const EdgeInsets.all(12),
+        border: BorderSide(
           color: Colors.deepPurple.withValues(alpha: 0.35),
           width: borderWidth,
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '第${index + 1}轮会话（共${turn.rounds.length}轮）',
-            style: const TextStyle(
-              color: Colors.deepPurple,
-              fontSize: 12,
-              fontWeight: MoeFontWeights.emphasis,
-              fontFamily: 'monospace',
-            ),
-          ),
-          const SizedBox(height: 4),
-          SelectableText(
-            meta,
-            style: TextStyle(
-              color: colors.textSecondary,
-              fontSize: 10,
-              fontFamily: 'monospace',
-            ),
-          ),
-          const SizedBox(height: 10),
-          ...[
-            for (var i = 0; i < turn.rounds.length; i++) ...[
-              _ConversationRoundCard(
-                round: turn.rounds[i],
-                showRawStreamEvents: showRawStreamEvents,
-                contextImagePreviewResolver: contextImagePreviewResolver,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '第${index + 1}轮会话（共${turn.rounds.length}轮）',
+              style: const TextStyle(
+                color: Colors.deepPurple,
+                fontSize: 12,
+                fontWeight: MoeFontWeights.emphasis,
+                fontFamily: 'monospace',
               ),
-              if (i != turn.rounds.length - 1) const SizedBox(height: 8),
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              meta,
+              style: TextStyle(
+                color: colors.textSecondary,
+                fontSize: 10,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...[
+              for (var i = 0; i < turn.rounds.length; i++) ...[
+                _ConversationRoundCard(
+                  round: turn.rounds[i],
+                  showRawStreamEvents: showRawStreamEvents,
+                  contextImagePreviewResolver: contextImagePreviewResolver,
+                ),
+                if (i != turn.rounds.length - 1) const SizedBox(height: 8),
+              ],
+            ],
+            if (finalReply.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _ConversationSection(
+                title: finalReplyTitle,
+                content: finalReply,
+                titleColor: Colors.green,
+              ),
             ],
           ],
-          if (finalReply.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _ConversationSection(
-              title: finalReplyTitle,
-              content: finalReply,
-              titleColor: Colors.green,
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -604,19 +603,17 @@ class _ContextImagePreviewTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 92,
-            height: 92,
-            padding: const EdgeInsets.all(2),
-            decoration: BoxDecoration(
-              color: colors.surface,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: colors.borderLight, width: borderWidth),
-            ),
-            child: SmoothClipRRect(
-              radius: 8,
-              child: SizedBox.expand(
-                child: _ContextImagePreviewMedia(item: item),
+          SizedBox.square(
+            dimension: 92,
+            child: MoeInsetSurface(
+              radius: 10,
+              padding: const EdgeInsets.all(2),
+              border: BorderSide(color: colors.borderLight, width: borderWidth),
+              child: SmoothClipRRect(
+                radius: 8,
+                child: SizedBox.expand(
+                  child: _ContextImagePreviewMedia(item: item),
+                ),
               ),
             ),
           ),

@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/media/media_store.dart';
+import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/background_service.dart';
 import 'package:drift/native.dart';
@@ -126,6 +127,11 @@ void main() {
         await MediaStore.localDeviceId);
     expect(await _unread(), 1);
     expect(await _status(), 'fired');
+    final prefs = await SharedPreferences.getInstance();
+    final clock = cloudPreferenceTimes(
+      prefs, _triggerKey, prefs.getString(_triggerKey), 'test-device',
+    );
+    expect(clock['value'], isNotNull, reason: '后台终态必须携带同步设置时间戳');
     final logs = await Directory(
       '${root.path}/logs',
     ).list().where((f) => f is File).toList();
@@ -187,6 +193,68 @@ void main() {
 
     expect((await _messages()).single.content, '早上好呀');
     expect(await _status(), 'fired');
+  });
+
+  test('a locked read of the role model is retried, not treated as unset',
+      () async {
+    // Global model A has no key; the role picked B, which has one. A lock
+    // while reading the role's model must not fall back to A.
+    Map<String, Object?> provider(String id, List<String> keys) => {
+          'id': id,
+          'apiKeys': keys,
+          'apiBaseUrl': 'http://127.0.0.1:9/v1',
+          'enabled': true,
+          'models': ['m-$id'],
+          'visible_models': ['m-$id'],
+          'custom_config': {'requestFormat': 'openai'},
+        };
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'aicove.ui_models.v1',
+      jsonEncode({
+        'providers': [provider('a', []), provider('b', ['sk-b'])],
+        'visible_models': ['a:m-a', 'b:m-b'],
+        'default_model': 'a:m-a',
+        'default_chat_models': ['a:m-a'],
+      }),
+    );
+    await _withDb((db) => db.customStatement(
+          "UPDATE conversations SET session_provider = 'b:m-b' "
+          "WHERE id = '$_conv'",
+        ));
+    late AppDatabase holder;
+    for (var attempt = 0;; attempt++) {
+      holder = AppDatabase.forTesting(NativeDatabase(
+        File(p.join(root.path, 'aicove.db')),
+        setup: (db) => db.execute('PRAGMA locking_mode = EXCLUSIVE'),
+      ));
+      try {
+        await holder.customStatement('BEGIN EXCLUSIVE');
+        break;
+      } catch (e) {
+        await holder.close();
+        if (!'$e'.contains('(code 5)') || attempt >= 6) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: 50 * (1 << attempt)));
+      }
+    }
+    final released = Future<void>.delayed(
+      const Duration(milliseconds: 300),
+      () async {
+        await holder.customStatement('COMMIT');
+        await holder.close();
+      },
+    );
+
+    await runActiveReplyTaskForTest(task());
+    await released;
+
+    await prefs.reload();
+    final logs = jsonDecode(prefs.getString('aicove.auto_trigger_logs.v1')!)
+        as List;
+    final started = logs.cast<Map>().singleWhere(
+          (log) => log['event'] == 'task_started',
+        );
+    expect((started['metadata'] as Map)['model'], 'b:m-b');
   });
 
   test('a run killed after writing is finished without a second message',

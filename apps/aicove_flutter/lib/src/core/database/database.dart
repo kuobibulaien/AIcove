@@ -53,6 +53,14 @@ class Conversations extends Table {
   TextColumn get thinkingLevels => text().nullable()();
   // 会话级聊天样式覆盖：'bubble' | 'document'，null 跟随全局（ADR0047）
   TextColumn get chatDisplayStyle => text().nullable()();
+  // 聊天界面显示偏好（按联系人），null 沿用旧的全局值
+  RealColumn get imagePreviewScale => real().nullable()();
+  BoolColumn get expandAudioText => boolean().nullable()();
+  BoolColumn get hideUserAvatar => boolean().nullable()();
+  // 气泡分段（按联系人），null 跟随全局默认
+  BoolColumn get chunkEnabled => boolean().nullable()();
+  BoolColumn get filterPunctuation => boolean().nullable()();
+  TextColumn get chunkPunctuationSetId => text().nullable()();
   // 角色工作模式：'chat' | 'tool'，null 为聊天模式（ADR0097）
   TextColumn get agentMode => text().nullable()();
 
@@ -182,60 +190,19 @@ class Providers extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// (注释已丢失)
-class SyncScopes extends Table {
-  TextColumn get enabledScopes => text()
-      .withDefault(const Constant('["chat.history", "characters.cards"]'))();
-  IntColumn get updatedAt => integer()();
-
-  // (注释已丢失)
-  IntColumn get id => integer().withDefault(const Constant(1))();
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
-/// (注释已丢失)
-class SyncCursors extends Table {
-  TextColumn get deviceId => text()();
-  IntColumn get conversationsCursor =>
-      integer().withDefault(const Constant(0))();
-  IntColumn get messagesCursor => integer().withDefault(const Constant(0))();
-  IntColumn get providersCursor => integer().withDefault(const Constant(0))();
-  IntColumn get updatedAt => integer()();
-
-  @override
-  Set<Column> get primaryKey => {deviceId};
-}
-
-/// (注释已丢失)
-class PendingOperations extends Table {
-  TextColumn get opId => text()();
-  TextColumn get opType => text()();
-  TextColumn get opData => text()(); // JSON
-  IntColumn get createdAt => integer()();
-  BoolColumn get synced => boolean().withDefault(const Constant(false))();
-
-  @override
-  Set<Column> get primaryKey => {opId};
-}
-
 @DriftDatabase(tables: [
   Conversations,
   Messages,
   MessageProjectionMappings,
   MessageBlocks,
   Providers,
-  SyncScopes,
-  SyncCursors,
-  PendingOperations,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration {
@@ -342,48 +309,65 @@ class AppDatabase extends _$AppDatabase {
         if (from < 25) {
           await _safeAddColumn('conversations', 'agent_mode TEXT');
         }
+        // v25 -> v26: 图片预览大小、语音默认展开、隐藏用户头像与气泡分段改为按联系人
+        if (from < 26) {
+          await _safeAddColumn('conversations', 'image_preview_scale REAL');
+          await _safeAddColumn('conversations',
+              'expand_audio_text INTEGER CHECK (expand_audio_text IN (0, 1))');
+          await _safeAddColumn('conversations',
+              'hide_user_avatar INTEGER CHECK (hide_user_avatar IN (0, 1))');
+          await _safeAddColumn('conversations',
+              'chunk_enabled INTEGER CHECK (chunk_enabled IN (0, 1))');
+          await _safeAddColumn('conversations',
+              'filter_punctuation INTEGER CHECK (filter_punctuation IN (0, 1))');
+          await _safeAddColumn(
+              'conversations', 'chunk_punctuation_set_id TEXT');
+        }
       },
-      // 只补物理访问索引，不改变表/记录格式或user_version。
-      // 已有v16也能获得索引，且回退到此前v16应用无需降级数据库。
+      // 打开时维护本机表、索引与清理触发器，不改变user_version。
       beforeOpen: (_) async {
+        await _runWithBusyRetry(
+          () => transaction(() async {
+            // 旧同步架构已退役；现行 cloud/LAN tracking 不依赖这些表。
+            await customStatement('DROP TABLE IF EXISTS sync_scopes');
+            await customStatement('DROP TABLE IF EXISTS sync_cursors');
+            await customStatement('DROP TABLE IF EXISTS pending_operations');
+          }),
+        );
         await AppDataMigration.rewriteDatabase(this);
         await _ensureChatEntryIndexes();
         await _ensureAutoReplyClaimCompletion();
         await _ensureProactiveCallTable();
+        await _runWithBusyRetry(
+          () => customStatement('''
+CREATE TRIGGER IF NOT EXISTS memory_items_delete_fts
+AFTER DELETE ON memory_items
+BEGIN
+  DELETE FROM memory_items_fts WHERE item_id = OLD.id;
+END
+'''),
+        );
       },
     );
   }
 
-  Future<void> _ensureChatEntryIndexes() async {
-    for (var attempt = 0;; attempt++) {
-      try {
-        await transaction(() async {
-          await installCloudTracking(this);
-          await installLanTracking(this);
-          // 默认ASC与隐含rowid同向；倒序扫描即可匹配created_at DESC,
-          // rowid DESC。显式把时间列改成DESC反而会为同时间戳二次排序。
-          await customStatement('''
+  Future<void> _ensureChatEntryIndexes() => _runWithBusyRetry(() =>
+      transaction(() async {
+        await installCloudTracking(this);
+        await installLanTracking(this);
+        // 默认ASC与隐含rowid同向；倒序扫描即可匹配created_at DESC,
+        // rowid DESC。显式把时间列改成DESC反而会为同时间戳二次排序。
+        await customStatement('''
 CREATE INDEX IF NOT EXISTS messages_active_conversation_time
 ON messages(conversation_id, created_at)
 WHERE deleted_at IS NULL AND replaced_by IS NULL
 ''');
-          await customStatement('''
+        await customStatement('''
 CREATE INDEX IF NOT EXISTS message_blocks_active_message_order
 ON message_blocks(message_id, sort_order)
 WHERE deleted_at IS NULL
 ''');
-        });
-        return;
-      } on SqliteException catch (error) {
-        // 前台/后台连接可同时首次打开。先回滚释放锁，再有界异步重试；
-        // 不改连接全局busy_timeout，不吞磁盘/语法等非锁错误。
-        if ((error.resultCode != 5 && error.resultCode != 6) || attempt >= 6) {
-          rethrow;
-        }
-        await Future<void>.delayed(Duration(milliseconds: 50 * (1 << attempt)));
-      }
-    }
-  }
+      }));
 
   /// 上下文摘要与长期记忆（ADR0038）。由专用 Adapter 以参数化 SQL 访问，
   /// 不走 Drift 表定义；每张表一条独立语句，均可重复执行。
@@ -547,8 +531,9 @@ CREATE TABLE IF NOT EXISTS auto_reply_trigger_claims (
   /// 主动来电记录（方案 12 §13，ProactiveCallLedger）：前台、WorkManager 与
   /// 通知回调共用的本机互斥表，同认领表只走 raw SQL、每次打开时建表，不升
   /// schema 版本，也不同步。
-  Future<void> _ensureProactiveCallTable() async {
-    await customStatement('''
+  Future<void> _ensureProactiveCallTable() => _runWithBusyRetry(
+    () => transaction(() async {
+      await customStatement('''
 CREATE TABLE IF NOT EXISTS proactive_calls (
   trigger_id TEXT NOT NULL PRIMARY KEY,
   conversation_id TEXT NOT NULL,
@@ -560,80 +545,81 @@ CREATE TABLE IF NOT EXISTS proactive_calls (
   settled_at INTEGER
 )
 ''');
-    // Tables from before `confirmed` (2026-10-14): their calls were all
-    // delivered, so they count as confirmed. A duplicate column means another
-    // isolate added it first.
-    final columns = await customSelect(
-      'PRAGMA table_info(proactive_calls)',
-    ).get();
-    if (columns.any((row) => row.data['name'] == 'confirmed')) return;
-    try {
-      await customStatement(
-        'ALTER TABLE proactive_calls '
-        'ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1',
+      // Tables from before `confirmed` (2026-10-14): their calls were all
+      // delivered, so they count as confirmed. A duplicate column means another
+      // isolate added it first.
+      final columns = await customSelect(
+        'PRAGMA table_info(proactive_calls)',
+      ).get();
+      if (columns.any((row) => row.data['name'] == 'confirmed')) return;
+      await _safeAddColumn(
+        'proactive_calls',
+        'confirmed INTEGER NOT NULL DEFAULT 1',
       );
-    } on SqliteException catch (error) {
-      if (!error.message.contains('duplicate column')) rethrow;
-    }
-  }
+    }),
+  );
 
   /// 认领租约（2026-10-12）给旧表补 completed_at 与 message_id：本地互斥表，
   /// 不升 schema 版本，每次打开时按列是否存在补齐。旧记录视为已完成，不会被
   /// 接管。
   Future<void> _ensureAutoReplyClaimCompletion() async {
-    // Same bounded retry as _ensureChatEntryIndexes: the foreground and the
-    // WorkManager isolate may open the database at the same moment.
-    for (var attempt = 0;; attempt++) {
-      try {
-        await transaction(() async {
-          final columns = await customSelect(
-            'PRAGMA table_info(auto_reply_trigger_claims)',
-          ).get();
-          if (columns.isEmpty) return;
-          final names = {for (final row in columns) row.data['name']};
-          if (!names.contains('completed_at')) {
-            await customStatement(
-              'ALTER TABLE auto_reply_trigger_claims '
-              'ADD COLUMN completed_at INTEGER',
-            );
-            await customStatement(
-              'UPDATE auto_reply_trigger_claims SET completed_at = claimed_at',
-            );
-          }
-          if (!names.contains('message_id')) {
-            await customStatement(
-              'ALTER TABLE auto_reply_trigger_claims ADD COLUMN message_id TEXT',
-            );
-          }
-        });
-        return;
-      } on SqliteException catch (error) {
-        // 锁冲突有界重试；另一连接已补好列时，下一轮读到列存在即返回。
-        if ((error.resultCode == 5 || error.resultCode == 6) && attempt < 6) {
-          await Future<void>.delayed(
-            Duration(milliseconds: 50 * (1 << attempt)),
-          );
-          continue;
-        }
-        // 另一个 isolate 抢先补列导致 duplicate column：重新检查一次。
-        final after = await customSelect(
+    try {
+      await _runWithBusyRetry(() => transaction(() async {
+        final columns = await customSelect(
           'PRAGMA table_info(auto_reply_trigger_claims)',
         ).get();
-        final names = {for (final row in after) row.data['name']};
-        if (!names.contains('completed_at') || !names.contains('message_id')) {
-          rethrow;
+        if (columns.isEmpty) return;
+        final names = {for (final row in columns) row.data['name']};
+        if (!names.contains('completed_at')) {
+          await customStatement(
+            'ALTER TABLE auto_reply_trigger_claims '
+            'ADD COLUMN completed_at INTEGER',
+          );
+          await customStatement(
+            'UPDATE auto_reply_trigger_claims SET completed_at = claimed_at',
+          );
         }
-        return;
+        if (!names.contains('message_id')) {
+          await customStatement(
+            'ALTER TABLE auto_reply_trigger_claims ADD COLUMN message_id TEXT',
+          );
+        }
+      }));
+    } on SqliteException {
+      // 另一连接已补齐列时可继续；锁冲突耗尽或其他失败且缺列则向上传递。
+      final after = await customSelect(
+        'PRAGMA table_info(auto_reply_trigger_claims)',
+      ).get();
+      final names = {for (final row in after) row.data['name']};
+      if (!names.contains('completed_at') || !names.contains('message_id')) {
+        rethrow;
       }
     }
   }
 
+  Future<void> _runWithBusyRetry(Future<void> Function() action) async {
+    // 前后台连接同时打开时，事务先回滚释放锁，再有界异步重试。
+    for (var attempt = 0;; attempt++) {
+      try {
+        await action();
+        return;
+      } on SqliteException catch (error) {
+        if ((error.resultCode != 5 && error.resultCode != 6) || attempt >= 6) {
+          rethrow;
+        }
+        await Future<void>.delayed(Duration(milliseconds: 50 * (1 << attempt)));
+      }
+    }
+  }
 
   Future<void> _safeAddColumn(String table, String columnDef) async {
     try {
       await customStatement('ALTER TABLE $table ADD COLUMN $columnDef');
-    } catch (_) {
-      // (注释已丢失)
+    } on SqliteException catch (error) {
+      // 另一连接或历史版本已补过同名列时可继续，其余失败必须中止迁移。
+      if (!error.message.toLowerCase().contains('duplicate column')) {
+        rethrow;
+      }
     }
   }
 }
@@ -645,6 +631,7 @@ LazyDatabase _openConnection() {
     return NativeDatabase.createInBackground(
       file,
       setup: (db) {
+        db.execute('PRAGMA busy_timeout = 5000');
         // Keep foreign key constraints on for all platforms.
         db.execute('PRAGMA foreign_keys = ON');
         try {

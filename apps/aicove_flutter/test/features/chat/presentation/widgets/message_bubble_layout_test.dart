@@ -383,4 +383,5 @@ void main() {
 
     expect(find.byType(TypingDotsIndicator), findsOneWidget);
   });
+
 }

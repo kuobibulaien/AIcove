@@ -35,6 +35,7 @@ abstract final class TaskReceiptLimits {
 class TaskReceiptBlock extends TextBlock {
   TaskReceiptBlock._({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.receiptId,
     required this.taskId,
@@ -172,6 +173,7 @@ class TaskReceiptBlock extends TextBlock {
     final record = Map<String, dynamic>.from(json['taskReceipt'] as Map);
     return TaskReceiptBlock._(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       receiptId: record['receipt_id'] as String,
       taskId: record['task_id'] as String,
@@ -274,6 +276,7 @@ enum TaskControlKind { reply, cancel }
 class TaskControlBlock extends TextBlock {
   TaskControlBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.controlId,
     required this.taskId,
@@ -300,6 +303,7 @@ class TaskControlBlock extends TextBlock {
     final record = Map<String, dynamic>.from(json['taskControl'] as Map);
     return TaskControlBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       controlId: record['control_id'] as String,
       taskId: record['task_id'] as String,

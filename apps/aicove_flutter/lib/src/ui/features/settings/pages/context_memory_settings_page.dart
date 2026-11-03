@@ -166,9 +166,7 @@ class _ContextMemorySettingsPageState
     AppSettings settings,
     String modelRef, {
     required String fallback,
-  }) => modelRef.isEmpty
-      ? fallback
-      : '${settings.getModelDisplayName(modelRef)}（$modelRef）';
+  }) => modelRef.isEmpty ? fallback : settings.getModelDisplayName(modelRef);
 
   List<_ModelChoice> _collectChatModels(AppSettings settings) {
     final result = <_ModelChoice>[];
@@ -182,11 +180,12 @@ class _ContextMemorySettingsPageState
           ? visible
           : settings.getProviderModelsByType(provider.id, type: ModelType.chat);
       for (final modelName in candidates) {
+        final modelRef = settings.buildModelRef(provider.id, modelName);
         result.add(
           _ModelChoice(
-            modelRef: settings.buildModelRef(provider.id, modelName),
+            modelRef: modelRef,
             providerName: provider.displayName ?? provider.id,
-            modelName: modelName,
+            modelName: settings.getModelDisplayName(modelRef),
           ),
         );
       }

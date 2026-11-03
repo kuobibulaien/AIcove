@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
-import '../../chat/services/chat_history_store.dart';
+import '../../chat/domain/message.dart';
 import '../../memory/application/memory_retrieval.dart';
 import '../../memory/providers/memory_providers.dart';
 import '../../agent_plugins/aicove_plugin.dart';
@@ -18,7 +18,7 @@ class MemoryPlugin extends BasePlugin {
   static const _metadata = PluginMetadata(
     id: 'memory',
     name: '长期记忆',
-    description: '在聊天时带上这个角色的长期记忆；压缩时自动整理',
+    description: '在聊天时带上核心印象与往事日记；按聊天轮次在后台自动整理',
     version: '3.0.0',
     author: 'AIcove Team',
     icon: Icons.memory,
@@ -38,23 +38,22 @@ class MemoryPlugin extends BasePlugin {
     String? userMessage,
     String? conversationId,
     bool resumeBackgroundWork = true,
+    List<Message> rawHistory = const [],
   }) async {
     // 缺少请求作用域时失败关闭；活动页面可能已经切到别的角色。
     final ownerId = conversationId?.trim() ?? '';
     if (ownerId.isEmpty) return null;
     // 上次中途退出留下的整理任务，借本次启动后第一次发送在后台续跑。
     // 上下文预览只读，不能借预览启动整理（会请求记忆模型并写库）。
-    if (resumeBackgroundWork)
+    if (resumeBackgroundWork) {
       _ref.read(memoryKeeperProvider).resumeOnce(ownerId);
-    final recent = await _ref
-        .read(chatHistoryStoreProvider)
-        .loadRecentProjectedMessages(ownerId, limit: 4);
+    }
     return _ref
         .read(memoryInjectorProvider)
         .build(
           ownerId: ownerId,
           roleLabel: await _roleLabel(ownerId),
-          query: buildMemoryQuery(recent, userMessage ?? ''),
+          query: buildMemoryQuery(rawHistory, userMessage ?? ''),
         )
         .timeout(
           const Duration(seconds: 2),

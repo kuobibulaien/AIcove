@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../theme/moe_frosted_material.dart';
 import '../../theme/tokens.dart';
 import 'moe_adaptive_shell.dart';
 import 'moe_chat_wallpaper.dart';
+import 'moe_floating_surface.dart';
 
 /// Shared page surface. The detail route owns its background across the whole
 /// workspace; its controls and Scaffold remain inside the detail pane.
@@ -40,6 +42,13 @@ class MoePageScaffold extends StatelessWidget {
     // Pages passing the theme's own page color still count as uncustomized.
     final usesDefault =
         color == scaffoldColor || color == context.moeColors.surface;
+    final hasSolidBackground =
+        background == null &&
+        color.a >= 1.0 &&
+        (!usesDefault || !MoeGlobalWallpaper.isActive(context));
+    final workspace = MoeWorkspace.maybeOf(context);
+    final isWideDetail =
+        workspace != null && workspace.isWide && workspace.isDetail;
     return MoeWorkspaceBackground(
       background: background != null
           ? background!
@@ -49,7 +58,15 @@ class MoePageScaffold extends StatelessWidget {
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: appBar,
-        body: body,
+        body: body == null
+            ? null
+            : MoeSharedBackdrop(
+                child: MoeSolidBackdropScope(
+                  color: hasSolidBackground ? color : null,
+                  waitForRouteTransition: isWideDetail,
+                  child: body!,
+                ),
+              ),
         bottomNavigationBar: bottomNavigationBar,
         floatingActionButton: floatingActionButton,
         resizeToAvoidBottomInset: resizeToAvoidBottomInset,

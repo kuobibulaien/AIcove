@@ -16,12 +16,15 @@ import 'moe_chat_wallpaper.dart';
 /// The detail navigator stays mounted when the window crosses the breakpoint.
 class MoeDetailStackObserver extends NavigatorObserver {
   final hasDetail = ValueNotifier<bool>(false);
+  final primaryCovered = ValueNotifier<bool>(false);
   final routeCount = ValueNotifier<int>(0);
   final background = ValueNotifier<Widget?>(null);
   final List<Route<dynamic>> _routes = [];
   final List<Route<dynamic>> _visibleRoutes = [];
   final Map<Route<dynamic>, Widget> _backgrounds = {};
+  final Map<Route<dynamic>, VoidCallback> _animationListeners = {};
   int _exiting = 0;
+  bool _userGestureInProgress = false;
   bool _scheduled = false;
   bool _disposed = false;
 
@@ -29,14 +32,66 @@ class MoeDetailStackObserver extends NavigatorObserver {
     (route) => route.popDisposition == RoutePopDisposition.doNotPop,
   );
 
+  /// Topmost page name for diagnostics; type names carry no user data.
+  /// The stack bottom is the placeholder behind the home page. Null when the
+  /// topmost page can't be named.
+  String? get topPageName {
+    if (_routes.length <= 1) return 'MainPage';
+    final page = _routes.whereType<PageRoute<dynamic>>().lastOrNull;
+    if (page is! MoeWorkspaceRouteTransition) return null;
+    return page.contentType.toString().split('<').first;
+  }
+
+  bool _computePrimaryCovered() {
+    if (_disposed || _exiting > 0 || _userGestureInProgress || _routes.length <= 1) {
+      return false;
+    }
+    for (var i = 1; i < _routes.length; i++) {
+      final route = _routes[i];
+      if (route is PageRoute<dynamic> &&
+          (route.animation == null ||
+              route.animation!.status == AnimationStatus.completed)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _attachRouteAnimation(Route<dynamic> route) {
+    if (route is! ModalRoute<dynamic> || _animationListeners.containsKey(route)) {
+      return;
+    }
+    final animation = route.animation;
+    if (animation == null) return;
+    void listener(AnimationStatus status) {
+      if (_disposed) return;
+      if (status != AnimationStatus.completed && primaryCovered.value) {
+        primaryCovered.value = _computePrimaryCovered();
+      } else {
+        _changed();
+      }
+    }
+
+    animation.addStatusListener(listener);
+    _animationListeners[route] = () => animation.removeStatusListener(listener);
+  }
+
+  void _detachRouteAnimation(Route<dynamic> route) {
+    _animationListeners.remove(route)?.call();
+  }
+
   void _changed() {
     if (_scheduled || _disposed) return;
     _scheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scheduled = false;
       if (!_disposed) {
+        for (final route in _routes) {
+          _attachRouteAnimation(route);
+        }
         routeCount.value = _routes.length;
         hasDetail.value = _routes.length > 1 || _exiting > 0;
+        primaryCovered.value = _computePrimaryCovered();
         final page = _visibleRoutes.whereType<PageRoute<dynamic>>().lastOrNull;
         background.value = _backgrounds[page];
       }
@@ -48,6 +103,7 @@ class MoeDetailStackObserver extends NavigatorObserver {
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     _routes.add(route);
     _visibleRoutes.add(route);
+    _attachRouteAnimation(route);
     if (_routes.length == 2 &&
         navigator != null &&
         MoeWorkspace.maybeOf(navigator!.context)?.isWide == true &&
@@ -60,8 +116,12 @@ class MoeDetailStackObserver extends NavigatorObserver {
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     _routes.remove(route);
+    _detachRouteAnimation(route);
     if (route is TransitionRoute<dynamic>) {
       _exiting++;
+      if (!_disposed) {
+        primaryCovered.value = false;
+      }
       route.completed.whenComplete(() {
         _exiting--;
         _forgetBackground(route);
@@ -69,6 +129,9 @@ class MoeDetailStackObserver extends NavigatorObserver {
       });
     } else {
       _forgetBackground(route);
+      if (!_disposed) {
+        primaryCovered.value = _computePrimaryCovered();
+      }
     }
     _changed();
   }
@@ -76,12 +139,18 @@ class MoeDetailStackObserver extends NavigatorObserver {
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
     _routes.remove(route);
+    _detachRouteAnimation(route);
     _forgetBackground(route);
+    if (!_disposed) {
+      primaryCovered.value = _computePrimaryCovered();
+    }
     _changed();
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (oldRoute != null) _detachRouteAnimation(oldRoute);
+    if (newRoute != null) _attachRouteAnimation(newRoute);
     final visibleIndex = oldRoute == null
         ? -1
         : _visibleRoutes.indexOf(oldRoute);
@@ -101,12 +170,37 @@ class MoeDetailStackObserver extends NavigatorObserver {
         _routes[index] = newRoute;
       }
     }
+    if (!_disposed) {
+      primaryCovered.value = _computePrimaryCovered();
+    }
+    _changed();
+  }
+
+  @override
+  void didStartUserGesture(
+    Route<dynamic> route,
+    Route<dynamic>? previousRoute,
+  ) {
+    _userGestureInProgress = true;
+    if (!_disposed) {
+      primaryCovered.value = false;
+    }
+  }
+
+  @override
+  void didStopUserGesture() {
+    _userGestureInProgress = false;
     _changed();
   }
 
   void dispose() {
     _disposed = true;
+    for (final detach in _animationListeners.values.toList()) {
+      detach();
+    }
+    _animationListeners.clear();
     hasDetail.dispose();
+    primaryCovered.dispose();
     routeCount.dispose();
     background.dispose();
     _backgrounds.clear();
@@ -447,12 +541,22 @@ class _MoeAdaptiveShellState extends State<MoeAdaptiveShell> {
                       excluding: !isWide && hasDetail,
                       child: TickerMode(
                         enabled: isWide || !hasDetail,
-                        child: _pane(
-                          child: widget.primary,
-                          isWide: isWide,
-                          isDetail: false,
-                          width: primaryWidth,
-                          height: contentHeight - inset * 2,
+                        child: RepaintBoundary(
+                          child: ValueListenableBuilder<bool>(
+                            valueListenable: widget.observer.primaryCovered,
+                            builder: (context, primaryCovered, child) =>
+                                Offstage(
+                                  offstage: !isWide && primaryCovered,
+                                  child: child,
+                                ),
+                            child: _pane(
+                              child: widget.primary,
+                              isWide: isWide,
+                              isDetail: false,
+                              width: primaryWidth,
+                              height: contentHeight - inset * 2,
+                            ),
+                          ),
                         ),
                       ),
                     ),

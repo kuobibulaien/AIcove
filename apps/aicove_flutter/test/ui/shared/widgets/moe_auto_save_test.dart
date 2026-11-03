@@ -250,4 +250,89 @@ void main() {
     expect(tester.takeException(), isNull);
     text.dispose();
   });
+
+  testWidgets(
+      'closing editor commits active IME composition and persists final text',
+      (tester) async {
+    var persisted = 'old';
+    await tester.pumpWidget(MaterialApp(
+        home: Builder(
+            builder: (context) => Scaffold(
+                    body: TextButton(
+                  child: const Text('open'),
+                  onPressed: () => showMoeAutoSaveTextEditor(
+                      context: context,
+                      title: 'edit',
+                      initialValue: persisted,
+                      onSave: (text) async => persisted = text),
+                )))));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    final field = tester.widget<TextField>(find.byType(TextField));
+    field.controller!.value = const TextEditingValue(
+      text: '开心，撒娇',
+      composing: TextRange(start: 3, end: 5),
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    expect(persisted, '开心，撒娇');
+    expect(find.text('edit'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sheet barrier tap and drag-to-close honor auto-save and snap back on failure',
+      (tester) async {
+    var fail = true;
+    var persisted = 'old';
+    await tester.pumpWidget(MaterialApp(
+        home: Builder(
+            builder: (context) => Scaffold(
+                    body: TextButton(
+                  child: const Text('open'),
+                  onPressed: () => showMoeAutoSaveTextEditor(
+                      context: context,
+                      title: 'edit',
+                      initialValue: persisted,
+                      onSave: (text) async {
+                        if (fail) throw const FormatException('名称不能为空');
+                        persisted = text;
+                      }),
+                )))));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'dragged edit');
+    final initialTop = tester.getTopLeft(find.byType(MoeBottomSheet)).dy;
+
+    // Drag down past close threshold while save fails: should show dialog and snap back.
+    await tester.drag(find.text('edit'), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(find.text('名称不能为空'), findsOneWidget);
+    await tester.tap(find.text('继续编辑'));
+    await tester.pumpAndSettle();
+    expect(find.text('dragged edit'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byType(MoeBottomSheet)).dy,
+      closeTo(initialTop, 1.0),
+    );
+    expect(persisted, 'old');
+
+    // Now allow save to succeed and tap outside barrier to close & flush.
+    fail = false;
+    await tester.enterText(find.byType(TextField), 'scrim edit');
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+    expect(persisted, 'scrim edit');
+    expect(find.text('edit'), findsNothing);
+
+    // Re-open and verify drag-to-close also flushes pending edits cleanly.
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'final drag');
+    await tester.drag(find.text('edit'), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(persisted, 'final drag');
+    expect(find.text('edit'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

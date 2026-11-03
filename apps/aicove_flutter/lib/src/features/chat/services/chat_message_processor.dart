@@ -12,6 +12,8 @@
 /// - 2026-03-18: 统一图片标签为 <image></image>，快速模式图片改为后补分段
 library;
 
+import 'dart:convert';
+
 import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../plugins/domain/plugin.dart';
@@ -21,6 +23,7 @@ import '../../plugins/image/image_plugin.dart';
 import '../../plugins/plugin_content_tags.dart';
 import '../../plugins/tts/tts_parser.dart';
 import '../../stickers/sticker_tag.dart';
+import '../../stickers/sticker_library.dart';
 import '../../../core/models/block_status.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/api/providers/provider_adapter.dart'
@@ -65,9 +68,14 @@ class _Seg {
 /// 提供消息构建、文本处理等无状态工具方法
 /// 注意：普通分段逻辑已移至 UI 层，但多模态标签（TTS、表情包）必须在存储时拆分
 class ChatMessageProcessor {
-  const ChatMessageProcessor();
+  const ChatMessageProcessor() : _ids = null;
+  ChatMessageProcessor._(this._ids);
+
+  final _ProjectionIds? _ids;
+  String _nextId(String kind) => _ids?.next(kind) ?? genId(kind);
+  DateTime get _now => _ids?.createdAt ?? DateTime.now();
   static final RegExp _imagePlaceholderRegex = RegExp(
-    r'(?:<image>\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
+    r'(?:<image>\s*(\{[^<]*\})?\s*</image>|\[(?:图片|image)(?:\s*:[^\]]*)?\])',
     caseSensitive: false,
   );
   static final RegExp _punctuationOnlyTextRegex = RegExp(
@@ -82,6 +90,8 @@ class ChatMessageProcessor {
   AssistantMessageBuildResult buildAssistantMessages({
     required String replyText,
     required String processedText,
+    String? rawMessageId,
+    DateTime? rawCreatedAt,
     String? displayReplyText,
     required List<PluginEvent> pluginEvents,
     List<PluginContent>? contents,
@@ -91,7 +101,23 @@ class ChatMessageProcessor {
     String reasoning = '',
     List<ReplyRound> replyRounds = const [],
   }) {
-    if (replyRounds.length > 1) {
+    if (rawMessageId != null) {
+      return ChatMessageProcessor._(
+        _ProjectionIds(rawMessageId, createdAt: rawCreatedAt),
+      ).buildAssistantMessages(
+        replyText: replyText,
+        processedText: processedText,
+        displayReplyText: displayReplyText,
+        pluginEvents: pluginEvents,
+        contents: contents,
+        toolAudioResults: toolAudioResults,
+        toolCalls: toolCalls,
+        rawToolResults: rawToolResults,
+        reasoning: reasoning,
+        replyRounds: replyRounds,
+      );
+    }
+    if (replyRounds.isNotEmpty) {
       return _buildRoundMessages(
         replyRounds,
         toolAudioResults: toolAudioResults,
@@ -108,8 +134,10 @@ class ChatMessageProcessor {
         .whereType<PluginAudioContent>()
         .toList(growable: false);
     final nonImageContents = normalizedContents
-        .where((content) =>
-            content is! PluginImageContent && content is! PluginAudioContent)
+        .where(
+          (content) =>
+              content is! PluginImageContent && content is! PluginAudioContent,
+        )
         .toList(growable: false);
 
     // 1. 先处理非图片内容（文本/音频等）
@@ -124,7 +152,7 @@ class ChatMessageProcessor {
       final hasMultimodal = pluginEvents.any(
         (e) =>
             e.type == 'tts_convert' ||
-            e.type == 'sticker_convert' ||
+            _isStickerEvent(e) ||
             e.type == 'image_generate',
       );
 
@@ -132,11 +160,13 @@ class ChatMessageProcessor {
         // 有多模态标签：按标签位置拆分，保证语序正确
         // TTS 段由 ChatTtsHandler 顺序处理，这里跳过
         final segments = _parseMultimodalSegments(
-          displayReplyText ?? replyText, pluginEvents,
+          displayReplyText ?? replyText,
+          pluginEvents,
+          toolImages: imageContents,
         );
         var audioContentIndex = 0;
         var toolAudioIndex = 0;
-        var imageContentIndex = 0;
+        final remainingImages = List<PluginImageContent>.of(imageContents);
         for (final segment in segments) {
           if (segment.content.trim().isEmpty) continue;
 
@@ -170,46 +200,56 @@ class ChatMessageProcessor {
               final stickerId = segment.data?['stickerId'] as String?;
               final tag = segment.data?['tag'] as String?;
               if (assetPath != null && assetPath.isNotEmpty) {
-                aiMessages.add(Message.fromBlocks(
-                  id: genId('sticker'),
-                  role: 'assistant',
-                  blocks: [
-                    EmojiBlock(
-                      messageId: genId('emoji'),
-                      emojiId: stickerId ?? tag ?? 'unknown',
-                      path: assetPath,
-                      matchedTag: tag,
-                    ),
-                  ],
-                  createdAt: DateTime.now(),
-                  status: 'sent',
-                ));
+                final stickerMessageId = _nextId('sticker');
+                aiMessages.add(
+                  Message.fromBlocks(
+                    id: stickerMessageId,
+                    role: 'assistant',
+                    blocks: [
+                      EmojiBlock(
+                        id: '${stickerMessageId}__b0_emoji',
+                        messageId: stickerMessageId,
+                        emojiId: stickerId ?? tag ?? 'unknown',
+                        path: StickerLibrary.resolveLocalPath(
+                          assetPath,
+                          stickerId: stickerId,
+                        ),
+                        matchedTag: tag,
+                      ),
+                    ],
+                    createdAt: _now,
+                    status: 'sent',
+                  ),
+                );
               }
               break;
             case _SegType.image:
-              if (imageContentIndex < imageContents.length) {
-                final image = imageContents[imageContentIndex];
+              final image = segment.data?['toolImage'] as PluginImageContent?;
+              if (image != null) {
+                remainingImages.remove(image);
                 aiMessages.add(
                   _buildImageMessage(
                     PluginImageContent(
                       image.localPath,
-                      caption: image.caption ?? segment.content.trim(),
+                      caption:
+                          image.caption ??
+                          (segment.data?['isToolAnchor'] == true
+                              ? null
+                              : segment.content.trim()),
                       generationSnapshot: image.generationSnapshot,
+                      width: image.width,
+                      height: image.height,
+                      slotId: image.slotId,
+                      versions: image.versions,
+                      activeVersionIndex: image.activeVersionIndex,
                     ),
                   ),
                 );
-                imageContentIndex += 1;
               }
               break;
           }
         }
-        if (imageContentIndex < imageContents.length) {
-          aiMessages.addAll(
-            _processPluginContents(imageContents.skip(imageContentIndex).toList(
-              growable: false,
-            )),
-          );
-        }
+        aiMessages.addAll(_processPluginContents(remainingImages));
         if (audioContentIndex < audioContents.length) {
           for (final content in audioContents.skip(audioContentIndex)) {
             aiMessages.add(_buildAudioMessageFromPluginContent(content));
@@ -222,16 +262,18 @@ class ChatMessageProcessor {
         }
       } else {
         // 无多模态标签：保持消息完整
-        var sourceText =
-            selectAssistantText(
-              processedText, pluginEvents, replyText,
-              processedTextProvided: displayReplyText != null,
-            );
+        var sourceText = selectAssistantText(
+          processedText,
+          pluginEvents,
+          replyText,
+          processedTextProvided: displayReplyText != null,
+        );
 
         // 如果文本为空但有 trigger 事件，生成确认消息
         if (sourceText.isEmpty) {
-          final triggerEvents =
-              pluginEvents.where((e) => e.type == 'trigger_created').toList();
+          final triggerEvents = pluginEvents
+              .where((e) => e.type == 'trigger_created')
+              .toList();
           if (triggerEvents.isNotEmpty) {
             final titles = triggerEvents
                 .map((e) => e.data['title'] as String?)
@@ -278,7 +320,8 @@ class ChatMessageProcessor {
     if (toolCalls.isNotEmpty) {
       final first = aiMessages.isEmpty ? null : aiMessages.first;
       final firstBlocks = first?.blocks;
-      final firstIsText = first != null &&
+      final firstIsText =
+          first != null &&
           (firstBlocks == null || firstBlocks.isEmpty
               ? first.content.trim().isNotEmpty
               : firstBlocks.every((block) => block is TextBlock));
@@ -289,7 +332,11 @@ class ChatMessageProcessor {
             ..._toolBlocks(first.id, toolCalls, rawToolResults),
             ...(firstBlocks == null || firstBlocks.isEmpty
                 ? <MessageBlock>[
-                    TextBlock(messageId: first.id, content: first.content),
+                    TextBlock(
+                      id: '${first.id}__text',
+                      messageId: first.id,
+                      content: first.content,
+                    ),
                   ]
                 : firstBlocks),
           ],
@@ -300,23 +347,44 @@ class ChatMessageProcessor {
           _toolMessage(
             toolCalls,
             rawToolResults,
-            createdAt: first?.createdAt ?? DateTime.now(),
+            ids: _ids,
+            createdAt: first?.createdAt ?? _now,
           ),
         );
       }
     }
 
-    aiMessages = attachModelThinking(aiMessages, reasoning);
+    aiMessages = _attachModelThinking(aiMessages, reasoning, _ids);
+    aiMessages = _normalizeBuiltMessages(aiMessages);
 
     // 计算最后一条消息预览
-    final lastMessageText =
-        aiMessages.isNotEmpty ? aiMessages.last.displayText : '';
+    final lastMessageText = aiMessages.isNotEmpty
+        ? aiMessages.last.displayText
+        : '';
 
     return AssistantMessageBuildResult(
       messages: aiMessages,
       lastMessageText: lastMessageText,
     );
   }
+
+  List<Message> _normalizeBuiltMessages(List<Message> messages) => [
+    for (final message in messages)
+      message.copyWith(
+        blocks: message.blocks == null
+            ? null
+            : [
+                for (final (index, block) in message.blocks!.indexed)
+                  MessageBlock.fromJson({
+                    ...block.toJson(),
+                    'id': '${message.id}__b${index}_${block.type.name}',
+                    'messageId': message.id,
+                    'createdAt': (_ids?.createdAt ?? block.createdAt)
+                        .toIso8601String(),
+                  }),
+              ],
+      ),
+  ];
 
   /// 调过工具的回复逐轮展开：每轮依次是思考 → 话术 → 这轮的工具调用，
   /// 最后一轮是正文（带工具产出的语音）。工具单独成一条消息，避免列表把
@@ -331,31 +399,48 @@ class ChatMessageProcessor {
     final messages = <Message>[];
     for (final (index, round) in rounds.indexed) {
       final isFinal = index == rounds.length - 1;
+      final roundProcessor = _ids == null
+          ? this
+          : ChatMessageProcessor._(
+              _ProjectionIds(
+                _ids.rawMessageId,
+                round: index,
+                createdAt: _ids.createdAt,
+              ),
+            );
       messages.addAll(
-        buildAssistantMessages(
-          replyText: round.replyText,
-          displayReplyText: round.replyText,
-          processedText: round.processedText,
-          pluginEvents: round.pluginEvents,
-          contents: round.pluginContents,
-          toolAudioResults: isFinal ? toolAudioResults : const [],
-          reasoning: round.reasoning,
-        ).messages,
+        roundProcessor
+            .buildAssistantMessages(
+              replyText: round.replyText,
+              displayReplyText: round.replyText,
+              processedText: round.processedText,
+              pluginEvents: round.pluginEvents,
+              contents: round.pluginContents,
+              toolAudioResults: isFinal ? toolAudioResults : const [],
+              reasoning: round.reasoning,
+            )
+            .messages,
       );
       final ids = round.toolCallIds.toSet();
       final roundCalls = [
         for (final call in toolCalls)
-          if (ids.contains(call.id) || (index == 0 && !claimed.contains(call.id)))
+          if (ids.contains(call.id) ||
+              (index == 0 && !claimed.contains(call.id)))
             call,
       ];
       if (roundCalls.isNotEmpty) {
         messages.add(
-          _toolMessage(roundCalls, rawToolResults, createdAt: DateTime.now()),
+          _toolMessage(
+            roundCalls,
+            rawToolResults,
+            createdAt: _now,
+            ids: roundProcessor._ids,
+          ),
         );
       }
     }
     return AssistantMessageBuildResult(
-      messages: messages,
+      messages: _normalizeBuiltMessages(messages),
       lastMessageText: messages.isNotEmpty ? messages.last.displayText : '',
     );
   }
@@ -364,36 +449,44 @@ class ChatMessageProcessor {
     String messageId,
     List<ToolCall> toolCalls,
     List<ToolResult> rawToolResults,
-  ) =>
-      [
-        for (final call in toolCalls)
-          ToolBlock(
-            messageId: messageId,
-            toolCallId: call.id,
-            toolName: call.name,
-            arguments: call.arguments,
-            result: {
-              if(call.name=='codemode') 'codemodeCalls': (rawToolResults.where((r)=>r.toolCallId==call.id).firstOrNull?.structured as Map?)?['codemodeCalls'] ?? const [],
-              'content': rawToolResults
-                  .firstWhere(
-                    (r) => r.toolCallId == call.id,
-                    orElse: () => ToolResult(
-                      toolCallId: call.id,
-                      name: call.name,
-                      result: '{"error": "no result"}',
-                    ),
-                  )
-                  .result,
-            },
-          ),
-      ];
+  ) => [
+    for (final call in toolCalls)
+      ToolBlock(
+        id: '${messageId}__tool_${call.id}',
+        messageId: messageId,
+        toolCallId: call.id,
+        toolName: call.name,
+        arguments: call.arguments,
+        result: {
+          if (call.name == 'codemode')
+            'codemodeCalls':
+                (rawToolResults
+                        .where((r) => r.toolCallId == call.id)
+                        .firstOrNull
+                        ?.structured
+                    as Map?)?['codemodeCalls'] ??
+                const [],
+          'content': rawToolResults
+              .firstWhere(
+                (r) => r.toolCallId == call.id,
+                orElse: () => ToolResult(
+                  toolCallId: call.id,
+                  name: call.name,
+                  result: '{"error": "no result"}',
+                ),
+              )
+              .result,
+        },
+      ),
+  ];
 
   static Message _toolMessage(
     List<ToolCall> toolCalls,
     List<ToolResult> rawToolResults, {
     required DateTime createdAt,
+    _ProjectionIds? ids,
   }) {
-    final id = genId('msg');
+    final id = ids?.next('tool') ?? genId('msg');
     return Message.fromBlocks(
       id: id,
       role: 'assistant',
@@ -411,22 +504,31 @@ class ChatMessageProcessor {
   static List<Message> attachModelThinking(
     List<Message> messages,
     String reasoning,
+  ) => _attachModelThinking(messages, reasoning, null);
+
+  static List<Message> _attachModelThinking(
+    List<Message> messages,
+    String reasoning,
+    _ProjectionIds? ids,
   ) {
     final content = reasoning.trim();
     if (content.isEmpty) return messages;
     ThinkingBlock thinking(String messageId) => ThinkingBlock(
-          messageId: messageId,
-          content: content,
-          title: modelThinkingTitle,
-          status: BlockStatus.success,
-        );
+      id: '${messageId}__thinking',
+      messageId: messageId,
+      content: content,
+      title: modelThinkingTitle,
+      status: BlockStatus.success,
+    );
     final first = messages.isEmpty ? null : messages.first;
     final firstBlocks = first?.blocks;
-    final firstIsText = first != null &&
+    final firstIsText =
+        first != null &&
         (firstBlocks == null || firstBlocks.isEmpty
             ? first.content.trim().isNotEmpty
-            : firstBlocks
-                .every((block) => block is TextBlock || block is ToolBlock));
+            : firstBlocks.every(
+                (block) => block is TextBlock || block is ToolBlock,
+              ));
     if (firstIsText) {
       return [
         first.copyWith(
@@ -434,7 +536,11 @@ class ChatMessageProcessor {
             thinking(first.id),
             ...(firstBlocks == null || firstBlocks.isEmpty
                 ? <MessageBlock>[
-                    TextBlock(messageId: first.id, content: first.content),
+                    TextBlock(
+                      id: '${first.id}__text',
+                      messageId: first.id,
+                      content: first.content,
+                    ),
                   ]
                 : firstBlocks),
           ],
@@ -442,18 +548,23 @@ class ChatMessageProcessor {
         ...messages.skip(1),
       ];
     }
-    final id = genId('msg');
+    final id = ids?.next('thinking') ?? genId('msg');
     return [
       Message.fromBlocks(
         id: id,
         role: 'assistant',
         blocks: [thinking(id)],
-        createdAt: first?.createdAt ?? DateTime.now(),
+        createdAt: first?.createdAt ?? ids?.createdAt ?? DateTime.now(),
         status: 'sent',
       ),
       ...messages,
     ];
   }
+
+  static bool _isStickerEvent(PluginEvent event) =>
+      (event.type == 'sticker_convert' || event.pluginId == 'sticker') &&
+      event.data['assetPath'] is String &&
+      (event.data['assetPath'] as String).trim().isNotEmpty;
 
   /// 解析多模态标签，返回按原文位置排列的片段列表
   ///
@@ -464,17 +575,28 @@ class ChatMessageProcessor {
   ) {
     final internal = _parseMultimodalSegments(text, pluginEvents);
     return internal
-        .map((s) => MultimodalSegment(
-              type: switch (s.type) {
-                _SegType.text => MultimodalSegmentType.text,
-                _SegType.tts => MultimodalSegmentType.tts,
-                _SegType.sticker => MultimodalSegmentType.sticker,
-                _SegType.image => MultimodalSegmentType.image,
-              },
-              content: s.content,
-              stickerData: s.type == _SegType.sticker ? s.data : null,
-              imageData: s.type == _SegType.image ? s.data : null,
-            ))
+        .map(
+          (s) => MultimodalSegment(
+            type: switch (s.type) {
+              _SegType.text => MultimodalSegmentType.text,
+              _SegType.tts => MultimodalSegmentType.tts,
+              _SegType.sticker => MultimodalSegmentType.sticker,
+              _SegType.image => MultimodalSegmentType.image,
+            },
+            content: s.content,
+            stickerData: s.type == _SegType.sticker && s.data != null
+                ? {
+                    ...s.data!,
+                    if (s.data!['assetPath'] case final String path)
+                      'assetPath': StickerLibrary.resolveLocalPath(
+                        path,
+                        stickerId: s.data!['stickerId'] as String?,
+                      ),
+                  }
+                : null,
+            imageData: s.type == _SegType.image ? s.data : null,
+          ),
+        )
         .toList();
   }
 
@@ -488,15 +610,16 @@ class ChatMessageProcessor {
   /// - 嵌套在 <tts> 内部的表情标签会被忽略（属于语音内容的一部分，语音正文里去掉）
   List<_Seg> _parseMultimodalSegments(
     String text,
-    List<PluginEvent> pluginEvents,
-  ) {
+    List<PluginEvent> pluginEvents, {
+    List<PluginImageContent> toolImages = const [],
+  }) {
     // 先移除非多模态的插件标签（如 trigger），保留 TTS 和 sticker 标签
     final cleanedText = _stripNonTtsTags(text);
 
     // 表情事件按标签分队列，与正文里顶层表情标签的出现顺序一一对应
     final stickerEventsByTag = <String, List<Map<String, dynamic>>>{};
     for (final event in pluginEvents) {
-      if (event.type == 'sticker_convert') {
+      if (_isStickerEvent(event)) {
         final tag = event.data['tag'] as String?;
         if (tag != null) (stickerEventsByTag[tag] ??= []).add(event.data);
       }
@@ -507,6 +630,17 @@ class ChatMessageProcessor {
         .where((event) => event.type == 'image_generate')
         .toList(growable: false);
     var imageEventIndex = 0;
+    final remainingToolImages = List<PluginImageContent>.of(toolImages);
+    // Reserve event-owned images before matching tool anchors, including anchors
+    // that appear before their corresponding inline generation event.
+    final eventImages = [
+      for (final event in imageEvents)
+        _takeImageForSlot(
+          remainingToolImages,
+          int.tryParse('${event.data['id'] ?? ''}'),
+          numbered: event.data['id'] != null,
+        ),
+    ];
 
     final segments = <_Seg>[];
     final pendingText = StringBuffer();
@@ -532,17 +666,51 @@ class ChatMessageProcessor {
           segments.add(_Seg(_SegType.tts, content));
           continue;
         }
-      } else if (_isInlineImageElement(segment) &&
-          imageEventIndex < imageEvents.length) {
-        final prompt = (segment as ContentTagElement).inner.trim();
-        if (prompt.isNotEmpty) {
+      } else if (_isInlineImageElement(segment)) {
+        final match = _imagePlaceholderRegex.firstMatch(segment.raw);
+        final anchorId = match == null ? null : _imageAnchorSlotId(match);
+        final event = imageEventIndex < imageEvents.length
+            ? imageEvents[imageEventIndex]
+            : null;
+        final eventId = int.tryParse('${event?.data['id'] ?? ''}');
+        final matchesEvent =
+            event != null &&
+            (event.data['tag'] == segment.raw ||
+                (event.data['tag'] == null &&
+                    (anchorId == null ||
+                        eventId == null ||
+                        anchorId == eventId)));
+        if (matchesEvent) {
+          final prompt = (segment as ContentTagElement).inner.trim();
+          if (prompt.isNotEmpty) {
+            flushText();
+            segments.add(
+              _Seg(
+                _SegType.image,
+                prompt,
+                data: {
+                  ...imageEvents[imageEventIndex].data,
+                  if (eventImages[imageEventIndex] case final image?)
+                    'toolImage': image,
+                },
+              ),
+            );
+            imageEventIndex += 1;
+            continue;
+          }
+        }
+        if (match != null) {
+          final image = _takeImageForAnchor(remainingToolImages, match);
           flushText();
-          segments.add(_Seg(
-            _SegType.image,
-            prompt,
-            data: imageEvents[imageEventIndex].data,
-          ));
-          imageEventIndex += 1;
+          if (image != null) {
+            segments.add(
+              _Seg(
+                _SegType.image,
+                segment.raw,
+                data: {'toolImage': image, 'isToolAnchor': true},
+              ),
+            );
+          }
           continue;
         }
       }
@@ -580,8 +748,11 @@ class ChatMessageProcessor {
       '',
     );
     result = result.replaceAll(
-      RegExp(r'<create_trigger\s[^>]*?>.*?</create_trigger>',
-          caseSensitive: false, dotAll: true),
+      RegExp(
+        r'<create_trigger\s[^>]*?>.*?</create_trigger>',
+        caseSensitive: false,
+        dotAll: true,
+      ),
       '',
     );
     // 移除 <delete_trigger ... /> 标签
@@ -604,30 +775,30 @@ class ChatMessageProcessor {
             messages.add(_buildTextMessage(text));
           }
 
-        case PluginImageContent(:final localPath, :final caption):
-          messages.add(
-            _buildImageMessage(
-              PluginImageContent(localPath, caption: caption, generationSnapshot: content.generationSnapshot),
-            ),
-          );
+        case PluginImageContent():
+          messages.add(_buildImageMessage(content));
 
         case PluginAudioContent(:final localPath, :final duration):
-          final msgId = genId('audio');
-          final audioUrl =
-              localPath.startsWith('file://') ? localPath : 'file://$localPath';
-          messages.add(Message.fromBlocks(
-            id: msgId,
-            role: 'assistant',
-            blocks: [
-              AudioBlock(
-                messageId: msgId,
-                url: audioUrl,
-                durationSeconds: duration?.inSeconds.toDouble(),
-              ),
-            ],
-            createdAt: DateTime.now(),
-            status: 'sent',
-          ));
+          final msgId = _nextId('audio');
+          final audioUrl = localPath.startsWith('file://')
+              ? localPath
+              : 'file://$localPath';
+          messages.add(
+            Message.fromBlocks(
+              id: msgId,
+              role: 'assistant',
+              blocks: [
+                AudioBlock(
+                  id: '${msgId}__b0_audio',
+                  messageId: msgId,
+                  url: audioUrl,
+                  durationSeconds: duration?.inSeconds.toDouble(),
+                ),
+              ],
+              createdAt: _now,
+              status: 'sent',
+            ),
+          );
 
         case PluginWidgetContent():
           break;
@@ -659,13 +830,9 @@ class ChatMessageProcessor {
     }
 
     var cursor = 0;
-    var imageIndex = 0;
+    final remaining = List<PluginImageContent>.of(images);
     final matches = _imagePlaceholderRegex.allMatches(normalizedText);
     for (final match in matches) {
-      if (imageIndex >= images.length) {
-        break;
-      }
-
       if (match.start > cursor) {
         final before = normalizedText.substring(cursor, match.start).trim();
         if (_isMeaningfulImageAdjacentText(before)) {
@@ -673,8 +840,8 @@ class ChatMessageProcessor {
         }
       }
 
-      messages.add(_buildImageMessage(images[imageIndex]));
-      imageIndex += 1;
+      final image = _takeImageForAnchor(remaining, match);
+      if (image != null) messages.add(_buildImageMessage(image));
       cursor = match.end;
     }
 
@@ -685,11 +852,48 @@ class ChatMessageProcessor {
       }
     }
 
-    for (; imageIndex < images.length; imageIndex++) {
-      messages.add(_buildImageMessage(images[imageIndex]));
+    for (final image in remaining) {
+      messages.add(_buildImageMessage(image));
     }
 
     return messages;
+  }
+
+  static PluginImageContent? _takeImageForAnchor(
+    List<PluginImageContent> remaining,
+    RegExpMatch match,
+  ) => _takeImageForSlot(
+    remaining,
+    _imageAnchorSlotId(match),
+    numbered: match.group(1) != null,
+  );
+
+  static int? _imageAnchorSlotId(RegExpMatch match) {
+    int? slotId;
+    final payload = match.group(1);
+    if (payload != null) {
+      try {
+        final data = jsonDecode(payload);
+        if (data is Map) slotId = int.tryParse('${data['id'] ?? ''}');
+      } on FormatException {
+        // Malformed placeholders do not claim another numbered slot.
+      }
+    }
+    return slotId;
+  }
+
+  static PluginImageContent? _takeImageForSlot(
+    List<PluginImageContent> remaining,
+    int? slotId, {
+    required bool numbered,
+  }) {
+    var index = numbered
+        ? remaining.indexWhere((image) => image.slotId == slotId)
+        : (remaining.isEmpty ? -1 : 0);
+    if (index < 0) {
+      index = remaining.indexWhere((image) => image.slotId == null);
+    }
+    return index < 0 ? null : remaining.removeAt(index);
   }
 
   bool _isMeaningfulImageAdjacentText(String text) {
@@ -699,27 +903,36 @@ class ChatMessageProcessor {
   }
 
   Message _buildTextMessage(String text) => Message(
-        id: genId('msg'),
-        role: 'assistant',
-        content: text,
-        createdAt: DateTime.now(),
-        status: 'sent',
-      );
+    id: _nextId('msg'),
+    role: 'assistant',
+    content: text,
+    createdAt: _now,
+    status: 'sent',
+  );
 
   Message _buildImageMessage(PluginImageContent content) {
-    final msgId = genId('img');
+    final msgId = _nextId('img');
+    final image = ImageBlock(
+      id: '${msgId}__b0_image',
+      messageId: msgId,
+      localPath: content.localPath,
+      prompt: content.caption,
+      generationSnapshot: content.generationSnapshot,
+      width: content.width,
+      height: content.height,
+      versions: content.versions,
+      activeVersionIndex: content.activeVersionIndex,
+      createdAt: _now,
+    );
     return Message.fromBlocks(
       id: msgId,
       role: 'assistant',
       blocks: [
-        ImageBlock(
-          messageId: msgId,
-          localPath: content.localPath,
-          prompt: content.caption,
-          generationSnapshot: content.generationSnapshot,
-        ),
+        content.versions.isEmpty
+            ? image
+            : image.withActiveVersion(content.activeVersionIndex),
       ],
-      createdAt: DateTime.now(),
+      createdAt: _now,
       status: 'sent',
     );
   }
@@ -728,7 +941,7 @@ class ChatMessageProcessor {
     PluginAudioContent content, {
     String? text,
   }) {
-    final msgId = genId('audio');
+    final msgId = _nextId('audio');
     final audioUrl = content.localPath.startsWith('file://')
         ? content.localPath
         : 'file://${content.localPath}';
@@ -737,13 +950,14 @@ class ChatMessageProcessor {
       role: 'assistant',
       blocks: [
         AudioBlock(
+          id: '${msgId}__b0_audio',
           messageId: msgId,
           url: audioUrl,
           text: (text?.trim().isNotEmpty ?? false) ? text!.trim() : null,
           durationSeconds: content.duration?.inSeconds.toDouble(),
         ),
       ],
-      createdAt: DateTime.now(),
+      createdAt: _now,
       status: 'sent',
     );
   }
@@ -752,7 +966,7 @@ class ChatMessageProcessor {
     ToolAudioResult result, {
     String? fallbackText,
   }) {
-    final msgId = genId('audio');
+    final msgId = _nextId('audio');
     final text = result.text.trim().isNotEmpty
         ? result.text.trim()
         : fallbackText?.trim();
@@ -761,12 +975,13 @@ class ChatMessageProcessor {
       role: 'assistant',
       blocks: [
         AudioBlock(
+          id: '${msgId}__b0_audio',
           messageId: msgId,
           url: result.audioUrl,
           text: text,
         ),
       ],
-      createdAt: DateTime.now(),
+      createdAt: _now,
       status: 'sent',
     );
   }
@@ -780,7 +995,10 @@ class ChatMessageProcessor {
   }) {
     final trimmedProcessed = processedText.trim();
     if (processedTextProvided || trimmedProcessed.isNotEmpty) {
-      return StickerTag.removeFrom(firstPartyContentTagScanner, trimmedProcessed);
+      return StickerTag.removeFrom(
+        firstPartyContentTagScanner,
+        trimmedProcessed,
+      );
     }
 
     // 如果检测到 TTS 事件，说明这轮回复应以语音为主
@@ -799,7 +1017,13 @@ class ChatMessageProcessor {
     if (text.isEmpty) return text;
     final ttsMatches = <String>[];
     final kept = StringBuffer();
-    final visibleText = StickerTag.removeFrom(firstPartyContentTagScanner, text);
+    final visibleText = StickerTag.removeFrom(
+      firstPartyContentTagScanner,
+      text.replaceAll(
+        RegExp(r'<image>\s*\{[^<]*\}\s*</image>', caseSensitive: false),
+        '',
+      ),
+    );
     for (final segment in firstPartyContentTagScanner.scan(visibleText)) {
       if (TtsParser.isSpeechElement(segment)) {
         // 移除 <tts>...</tts> 标签，但保留内容（清理 MiniMax 专有标签后）
@@ -817,11 +1041,15 @@ class ChatMessageProcessor {
 
     // 移除 <create_trigger ... /> 标签
     result = result.replaceAll(
-        RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false), '');
+      RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false),
+      '',
+    );
 
     // 移除 <delete_trigger ... /> 标签
     result = result.replaceAll(
-        RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false), '');
+      RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false),
+      '',
+    );
 
     result = result.trim();
 
@@ -835,7 +1063,9 @@ class ChatMessageProcessor {
 
   /// 收集 TTS 文本片段
   List<String> collectTtsTexts(
-      String replyText, List<PluginEvent> pluginEvents) {
+    String replyText,
+    List<PluginEvent> pluginEvents,
+  ) {
     final segments = <String>[];
     for (final event in pluginEvents) {
       if (event.type != 'tts_convert') continue;
@@ -859,3 +1089,16 @@ class ChatMessageProcessor {
 
 /// 单例实例
 const chatMessageProcessor = ChatMessageProcessor();
+
+/// A raw row and round own their bubble slots across devices and reloads.
+class _ProjectionIds {
+  _ProjectionIds(this.rawMessageId, {this.round = 0, DateTime? createdAt})
+    : createdAt =
+          createdAt ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  final String rawMessageId;
+  final int round;
+  int _slot = 0;
+  final DateTime createdAt;
+  String next(String kind) =>
+      '${rawMessageId}__proj_r${round}_s${_slot++}_$kind';
+}

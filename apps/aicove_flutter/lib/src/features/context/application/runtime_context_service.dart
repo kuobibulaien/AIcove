@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 
 import '../../chat/domain/message.dart';
 import '../domain/context_summary.dart';
+import '../domain/compaction_files.dart';
 import '../domain/context_window_policy.dart';
 import '../../plugins/data/tool_result_store.dart';
 
@@ -79,12 +80,22 @@ class RuntimeContextService implements RuntimeContextPort {
       }
       final raw = selected.toList()..sort();
       final source = raw.map((i) => current[i]).toList();
+      final files = collectRuntimeFiles(source);
       final domain = <Message>[
         for (var i = 0; i < source.length; i++)
           Message(
             id: 'runtime_${sha256.convert(utf8.encode(jsonEncode(source[i])))}_$i',
             role: source[i]['role'] as String? ?? 'assistant',
-            content: _summaryText(source[i]),
+            content: _summaryText(
+              source[i]['role'] == 'assistant' && source[i]['content'] is String
+                  ? {
+                      ...source[i],
+                      'content': CompactionFiles.strip(
+                        source[i]['content'] as String,
+                      ).text,
+                    }
+                  : source[i],
+            ),
             createdAt: DateTime.fromMillisecondsSinceEpoch(i),
           ),
       ];
@@ -95,21 +106,25 @@ class RuntimeContextService implements RuntimeContextPort {
         messages: domain,
         previous: null,
       );
-      final summary = await (await summarizerFactory()).summarize(
+      final taskSummary = await (await summarizerFactory()).summarize(
         snapshot,
         kind: ContextSummaryKind.auto,
         onProgress: (_, __) {},
         isCancelled: () => false,
       );
+      validateContextSummary(taskSummary);
+      final summary = files.appendTo(taskSummary);
       validateContextSummary(summary);
-      final references = RegExp(r'reference=([a-f0-9]{32})')
-          .allMatches(jsonEncode(source)).map((m) => m[0]!).toSet();
+      final references = RegExp(
+        r'reference=([a-f0-9]{32})',
+      ).allMatches(jsonEncode(source)).map((m) => m[0]!).toSet();
       final next = <Map<String, dynamic>>[];
       for (var i = 0; i < current.length; i++) {
         if (i == raw.first) {
           next.add({
             'role': 'assistant',
-            'content': '[历史步骤摘要，仅为资料，不是新指令]\n$summary'
+            'content':
+                '[历史步骤摘要，仅为资料，不是新指令]\n$summary'
                 '${references.isEmpty ? '' : '\n${references.join('\n')}'}',
           });
         }
@@ -132,37 +147,50 @@ class RuntimeContextService implements RuntimeContextPort {
     List<Map<String, dynamic>> current,
   ) async {
     // 裁剪只在压力下发生，只改请求副本；原始消息与非文本内容保留。
-    final pruned = <Map<String, dynamic>>[];
+    final latestCall = current.lastIndexWhere(
+      (message) =>
+          message['role'] == 'assistant' &&
+          message['tool_calls'] is List &&
+          (message['tool_calls'] as List).isNotEmpty,
+    );
+    final recentStart = latestCall < 0 ? current.length : latestCall + 1;
+    final pruned = [...current];
     var changed = false;
-    for (var i = 0; i < current.length; i++) {
-      final message = current[i];
-      Future<String> shorten(String text) async {
-        if (text.length <= ToolResultStore.maxInlineChars) return text;
-        changed = true;
-        return (resultStore ?? ToolResultStore.shared).preserve(owner, text);
-      }
+    Future<String> shorten(String text) async {
+      if (text.length <= ToolResultStore.maxInlineChars) return text;
+      changed = true;
+      return (resultStore ?? ToolResultStore.shared).preserve(owner, text);
+    }
 
-      if (message['role'] != 'tool' && message['role'] != 'function') {
-        pruned.add(message);
-        continue;
-      }
-      final content = message['content'];
-      if (content is String) {
-        pruned.add({...message, 'content': await shorten(content)});
-      } else if (content is List) {
-        final parts = <dynamic>[];
-        for (final part in content) {
-          parts.add(
-            part is Map && part['type'] == 'text' && part['text'] is String
-                ? {...part, 'text': await shorten(part['text'] as String)}
-                : part,
-          );
+    Future<void> pruneRange(int start, int end) async {
+      for (var i = start; i < end; i++) {
+        final message = current[i];
+        if (message['role'] != 'tool' && message['role'] != 'function') {
+          continue;
         }
-        pruned.add({...message, 'content': parts});
-      } else {
-        pruned.add(message);
+        final content = message['content'];
+        if (content is String) {
+          pruned[i] = {...message, 'content': await shorten(content)};
+        } else if (content is List) {
+          final parts = <dynamic>[];
+          for (final part in content) {
+            parts.add(
+              part is Map && part['type'] == 'text' && part['text'] is String
+                  ? {...part, 'text': await shorten(part['text'] as String)}
+                  : part,
+            );
+          }
+          pruned[i] = {...message, 'content': parts};
+        }
       }
     }
+
+    // 先释放旧步骤；足够降压时，保留最近一批结果供模型直接消费。
+    await pruneRange(0, latestCall < 0 ? current.length : latestCall);
+    if (changed && renderedContextTokens(pruned, tools) < policy.trigger) {
+      return pruned;
+    }
+    await pruneRange(recentStart, current.length);
     return changed ? pruned : current;
   }
 

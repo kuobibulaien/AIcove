@@ -1,9 +1,13 @@
 library;
 
 import 'dart:io';
+import 'dart:convert';
+import 'package:path/path.dart' as p;
+import '../../../core/models/message_block.dart' show ToolBlock;
 import '../../plugins/data/tool_result_store.dart';
 import '../../workspace/application/workspace_shell.dart';
 import '../../workspace/application/codemode_declarations.dart';
+import '../../workspace/application/tool_search.dart';
 
 import '../../agent_context/domain/agent_runtime_contracts.dart'
     show AgentToolAuthorization;
@@ -24,6 +28,7 @@ import '../../context/domain/context_window_policy.dart';
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../conversation_state/domain/conversation_state_port.dart';
 import '../../conversation_state/domain/mvu_content.dart';
@@ -34,6 +39,7 @@ import '../../agent_context/domain/silly_tavern_preset_assembler.dart';
 import '../../agent_context/domain/silly_tavern_regex_processor.dart';
 import '../../agent_context/domain/silly_tavern_world_book.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
+import '../application/conversation_model.dart';
 import '../domain/conversation.dart';
 import '../domain/role_agent_mode.dart';
 import '../domain/chat_context_preview.dart';
@@ -42,12 +48,11 @@ import '../../context/providers/context_providers.dart';
 import '../domain/message.dart';
 import '../domain/persona_prompt_codec.dart';
 import '../../settings/app_settings.dart';
-import '../../settings/provider_detail/provider_detail_support.dart';
+import 'provider_key_failure.dart';
 import '../../plugins/image/image_config.dart';
 import '../../plugins/image/drawing_preset_provider.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/plugin_providers.dart';
-import '../../plugins/packages/package_plugin.dart';
 import '../../plugins/image/image_plugin.dart';
 import '../../plugins/prompts/plugin_prompt_resolution.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
@@ -176,6 +181,7 @@ class ChatSendBackendService {
   ///
   /// [deferReminders] 为 true 时插件提醒（时间感知等）不插进消息，改由
   /// [ApiConfig.reminders] 在每次发送时按当时时刻现算，由调用方放到位置上（通话）。
+  /// [forceInlineImageRoute] 让已启用的绘图使用内联标签，不改变绘图权限。
   Future<ApiConfig> prepareApiConfig({
     required Conversation conv,
     required List<Message> history,
@@ -188,6 +194,7 @@ class ChatSendBackendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) => _prepareApiConfig(
     conv: conv,
     history: history,
@@ -200,6 +207,7 @@ class ChatSendBackendService {
     requestTime: requestTime,
     persistSideEffects: persistSideEffects,
     deferReminders: deferReminders,
+    forceInlineImageRoute: forceInlineImageRoute,
   );
 
   /// 只读预览：走与真实发送相同的装配，返回模型将看到的完整上下文。
@@ -262,6 +270,7 @@ class ChatSendBackendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     final resolvedConversationId = (conversationId?.trim().isNotEmpty ?? false)
         ? conversationId!.trim()
@@ -272,7 +281,10 @@ class ChatSendBackendService {
     final settings = await _ref.read(appSettingsProvider.future);
     final requestConfig = await _requestConfigBuilder.buildRequestConfig(
       settings,
-      modelRef: overrideModel,
+      consumeKeyRotation: preview == null,
+      modelRef: (overrideModel?.trim().isNotEmpty ?? false)
+          ? overrideModel
+          : conversationPrimaryModel(settings, conv),
     );
     final resolvedProvider = ProviderAdapterFactory.resolveProvider(
       requestConfig.providerId,
@@ -358,9 +370,15 @@ class ChatSendBackendService {
     final effectiveImageRoute = settings.resolveEffectiveImageGenerationRoute(
       modelRef,
     );
+    final useForcedInlineImageRoute =
+        forceInlineImageRoute &&
+        settings.imageGenerationEnabled &&
+        (conv.enabledPlugins == null || conv.enabledPlugins!.contains('image'));
     final shouldUseStableImageRoute =
+        !useForcedInlineImageRoute &&
         effectiveImageRoute == EffectiveImageGenerationRoute.stable;
     final shouldUseFastImageRoute =
+        useForcedInlineImageRoute ||
         effectiveImageRoute == EffectiveImageGenerationRoute.fast;
     if (resolvedConversationId != conv.id) {
       throw StateError('请求联系人与角色上下文不一致');
@@ -388,8 +406,7 @@ class ChatSendBackendService {
         (conv.enabledPlugins == null || conv.enabledPlugins!.contains('image'));
     // 表情包、时间感知的说明仍是全局一份（ADR0054）；语音、绘图改由预设绑定的提示词包提供（ADR0092）。
     final pluginPrompts = await _ref.read(pluginPromptsProvider.future);
-    // 旧数据先收进提示词包；角色卡的「绘图提示」在启动时并进绘图预设，
-    // 还没并的这里临时补上（见下方 unmovedDrawing）。
+    // 旧数据先收进提示词包，角色生图偏好在本次解析时覆盖预设旧节。
     await _ref.read(promptPackMigratorProvider).ensurePacks();
     final promptPacks = await _ref.read(promptPackProvider.notifier).library;
     final drawingPersona = conv.personaPrompt;
@@ -418,6 +435,8 @@ class ChatSendBackendService {
         imagePrompts = resolveDrawingPrompts(
           promptPacks,
           drawingPreset,
+          rolePromptPackId: personaParts.drawingPromptPackId,
+          roleDrawingPrompt: personaParts.customDrawingPrompt,
           format: format,
           model: model,
         );
@@ -426,34 +445,18 @@ class ChatSendBackendService {
         // matches automatically, and the preset editor shows the problem.
         AppLogger.warning(
           'PromptPacks',
-          '绘图预设绑定的提示词包已不存在，本次按模型自动匹配',
+          '绘图提示词包不可用，本次按模型自动匹配',
           metadata: {'presetId': drawingPreset.id},
         );
         imagePrompts = resolveDrawingPrompts(
           promptPacks,
           drawingPreset.copyWith(prompts: drawingPreset.prompts.withPack(null)),
+          rolePromptPackId: null,
+          roleDrawingPrompt: personaParts.customDrawingPrompt,
           format: format,
           model: model,
         );
       }
-    }
-    // A role not moved yet (unsaved, or the move failed) still gets its
-    // drawing requirement, the same way the moved one would.
-    final unmovedDrawing = PersonaPromptCodec.parse(
-      drawingPersona,
-    ).customDrawingPrompt.trim();
-    if (imagePrompts != null && unmovedDrawing.isNotEmpty) {
-      // By section id: a preset that already got the sections (the role
-      // write failed after the preset was saved) keeps its own copy, which
-      // the user may have edited since.
-      final binding = PresetPromptBinding(
-        ownSections: imagePrompts.ownSections,
-      ).addMissing(roleDrawingSections(unmovedDrawing));
-      imagePrompts = ResolvedPromptPack(
-        pack: imagePrompts.pack,
-        automatic: imagePrompts.automatic,
-        ownSections: binding.ownSections,
-      );
     }
     // 旧选择已经在预设迁移中收成值，不能在执行时再覆盖快照。
     const String? boundImageToolPresetName = null;
@@ -462,7 +465,9 @@ class ChatSendBackendService {
         settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
         !settings.isModelToolCallingDisabled(modelRef);
     final supportsToolCalling =
-        boundPreset?.functionCalling != false && modelSupportsTools;
+        (conv.effectiveAgentMode == RoleAgentMode.tool ||
+            boundPreset?.functionCalling != false) &&
+        modelSupportsTools;
     final enabledPluginIds = conv.enabledPlugins?.toSet();
     var voiceRequest = await _ref
         .read(voicePresetApplicationProvider)
@@ -491,39 +496,48 @@ class ChatSendBackendService {
     final previousUserMessageTime =
         _resolveTimeAwarenessPreviousUserMessageTime(history);
     // 插件按自身范围贡献提示词、提醒、工具与输出标签；核心不再识别具体插件类型。
-    final pluginRuntime = PluginRuntime.fromPlugins(
-      _ref.read(pluginManagerProvider).getAllPlugins(),
-    )..install(tavernCompatAgentPlugin());
-    // ADR0088/0097: 聊天模式下，联网搜索与 MCP 交给杂活 Agent，聊天模型只拿到
-    // delegate_task；工具模式是完整 Agent，直接使用全部插件，不派活。
-    final toolMode = conv.effectiveAgentMode == RoleAgentMode.tool;
-    final officeToErrandAgent = delegateTaskEnabled && !toolMode;
-    if (officeToErrandAgent) {
-      pluginRuntime.install(
-        delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider)),
-      );
-    }
-    // ADR0073: the assistant's abilities belong to its conversation, not to
-    // its editable role card.
-    if (conv.id == kAicoveAssistantId) {
-      pluginRuntime.install(
-        assistantAgentPlugin(
-          _ref.read(assistantToolsetProvider),
-          // Writes need the review gate, which only the kernel runner has.
-          writes: _ref.read(assistantWriteToolsProvider),
-          settings: _ref.read(assistantSettingsToolsProvider),
-          cards: _ref.read(assistantCardToolsProvider),
-          checkup: _ref.read(assistantCheckupProvider),
-          groups: _ref.read(assistantToolGroupsProvider),
-        ),
-      );
-    }
-    final selectedPluginIds = [
-      for (final id in pluginRuntime.selectForRole(enabledPluginIds))
-        if (!officeToErrandAgent || !isOfficePluginId(id)) id,
-    ];
-    final pluginScopes = [
-      ...pluginRuntime.requestScopes(
+    final pluginRuntime = PluginRuntime();
+    try {
+      for (final plugin in _ref.read(pluginManagerProvider).getAllPlugins()) {
+        pluginRuntime.install(plugin.agentPlugin, enabled: plugin.enabled);
+      }
+      pluginRuntime.install(tavernCompatAgentPlugin());
+      // ADR0088/0097: 聊天模式下，联网搜索与 MCP 交给杂活 Agent，聊天模型只拿到
+      // delegate_task；工具模式是完整 Agent，直接使用全部插件，不派活。
+      final toolMode = conv.effectiveAgentMode == RoleAgentMode.tool;
+      final officeToErrandAgent = delegateTaskEnabled && !toolMode;
+      if (officeToErrandAgent) {
+        pluginRuntime.install(
+          delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider)),
+        );
+      }
+      // ADR0111: every tool-mode role has AIcove酱's abilities; they follow the
+      // work mode, not the editable role card.
+      if (toolMode) {
+        pluginRuntime.install(
+          assistantAgentPlugin(
+            _ref.read(assistantToolsetProvider),
+            conversationId: conv.id,
+            // Writes need the review gate, which only the kernel runner has.
+            writes: _ref.read(assistantWriteToolsProvider),
+            settings: _ref.read(assistantSettingsToolsProvider),
+            cards: _ref.read(assistantCardToolsProvider),
+            checkup: _ref.read(assistantCheckupProvider),
+            groups: _ref.read(assistantToolGroupsProvider),
+          ),
+        );
+      }
+      final selectedPluginIds = [
+        for (final id in pluginRuntime.selectForRole(enabledPluginIds))
+          if (!officeToErrandAgent || !isOfficePluginId(id)) id,
+      ];
+      final pluginScopes = <PluginRequestScope>[];
+      void retainScope(PluginRequestScope scope) {
+        pluginRuntime.scope.addCloser(scope.dispose);
+        pluginScopes.add(scope);
+      }
+
+      for (final scope in pluginRuntime.requestScopes(
         pluginRuntime.snapshot(),
         selectedPluginIds,
         PluginRequestInputs(
@@ -532,631 +546,793 @@ class ChatSendBackendService {
           imageConfig: imageConfig,
           voiceRequest: voiceRequest,
           pluginPrompts: pluginPrompts,
+          conversationId: resolvedConversationId,
           history: history,
           previousUserMessageTime: previousUserMessageTime,
           useFastImageRoute: shouldUseFastImageRoute,
           useStableImageRoute: shouldUseStableImageRoute,
           supportsToolCalling: supportsToolCalling,
+          packageExecutable: toolMode,
           reminders: _systemReminderService,
           boundPreset: boundPreset,
           voicePrompts: voicePrompts,
           imagePrompts: imagePrompts,
           rolePluginIds: enabledPluginIds,
         ),
-      ),
+      )) {
+        retainScope(scope);
+      }
       // 工具模式的工作区直接给角色用，不经杂活 Agent（ADR0097）。
-      if (toolMode)
-        WorkspaceRequestScope(
-          await _roleWorkspaceToolset(conv),
-          supportsTools: supportsToolCalling,
-        ),
-    ];
-    final contextPolicy = ChatPluginContextPolicy.firstParty(
-      activeProviderIds: {
-        for (final scope in pluginScopes)
-          if (scope.active) scope.pluginId,
-      },
-      extraProviders: [
-        for (final plugin in pluginRuntime.plugins)
-          if (plugin.contentTags case final tags?) tags,
-      ],
-    );
-    var reqMessages = await _requestMessageBuilder.buildRequestMessages(
-      history,
-      settings: settings,
-      supportsVision: supportsVision,
-      pluginPolicy: contextPolicy,
-      inlineImagePrompts: !shouldUseStableImageRoute,
-    );
-
-    reqMessages = contextPolicy.filterMessages(reqMessages);
-    for (final scope in pluginScopes) {
-      reqMessages = scope.filterRequestMessages(reqMessages);
-    }
-    final includeInternalImageRule = _containsInternalImageContext(reqMessages);
-    final systemParts = <String>[];
-    if (boundPreset == null && personaParts.userPrompt.isNotEmpty) {
-      systemParts.add(contextPolicy.filterText(personaParts.userPrompt));
-    }
-    if (handoffPrompt.isNotEmpty) {
-      systemParts.add(contextPolicy.filterText(handoffPrompt));
-    }
-    // 插件提示词先于提醒构建：长期记忆在这里检索，本轮话题相关的往事随后进提醒。
-    final pluginRequestContext = PluginRequestContext(
-      userMessage: userText ?? '',
-      supportsToolCalling: supportsToolCalling,
-      conversationId: resolvedConversationId,
-      hasInternalImageContext: includeInternalImageRule,
-      readOnly: preview != null,
-    );
-    final rawPluginPromptBuild = await _pluginContextBuilder
-        .buildPromptEntries([
-          for (final scope in pluginScopes)
-            PluginPromptSource(
-              pluginId: scope.pluginId,
-              pluginName: scope.pluginName,
-              build: () => scope.prompt(pluginRequestContext),
-            ),
-        ]);
-    final pluginPromptBuild = PluginPromptBuildResult(
-      entries: [
-        for (final entry in rawPluginPromptBuild.entries)
-          PluginPromptEntry(
-            order: entry.order,
-            pluginId: entry.pluginId,
-            pluginName: entry.pluginName,
-            injected:
-                entry.injected &&
-                contextPolicy.filterText(entry.content).trim().isNotEmpty,
-            content: contextPolicy.filterText(entry.content),
-            reason: entry.reason,
-            error: entry.error,
-          ),
-      ],
-    );
-    for (final promptEntry in pluginPromptBuild.entries) {
-      if (!promptEntry.injected) continue;
-      systemParts.add(contextPolicy.filterText(promptEntry.content));
-    }
-    // Proactive replies are written ahead of time and pass their fire time,
-    // so time-aware plugins describe the moment the reply will be sent.
-    final effectiveRequestTime =
-        requestTime ?? _ref.read(requestClockProvider)();
-    final outputTags = {for (final scope in pluginScopes) ...scope.outputTags};
-    final outputTagReminder = buildOutputTagReminder(
-      imageInline: outputTags.contains(OutputTagHint.imageInline),
-      imageTool: outputTags.contains(OutputTagHint.imageTool),
-      tts: outputTags.contains(OutputTagHint.tts),
-      presetTags: [for (final scope in pluginScopes) ...scope.presetTagNames],
-    );
-    String remindersAt(DateTime time) =>
-        _systemReminderService.mergeReminderContents([
-          ...collectPluginReminders(
-            pluginScopes,
-            time,
-          ).map(contextPolicy.filterText),
-          outputTagReminder,
-        ]);
-    final systemReminderContent = remindersAt(effectiveRequestTime);
-    // 延后的提醒只记进追踪，不进本次消息。
-    final injectedReminder = deferReminders ? '' : systemReminderContent;
-    if (boundPreset == null && injectedReminder.isNotEmpty) {
-      reqMessages = _systemReminderService.insertReminderBeforeLastUser(
-        messages: reqMessages,
-        reminderContent: injectedReminder,
-      );
-    }
-
-    List<Map<String, dynamic>>? tools;
-    List<AITool> boundTools = const [];
-    if (supportsToolCalling) {
-      final aiTools = await _pluginContextBuilder.collectToolsWithRetry([
-        for (final scope in pluginScopes)
-          PluginToolSource(
-            pluginId: scope.pluginId,
-            tools: () => [
-              for (final tool in scope.tools())
-                if (!scope.pluginId.startsWith('pkg:') ||
-                    !PackagePlugin.isExecutionTool(tool.name) ||
-                    (toolMode))
-                  tool,
-            ],
-          ),
-      ]);
       if (toolMode) {
-        aiTools.add(ToolResultStore.shared.reader(resolvedConversationId));
-      }
-      final exposedTools = toolMode ? assembleCodemodeTools(aiTools) : aiTools;
-      boundTools = List.unmodifiable(exposedTools);
-      if (aiTools.isNotEmpty) {
-        var schemas = directToolSchemas(exposedTools);
-        for (final scope in pluginScopes) {
-          schemas = scope.rewriteToolSchemas(schemas);
-        }
-        tools = schemas;
-        AppLogger.debug(
-          _logTag,
-          '收集到工具定义',
-          metadata: {
-            'toolCount': tools.length,
-            'toolNames': aiTools.map((t) => t.name).toList(),
-          },
-        );
-      }
-    }
-
-    final systemAssemblyEntries = _tracePayloadBuilder
-        .buildSystemAssemblyEntries(
-          personaPrompt: boundPreset == null
-              ? contextPolicy.filterText(personaParts.userPrompt)
-              : '',
-          handoffPrompt: contextPolicy.filterText(handoffPrompt),
-          pluginPromptBuild: pluginPromptBuild,
-        );
-    // 关闭 {{user}} 名称时预设只拿到中性指代，提示模型称呼仍以角色设定为准。
-    if (boundPreset != null && !boundPreset.userNameMacroEnabled) {
-      systemParts.add(_neutralUserNameHint);
-    }
-    systemParts.removeWhere((part) => part.trim().isEmpty);
-    final userName = settings.userName?.trim() ?? '';
-    final promptUserName =
-        boundPreset?.userNameMacroEnabled != false && userName.isNotEmpty
-        ? userName
-        : kNeutralUserName;
-    final messagesBeforeSystemCount = reqMessages.length;
-    final maxContextTokens = math.min(
-      boundPreset?.maxContextTokens ?? settings.getMaxContextTokens(modelRef),
-      settings.getMaxContextTokens(modelRef),
-    );
-    SillyTavernAssemblyResult? presetAssembly;
-    SillyTavernRegexMessagesResult? presetRegexPromptResult;
-    SillyTavernVariableSnapshot? presetVariableSnapshot;
-    var presetVariablesPersisted = false;
-    final presetRuntimeWarnings = <String>[];
-    TavernWorldScanResult? worldScan;
-    List<Map<String, dynamic>> truncatedMessages;
-    if (boundPreset != null) {
-      final mvuView = await _readMvuState(
-        conv: conv,
-        conversationId: resolvedConversationId,
-        preset: boundPreset,
-        userName: promptUserName,
-      );
-      final mvuState = mvuView.active ? mvuView.mvu : null;
-      presetRegexPromptResult = await _sillyTavernRegexProcessor
-          .applyToPromptMessages(
-            messages: reqMessages,
-            scripts: boundPreset.regexScripts,
-            authorized: boundPreset.regexAuthorized,
-          );
-      reqMessages = contextPolicy.filterMessages(
-        presetRegexPromptResult.messages,
-      );
-      worldScan = await _worldScanner.scan(
-        books: boundPreset.worldBooks,
-        messages: reqMessages,
-        tokenBudget:
-            ((maxContextTokens - (boundPreset.maxOutputTokens ?? 2048)) ~/ 4)
-                .clamp(0, 65536),
-        macroValues: {
-          'char': conv.displayName.trim().isEmpty
-              ? conv.title
-              : conv.displayName,
-          'user': promptUserName,
-          'description': contextPolicy.filterText(personaParts.userPrompt),
-          'scenario': conv.description?.trim() ?? '',
-        },
-        entrySkips: mvuWorldEntrySkips(
-          boundPreset.worldBooks,
-          mvuActive: mvuState != null,
-        ),
-      );
-      worldScan = await _sillyTavernRegexProcessor.applyToWorldInfo(
-        scan: worldScan,
-        scripts: boundPreset.regexScripts,
-        authorized: boundPreset.regexAuthorized,
-      );
-      presetVariableSnapshot = await _sillyTavernVariableStore.load(
-        presetId: boundPreset.id,
-        conversationId: resolvedConversationId,
-      );
-      final reminderMessage = injectedReminder.isEmpty
-          ? null
-          : _systemReminderService.buildReminderMessage(
-              reminderContent: injectedReminder,
-            );
-      presetAssembly = _sillyTavernPresetAssembler.assemble(
-        preset: boundPreset,
-        historyMessages: reqMessages,
-        context: SillyTavernAssemblyContext(
-          characterName: conv.displayName.trim().isEmpty
-              ? conv.title
-              : conv.displayName,
-          userName: promptUserName,
-          characterDescription: contextPolicy.filterText(
-            personaParts.userPrompt,
+        retainScope(
+          WorkspaceRequestScope(
+            await _roleWorkspaceToolset(conv, resolvedConversationId),
+            supportsTools: supportsToolCalling,
           ),
-          scenario: conv.description?.trim() ?? '',
-          // 酒馆仅在主提示词/越狱提示词被外部 override 时为
-          // {{original}} 提供被覆盖前文本；AIcove 当前没有该 override 层。
-          original: '',
-          runtimeSystemContent: systemParts.join('\n\n'),
-          protectedRuntimeMessages: <Map<String, dynamic>>[
-            if (reminderMessage != null) reminderMessage,
-          ],
-          initialVariables: presetVariableSnapshot.values,
-          initialWarnings: [
-            ...presetVariableSnapshot.warnings,
-            ...worldScan.warnings,
-            ...mvuView.diagnostics,
-          ],
-          worldInjections: worldScan.injections,
-          messageVariables: mvuState == null
-              ? null
-              : <String, Object?>{'stat_data': mvuState.statData},
-        ),
-        maxContextTokens: maxContextTokens,
-        reserveTokens: boundPreset.maxOutputTokens ?? 2048,
-        truncateHistory: false,
-      );
-      reqMessages = contextPolicy.filterMessages(presetAssembly.messages);
-      truncatedMessages = reqMessages;
-      systemAssemblyEntries
-        ..clear()
-        ..addAll(
-          presetAssembly.traceEntries
-              .where((entry) => entry['role'] == 'system')
-              .map(
-                (entry) => <String, dynamic>{
-                  'order': entry['order'],
-                  'source': entry['source'],
-                  'label': entry['label'],
-                  'content': contextPolicy.filterText(
-                    (entry['content'] ?? '').toString(),
-                  ),
-                },
-              ),
-        );
-    } else {
-      if (systemParts.isNotEmpty) {
-        reqMessages.insert(0, {
-          'role': 'system',
-          'content': systemParts.join('\n\n'),
-        });
-      }
-      reqMessages = contextPolicy.filterMessages(reqMessages);
-      truncatedMessages = reqMessages;
-    }
-    systemAssemblyEntries.removeWhere(
-      (entry) => (entry['content'] ?? '').toString().trim().isEmpty,
-    );
-    var finalMessages = _systemReminderService.normalizeReminderPlacement(
-      messages: contextPolicy.filterMessages(truncatedMessages),
-    );
-
-    if (!toolMode &&
-        ToolResultStore.wantsReader([
-          for (final s in tools ?? const <Map<String, dynamic>>[])
-            '${(s['function'] as Map?)?['name']}',
-        ])) {
-      tools = [
-        ...tools!,
-        ToolResultStore.shared.reader(resolvedConversationId).toOpenAISchema(),
-      ];
-    }
-    final policy = ContextWindowPolicy(
-      configured: settings.contextWindowTokens,
-      modelWindow: maxContextTokens,
-      outputReserve: boundPreset?.maxOutputTokens ?? 2048,
-    );
-    var inputTokens = renderedContextTokens(finalMessages, tools);
-    final inputLimit = policy.trigger;
-    final runtimeContext = RuntimeContextService(
-      owner: resolvedConversationId,
-      policy: policy,
-      summarizerFactory: () =>
-          _ref.read(runtimeContextSummarizerProvider.future),
-      tools: tools,
-    );
-    if (preview != null) {
-      preview.inputLimit = inputLimit;
-      if (inputTokens >= inputLimit) {
-        preview.notes.add('已达到自动压缩阈值，真实发送前会先压缩，实际内容会比这里短');
-      }
-    } else if (inputTokens >= inputLimit) {
-      finalMessages = await runtimeContext.pruneToolResults(finalMessages);
-      inputTokens = renderedContextTokens(finalMessages, tools);
-    }
-    final uncoveredUsers = originalHistory
-        .where(
-          (m) =>
-              m.role == 'user' &&
-              !(automaticHandoff?.sourceIds.contains(m.id) ?? false),
-        )
-        .length;
-    if (preview != null) {
-      // 预览只读，不压缩。
-    } else if (inputTokens >= inputLimit &&
-        (uncoveredUsers < 2 || !persistSideEffects)) {
-      finalMessages = await runtimeContext.prepare(finalMessages);
-    } else if (inputTokens >= inputLimit) {
-      AppLogger.info(
-        'AutomaticContext',
-        '达到上下文窗口，先压缩再发送',
-        metadata: {
-          'conversationId': resolvedConversationId,
-          'inputTokens': inputTokens,
-          'inputLimit': inputLimit,
-          'pass': compactionPass,
-        },
-      );
-      if (compactionPass >= 2) {
-        throw const ContextCompactionException(
-          '自动压缩后仍超过上下文窗口，本轮未发送；请缩短当前消息或角色设置。',
         );
       }
-      await context.compactAuto(
-        ownerId: resolvedConversationId,
-        topicBoundary: conv.contextStartMessageId,
-        history: originalHistory,
-        previous: automaticHandoff,
-        keepOnlyLatestTurn: compactionPass > 0,
-        retainTokens: policy.retain,
-      );
-      return prepareApiConfig(
-        conv: conv,
-        history: originalHistory,
-        userText: userText,
-        trace: trace,
-        overrideModel: overrideModel,
-        conversationId: conversationId,
-        traceContext: traceContext,
-        compactionPass: compactionPass + 1,
-        deferReminders: deferReminders,
-      );
-    }
-    if (preview == null &&
-        persistSideEffects &&
-        boundPreset != null &&
-        presetAssembly != null &&
-        presetVariableSnapshot != null) {
-      try {
-        presetVariablesPersisted = await _sillyTavernVariableStore
-            .saveIfChanged(
-              presetId: boundPreset.id,
-              conversationId: resolvedConversationId,
-              previousValues: presetVariableSnapshot.values,
-              values: presetAssembly.variables,
-            );
-      } catch (error) {
-        presetRuntimeWarnings.add('会话变量写入失败，本轮求值已生效但下轮不会继承');
-        AppLogger.warning(
-          _logTag,
-          '酒馆预设变量写入失败',
-          metadata: <String, dynamic>{
-            'recipeId': boundPreset.id,
-            'errorType': error.runtimeType.toString(),
-          },
-        );
-      }
-    }
-
-    if (traceContext != null) {
-      final payloadRef = await TraceStore.instance.writePayload(
-        traceId: traceContext.traceId,
-        sessionId: traceContext.sessionId,
-        turnId: traceContext.turnId,
-        stage: TraceStage.apiConfigReady.value,
-        source: 'ChatSendBackendService',
-        payload: {
-          'runtimeContext': _tracePayloadBuilder.buildRuntimeContextPayload(
-            now: effectiveRequestTime,
-            previousUserMessageTime: previousUserMessageTime,
-            pluginScopes: pluginScopes,
-            historyCount: history.length,
-            systemReminderInjected: injectedReminder.isNotEmpty,
-            systemReminderContent: systemReminderContent,
-          ),
-          'promptAssembly': _tracePayloadBuilder.buildPromptAssemblyPayload(
-            systemAssemblyEntries: systemAssemblyEntries,
-            pluginPromptBuild: pluginPromptBuild,
-            messagesBeforeSystemCount: messagesBeforeSystemCount,
-            messagesAfterSystemCount: reqMessages.length,
-            finalMessages: finalMessages,
-            toolsCount: tools?.length ?? 0,
-            systemReminderInjected: injectedReminder.isNotEmpty,
-            systemReminderContent: systemReminderContent,
-            presetAssembly: <String, dynamic>{
-              if (boundRecipeId != null && boundRecipeId.isNotEmpty)
-                'recipeId': boundRecipeId,
-              if (boundPreset != null) ...<String, dynamic>{
-                'effectivePresetId': boundPreset.id,
-                'presetName': boundPreset.name,
-                'worldInfo': worldScan?.traces,
-                'sourceFormat': boundPreset.sourceFormat,
-                'selectedOrderIndex': boundPreset.selectedOrder.sourceIndex,
-                if (boundPreset.selectedOrder.characterId != null)
-                  'selectedOrderCharacterId':
-                      boundPreset.selectedOrder.characterId,
-                'historyIncluded': presetAssembly?.historyIncluded,
-                'maxContextTokens': maxContextTokens,
-                'maxOutputTokens': boundPreset.maxOutputTokens,
-                'functionCalling': boundPreset.functionCalling,
-                'toolsEffectiveCount': tools?.length ?? 0,
-                'useSystemPrompt': boundPreset.useSystemPrompt,
-                'squashSystemMessages': boundPreset.squashSystemMessages,
-                'attachmentCount': boundPreset.attachmentCount,
-                'assistantPrefillDeclared': boundPreset.assistantPrefill
-                    .trim()
-                    .isNotEmpty,
-                'assistantPrefillApplied':
-                    presetAssembly?.traceEntries.any(
-                      (entry) => entry['source'].toString().contains(
-                        'preset.assistantPrefill',
-                      ),
-                    ) ??
-                    false,
-                'warnings': <String>[
-                  ...?presetAssembly?.warnings,
-                  ...?presetRegexPromptResult?.warnings,
-                  ...presetRuntimeWarnings,
-                ],
-                'appliedMacros':
-                    presetAssembly?.appliedMacros.toList() ?? const <String>[],
-                'unknownMacros':
-                    presetAssembly?.unknownMacros.toList() ?? const <String>[],
-                'variableCount': presetAssembly?.variables.length ?? 0,
-                'variablesPersisted': presetVariablesPersisted,
-                'regex': <String, dynamic>{
-                  'declared': boundPreset.regexScriptCount,
-                  'authorized': boundPreset.regexAuthorized,
-                  'promptTrace':
-                      presetRegexPromptResult?.traces ?? const <dynamic>[],
-                },
-                'parameterCompatibility': boundPreset.parameterCompatibility
-                    .map((entry) => entry.toTraceJson())
-                    .toList(growable: false),
-                'providerRequestOptions': providerRequestOptions.toTraceJson(),
-                'providerParameterMapping': providerRequestOptions
-                    .parameterTraceForProvider(resolvedProvider),
-                'provider': resolvedProvider,
-                'entries': presetAssembly?.traceEntries ?? const [],
-              },
-            },
-          ),
+      final contextPolicy = ChatPluginContextPolicy.firstParty(
+        activeProviderIds: {
+          for (final scope in pluginScopes)
+            if (scope.active) scope.pluginId,
         },
-        now: effectiveRequestTime,
+        extraProviders: [
+          for (final plugin in pluginRuntime.plugins)
+            if (plugin.contentTags case final tags?) tags,
+        ],
       );
-      await TraceStore.instance.record(
-        traceId: traceContext.traceId,
-        sessionId: traceContext.sessionId,
-        turnId: traceContext.turnId,
-        stage: TraceStage.apiConfigReady,
-        source: 'ChatSendBackendService',
-        payloadRef: payloadRef,
-        meta: {
-          'modelFullId': modelFull,
-          'messagesCount': finalMessages.length,
-          'toolsCount': tools?.length ?? 0,
-          'supportsToolCalling': supportsToolCalling,
-          'supportsVision': supportsVision,
-        },
-      );
-    }
-
-    if (preview != null) {
-      preview
-        ..presetName = boundPreset?.name
-        ..sources = systemAssemblyEntries
-        ..plugins = pluginPromptBuild.entries;
-      preview.notes.addAll([
-        ...?presetAssembly?.warnings,
-        ...?presetRegexPromptResult?.warnings,
-      ]);
-    }
-
-    final config = ApiConfig(
-      requestInputTokenLimit: inputLimit,
-      openPresetRuntime: pluginRuntime.scope.lookup(
-        TavernCompatServices.presetRuntime,
-      ),
-      presetScript: PresetScriptSnapshot.fromPreset(
-        boundPreset,
-        toolsAllowed: supportsToolCalling,
-        modelSupportsTools: modelSupportsTools,
-        macros: {
-          'char': conv.displayName.trim().isEmpty
-              ? conv.title
-              : conv.displayName,
-          'user': promptUserName,
-          'description': contextPolicy.filterText(personaParts.userPrompt),
-          'scenario': conv.description?.trim() ?? '',
-        },
-      ),
-      runtimeContext: runtimeContext,
-      toolResultOwner: resolvedConversationId,
-      currentWorkspaceId: () => pluginScopes
-          .whereType<WorkspaceRequestScope>()
-          .firstOrNull
-          ?.toolset
-          .currentWorkspaceId,
-      settings: settings,
-      modelFullId: modelFull,
-      providerApiBase: requestConfig.providerApiBase,
-      providerApiKey: requestConfig.providerApiKey,
-      providerId: requestConfig.providerId,
-      providerApiKeyItemId: requestConfig.providerApiKeyItemId,
-      providerApiKeyItemIndex: requestConfig.providerApiKeyItemIndex,
-      providerApiKeyStrategy: requestConfig.providerApiKeyStrategy,
-      customConfig: requestConfig.customConfig,
-      messages: finalMessages,
-      tools: tools,
-      boundTools: boundTools,
-      enabledPluginIds: enabledPluginIds,
-      modelTemperature:
-          boundPreset?.temperature ?? requestConfig.modelTemperature,
-      modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
-      modelContextMessageLimit: requestConfig.modelContextMessageLimit,
-      // 聊天模式办事交给杂活 Agent，一律去掉模型内置搜索（ADR0088）；
-      // 其余情况沿用旧规则：联网搜索插件接管才去掉。
-      providerRequestOptions:
-          officeToErrandAgent ||
-              supportsToolCalling &&
-                  pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
-          ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
-          : providerRequestOptions,
-      // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
-      // 保留原标签交给聊天列表投影为折叠／正文／选项（ADR0046）。
-      presetRegexScripts: boundPreset == null
-          ? const <SillyTavernRegexScript>[]
-          : inferPresetTagMapping(
-              boundPreset,
-            ).displayScripts(boundPreset.regexScripts),
-      presetRegexAuthorized: boundPreset?.regexAuthorized ?? false,
-      presetStreamResponse: boundPreset?.streamResponse,
-      traceContext: traceContext,
-      boundImageToolPresetName: boundImageToolPresetName,
-      boundImageArtistPresetName: boundImageArtistPresetName,
-      drawingConfig: imageConfig,
-      voiceRequest: voiceRequest,
-      reminders: deferReminders ? remindersAt : null,
-      responseProcessors: pluginRuntime.responseProcessors(
-        pluginRuntime.snapshot(),
-        selectedPluginIds,
-        PluginResponseInputs(
-          ref: _ref,
-          voiceRequest: voiceRequest,
-          drawingConfig: imageConfig,
-          settings: settings,
-          rolePluginIds: enabledPluginIds,
-        ),
-      ),
-    );
-    if (conv.id != kAicoveAssistantId || preview != null) {
-      return config;
-    }
-    return config.copyWith(
-      toolPolicy: await _assistantToolPolicy(
-        alwaysAsk: await _ref.read(assistantAlwaysAskProvider.future),
-        config: config,
-        history: history,
-        userText: userText,
+      var reqMessages = await _requestMessageBuilder.buildRequestMessages(
+        history,
         settings: settings,
-      ),
-    );
+        supportsVision: supportsVision,
+        pluginPolicy: contextPolicy,
+        inlineImagePrompts: !shouldUseStableImageRoute,
+      );
+
+      reqMessages = contextPolicy.filterMessages(reqMessages);
+      for (final scope in pluginScopes) {
+        reqMessages = scope.filterRequestMessages(reqMessages);
+      }
+      final includeInternalImageRule = _containsInternalImageContext(
+        reqMessages,
+      );
+      final systemParts = <String>[];
+      if (boundPreset == null && personaParts.rolePrompt.isNotEmpty) {
+        systemParts.add(contextPolicy.filterText(personaParts.rolePrompt));
+      }
+      if (handoffPrompt.isNotEmpty) {
+        systemParts.add(contextPolicy.filterText(handoffPrompt));
+      }
+      // 插件提示词先于提醒构建：长期记忆在这里检索，本轮话题相关的往事随后进提醒。
+      final pluginRequestContext = PluginRequestContext(
+        userMessage: userText ?? '',
+        supportsToolCalling: supportsToolCalling,
+        conversationId: resolvedConversationId,
+        hasInternalImageContext: includeInternalImageRule,
+        readOnly: preview != null,
+        rawHistory: history,
+      );
+      final rawPluginPromptBuild = await _pluginContextBuilder
+          .buildPromptEntries([
+            for (final scope in pluginScopes)
+              PluginPromptSource(
+                pluginId: scope.pluginId,
+                pluginName: scope.pluginName,
+                build: () => scope.prompt(pluginRequestContext),
+              ),
+          ]);
+      final pluginPromptBuild = PluginPromptBuildResult(
+        entries: [
+          for (final entry in rawPluginPromptBuild.entries)
+            PluginPromptEntry(
+              order: entry.order,
+              pluginId: entry.pluginId,
+              pluginName: entry.pluginName,
+              injected:
+                  entry.injected &&
+                  contextPolicy.filterText(entry.content).trim().isNotEmpty,
+              content: contextPolicy.filterText(entry.content),
+              reason: entry.reason,
+              error: entry.error,
+            ),
+        ],
+      );
+      final drawingPromptContent = pluginPromptBuild.entries
+          .where((entry) => entry.pluginId == 'image')
+          .map((entry) => entry.content)
+          .where((content) => content.trim().isNotEmpty)
+          .join('\n\n');
+      final fallbackDrawingPrompt = pluginPromptBuild.entries.any(
+        (entry) => entry.pluginId == 'image' && entry.injected,
+      );
+      for (final promptEntry in pluginPromptBuild.entries) {
+        if (!promptEntry.injected) continue;
+        // Bound presets may position only the drawing contribution themselves.
+        // Other plugin rules, and ordinary chats, keep their existing path.
+        if (boundPreset != null && promptEntry.pluginId == 'image') continue;
+        systemParts.add(contextPolicy.filterText(promptEntry.content));
+      }
+      // Proactive replies are written ahead of time and pass their fire time,
+      // so time-aware plugins describe the moment the reply will be sent.
+      final effectiveRequestTime =
+          requestTime ?? _ref.read(requestClockProvider)();
+      final outputTags = {
+        for (final scope in pluginScopes) ...scope.outputTags,
+      };
+      final outputTagReminder = buildOutputTagReminder(
+        imageInline: outputTags.contains(OutputTagHint.imageInline),
+        imageTool: outputTags.contains(OutputTagHint.imageTool),
+        tts: outputTags.contains(OutputTagHint.tts),
+        presetTags: [for (final scope in pluginScopes) ...scope.presetTagNames],
+      );
+      String remindersAt(DateTime time) =>
+          _systemReminderService.mergeReminderContents([
+            ...collectPluginReminders(
+              pluginScopes,
+              time,
+            ).map(contextPolicy.filterText),
+            outputTagReminder,
+          ]);
+      final systemReminderContent = remindersAt(effectiveRequestTime);
+      // 延后的提醒只记进追踪，不进本次消息。
+      final injectedReminder = deferReminders ? '' : systemReminderContent;
+      if (boundPreset == null && injectedReminder.isNotEmpty) {
+        reqMessages = _systemReminderService.insertReminderBeforeLastUser(
+          messages: reqMessages,
+          reminderContent: injectedReminder,
+        );
+      }
+
+      List<Map<String, dynamic>>? tools;
+      List<AITool> boundTools = const [];
+      if (supportsToolCalling) {
+        final aiTools = await _pluginContextBuilder.collectToolsWithRetry([
+          for (final scope in pluginScopes)
+            PluginToolSource(pluginId: scope.pluginId, tools: scope.tools),
+        ]);
+        if (toolMode) {
+          aiTools.add(ToolResultStore.shared.reader(resolvedConversationId));
+        }
+        final exposedTools = toolMode
+            ? assembleCodemodeTools(aiTools)
+            : aiTools;
+        boundTools = List.unmodifiable(exposedTools);
+        if (aiTools.isNotEmpty) {
+          var schemas = directToolSchemas(exposedTools);
+          for (final scope in pluginScopes) {
+            schemas = scope.rewriteToolSchemas(schemas);
+          }
+          tools = schemas;
+          AppLogger.debug(
+            _logTag,
+            '收集到工具定义',
+            metadata: {
+              'toolCount': tools.length,
+              'toolNames': aiTools.map((t) => t.name).toList(),
+            },
+          );
+        }
+      }
+
+      final systemAssemblyEntries = _tracePayloadBuilder
+          .buildSystemAssemblyEntries(
+            personaPrompt: boundPreset == null
+                ? contextPolicy.filterText(personaParts.rolePrompt)
+                : '',
+            handoffPrompt: contextPolicy.filterText(handoffPrompt),
+            pluginPromptBuild: pluginPromptBuild,
+          );
+      // 关闭 {{user}} 名称时预设只拿到中性指代，提示模型称呼仍以角色设定为准。
+      if (boundPreset != null && !boundPreset.userNameMacroEnabled) {
+        systemParts.add(_neutralUserNameHint);
+      }
+      systemParts.removeWhere((part) => part.trim().isEmpty);
+      final userName = settings.userName?.trim() ?? '';
+      final promptUserName =
+          boundPreset?.userNameMacroEnabled != false && userName.isNotEmpty
+          ? userName
+          : kNeutralUserName;
+      final messagesBeforeSystemCount = reqMessages.length;
+      final modelContextTokens = settings.getMaxContextTokens(modelRef);
+      SillyTavernAssemblyResult? presetAssembly;
+      SillyTavernRegexMessagesResult? presetRegexPromptResult;
+      SillyTavernVariableSnapshot? presetVariableSnapshot;
+      var presetVariablesPersisted = false;
+      final presetRuntimeWarnings = <String>[];
+      TavernWorldScanResult? worldScan;
+      List<Map<String, dynamic>> truncatedMessages;
+      if (boundPreset != null) {
+        final mvuView = await _readMvuState(
+          conv: conv,
+          conversationId: resolvedConversationId,
+          preset: boundPreset,
+          userName: promptUserName,
+        );
+        final mvuState = mvuView.active ? mvuView.mvu : null;
+        presetRegexPromptResult = await _sillyTavernRegexProcessor
+            .applyToPromptMessages(
+              messages: reqMessages,
+              scripts: boundPreset.regexScripts,
+              authorized: boundPreset.regexAuthorized,
+            );
+        reqMessages = contextPolicy.filterMessages(
+          presetRegexPromptResult.messages,
+        );
+        worldScan = await _worldScanner.scan(
+          books: boundPreset.worldBooks,
+          messages: reqMessages,
+          tokenBudget:
+              (math.min(
+                        boundPreset.maxContextTokens ?? modelContextTokens,
+                        modelContextTokens,
+                      ) ~/
+                      4)
+                  .clamp(1024, 65536),
+          macroValues: {
+            'char': conv.displayName.trim().isEmpty
+                ? conv.title
+                : conv.displayName,
+            'user': promptUserName,
+            'description': contextPolicy.filterText(personaParts.rolePrompt),
+            'scenario': conv.description?.trim() ?? '',
+          },
+          entrySkips: mvuWorldEntrySkips(
+            boundPreset.worldBooks,
+            mvuActive: mvuState != null,
+          ),
+        );
+        worldScan = await _sillyTavernRegexProcessor.applyToWorldInfo(
+          scan: worldScan,
+          scripts: boundPreset.regexScripts,
+          authorized: boundPreset.regexAuthorized,
+        );
+        presetVariableSnapshot = await _sillyTavernVariableStore.load(
+          presetId: boundPreset.id,
+          conversationId: resolvedConversationId,
+        );
+        final reminderMessage = injectedReminder.isEmpty
+            ? null
+            : _systemReminderService.buildReminderMessage(
+                reminderContent: injectedReminder,
+              );
+        presetAssembly = _sillyTavernPresetAssembler.assemble(
+          preset: boundPreset,
+          historyMessages: reqMessages,
+          context: SillyTavernAssemblyContext(
+            characterName: conv.displayName.trim().isEmpty
+                ? conv.title
+                : conv.displayName,
+            userName: promptUserName,
+            characterDescription: contextPolicy.filterText(
+              personaParts.rolePrompt,
+            ),
+            scenario: conv.description?.trim() ?? '',
+            // 酒馆仅在主提示词/越狱提示词被外部 override 时为
+            // {{original}} 提供被覆盖前文本；AIcove 当前没有该 override 层。
+            original: '',
+            drawingPromptContent: drawingPromptContent,
+            fallbackDrawingPrompt: fallbackDrawingPrompt,
+            runtimeSystemContent: systemParts.join('\n\n'),
+            protectedRuntimeMessages: <Map<String, dynamic>>[
+              if (reminderMessage != null) reminderMessage,
+            ],
+            initialVariables: presetVariableSnapshot.values,
+            initialWarnings: [
+              ...presetVariableSnapshot.warnings,
+              ...worldScan.warnings,
+              ...mvuView.diagnostics,
+            ],
+            worldInjections: worldScan.injections,
+            messageVariables: mvuState == null
+                ? null
+                : <String, Object?>{'stat_data': mvuState.statData},
+          ),
+          maxContextTokens: boundPreset.maxContextTokens ?? modelContextTokens,
+          reserveTokens: boundPreset.maxOutputTokens ?? 2048,
+          truncateHistory: false,
+        );
+        reqMessages = contextPolicy.filterMessages(presetAssembly.messages);
+        truncatedMessages = reqMessages;
+        systemAssemblyEntries
+          ..clear()
+          ..addAll(
+            presetAssembly.traceEntries
+                .where((entry) => entry['role'] == 'system')
+                .map(
+                  (entry) => <String, dynamic>{
+                    'order': entry['order'],
+                    'source': entry['source'],
+                    'label': entry['label'],
+                    'content': contextPolicy.filterText(
+                      (entry['content'] ?? '').toString(),
+                    ),
+                  },
+                ),
+          );
+      } else {
+        if (systemParts.isNotEmpty) {
+          reqMessages.insert(0, {
+            'role': 'system',
+            'content': systemParts.join('\n\n'),
+          });
+        }
+        reqMessages = contextPolicy.filterMessages(reqMessages);
+        truncatedMessages = reqMessages;
+      }
+      systemAssemblyEntries.removeWhere(
+        (entry) => (entry['content'] ?? '').toString().trim().isEmpty,
+      );
+      var finalMessages = _systemReminderService.normalizeReminderPlacement(
+        messages: contextPolicy.filterMessages(truncatedMessages),
+      );
+
+      // ToolBlock calls have already been rendered from the uncompressed raw
+      // history. Only currently granted deferred tools can be carried forward.
+      if (toolMode && tools != null) {
+        final called = {
+          ...calledMcpToolNames(finalMessages),
+          // Legacy ToolBlocks may have no provider call id and therefore no
+          // native wire call. The raw-derived, uncovered history still records
+          // their actual tool name; never inspect text summaries for names.
+          for (final message in history)
+            if (message.role == 'assistant')
+              for (final block in message.blocks ?? const [])
+                if (block is ToolBlock && block.toolName.startsWith('mcp__'))
+                  block.toolName,
+        };
+        final names = {
+          for (final schema in tools) (schema['function'] as Map)['name'],
+        };
+        tools = [
+          ...tools,
+          for (final tool in boundTools)
+            if (tool.exposure == ToolExposure.deferred &&
+                called.contains(tool.name) &&
+                !names.contains(tool.name))
+              tool.toOpenAISchema(),
+        ];
+      }
+
+      if (!toolMode &&
+          ToolResultStore.wantsReader([
+            for (final s in tools ?? const <Map<String, dynamic>>[])
+              '${(s['function'] as Map?)?['name']}',
+          ])) {
+        tools = [
+          ...tools!,
+          ToolResultStore.shared
+              .reader(resolvedConversationId)
+              .toOpenAISchema(),
+        ];
+      }
+      final policy = ContextWindowPolicy(
+        configured: settings.contextWindowTokens,
+        modelWindow: modelContextTokens,
+      );
+      var inputTokens = renderedContextTokens(finalMessages, tools);
+      final inputLimit = policy.trigger;
+      // Always live: a preset script can add tools even when this list starts empty.
+      final runtimeTools = <Map<String, dynamic>>[...?tools];
+      final runtimeContext = RuntimeContextService(
+        owner: resolvedConversationId,
+        policy: policy,
+        summarizerFactory: () =>
+            _ref.read(runtimeContextSummarizerProvider.future),
+        tools: runtimeTools,
+      );
+      var toolResultsPruned = false;
+      if (preview != null) {
+        preview.inputLimit = inputLimit;
+        if (inputTokens >= inputLimit) {
+          preview.notes.add('已达到自动压缩阈值，真实发送前会先压缩，实际内容会比这里短');
+        }
+      } else if (inputTokens >= inputLimit) {
+        finalMessages = await runtimeContext.pruneToolResults(finalMessages);
+        toolResultsPruned = true;
+        inputTokens = renderedContextTokens(finalMessages, tools);
+      }
+      final uncoveredUsers = originalHistory
+          .where(
+            (m) =>
+                m.role == 'user' &&
+                !(automaticHandoff?.sourceIds.contains(m.id) ?? false),
+          )
+          .length;
+      final messagesBeforeRuntime = finalMessages;
+      var runtimePrepared = false;
+      if (preview != null) {
+        // 预览只读，不压缩。
+      } else if (inputTokens >= inputLimit &&
+          (uncoveredUsers < 2 || !persistSideEffects)) {
+        finalMessages = await runtimeContext.prepare(finalMessages);
+        runtimePrepared = true;
+      } else if (inputTokens >= inputLimit) {
+        AppLogger.info(
+          'AutomaticContext',
+          '达到上下文窗口，先压缩再发送',
+          metadata: {
+            'conversationId': resolvedConversationId,
+            'inputTokens': inputTokens,
+            'inputLimit': inputLimit,
+            'pass': compactionPass,
+          },
+        );
+        if (compactionPass >= 2) {
+          throw const ContextCompactionException(
+            '自动压缩后仍超过上下文窗口，本轮未发送；请缩短当前消息或角色设置。',
+          );
+        }
+        await context.compactAuto(
+          ownerId: resolvedConversationId,
+          topicBoundary: conv.contextStartMessageId,
+          history: originalHistory,
+          previous: automaticHandoff,
+          keepOnlyLatestTurn: compactionPass > 0,
+          retainTokens: policy.retain,
+        );
+        return prepareApiConfig(
+          conv: conv,
+          history: originalHistory,
+          userText: userText,
+          trace: trace,
+          overrideModel: overrideModel,
+          conversationId: conversationId,
+          traceContext: traceContext,
+          compactionPass: compactionPass + 1,
+          requestTime: requestTime,
+          deferReminders: deferReminders,
+          forceInlineImageRoute: forceInlineImageRoute,
+        );
+      }
+      if (boundPreset?.maxContextTokens != null && presetAssembly != null) {
+        final presetWindow = boundPreset!.maxContextTokens!;
+        final reserve = boundPreset.maxOutputTokens ?? 2048;
+        final exceedsWindow = presetWindow - reserve <= 0;
+        final budget = exceedsWindow
+            ? math.max(1024, presetWindow ~/ 2)
+            : presetWindow - reserve;
+        final fullAssembly = presetAssembly;
+        presetAssembly = _sillyTavernPresetAssembler.truncateAssembly(
+          fullAssembly,
+          inputBudget: budget,
+          outputExceedsWindow: exceedsWindow,
+          estimateTokens: (messages) => renderedContextTokens(
+            _systemReminderService.normalizeReminderPlacement(
+              messages: contextPolicy.filterMessages(messages),
+            ),
+            tools,
+          ),
+        );
+        if (presetAssembly.keptHistoryCount < fullAssembly.keptHistoryCount) {
+          if (runtimePrepared) {
+            // Runtime compression retains unchanged message objects. Remove only
+            // omitted originals; preserve its newly generated summary.
+            final keptEntries = presetAssembly.entries.toSet();
+            final omitted = fullAssembly.entries.where(
+              (entry) => !keptEntries.contains(entry),
+            );
+            String messageKey(Map<String, dynamic> message) {
+              final id = message['tool_call_id'];
+              if (message['role'] == 'tool' && id != null) {
+                return 'tool:$id';
+              }
+              return jsonEncode(message);
+            }
+
+            final omittedCounts = <String, int>{};
+            for (final message in omitted.expand(
+              (entry) => contextPolicy.filterMessages([entry.message]),
+            )) {
+              final key = messageKey(message);
+              omittedCounts[key] = (omittedCounts[key] ?? 0) + 1;
+            }
+            final removed = <Map<String, dynamic>>{};
+            for (final message in messagesBeforeRuntime) {
+              final key = messageKey(message);
+              final count = omittedCounts[key] ?? 0;
+              if (count > 0) {
+                removed.add(message);
+                omittedCounts[key] = count - 1;
+              }
+            }
+            finalMessages = finalMessages
+                .where((message) => !removed.contains(message))
+                .toList();
+          } else {
+            finalMessages = _systemReminderService.normalizeReminderPlacement(
+              messages: contextPolicy.filterMessages(presetAssembly.messages),
+            );
+            if (toolResultsPruned) {
+              finalMessages = await runtimeContext.pruneToolResults(
+                finalMessages,
+              );
+            }
+          }
+        }
+      }
+      if (preview == null &&
+          persistSideEffects &&
+          boundPreset != null &&
+          presetAssembly != null &&
+          presetVariableSnapshot != null) {
+        try {
+          presetVariablesPersisted = await _sillyTavernVariableStore
+              .saveIfChanged(
+                presetId: boundPreset.id,
+                conversationId: resolvedConversationId,
+                previousValues: presetVariableSnapshot.values,
+                values: presetAssembly.variables,
+              );
+        } catch (error) {
+          presetRuntimeWarnings.add('会话变量写入失败，本轮求值已生效但下轮不会继承');
+          AppLogger.warning(
+            _logTag,
+            '酒馆预设变量写入失败',
+            metadata: <String, dynamic>{
+              'recipeId': boundPreset.id,
+              'errorType': error.runtimeType.toString(),
+            },
+          );
+        }
+      }
+
+      if (traceContext != null) {
+        final payloadRef = await TraceStore.instance.writePayload(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          stage: TraceStage.apiConfigReady.value,
+          source: 'ChatSendBackendService',
+          payload: {
+            'runtimeContext': _tracePayloadBuilder.buildRuntimeContextPayload(
+              now: effectiveRequestTime,
+              previousUserMessageTime: previousUserMessageTime,
+              pluginScopes: pluginScopes,
+              historyCount: history.length,
+              systemReminderInjected: injectedReminder.isNotEmpty,
+              systemReminderContent: systemReminderContent,
+            ),
+            'promptAssembly': _tracePayloadBuilder.buildPromptAssemblyPayload(
+              systemAssemblyEntries: systemAssemblyEntries,
+              pluginPromptBuild: pluginPromptBuild,
+              messagesBeforeSystemCount: messagesBeforeSystemCount,
+              messagesAfterSystemCount: reqMessages.length,
+              finalMessages: finalMessages,
+              toolsCount: tools?.length ?? 0,
+              systemReminderInjected: injectedReminder.isNotEmpty,
+              systemReminderContent: systemReminderContent,
+              presetAssembly: <String, dynamic>{
+                if (boundRecipeId != null && boundRecipeId.isNotEmpty)
+                  'recipeId': boundRecipeId,
+                if (boundPreset != null) ...<String, dynamic>{
+                  'effectivePresetId': boundPreset.id,
+                  'presetName': boundPreset.name,
+                  'worldInfo': worldScan?.traces,
+                  'sourceFormat': boundPreset.sourceFormat,
+                  'selectedOrderIndex': boundPreset.selectedOrder.sourceIndex,
+                  if (boundPreset.selectedOrder.characterId != null)
+                    'selectedOrderCharacterId':
+                        boundPreset.selectedOrder.characterId,
+                  'historyIncluded': presetAssembly?.historyIncluded,
+                  'maxContextTokens':
+                      boundPreset.maxContextTokens ?? modelContextTokens,
+                  'maxOutputTokens': boundPreset.maxOutputTokens,
+                  'functionCalling': boundPreset.functionCalling,
+                  'toolsEffectiveCount': tools?.length ?? 0,
+                  'useSystemPrompt': boundPreset.useSystemPrompt,
+                  'squashSystemMessages': boundPreset.squashSystemMessages,
+                  'attachmentCount': boundPreset.attachmentCount,
+                  'assistantPrefillDeclared': boundPreset.assistantPrefill
+                      .trim()
+                      .isNotEmpty,
+                  'assistantPrefillApplied':
+                      presetAssembly?.traceEntries.any(
+                        (entry) => entry['source'].toString().contains(
+                          'preset.assistantPrefill',
+                        ),
+                      ) ??
+                      false,
+                  'warnings': <String>[
+                    ...?presetAssembly?.warnings,
+                    ...?presetRegexPromptResult?.warnings,
+                    ...presetRuntimeWarnings,
+                  ],
+                  'appliedMacros':
+                      presetAssembly?.appliedMacros.toList() ??
+                      const <String>[],
+                  'unknownMacros':
+                      presetAssembly?.unknownMacros.toList() ??
+                      const <String>[],
+                  'variableCount': presetAssembly?.variables.length ?? 0,
+                  'variablesPersisted': presetVariablesPersisted,
+                  'regex': <String, dynamic>{
+                    'declared': boundPreset.regexScriptCount,
+                    'authorized': boundPreset.regexAuthorized,
+                    'promptTrace':
+                        presetRegexPromptResult?.traces ?? const <dynamic>[],
+                  },
+                  'parameterCompatibility': boundPreset.parameterCompatibility
+                      .map((entry) => entry.toTraceJson())
+                      .toList(growable: false),
+                  'providerRequestOptions': providerRequestOptions
+                      .toTraceJson(),
+                  'providerParameterMapping': providerRequestOptions
+                      .parameterTraceForProvider(resolvedProvider),
+                  'provider': resolvedProvider,
+                  'entries': presetAssembly?.traceEntries ?? const [],
+                },
+              },
+            ),
+          },
+          now: effectiveRequestTime,
+        );
+        await TraceStore.instance.record(
+          traceId: traceContext.traceId,
+          sessionId: traceContext.sessionId,
+          turnId: traceContext.turnId,
+          stage: TraceStage.apiConfigReady,
+          source: 'ChatSendBackendService',
+          payloadRef: payloadRef,
+          meta: {
+            'modelFullId': modelFull,
+            'messagesCount': finalMessages.length,
+            'toolsCount': tools?.length ?? 0,
+            'supportsToolCalling': supportsToolCalling,
+            'supportsVision': supportsVision,
+          },
+        );
+      }
+
+      if (preview != null) {
+        preview
+          ..presetName = boundPreset?.name
+          ..sources = systemAssemblyEntries
+          ..plugins = pluginPromptBuild.entries;
+        preview.notes.addAll([
+          ...?presetAssembly?.warnings,
+          ...?presetRegexPromptResult?.warnings,
+        ]);
+      }
+
+      final config = ApiConfig(
+        requestInputTokenLimit: inputLimit,
+        openPresetRuntime: pluginRuntime.scope.lookup(
+          TavernCompatServices.presetRuntime,
+        ),
+        presetScript: PresetScriptSnapshot.fromPreset(
+          boundPreset,
+          toolsAllowed: supportsToolCalling,
+          modelSupportsTools: modelSupportsTools,
+          macros: {
+            'char': conv.displayName.trim().isEmpty
+                ? conv.title
+                : conv.displayName,
+            'user': promptUserName,
+            'description': contextPolicy.filterText(personaParts.rolePrompt),
+            'scenario': conv.description?.trim() ?? '',
+          },
+        ),
+        runtimeContext: runtimeContext,
+        onToolSchemasChanged: (schemas) {
+          // Keep only the runtime budget live, not the initial config loadout:
+          // reusing a config must not carry search-only activations into a run.
+          runtimeTools
+            ..clear()
+            ..addAll(schemas);
+        },
+        toolResultOwner: resolvedConversationId,
+        currentWorkspaceId: () => pluginScopes
+            .whereType<WorkspaceRequestScope>()
+            .firstOrNull
+            ?.toolset
+            .currentWorkspaceId,
+        settings: settings,
+        modelFullId: modelFull,
+        providerApiBase: requestConfig.providerApiBase,
+        providerApiKey: requestConfig.providerApiKey,
+        providerId: requestConfig.providerId,
+        providerApiKeyItemId: requestConfig.providerApiKeyItemId,
+        providerApiKeyItemIndex: requestConfig.providerApiKeyItemIndex,
+        providerApiKeyStrategy: requestConfig.providerApiKeyStrategy,
+        customConfig: requestConfig.customConfig,
+        messages: finalMessages,
+        tools: tools,
+        boundTools: boundTools,
+        enabledPluginIds: enabledPluginIds,
+        modelTemperature:
+            boundPreset?.temperature ?? requestConfig.modelTemperature,
+        modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
+        modelContextMessageLimit: requestConfig.modelContextMessageLimit,
+        // 聊天模式办事交给杂活 Agent，一律去掉模型内置搜索（ADR0088）；
+        // 其余情况沿用旧规则：联网搜索插件接管才去掉。
+        providerRequestOptions:
+            officeToErrandAgent ||
+                supportsToolCalling &&
+                    pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
+            ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
+            : providerRequestOptions,
+        // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
+        // 保留原标签交给聊天列表投影为折叠／正文／选项（ADR0046）。
+        presetRegexScripts: boundPreset == null
+            ? const <SillyTavernRegexScript>[]
+            : inferPresetTagMapping(
+                boundPreset,
+              ).displayScripts(boundPreset.regexScripts),
+        presetRegexAuthorized: boundPreset?.regexAuthorized ?? false,
+        presetStreamResponse: boundPreset?.streamResponse,
+        traceContext: traceContext,
+        boundImageToolPresetName: boundImageToolPresetName,
+        boundImageArtistPresetName: boundImageArtistPresetName,
+        drawingConfig: imageConfig,
+        voiceRequest: voiceRequest,
+        reminders: deferReminders ? remindersAt : null,
+        responseProcessors: pluginRuntime.responseProcessors(
+          pluginRuntime.snapshot(),
+          selectedPluginIds,
+          PluginResponseInputs(
+            ref: _ref,
+            voiceRequest: voiceRequest,
+            drawingConfig: imageConfig,
+            imagePrompts: imagePrompts,
+            settings: settings,
+            rolePluginIds: enabledPluginIds,
+          ),
+        ),
+      );
+      if (conv.effectiveAgentMode != RoleAgentMode.tool || preview != null) {
+        return config;
+      }
+      return config.copyWith(
+        toolPolicy: await _assistantToolPolicy(
+          alwaysAsk: await _ref.read(assistantAlwaysAskProvider.future),
+          config: config,
+          history: history,
+          userText: userText,
+          settings: settings,
+        ),
+      );
+    } finally {
+      await pluginRuntime.scope.dispose();
+    }
   }
 
-  /// 工具模式的角色自己的工作区（ADR0097）：授权与杂活 Agent 看到的一样，
-  /// 本次新建的工作区记到角色名下。
-  Future<WorkspaceToolset> _roleWorkspaceToolset(Conversation conv) async {
+  /// 工具模式的角色可用本机全部工作区（ADR0111），本次新建的工作区仍记到
+  /// 角色名下。
+  Future<WorkspaceToolset> _roleWorkspaceToolset(
+    Conversation conv,
+    String conversationId,
+  ) async {
     final store = await _ref.read(workspaceStoreProvider.future);
     final localIds = [for (final workspace in await store.list()) workspace.id];
+    final prefs = await SharedPreferences.getInstance();
+    final selectionKey = 'workspace_current_$conversationId';
+    final home =
+        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
     return WorkspaceToolset(
       store: store,
+      userSkillRoots: [
+        if (home != null && home.isNotEmpty) ...[
+          p.join(home, '.agents', 'skills'),
+          p.join(home, '.claude', 'skills'),
+        ],
+      ],
+      currentWorkspaceId: prefs.getString(selectionKey),
+      enableLocalFiles: true,
+      currentLocalDirectory: prefs.getString('${selectionKey}_local'),
+      onLocalDirectoryChanged: (path) async {
+        if (path == null) {
+          await prefs.remove('${selectionKey}_local');
+        } else {
+          await prefs.setString('${selectionKey}_local', path);
+        }
+      },
+      onWorkspaceChanged: (id) async {
+        await prefs.setString(selectionKey, id);
+      },
       enableScripts: true,
       enableShell: WorkspaceShell.available(platform: Platform.operatingSystem),
       workspaceIds: WorkspaceGrants.effective(
-        roleGrants: WorkspaceGrants.forRole(conv.id, conv.enabledPlugins),
+        roleGrants: localIds.toSet(),
         presetAllows: null,
         pluginEnabled: true,
         localIds: localIds,
@@ -1167,15 +1343,16 @@ class ChatSendBackendService {
       runWebApp: (ws, path) async => (await _ref.read(
         webAppLauncherProvider.future,
       )).openForAgent(ws, path),
-      // Only AIcove酱 gets channel keys in its shell (ADR0109 补充二).
-      shellEnvironment: conv.id == kAicoveAssistantId
-          ? () {
-              final settings = _ref.read(appSettingsProvider).valueOrNull;
-              return settings == null
-                  ? const <String, String>{}
-                  : channelKeyEnvironment(settings);
-            }
-          : null,
+      runLocalWebApp: (root, page) async => (await _ref.read(
+        webAppLauncherProvider.future,
+      )).openLocalDirectoryForAgent(root, page),
+      // Every tool-mode role's shell gets channel keys (ADR0111).
+      shellEnvironment: () {
+        final settings = _ref.read(appSettingsProvider).valueOrNull;
+        return settings == null
+            ? const <String, String>{}
+            : channelKeyEnvironment(settings);
+      },
     );
   }
 
@@ -1322,8 +1499,10 @@ class ChatSendBackendService {
         config.voiceRequest!.ownerId != sessionId) {
       throw StateError('语音请求与当前发送角色不一致');
     }
-    try {
-      return await _apiRunner.executeApiCall(
+    return executeWithProviderKeyFailureRecording(
+      config: config,
+      recorder: _ref.read(providerKeyFailureRecorderProvider),
+      execute: () => _apiRunner.executeApiCall(
         config: config,
         sessionId: sessionId,
         userText: userText,
@@ -1347,44 +1526,8 @@ class ChatSendBackendService {
         onStreamToolCallObserved: onStreamToolCallObserved,
         onStreamingFallback: onStreamingFallback,
         traceContext: config.traceContext,
-      );
-    } catch (e) {
-      await _markExhaustedMultiKeyFailure(config, e);
-      rethrow;
-    }
-  }
-
-  Future<void> _markExhaustedMultiKeyFailure(
-    ApiConfig config,
-    Object error,
-  ) async {
-    final failedKey = config.providerApiKey?.trim();
-    if (failedKey == null || failedKey.isEmpty) return;
-    if (config.providerApiKeyStrategy != providerMultiKeyStrategyExhaust) {
-      return;
-    }
-
-    final settings = _ref.read(appSettingsProvider).valueOrNull;
-    if (settings == null) return;
-    final provider = settings.getProvider(config.providerId);
-    if (provider == null) return;
-
-    final patch = buildProviderMultiKeyFailurePatch(
-      provider: provider,
-      failedKey: failedKey,
-      failedItemId: config.providerApiKeyItemId,
-      failedItemIndex: config.providerApiKeyItemIndex,
-      error: error,
+      ),
     );
-    if (!patch.changed) return;
-
-    await _ref
-        .read(appSettingsProvider.notifier)
-        .editProvider(
-          providerId: provider.id,
-          apiKeys: patch.apiKeys,
-          customConfig: patch.customConfig,
-        );
   }
 
   bool _containsInternalImageContext(List<Map<String, dynamic>> messages) {

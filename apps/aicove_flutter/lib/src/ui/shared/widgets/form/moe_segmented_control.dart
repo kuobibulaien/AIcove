@@ -36,6 +36,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
+import '../../../theme/moe_frosted_material.dart';
 import '../../../theme/tokens.dart';
 import '../moe_liquid_glass.dart';
 
@@ -354,19 +355,26 @@ class _Thumb extends StatelessWidget {
         ),
       );
     }
-    final recess = ClipRRect(
-      borderRadius: shape,
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: _recessBlur, sigmaY: _recessBlur),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: isDark ? 0.32 : 0.09),
-            borderRadius: shape,
-          ),
-          child: const SizedBox.expand(),
-        ),
+    final recessBox = DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: isDark ? 0.32 : 0.09),
+        borderRadius: shape,
       ),
+      child: const SizedBox.expand(),
     );
+    final overSolidBackdrop = MoeSolidBackdropScope.colorOf(context) != null;
+    final recess = overSolidBackdrop
+        ? recessBox
+        : ClipRRect(
+            borderRadius: shape,
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(
+                sigmaX: _recessBlur,
+                sigmaY: _recessBlur,
+              ),
+              child: recessBox,
+            ),
+          );
     if (lift == 0) return recess;
 
     final glass = MoeLiquidGlass(

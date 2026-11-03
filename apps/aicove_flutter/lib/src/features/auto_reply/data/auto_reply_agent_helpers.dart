@@ -1,6 +1,8 @@
 import '../../../core/services/system_reminder_service.dart';
 import '../../chat/domain/message.dart';
 import '../../chat/services/chat_send_service.dart';
+import '../../chat/application/conversation_model.dart';
+import '../../chat/domain/conversation.dart';
 import '../../settings/app_settings.dart';
 
 const SystemReminderService _systemReminderService = SystemReminderService();
@@ -24,12 +26,12 @@ bool isCachedAutoReplyContentFresh({
   return age <= maxAge;
 }
 
-String resolveAutoReplyAgentModelRef(AppSettings settings) {
-  if (settings.defaultChatModels.isNotEmpty) {
-    return settings.defaultChatModels.first;
-  }
-  return settings.defaultModelName;
-}
+/// 主动回复用目标会话自己的聊天模型（会话选过的 > 默认队列首位）。
+String resolveAutoReplyAgentModelRef(
+  AppSettings settings,
+  Conversation conversation,
+) =>
+    conversationPrimaryModel(settings, conversation);
 
 List<Message> buildAutoReplyAgentContextMessages({
   required List<Message> messages,
@@ -62,36 +64,22 @@ DateTime _resolveReminderMessageTime(List<Message> messages) {
   return lastCreatedAt.add(const Duration(milliseconds: 1));
 }
 
+/// Proactive generation keeps raw text; response plugins belong to delivery.
 ApiConfig disableNativeToolCallsForAutoReplyGeneration(
   ApiConfig config, {
   double defaultTemperature = 0.7,
 }) {
-  return ApiConfig(
-    settings: config.settings,
-    modelFullId: config.modelFullId,
-    providerApiBase: config.providerApiBase,
-    providerApiKey: config.providerApiKey,
-    customConfig: config.customConfig,
-    messages: config.messages,
-    tools: null,
-    enabledPluginIds: config.enabledPluginIds,
+  return config.copyWith(
+    clearTools: true,
+    responseProcessors: const [],
     modelTemperature: config.modelTemperature ?? defaultTemperature,
-    modelTopP: config.modelTopP,
-    modelContextMessageLimit: config.modelContextMessageLimit,
-    traceContext: config.traceContext,
-    boundImageToolPresetName: config.boundImageToolPresetName,
-    boundImageArtistPresetName: config.boundImageArtistPresetName,
-    responseProcessors: config.responseProcessors,
   );
 }
 
-String selectCacheableAutoReplyText(ApiCallResult result) {
-  final raw = result.rawReplyText.trim();
-  if (raw.isNotEmpty) return raw;
-  final reply = result.replyText.trim();
-  if (reply.isNotEmpty) return reply;
-  return result.processedText.trim();
-}
+// ApiCallResult already defaults omitted raw text for legacy callers. An
+// explicitly empty raw reply must not resurrect display-only text or tags.
+String selectCacheableAutoReplyText(ApiCallResult result) =>
+    result.rawReplyText.trim();
 
 ApiConfig appendAutoReplyReminderAsLastUser(
   ApiConfig config,
@@ -109,21 +97,5 @@ ApiConfig appendAutoReplyReminderAsLastUser(
       _systemReminderService.ensureReminderSemanticsPrompt(
     messages: messagesWithReminder,
   );
-  return ApiConfig(
-    settings: config.settings,
-    modelFullId: config.modelFullId,
-    providerApiBase: config.providerApiBase,
-    providerApiKey: config.providerApiKey,
-    customConfig: config.customConfig,
-    messages: normalizedMessages,
-    tools: config.tools,
-    enabledPluginIds: config.enabledPluginIds,
-    modelTemperature: config.modelTemperature,
-    modelTopP: config.modelTopP,
-    modelContextMessageLimit: config.modelContextMessageLimit,
-    traceContext: config.traceContext,
-    boundImageToolPresetName: config.boundImageToolPresetName,
-    boundImageArtistPresetName: config.boundImageArtistPresetName,
-    responseProcessors: config.responseProcessors,
-  );
+  return config.copyWith(messages: normalizedMessages);
 }

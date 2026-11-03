@@ -1,7 +1,7 @@
-/// AutoReplyAdvancedSettingsPage - 主动关怀「更多设置」
+/// AutoReplyAdvancedSettingsPage - 主动回复「更多设置」
 ///
 /// 不常改的选项：后台判断用的模型、准时提醒、Android 后台运行检查清单、
-/// 历史记录。前台保活由「是否有角色启用主动关怀」自动决定，这里只做系统授权检查。
+/// 历史记录。前台保活由「是否有角色启用主动回复」自动决定，这里只做系统授权检查。
 library;
 
 import 'dart:async';
@@ -11,10 +11,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../../core/services/android_keep_alive_manager.dart';
+import '../../../../features/plugins/prompts/plugin_prompts.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../plugins/pages/plugin_prompts_page.dart';
 import '../widgets/auto_reply_settings_cards.dart';
 import '../widgets/auto_reply_dialogs.dart';
 import 'auto_reply_history_log_page.dart';
@@ -98,7 +100,9 @@ class _AutoReplyAdvancedSettingsPageState
     AutoReplySettings current,
     bool enabled,
   ) async {
-    await _save(current.copyWith(allowExactAlarm: enabled));
+    final latest =
+        ref.read(appSettingsProvider).valueOrNull?.autoReplySettings ?? current;
+    await _save(latest.copyWith(allowExactAlarm: enabled));
     if (!enabled || !AndroidKeepAliveManager.isSupported) return;
     if (_keepAliveStatus?.canScheduleExactAlarms == false) {
       await _openExactAlarmSettings();
@@ -151,6 +155,11 @@ class _AutoReplyAdvancedSettingsPageState
 
   Widget _buildContent(AppSettings settings) {
     final current = settings.autoReplySettings;
+    final prompts = ref.watch(pluginPromptsProvider).valueOrNull;
+    final autoReplySlots = PluginPromptSlot.forPlugin('auto_reply');
+    final modifiedCount = autoReplySlots
+        .where((s) => !(prompts?.isDefault(s) ?? true))
+        .length;
 
     return MoeSettingsContent(
       child: Builder(
@@ -176,6 +185,20 @@ class _AutoReplyAdvancedSettingsPageState
 
             MoeSettingsGroup(
               children: [
+                MoeSettingsRow(
+                  label: '提示词设置',
+                  subtitle: '定时提醒工具说明与主动发消息、打电话引导语',
+                  trailingType: MoeSettingsRowTrailing.text,
+                  detailText: modifiedCount > 0 ? '$modifiedCount 项已修改' : '默认',
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const PluginPromptGroupPage(
+                        pluginId: 'auto_reply',
+                        title: '主动回复与提醒提示词',
+                      ),
+                    ),
+                  ),
+                ),
                 MoeSettingsRow(
                   label: '更准时',
                   subtitle: _exactAlarmSubtitle(current),
@@ -219,7 +242,7 @@ class _AutoReplyAdvancedSettingsPageState
                 ),
                 onExactAlarmTap: _openExactAlarmSettings,
               ),
-              const AutoReplySectionFooter('有角色开着主动关怀时，通知栏会常驻一条后台运行通知，防止被系统杀掉。'),
+              const AutoReplySectionFooter('有角色开着主动回复时，通知栏会常驻一条后台运行通知，防止被系统杀掉。'),
             ],
             const SizedBox(height: MoeSettingsLayout.sectionGap),
           ],
@@ -255,13 +278,15 @@ class _AutoReplyAdvancedSettingsPageState
       settings: settings,
     );
     if (result == null) return;
+    final latest =
+        ref.read(appSettingsProvider).valueOrNull?.autoReplySettings ?? current;
     await _save(
       result.model == null
-          ? current.copyWith(
+          ? latest.copyWith(
               clearAnalyzerModel: true,
               clearAnalyzerProvider: true,
             )
-          : current.copyWith(
+          : latest.copyWith(
               analyzerModel: result.model,
               analyzerProvider: result.provider,
             ),

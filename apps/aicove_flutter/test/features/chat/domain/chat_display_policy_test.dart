@@ -83,4 +83,51 @@ void main() {
     );
     expect(conv('someone').effectiveDisplayStyle, isNull);
   });
+
+  test('a contact only overrides whether to chunk; punctuation stays global',
+      () {
+    final global = const MessageFormatConfig(
+      filterPunctuation: true,
+    ).withActiveSet('aggressive')!;
+    final policy = ChatDisplayPolicy.resolve(
+      formatConfig: global,
+      globalStyle: ChatDisplayStyle.bubble,
+      chunkOverride: const ChatChunkOverride(enableChunking: false),
+    );
+    expect(
+      policy.effectiveFormatConfig,
+      global.copyWith(enableChunking: false),
+    );
+    expect(ChatChunkOverride.none.applyTo(global), global);
+  });
+
+  test('old per-contact punctuation fields on a contact no longer apply', () {
+    final global = const MessageFormatConfig().withActiveSet('aggressive')!;
+    final now = DateTime(2026, 10, 23);
+    final conv = Conversation(
+      id: 'c',
+      title: 't',
+      displayName: 'd',
+      createdAt: now,
+      updatedAt: now,
+      chunkEnabled: false,
+      filterPunctuation: true,
+      chunkPunctuationSetId: 'standard',
+    );
+    expect(
+      conv.chunkOverride.applyTo(global),
+      global.copyWith(enableChunking: false),
+    );
+  });
+
+  test('document style turns chunking off even when the contact turned it on',
+      () {
+    final policy = ChatDisplayPolicy.resolve(
+      formatConfig: const MessageFormatConfig(enableChunking: false),
+      globalStyle: ChatDisplayStyle.bubble,
+      conversationStyle: ChatDisplayStyle.document,
+      chunkOverride: const ChatChunkOverride(enableChunking: true),
+    );
+    expect(policy.effectiveFormatConfig.enableChunking, isFalse);
+  });
 }

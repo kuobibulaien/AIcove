@@ -53,10 +53,12 @@ class _Actions extends ChatActions {
   _Actions(super.ref);
   final calls = <(String, String, String)>[];
   @override
-  Future<void> regenerateMedia(
-      {required String conversationId,
-      required String messageId,
-      required String blockId}) async {
+  Future<void> regenerateMedia({
+    required String conversationId,
+    required String messageId,
+    required String blockId,
+    String? customPrompt,
+  }) async {
     calls.add((conversationId, messageId, blockId));
   }
 }

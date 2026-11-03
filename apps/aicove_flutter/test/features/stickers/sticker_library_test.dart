@@ -117,6 +117,41 @@ void main() {
     expect(StickerRegistry.instance.hasTag('得意'), isFalse);
   });
 
+  test('sent content survives deletion of all duplicate sticker IDs and reload', () async {
+    final first = await library.importFiles([StickerImportFile('A.png', _png(19))]);
+    final second = await library.importFiles([StickerImportFile('B.png', _png(19))]);
+    final a = library.packById(first.packIds.single)!.stickers.single;
+    final b = library.packById(second.packIds.single)!.stickers.single;
+    expect(a.path, b.path);
+    await library.markUsed(a.id);
+    await library.deleteStickers(first.packIds.single, {a.id});
+    final reloaded = StickerLibrary(root);
+    await reloaded.load();
+    await reloaded.deletePack(second.packIds.single);
+    expect(File(a.path).existsSync(), isTrue);
+  });
+
+  test('legacy usedIds retain content before deleting the last UUID association', () async {
+    final first = await library.importFiles([StickerImportFile('A.png', _png(20))]);
+    final second = await library.importFiles([StickerImportFile('B.png', _png(20))]);
+    final sent = library.packById(first.packIds.single)!.stickers.single;
+    await library.markUsed(sent.id);
+    final manifest = File(p.join(root.path, 'library.json'));
+    final legacy = jsonDecode(await manifest.readAsString()) as Map<String, dynamic>;
+    legacy.remove('usedFiles');
+    await manifest.writeAsString(jsonEncode(legacy));
+    final migrated = StickerLibrary(root);
+    await migrated.load();
+    await migrated.deletePack(first.packIds.single);
+    final saved = jsonDecode(await manifest.readAsString()) as Map<String, dynamic>;
+    expect(saved['usedFiles'], contains(p.basename(sent.path)));
+    final reloaded = StickerLibrary(root);
+    await reloaded.load();
+    await reloaded.deleteStickers(second.packIds.single,
+      {reloaded.packById(second.packIds.single)!.stickers.single.id});
+    expect(File(sent.path).existsSync(), isTrue);
+  });
+
   test('zip import applies labels.json tags, description and pack name', () async {
     final labels = {
       'name': '猫猫·动图',

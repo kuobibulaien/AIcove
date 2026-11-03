@@ -118,9 +118,7 @@ void main() {
   });
 
   test('按记忆模型预算分批；失败记录错误且书签不动，之后续跑', () async {
-    messages['a'] = [
-      for (var i = 0; i < 6; i++) _m('m$i', i, text: '字' * 400),
-    ];
+    messages['a'] = [for (var i = 0; i < 6; i++) _m('m$i', i, text: '字' * 400)];
     boundaries['a'] = {'m5'};
     agent.batchTokenBudget = 900;
     agent.fail = true;
@@ -352,6 +350,156 @@ void main() {
       ),
       throwsA(isA<MemoryException>()),
     );
+  });
+
+  test('滚动窗口严格早于 24 小时并顺延连续消息', () async {
+    final base = DateTime(2026, 5, 12, 12);
+    Message at(String id, Duration delta) =>
+        _m(id, base.add(delta).millisecondsSinceEpoch);
+    messages['a'] = [
+      at('old', Duration.zero),
+      at('cutoff', const Duration(minutes: 10)),
+      at('continued', const Duration(minutes: 20)),
+      at('break', const Duration(minutes: 31)),
+      at('latest', const Duration(hours: 24, minutes: 10)),
+    ];
+    expect((await keeper.pendingMessages('a')).map((m) => m.id), [
+      'old',
+      'cutoff',
+      'continued',
+    ]);
+    messages['a'] = [
+      at('recent', Duration.zero),
+      at('latest', const Duration(hours: 24)),
+    ];
+    expect(await keeper.pendingMessages('a'), isEmpty);
+  });
+
+  test('自然日和完整日用户数决定轮次，续跑保持切分', () async {
+    final day = DateTime(2026, 5, 12, 8);
+    Message at(String id, DateTime time) => _m(id, time.millisecondsSinceEpoch);
+    final small = [
+      at('a', day),
+      at('b', day.add(const Duration(hours: 3))),
+      at('c', day.add(const Duration(days: 1))),
+    ];
+    expect(
+      MemoryKeeperService.buildBatches(
+        small,
+        startIndex: 0,
+        targetIndex: 2,
+        budget: 100000,
+      ).map((b) => b.map((m) => m.id).toList()),
+      [
+        ['a', 'b'],
+        ['c'],
+      ],
+    );
+    final twenty = [
+      for (var i = 0; i < 20; i++)
+        at('t$i', day.add(Duration(minutes: i < 10 ? i : i + 180))),
+    ];
+    expect(MemoryKeeperService.splitRounds(twenty), hasLength(1));
+    final many = [
+      for (var i = 0; i < 11; i++) at('a$i', day.add(Duration(minutes: i))),
+      for (var i = 0; i < 10; i++)
+        at('b$i', day.add(Duration(hours: 3, minutes: i))),
+      at('last', day.add(const Duration(hours: 5))),
+    ];
+    final batches = MemoryKeeperService.buildBatches(
+      many,
+      startIndex: 5,
+      targetIndex: 21,
+      budget: 100000,
+    );
+    expect(batches.map((b) => b.length), [6, 10, 1]);
+    messages['a'] = many;
+    expect(
+      (await keeper.estimateRebuild('a', batchTokenBudget: 100000)).batches,
+      3,
+    );
+    boundaries['a'] = {'last'};
+    keeper.schedule('a');
+    await keeper.idle('a');
+    expect(agent.batches.map((b) => b.length), [11, 10, 1]);
+  });
+
+  test('往事日记补日期并保护旧日记', () {
+    final ops = parseMemoryOps(
+      '{"ops":[{"op":"add","title":"旅行","content":"去海边","source_ids":["m"]},'
+      '{"op":"update","id":"old","content":"改"},{"op":"delete","id":"old"},'
+      '{"op":"update","id":"today","content":"补充"}]}',
+      knownIds: {'old', 'today'},
+      lockedIds: {},
+      sourceIds: {'m'},
+      defaultArchiveDate: '2026-05-12',
+      protectedArchiveIds: {'old'},
+    );
+    expect(ops, hasLength(2));
+    expect((ops.first as AddMemory).title, '2026-05-12 旅行');
+    expect((ops.last as UpdateMemory).id, 'today');
+    expect(formatMemoryRoundDate(DateTime(2026, 5, 12)), '2026-05-12');
+  });
+
+  test('日记按标题日期排序且注入不附加更新日期', () async {
+    for (final title in ['2026-05-12 旅行', '2026-05-10 往事', '无日期']) {
+      await store.saveByUser(
+        ownerId: 'a',
+        layer: MemoryLayer.archive,
+        title: title,
+        content: '海边',
+      );
+    }
+    expect((await store.list('a')).map((i) => i.title), [
+      '2026-05-12 旅行',
+      '2026-05-10 往事',
+      '无日期',
+    ]);
+    final injector = MemoryInjector(
+      store: store,
+      retriever: KeywordMemoryRetriever(store),
+    );
+    final result = (await injector.build(
+      ownerId: 'a',
+      roleLabel: '角色',
+      query: '海边',
+    ))!;
+    expect(result.archive, matches(RegExp(r'- 2026-05-12 旅行：海边(?:\n|$)')));
+    expect(result.archive, matches(RegExp(r'无日期：海边（\d{4}-\d{2}-\d{2}）')));
+  });
+
+  test('运行中的触发不丢失，续跑检查按十分钟节流', () async {
+    messages['a'] = [_m('a1', 1)];
+    boundaries['a'] = {'a1'};
+    var loads = 0;
+    keeper = MemoryKeeperService(
+      store: store,
+      loadMessages: (o) async {
+        loads++;
+        return messages[o] ?? const [];
+      },
+      compactedBoundaries: (o) async => boundaries[o] ?? const {},
+      agentFactory: () async => agent,
+      allowed: (_) async => true,
+    );
+    agent.gate = Completer<void>();
+    keeper.schedule('a');
+    await Future<void>.delayed(Duration.zero);
+    keeper.schedule('a');
+    agent.gate!.complete();
+    agent.gate = null;
+    await keeper.idle('a');
+    await keeper.idle('a');
+    expect(agent.batches, hasLength(1));
+    expect(loads, 3);
+    final now = DateTime(2026, 5, 12);
+    keeper.resumeOnce('a', now: now);
+    await keeper.idle('a');
+    keeper.resumeOnce('a', now: now.add(const Duration(minutes: 9)));
+    expect(keeper.isRunning('a'), isFalse);
+    keeper.resumeOnce('a', now: now.add(const Duration(minutes: 10)));
+    expect(keeper.isRunning('a'), isTrue);
+    await keeper.idle('a');
   });
 
   test('清空聊天只删自动整理的记忆和进度，用户锁定的保留', () async {

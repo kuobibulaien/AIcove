@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:aicove_flutter/src/core/prompts/prompt_builtin_defaults.g.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
@@ -5,9 +7,11 @@ import 'package:aicove_flutter/src/features/plugins/image/drawing_preset.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/builtin_prompt_packs.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack.dart';
+import 'package:aicove_flutter/src/features/plugins/prompts/plugin_prompt_resolution.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack_migration.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack_store.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 PromptPackLibrary _library() =>
     PromptPackLibrary(builtins: kBuiltinPromptPacks);
@@ -24,7 +28,372 @@ Conversation _role(String id, {String persona = ''}) => Conversation(
   updatedAt: DateTime(2026, 10, 19),
 );
 
+class _MemoryPromptPackStore implements PromptPackStore {
+  PromptPackState value = PromptPackState.initial();
+  int saves = 0;
+
+  @override
+  Future<PromptPackState> load() async => value;
+
+  @override
+  Future<void> save(PromptPackState state) async {
+    value = state;
+    saves++;
+  }
+}
+
 void main() {
+  test('漫画处理方式随保存、复制、导入和修改保留', () async {
+    final original = _library().require('builtin.image.novelai_manga');
+    expect(original.postProcessor, 'novelai_manga');
+    expect(original.isCompatibleWithImageFormat(' NovelAI '), isTrue);
+    expect(original.isCompatibleWithImageFormat('comfyui'), isFalse);
+    expect(PromptPack.postProcessorLabel(original.postProcessor), 'NovelAI 分镜解析');
+    expect(PromptPack.fromJson(original.toJson()).postProcessor, 'novelai_manga');
+    final legacy = original.toJson()..remove('postProcessor');
+    expect(PromptPack.fromJson(legacy).postProcessor, 'novelai_manga');
+    final forked = _library().fork(original.id, newId: 'copy').require('copy');
+    expect(forked.postProcessor, 'novelai_manga');
+    expect(_library().importCustomJson(original.toJson(), newId: 'import').pack.postProcessor, 'novelai_manga');
+    final store = _MemoryPromptPackStore();
+    final container = ProviderContainer(overrides: [promptPackStoreProvider.overrideWithValue(store)]);
+    addTearDown(container.dispose);
+    await container.read(promptPackProvider.future);
+    final notifier = container.read(promptPackProvider.notifier);
+    final id = await notifier.fork(original.id);
+    await notifier.editCustomMeta(id, postProcessor: 'moss_manga');
+    final updated = container.read(promptPackProvider).requireValue.library.require(id);
+    expect(updated.requiredImageFormat, 'comfyui');
+  });
+
+  group('JSON 导入', () {
+    Map<String, dynamic> exported({String plugin = 'image'}) => {
+      'id': 'builtin.original',
+      'pluginId': plugin,
+      'name': '  我的方案  ',
+      'description': '说明',
+      'match': [
+        {
+          'formats': ['openai'],
+          'models': ['flux'],
+        },
+      ],
+      'sections': <Map<String, dynamic>>[
+        {
+          'id': 'one',
+          'scope': plugin == 'image' ? 'tool.width' : 'chat',
+          'title': '正文',
+          'text': '保留内容',
+          'enabled': false,
+        },
+      ],
+    };
+
+    Matcher error(String message) => throwsA(
+      isA<FormatException>().having((e) => e.message, 'message', message),
+    );
+
+    test('支持直接包和嵌套包，保留规则内容并规范旧用途', () {
+      for (final nested in [false, true]) {
+        final raw = exported();
+        final result = _library().importCustomJson(
+          nested ? {'pack': raw} : raw,
+          newId: 'imported',
+          expectedPluginId: 'image',
+        );
+        expect(result.pack.id, 'imported');
+        expect(result.pack.name, '我的方案');
+        expect(result.pack.builtIn, isFalse);
+        expect(result.pack.fallback, isFalse);
+        expect(result.pack.description, '说明');
+        expect(result.pack.match.single.models, ['flux']);
+        expect(result.pack.sections.single.scope, PromptScopes.imageToolParams);
+        expect(result.pack.sections.single.text, '保留内容');
+        expect(result.pack.sections.single.enabled, isFalse);
+        expect(result.library.custom.single, result.pack);
+      }
+    });
+
+    test('同插件名字和新 ID 去重，导入不会覆盖已有包', () {
+      final first = _library().importCustomJson(exported(), newId: 'same');
+      final second = first.library.importCustomJson(exported(), newId: 'same');
+      expect(second.pack.id, isNot('same'));
+      expect(second.pack.name, '我的方案 (2)');
+      expect(second.library.custom, hasLength(2));
+      expect(second.library.require('same'), first.pack);
+      final third = second.library.importCustomJson(
+        exported(),
+        newId: 'builtin.image.natural',
+      );
+      expect(third.pack.builtIn, isFalse);
+      expect(third.pack.name, '我的方案 (3)');
+      expect(third.library.require('builtin.image.natural').builtIn, isTrue);
+    });
+
+    test('空名称使用文件名或插件默认名称', () {
+      final raw = exported()..['name'] = ' ';
+      expect(
+        _library()
+            .importCustomJson(raw, newId: 'a', fallbackName: ' 文件名 ')
+            .pack
+            .name,
+        '文件名',
+      );
+      expect(_library().importCustomJson(raw, newId: 'a').pack.name, '导入的生图方案');
+      expect(
+        _library()
+            .importCustomJson(
+              exported(plugin: 'tts')..remove('name'),
+              newId: 'b',
+            )
+            .pack
+            .name,
+        '导入的提示词包',
+      );
+    });
+
+    test('类型、内容和用途校验，重复和空分节 ID 自动补齐', () {
+      expect(
+        () =>
+            _library().importCustomJson(exported(plugin: 'other'), newId: 'a'),
+        error('这个文件不是有效的提示词包'),
+      );
+      expect(
+        () => _library().importCustomJson(
+          exported(plugin: 'tts'),
+          newId: 'a',
+          expectedPluginId: 'image',
+        ),
+        error('这个文件是语音提示词包，请在语音提示词包里导入'),
+      );
+      expect(
+        () => _library().importCustomJson(
+          exported(),
+          newId: 'a',
+          expectedPluginId: 'tts',
+        ),
+        error('这个文件是生图方案，请在生图方案里导入'),
+      );
+      for (final sections in [null, [], 'bad']) {
+        expect(
+          () => _library().importCustomJson(
+            exported()..['sections'] = sections,
+            newId: 'a',
+          ),
+          error('这个提示词包里没有任何内容，无法导入'),
+        );
+      }
+      final wrongScope = exported();
+      (wrongScope['sections'] as List).single['scope'] = 'chat';
+      expect(
+        () => _library().importCustomJson(wrongScope, newId: 'a'),
+        error('这个提示词包包含不支持的分节类型'),
+      );
+      for (final scope in [null, '', 42]) {
+        final invalidScope = exported();
+        (invalidScope['sections'] as List).single['scope'] = scope;
+        expect(
+          () => _library().importCustomJson(invalidScope, newId: 'a'),
+          error('这个提示词包包含不支持的分节类型'),
+        );
+      }
+      final missingScope = exported();
+      ((missingScope['sections'] as List).single as Map).remove('scope');
+      expect(
+        () => _library().importCustomJson(missingScope, newId: 'a'),
+        error('这个提示词包包含不支持的分节类型'),
+      );
+      final duplicate = exported();
+      duplicate['sections'] = [
+        ...(duplicate['sections'] as List),
+        Map<String, dynamic>.from((duplicate['sections'] as List).first),
+      ];
+      final repaired = _library().importCustomJson(duplicate, newId: 'a').pack;
+      expect(repaired.sections.map((s) => s.id).toSet(), hasLength(2));
+      expect(repaired.sections.map((s) => s.text), everyElement('保留内容'));
+      final blankId = exported();
+      (blankId['sections'] as List).single['id'] = ' ';
+      expect(
+        _library()
+            .importCustomJson(blankId, newId: 'a')
+            .pack
+            .sections
+            .single
+            .id,
+        isNot(isEmpty),
+      );
+      for (final plugin in [null, '', '  ']) {
+        final missingPlugin = exported()..['pluginId'] = plugin;
+        expect(
+          _library()
+              .importCustomJson(
+                missingPlugin,
+                newId: 'a',
+                expectedPluginId: 'image',
+              )
+              .pack
+              .pluginId,
+          'image',
+        );
+        expect(
+          () => _library().importCustomJson(missingPlugin, newId: 'a'),
+          error('这个文件不是有效的提示词包'),
+        );
+      }
+      final malformed = exported()..['match'] = 'bad';
+      expect(
+        () => _library().importCustomJson(malformed, newId: 'a'),
+        throwsFormatException,
+      );
+    });
+
+    test('导入沿用自建包已有的正则校验', () {
+      final raw = exported()
+        ..['match'] = [
+          {
+            'models': ['/(/'],
+          },
+        ];
+      expect(
+        () => _library().importCustomJson(raw, newId: 'bad'),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('正则'),
+          ),
+        ),
+      );
+    });
+
+    test('notifier 排队导入，以最新存储去重，解析失败不写入', () async {
+      final store = _MemoryPromptPackStore();
+      final container = ProviderContainer(
+        overrides: [promptPackStoreProvider.overrideWithValue(store)],
+      );
+      addTearDown(container.dispose);
+      await container.read(promptPackProvider.future);
+      final notifier = container.read(promptPackProvider.notifier);
+      final imported = await Future.wait([
+        notifier.importCustomFromJson(jsonEncode(exported())),
+        notifier.importCustomFromJson(jsonEncode({'pack': exported()})),
+      ]);
+      expect(imported.map((p) => p.name), ['我的方案', '我的方案 (2)']);
+      expect(imported.map((p) => p.id).toSet(), hasLength(2));
+      expect(store.value.library.custom, hasLength(2));
+      for (final invalid in ['{', '[]', 'null']) {
+        await expectLater(
+          notifier.importCustomFromJson(invalid),
+          error('这个文件打不开，可能已经损坏'),
+        );
+      }
+      await expectLater(
+        notifier.importCustomFromJson(
+          jsonEncode(exported()),
+          expectedPluginId: 'tts',
+        ),
+        error('这个文件是生图方案，请在生图方案里导入'),
+      );
+      expect(store.saves, 2);
+      expect(
+        container.read(promptPackProvider).requireValue.library.custom,
+        hasLength(2),
+      );
+      // A failed import leaves the write queue usable; external writes are
+      // loaded again before choosing the next imported name.
+      store.value = store.value.copyWith(
+        library: store.value.library
+            .importCustomJson(exported(), newId: 'external')
+            .library,
+      );
+      final next = await notifier.importCustomFromJson(jsonEncode(exported()));
+      expect(next.name, '我的方案 (4)');
+      expect(store.saves, 3);
+      expect(store.value.library.custom, hasLength(4));
+    });
+  });
+
+  test(
+    'role pack and text override preset while empty text keeps legacy sections',
+    () {
+      final oldSections = roleDrawingSections('旧内容');
+      final preset = DrawingPreset(
+        id: 'p',
+        name: 'p',
+        config: const ImageConfig(),
+        prompts: PresetPromptBinding(
+          packId: 'builtin.image.novelai',
+          ownSections: oldSections,
+        ),
+      );
+      final resolved = resolveDrawingPrompts(
+        _library(),
+        preset,
+        format: 'openai',
+        model: 'gpt-image-1',
+        rolePromptPackId: ' builtin.image.danbooru ',
+        roleDrawingPrompt: ' 新内容 ',
+      );
+      expect(resolved.pack.id, 'builtin.image.danbooru');
+      expect(resolved.ownSections.map((s) => s.text).join(), contains('新内容'));
+      expect(
+        resolved.ownSections.map((s) => s.text).join(),
+        isNot(contains('旧内容')),
+      );
+      final inherited = resolveDrawingPrompts(
+        _library(),
+        preset,
+        format: 'openai',
+        model: 'gpt-image-1',
+      );
+      expect(inherited.pack.id, 'builtin.image.novelai');
+      expect(inherited.ownSections, oldSections);
+      final automatic = resolveDrawingPrompts(
+        _library(),
+        preset.copyWith(prompts: preset.prompts.withPack(null)),
+        format: 'openai',
+        model: 'gpt-image-1',
+      );
+      expect(automatic.automatic, isTrue);
+      expect(automatic.pack.id, 'builtin.image.natural');
+      expect(
+        () => resolveDrawingPrompts(
+          _library(),
+          preset,
+          format: 'openai',
+          model: '',
+          rolePromptPackId: 'missing',
+        ),
+        throwsA(isA<PromptPackMissingException>()),
+      );
+    },
+  );
+
+  test('image parameter contracts separate NovelAI from generic sampling', () {
+    final library = _library();
+    final nai = library.require('builtin.image.novelai');
+    final generic = library.require('builtin.image.danbooru');
+    expect(nai.section('image.params'), isNotNull);
+    final overridden = library.editSection(
+      'builtin.image.novelai',
+      'image.params',
+      text: '自定义参数说明',
+    );
+    expect(
+      overridden.require('builtin.image.novelai').section('image.params')!.text,
+      '自定义参数说明',
+    );
+    final naiText = nai.sections.map((s) => s.text).join('\n');
+    final genericText = generic.sections.map((s) => s.text).join('\n');
+    expect(naiText, contains('steps为1–50'));
+    expect(naiText, contains('0–10'));
+    expect(naiText, contains('自动对齐'));
+    expect(naiText, contains('超出范围会被自动修正'));
+    expect(genericText, contains('0–20'));
+    expect(genericText, contains('超出范围会被自动修正'));
+    expect(genericText, isNot(contains('自动对齐')));
+  });
+
   group('按模型家族匹配', () {
     test('语音：格式＋模型模式，窄的家族在前，没命中走通用', () {
       expect(
@@ -445,6 +814,7 @@ void main() {
         '1',
         persona: PersonaPromptCodec.compose(
           userPrompt: '人设',
+          extraPrompt: '保留补充1',
           customDrawingPrompt: '绿发少女',
           drawingPresetId: 'own',
         ),
@@ -453,6 +823,7 @@ void main() {
         '2',
         persona: PersonaPromptCodec.compose(
           userPrompt: '人设2',
+          extraPrompt: '保留补充2',
           customDrawingPrompt: '白发',
         ),
       );
@@ -467,9 +838,14 @@ void main() {
       final parts = PersonaPromptCodec.parse(first.personaPrompt);
       expect(parts.customDrawingPrompt, isEmpty);
       expect(parts.userPrompt, '人设');
+      expect(parts.extraPrompt, '保留补充1');
       expect(parts.drawingPresetId, 'own');
 
       final second = planRoleDrawingMove(onDefault, catalog, roles)!;
+      expect(
+        PersonaPromptCodec.parse(second.personaPrompt).extraPrompt,
+        '保留补充2',
+      );
       expect(second.preset.id, 'drawing_role_2_default');
       expect(second.preset.name, '角色2 · 默认绘图');
       expect(second.preset.prompts.ownSections.first.text, contains('白发'));
@@ -551,21 +927,18 @@ void main() {
       PromptScopes.canonical('tool.negative_prompt'),
       PromptScopes.imageToolPrompt,
     );
-    final library = PromptPackLibrary.fromJson(
-      {
-        'version': 1,
-        'overrides': {
-          'builtin.image.natural': {
-            'sections': {
-              'natural.tool_prompt': {'text': '我改过的提示词'},
-              'image.tool_width': {'text': '我改过的宽度'},
-              'natural.inline': {'enabled': false},
-            },
+    final library = PromptPackLibrary.fromJson({
+      'version': 1,
+      'overrides': {
+        'builtin.image.natural': {
+          'sections': {
+            'natural.tool_prompt': {'text': '我改过的提示词'},
+            'image.tool_width': {'text': '我改过的宽度'},
+            'natural.inline': {'enabled': false},
           },
         },
       },
-      builtins: kBuiltinPromptPacks,
-    );
+    }, builtins: kBuiltinPromptPacks);
     final pack = library.require('builtin.image.natural');
     expect(pack.section('natural.tool_prompt'), isNull);
     expect(

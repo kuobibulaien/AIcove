@@ -33,8 +33,8 @@ final _runner = createApiRunner();
 ApiConfig _config(List<Map<String, dynamic>> messages, List<AITool> tools) =>
     ApiConfig(
       settings: _settings,
-      modelFullId: 'openai:deepseek-flash',
-      providerApiBase: 'https://api.deepseek.com',
+      modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+      providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
       providerApiKey: _apiKey,
       customConfig: const {},
       modelTemperature: 0.3,
@@ -133,8 +133,8 @@ void main() {
           loadSettings: () async => _settings,
           requestConfig: ({required settings, required modelRef}) async =>
               BackgroundAgentRequestConfig(
-                modelFullId: 'openai:deepseek-flash',
-                providerApiBase: 'https://api.deepseek.com',
+                modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+                providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
                 providerApiKey: _apiKey,
                 customConfig: const <String, dynamic>{},
                 modelTemperature: 0,

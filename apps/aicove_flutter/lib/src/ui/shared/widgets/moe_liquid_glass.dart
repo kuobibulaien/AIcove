@@ -39,6 +39,7 @@ class MoeLiquidGlass extends StatelessWidget {
     this.clipBehavior = Clip.antiAlias,
     this.useOwnLayer = true,
     this.keepPremiumWhileScrolling = false,
+    this.solidBackdrop,
   }) : assert(radius >= 0),
        assert(thickness == null || thickness >= 0),
        assert(blurSigma == null || blurSigma >= 0);
@@ -113,6 +114,37 @@ class MoeLiquidGlass extends StatelessWidget {
   /// down to the scroll-safe standard shader.
   final bool keepPremiumWhileScrolling;
 
+  /// Known uniform opaque backdrop color directly behind this surface. When
+  /// set, the Gaussian blur pass is skipped while keeping the full glass rim,
+  /// Fresnel gradient, and backdrop saturation.
+  final Color? solidBackdrop;
+
+  static Color _saturateBt709(Color color, double sat) {
+    const double rw = 0.2126, gw = 0.7152, bw = 0.0722;
+    final r = color.r * 255.0;
+    final g = color.g * 255.0;
+    final b = color.b * 255.0;
+    final outR =
+        ((rw + (1 - rw) * sat) * r +
+                (gw - gw * sat) * g +
+                (bw - bw * sat) * b)
+            .round()
+            .clamp(0, 255);
+    final outG =
+        ((rw - rw * sat) * r +
+                (gw + (1 - gw) * sat) * g +
+                (bw - bw * sat) * b)
+            .round()
+            .clamp(0, 255);
+    final outB =
+        ((rw - rw * sat) * r +
+                (gw - gw * sat) * g +
+                (bw + (1 - bw) * sat) * b)
+            .round()
+            .clamp(0, 255);
+    return Color.fromARGB((color.a * 255.0).round().clamp(0, 255), outR, outG, outB);
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
@@ -177,12 +209,25 @@ class MoeLiquidGlass extends StatelessWidget {
 
     if (!isLiquidEnabled) {
       // ── 降级分支：平滑回退到项目原生毛玻璃 / 高对比度实体卡片 ──
+      final rawTint = isFrosted
+          ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
+          : colors.glassTintForFill(tintFill);
+      final fallbackColor = !isGlassEnabled
+          ? colors.componentBackground.withValues(alpha: 1)
+          : solidBackdrop != null
+          ? Color.alphaBlend(
+              rawTint,
+              isFrosted
+                  ? MoeFrostedMaterial.saturateColor(
+                      brightness,
+                      solidBackdrop!,
+                      fill: tintFill,
+                    )
+                  : solidBackdrop!,
+            )
+          : rawTint;
       final fallbackSurface = Material(
-        color: isGlassEnabled
-            ? (isFrosted
-                  ? MoeFrostedMaterial.surfaceTint(brightness, fill: tintFill)
-                  : colors.glassTintForFill(tintFill))
-            : colors.componentBackground.withValues(alpha: 1),
+        color: fallbackColor,
         shape: surfaceShape.copyWith(
           side:
               border ??
@@ -209,6 +254,7 @@ class MoeLiquidGlass extends StatelessWidget {
           // Frosted keeps its filter at zero blur for the fill's vibrancy.
           child:
               isGlassEnabled &&
+                  solidBackdrop == null &&
                   (isFrosted || baseline.blurSigma(effectiveSigma) > 0)
               ? BackdropFilter(
                   filter: isFrosted
@@ -228,15 +274,39 @@ class MoeLiquidGlass extends StatelessWidget {
       );
     } else {
       // ── 液态玻璃分支：GPU Fragment Shader 透镜折射 ──
-      LiquidGlassSettings settingsFor(Size size) =>
-          settings ??
-          LiquidGlassSettings(
-            thickness: thickness ?? adaptiveThickness(size),
-            refractiveIndex: refractiveIndex,
-            blur: baseline.blurSigma(effectiveSigma),
-            glassColor: colors.glassTintForFill(tintFill),
-            bodyMode: GlassBodyMode.adaptive,
-          );
+      // 外层 DecoratedBox 已统一承载 ShapeDecoration 阴影，显式关闭 liquid_glass_widgets
+      // 内部默认在浅色模式下额外叠加的 2 次 saveLayer + ImageFilter.blur + dstOut 阴影。
+      LiquidGlassSettings settingsFor(Size size) {
+        final base =
+            settings ??
+            LiquidGlassSettings(
+              thickness: thickness ?? adaptiveThickness(size),
+              refractiveIndex: refractiveIndex,
+              blur: solidBackdrop != null
+                  ? 0
+                  : baseline.blurSigma(effectiveSigma),
+              glassColor: colors.glassTintForFill(tintFill),
+              bodyMode: GlassBodyMode.adaptive,
+              shadowElevation: 0,
+              shadow: const [],
+            );
+        final noShadow = base.shadow == null
+            ? base.copyWith(shadowElevation: 0, shadow: const [])
+            : base;
+        if (solidBackdrop == null) return noShadow;
+        final usesStandardShader =
+            effectiveQuality != GlassQuality.premium ||
+            !ui.ImageFilter.isShaderFilterSupported;
+        return usesStandardShader
+            ? noShadow.copyWith(
+                blur: 0,
+                backerColor: _saturateBt709(
+                  solidBackdrop!,
+                  noShadow.effectiveSaturation,
+                ),
+              )
+            : noShadow.copyWith(blur: 0);
+      }
 
       surfaceWidget = DecoratedBox(
         decoration: ShapeDecoration(

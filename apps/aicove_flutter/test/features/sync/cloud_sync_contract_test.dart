@@ -1309,8 +1309,20 @@ void main() {
         } else {
           await expectLater(
             resolveModelMedia(input, store: desktop.media),
-            throwsA(isA<OriginalMediaUnavailable>()),
+            throwsA(isA<OriginalMediaUnavailable>().having(
+              (error) => error.toString(),
+              'message',
+              '这条消息里的图片取不到原图，本轮没有发出。请重新选择图片后再发。',
+            )),
           );
+          final history = await resolveModelMedia([
+            ...input,
+            {'role': 'user', 'content': '继续聊'},
+          ], store: desktop.media);
+          expect((history.first['content'] as List).single, {
+            'type': 'text',
+            'text': '[图片：原图不在本机]',
+          });
           expect(await (await phone.media.original(id)).exists(), true);
         }
       }
@@ -1421,6 +1433,60 @@ void main() {
         'newer phone edit',
       );
       expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
+    },
+  );
+  test(
+    'equivalent current content retires a conflict and converges both devices',
+    () async {
+      final phone = await device('phone'), desktop = await device('desktop');
+      await seed(phone);
+      await phone.sync.enable();
+      await phone.sync.waitForMedia();
+      await desktop.sync.enable();
+      await desktop.sync.waitForMedia();
+      await phone.local.execute(
+        "UPDATE messages SET content='phone edit' WHERE id='text'",
+      );
+      await desktop.local.execute(
+        "UPDATE messages SET content='desktop edit' WHERE id='text'",
+      );
+      await phone.sync.synchronize();
+      await phone.sync.waitForMedia();
+      await desktop.sync.synchronize();
+      await desktop.sync.waitForMedia();
+      expect(
+        (await desktop.remote.get('conflicts'))['conflicts'],
+        hasLength(1),
+      );
+      await desktop.local.mark('messages', 'text');
+      final uploads = desktop.remote.pushRequests;
+      // The cloud's latest business value now agrees with the retained local
+      // edit. No clock or explicit conflict choice is needed to prove equality.
+      await phone.local.execute(
+        "UPDATE messages SET content='desktop edit' WHERE id='text'",
+      );
+      await phone.sync.synchronize();
+      await phone.sync.waitForMedia();
+      await desktop.sync.synchronize();
+      await desktop.sync.waitForMedia();
+      expect((await desktop.remote.get('conflicts'))['conflicts'], isEmpty);
+      expect(desktop.remote.pushRequests, uploads);
+      for (final d in [phone, desktop]) {
+        final known = (await d.local.rows(
+          "SELECT * FROM cloud_versions WHERE kind='messages' AND entity_id='text'",
+        )).single;
+        expect(known['conflict_id'], isNull);
+        expect(
+          known['local_json'],
+          (await d.local.read('messages', 'text'))!.localJson,
+        );
+        expect(await d.local.rows('SELECT * FROM cloud_dirty'), isEmpty);
+        expect(await d.local.rows('SELECT * FROM cloud_inbox'), isEmpty);
+        expect(
+          (await d.local.read('messages', 'text'))!.payload['row']['content'],
+          'desktop edit',
+        );
+      }
     },
   );
   test('each device publishes its own name without conflicts', () async {

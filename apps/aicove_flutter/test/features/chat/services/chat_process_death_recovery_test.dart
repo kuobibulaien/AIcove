@@ -319,10 +319,9 @@ void main() {
       await container.read(conversationsProvider.future);
       container.read(activeConversationIdProvider.notifier).state =
           conversationId;
-      final stopped = expectLater(
-        container.read(chatActionsProvider).send('Synthetic live send'),
-        throwsStateError,
-      );
+      // The user message is already committed: the send reports failure on
+      // that record instead of throwing a pre-commit draft/edit failure.
+      final sending = container.read(chatActionsProvider).send('Synthetic live send');
       try {
         final live = await committed.future.timeout(
           const Duration(seconds: 10),
@@ -376,8 +375,13 @@ void main() {
         );
       } finally {
         release.complete();
-        await stopped;
+        await sending;
       }
+      final live = await committed.future;
+      expect(
+        (await container.read(messageRepositoryProvider).getById(live.id))?.status,
+        'failed',
+      );
     },
   );
 

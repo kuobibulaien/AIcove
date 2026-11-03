@@ -133,7 +133,7 @@ class AndroidKeepAliveManager {
     return _waitForStableGuardState(enabled, fallback: status);
   }
 
-  /// 有联系人启用主动关怀时常驻前台保活，否则关闭。
+  /// 有联系人启用主动回复时常驻前台保活，否则关闭。
   static Future<void> syncGuard(bool desiredEnabled) async {
     if (!isSupported) return;
     final status = await getStatus();

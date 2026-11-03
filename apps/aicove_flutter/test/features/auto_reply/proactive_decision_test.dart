@@ -9,6 +9,7 @@ import 'package:aicove_flutter/src/features/auto_reply/data/conversation_proacti
 import 'package:aicove_flutter/src/features/auto_reply/data/proactive_planner.dart';
 import 'package:aicove_flutter/src/features/auto_reply/domain/proactive_decision.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, ProactiveAnswer> _answers({
@@ -181,6 +182,29 @@ void main() {
         () => ChatModelDecisionAdapter.parseReply('好的，我觉得不该打扰', questions),
         throwsFormatException,
       );
+    });
+
+    test('frequent frequency uses frequent prompt and parses multiple triggers', () async {
+      String? prompt;
+      final adapter = ChatModelDecisionAdapter(
+        assistantName: '理',
+        frequency: AutoReplyFrequency.frequent,
+        run: (value) async {
+          prompt = value;
+          return '{"triggers": ['
+              '{"kind": "continue_chat", "timing": "in_minutes"}, '
+              '{"kind": "check_in", "timing": "in_hours", "reminder_requested": true}'
+              ']}';
+        },
+      );
+
+      final list = await adapter.answerAll(state: 'STATE', questions: questions);
+      expect(prompt, contains('回复频率设成了「频繁」'));
+      expect(list, hasLength(2));
+      expect(list[0]['kind']!.choice, 'continue_chat');
+      expect(list[0]['timing']!.choice, 'in_minutes');
+      expect(list[1]['kind']!.choice, 'check_in');
+      expect(list[1]['reminder_requested']!.yes, isTrue);
     });
   });
 

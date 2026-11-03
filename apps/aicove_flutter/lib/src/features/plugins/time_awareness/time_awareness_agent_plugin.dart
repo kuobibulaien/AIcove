@@ -3,6 +3,7 @@ import '../../agent_plugins/plugin_request_context.dart';
 import '../../agent_plugins/plugin_request_scope.dart';
 import '../prompts/plugin_prompts.dart';
 import 'time_awareness_plugin.dart';
+import 'time_awareness_role_options.dart';
 
 /// Time awareness on the v2 registrar: the tag semantics prompt and the
 /// current-time reminder (ADR0063 order 10).
@@ -16,8 +17,15 @@ AicovePlugin timeAwarenessAgentPlugin(TimeAwarenessPlugin registered) =>
         (inputs) => TimeAwarenessRequestScope(
           TimeAwarenessPlugin(
             registered.config.copyWith(
-              currentTimePromptTemplate:
-                  inputs.pluginPrompts.of(PluginPromptSlot.currentTime),
+              includeCurrentTime: TimeAwarenessRoleOptions.currentTime(
+                inputs.rolePluginIds,
+              ),
+              currentTimePromptTemplate: inputs.pluginPrompts.of(
+                PluginPromptSlot.currentTime,
+              ),
+              systemGuidePromptTemplate: inputs.pluginPrompts.of(
+                PluginPromptSlot.timeContextGuide,
+              ),
             ),
           ),
           inputs,
@@ -60,8 +68,8 @@ class TimeAwarenessRequestScope extends PluginRequestScope {
 
   @override
   TimeContextTrace get timeContextTrace => TimeContextTrace(
-        pluginName: snapshot.name,
-        enabled: snapshot.enabled,
-        config: snapshot.getConfig(),
-      );
+    pluginName: snapshot.name,
+    enabled: snapshot.enabled,
+    config: snapshot.getConfig(),
+  );
 }

@@ -1,6 +1,8 @@
 @Tags(['slow'])
 library;
 
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show KernelCancellation;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -23,7 +25,6 @@ import 'package:aicove_flutter/src/core/models/block_status.dart';
 import 'package:aicove_flutter/src/core/services/attachment_picker_service.dart';
 import 'package:aicove_flutter/src/features/chat/chat_actions.dart';
 import 'package:aicove_flutter/src/features/chat/chat_layer_providers.dart';
-import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_ports.dart';
 import 'package:aicove_flutter/src/features/chat/application/active_stream_projection.dart';
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
@@ -93,6 +94,7 @@ class _SpyModelFailoverPromptController extends ModelFailoverPromptController {
     required String errorMessage,
     String? errorDetail,
     DateTime? roundStartedAt,
+    KernelCancellation? cancellation,
   }) async {
     requestCalls += 1;
     return ModelFailoverDecision.tryNext;
@@ -111,6 +113,7 @@ class _BlockingModelFailoverPromptController
     required String errorMessage,
     String? errorDetail,
     DateTime? roundStartedAt,
+    KernelCancellation? cancellation,
   }) {
     requestCalls += 1;
     return super.request(
@@ -120,6 +123,7 @@ class _BlockingModelFailoverPromptController
       errorMessage: errorMessage,
       errorDetail: errorDetail,
       roundStartedAt: roundStartedAt,
+      cancellation: cancellation,
     );
   }
 }
@@ -395,6 +399,8 @@ class _MemoryChatHistoryPort implements ChatHistoryPort {
     required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
+    bool updateSummary = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {}
 
   @override
@@ -418,14 +424,15 @@ class _MemoryChatHistoryPort implements ChatHistoryPort {
   }
 
   @override
-  Future<void> truncateAfterMessage({
+  Future<Future<void> Function()> prepareTruncateAfterMessage({
     required String conversationId,
     required String anchorMessageId,
   }) async {
     final index =
         _messages.indexWhere((message) => message.id == anchorMessageId);
-    if (index < 0 || index >= _messages.length - 1) return;
-    _messages.removeRange(index + 1, _messages.length);
+    if (index < 0 || index >= _messages.length - 1) return () async {};
+    final ids = [for (final m in _messages.skip(index + 1)) m.id];
+    return () async => _messages.removeWhere((m) => ids.contains(m.id));
   }
 }
 
@@ -465,6 +472,8 @@ class _EditMessageFastPathHistoryPort implements ChatHistoryPort {
     required List<Message> projectedMessages,
     required String lastMessagePreview,
     bool updateShortWindow = true,
+    bool updateSummary = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {}
 
   @override
@@ -484,10 +493,11 @@ class _EditMessageFastPathHistoryPort implements ChatHistoryPort {
   }
 
   @override
-  Future<void> truncateAfterMessage({
+  Future<Future<void> Function()> prepareTruncateAfterMessage({
     required String conversationId,
     required String anchorMessageId,
-  }) async {}
+  }) async =>
+      () async {};
 }
 
 abstract class _InMemoryHistorySendService extends ChatSendService {
@@ -506,16 +516,6 @@ abstract class _InMemoryHistorySendService extends ChatSendService {
     return all;
   }
 
-  @override
-  Future<List<Message>> prepareHistoryFromStore({
-    required Conversation conv,
-    required Message userMsg,
-  }) async {
-    return prepareHistory(
-      conv: conv,
-      userMsg: userMsg,
-    );
-  }
 }
 
 class _SpyStreamingSendService extends _InMemoryHistorySendService {
@@ -530,6 +530,7 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
   bool sawToolObservedCallback = false;
   bool sawFallbackCallback = false;
   int executeCalls = 0;
+  final List<String?> preparedModels = <String?>[];
 
   @override
   Future<void> addUserMessage({
@@ -557,7 +558,9 @@ class _SpyStreamingSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
+    preparedModels.add(overrideModel);
     return ApiConfig(
       settings: _settings,
       modelFullId: overrideModel ?? _settings.defaultModelName,
@@ -640,6 +643,7 @@ class _FallbackAfterDeltaSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -806,6 +810,7 @@ class _MultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -888,6 +893,7 @@ class _SlowMultiDeltaStreamingSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -970,6 +976,7 @@ class _SingleDeltaSlowFinalizeSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1049,6 +1056,7 @@ class _DelayedFirstSentenceSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1137,6 +1145,46 @@ class _CancellablePendingSendService extends _DelayedFirstSentenceSendService {
   }
 }
 
+class _HistoryRecordingPendingSendService
+    extends _CancellablePendingSendService {
+  _HistoryRecordingPendingSendService(
+    super.ref,
+    super.settings, {
+    super.partial,
+  });
+
+  List<Message>? requestHistory;
+
+  @override
+  Future<ApiConfig> prepareApiConfig({
+    required Conversation conv,
+    required List<Message> history,
+    required String? userText,
+    TraceLogger? trace,
+    String? overrideModel,
+    String? conversationId,
+    TraceContext? traceContext,
+    DateTime? requestTime,
+    bool persistSideEffects = true,
+    bool deferReminders = false,
+    bool forceInlineImageRoute = false,
+  }) {
+    requestHistory = history;
+    return super.prepareApiConfig(
+      conv: conv,
+      history: history,
+      userText: userText,
+      trace: trace,
+      overrideModel: overrideModel,
+      conversationId: conversationId,
+      traceContext: traceContext,
+      requestTime: requestTime,
+      persistSideEffects: persistSideEffects,
+      deferReminders: deferReminders,
+    );
+  }
+}
+
 class _ThrowAfterFirstSentenceSendService
     extends _DelayedFirstSentenceSendService {
   _ThrowAfterFirstSentenceSendService(super.ref, super._settings);
@@ -1179,6 +1227,7 @@ class _DelayedMultiSentenceSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1262,6 +1311,7 @@ class _ChunkBoundarySentenceSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1346,6 +1396,7 @@ class _NoBoundarySlowDeltaSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1430,6 +1481,7 @@ class _StreamingTtsSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1524,6 +1576,7 @@ class _StreamingLeadingTtsSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1627,6 +1680,7 @@ class _SlowTailStreamingTtsSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1748,6 +1802,7 @@ class _StreamingInlineImageSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1842,6 +1897,7 @@ class _StreamingAttributeImageTagSendService
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -1927,6 +1983,7 @@ class _StreamingMixedTtsImageTailSendService
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -2036,6 +2093,7 @@ class _StreamingOnlyTtsSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -2118,6 +2176,7 @@ class _StreamingOnlyTtsAndImageSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -2226,6 +2285,7 @@ class _RecordingStreamTtsHandler extends ChatTtsHandler {
     List<Message>? streamPendingTtsMessages,
     bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
     lastStreamTextMessageIds =
@@ -2275,6 +2335,7 @@ class _RecordingImageConfigSendService extends _InMemoryHistorySendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     lastOverrideModel = overrideModel;
     lastConversationId = conversationId;
@@ -2601,6 +2662,7 @@ class _RetryOnceProviderRefreshImageSendService
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) async {
     return ApiConfig(
       settings: _settings,
@@ -2781,6 +2843,7 @@ class _NoopChatTtsHandler extends ChatTtsHandler {
     List<Message>? streamPendingTtsMessages,
     bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {}
 }
 
@@ -2803,6 +2866,7 @@ class _DeliverBuildResultOnlyChatTtsHandler extends ChatTtsHandler {
     List<Message>? streamPendingTtsMessages,
     bool streamTtsResolutionManaged = false,
     TraceLogger? trace,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     lastAppendAfterStreamText = appendAfterStreamText;
     if (buildResult.messages.isEmpty) {
@@ -2820,6 +2884,59 @@ class _DeliverBuildResultOnlyChatTtsHandler extends ChatTtsHandler {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   _installPlatformChannelMocks();
+
+  test('主对话阶段按会话保留，后台中断不覆盖当前会话状态', () async {
+    final now = DateTime(2026, 10, 25);
+    final conversations = [
+      for (final id in ['status-a', 'status-b'])
+        Conversation(id: id, title: id, displayName: id,
+            createdAt: now, updatedAt: now, messages: const []),
+    ];
+    final settings = _buildTestSettings().copyWith(ttsEnabled: false);
+    final database = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(database.close);
+    for (final conversation in conversations) {
+      await _insertConversation(database, conversation);
+    }
+    late _CancellablePendingSendService service;
+    final container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(database),
+      appSettingsProvider.overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      conversationsProvider.overrideWith(() => _FakeConversationsNotifier(conversations)),
+      activeConversationProvider.overrideWith((ref) {
+        final id = ref.watch(activeConversationIdProvider);
+        return conversations.where((conversation) => conversation.id == id).firstOrNull;
+      }),
+      chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
+      chatSendServiceProvider.overrideWith((ref) {
+        service = _CancellablePendingSendService(ref, settings);
+        return service;
+      }),
+    ]);
+    addTearDown(container.dispose);
+    container.read(activeConversationIdProvider.notifier).state = 'status-a';
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    container.read(chatSendServiceProvider);
+    final actions = container.read(chatActionsProvider);
+    final sending = actions.send('检查独立状态');
+    try {
+      await service.started.future;
+      expect(container.read(conversationChatStatusProvider('status-a')), ChatStatus.thinking);
+      container.read(activeConversationIdProvider.notifier).state = 'status-b';
+      expect(container.read(chatStatusProvider), ChatStatus.idle);
+      setConversationMainChatStatus(service.statusRef, 'status-b', ChatStatus.toolCalling);
+      container.read(activeConversationIdProvider.notifier).state = 'status-a';
+      expect(container.read(chatStatusProvider), ChatStatus.thinking);
+      container.read(activeConversationIdProvider.notifier).state = 'status-b';
+      expect(await actions.interruptCurrentGeneration(convId: 'status-a'), isTrue);
+      expect(container.read(conversationChatStatusProvider('status-a')), ChatStatus.idle);
+      expect(container.read(chatStatusProvider), ChatStatus.toolCalling);
+    } finally {
+      await actions.interruptCurrentGeneration(convId: 'status-a');
+      await sending;
+    }
+  });
 
   test('recallFailedMessage 会删除失败消息并软删除数据库记录', () async {
     final now = DateTime.now();
@@ -3400,7 +3517,8 @@ void main() {
         .read(chatHistoryStoreProvider)
         .loadProjectedMessagesFromRawStore(conv.id);
     expect(remainingMessages.map((message) => message.id), [
-      userMsg.id,
+      '${userMsg.id}__proj_00_text',
+      '${userMsg.id}__proj_01_image',
       aiMsg.id,
     ]);
 
@@ -3639,30 +3757,108 @@ void main() {
     );
   });
 
-  test('retry 会使用流式参数调用 API', () async {
+  for (final sticker in [false, true]) {
+    test(sticker ? '失败表情回填入口仍经 retry 流式重发' : 'retry 会使用流式参数调用 API', () async {
+      final now = DateTime.now();
+      final failedUser = Message(
+        id: 'msg_user_retry',
+        role: 'user',
+        content: '重试一下',
+        blocks: sticker ? [EmojiBlock(messageId: 'msg_user_retry', emojiId: 'cat', path: 'assets/stickers/cat.png', matchedTag: '猫')] : null,
+        createdAt: now.subtract(const Duration(seconds: 1)),
+        status: 'failed',
+      );
+      final conv = Conversation(
+        id: 'conv_retry',
+        title: 'Retry',
+        displayName: 'Retry',
+        createdAt: now,
+        updatedAt: now,
+        messages: [failedUser],
+        lastMessage: failedUser.displayText,
+        lastMessageTime: failedUser.createdAt,
+      );
+      final settings = _buildTestSettings();
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      await _insertConversation(db, conv);
+      await _insertMessageWithBlocks(db, conv.id, failedUser);
+
+      late _SpyStreamingSendService spyService;
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          appSettingsProvider.overrideWith(
+            () => _FakeAppSettingsNotifier(settings),
+          ),
+          chatSendServiceProvider.overrideWith((ref) {
+            spyService = _SpyStreamingSendService(ref, settings);
+            return spyService;
+          }),
+          activeConversationProvider.overrideWith((ref) {
+            return conv;
+          }),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container.read(appSettingsProvider.future);
+      final actions = container.read(chatActionsProvider);
+
+      if (sticker) {
+        await actions.recallFailedMessage(failedUser.id);
+      } else {
+        await actions.retry(failedUser.id);
+      }
+
+      if (sticker) {
+        final stored = await (db.select(db.messages)..where((m) => m.id.equals(failedUser.id))).getSingle();
+        expect(stored.deletedAt, isNull);
+        expect(stored.status, 'sent');
+      }
+      expect(spyService.executeCalls, 1);
+      expect(spyService.lastEnableStreaming, isTrue);
+      expect(spyService.sawDeltaCallback, isTrue);
+      expect(spyService.sawResetCallback, isTrue);
+      expect(spyService.sawToolObservedCallback, isTrue);
+      expect(spyService.sawFallbackCallback, isTrue);
+    });
+  }
+
+  test('send 优先用本会话选的模型，而不是全局默认模型', () async {
     final now = DateTime.now();
-    final failedUser = Message(
-      id: 'msg_user_retry',
-      role: 'user',
-      content: '重试一下',
-      createdAt: now.subtract(const Duration(seconds: 1)),
-      status: 'failed',
-    );
     final conv = Conversation(
-      id: 'conv_retry',
-      title: 'Retry',
-      displayName: 'Retry',
+      id: 'conv_session_model',
+      title: 'SessionModel',
+      displayName: 'SessionModel',
       createdAt: now,
       updatedAt: now,
-      messages: [failedUser],
-      lastMessage: failedUser.displayText,
-      lastMessageTime: failedUser.createdAt,
+      messages: const [],
+      lastMessage: '',
+      lastMessageTime: now,
+      sessionProvider: 'openai:gpt-3.5-turbo',
     );
-    final settings = _buildTestSettings();
+    final settings = _buildTestSettings().copyWith(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+      modelList: const <String>[
+        'openai:gpt-4o-mini',
+        'openai:gpt-3.5-turbo',
+      ],
+      allKnownModels: const <String>[
+        'openai:gpt-4o-mini',
+        'openai:gpt-3.5-turbo',
+      ],
+      modelProviderMap: const <String, String>{
+        'openai:gpt-4o-mini': 'openai',
+        'gpt-4o-mini': 'openai',
+        'openai:gpt-3.5-turbo': 'openai',
+        'gpt-3.5-turbo': 'openai',
+      },
+    );
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     await _insertConversation(db, conv);
-    await _insertMessage(db, conv.id, failedUser);
 
     late _SpyStreamingSendService spyService;
     final container = ProviderContainer(
@@ -3671,143 +3867,13 @@ void main() {
         appSettingsProvider.overrideWith(
           () => _FakeAppSettingsNotifier(settings),
         ),
+        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
         chatSendServiceProvider.overrideWith((ref) {
           spyService = _SpyStreamingSendService(ref, settings);
           return spyService;
         }),
-        activeConversationProvider.overrideWith((ref) {
-          return conv;
-        }),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    await container.read(appSettingsProvider.future);
-    final actions = container.read(chatActionsProvider);
-
-    await actions.retry(failedUser.id);
-
-    expect(spyService.executeCalls, 1);
-    expect(spyService.lastEnableStreaming, isTrue);
-    expect(spyService.sawDeltaCallback, isTrue);
-    expect(spyService.sawResetCallback, isTrue);
-    expect(spyService.sawToolObservedCallback, isTrue);
-    expect(spyService.sawFallbackCallback, isTrue);
-  });
-
-  test('sendProactiveTrigger 会把 targetConvId 显式传给 prepareApiConfig', () async {
-    final now = DateTime.now();
-    final activeConv = Conversation(
-      id: 'conv_active',
-      title: 'Active',
-      displayName: 'Active',
-      createdAt: now,
-      updatedAt: now,
-      messages: const [],
-    );
-    final targetConv = Conversation(
-      id: 'conv_target',
-      title: 'Target',
-      displayName: 'Target',
-      createdAt: now,
-      updatedAt: now,
-      messages: const [],
-    );
-    final trigger = AutoReplyTrigger(
-      id: 'trigger_1',
-      title: '早安问候',
-      type: AutoReplyTriggerType.fixed,
-      status: AutoReplyTriggerStatus.pending,
-      createdAt: now,
-      nextFireAt: now,
-      allowNight: true,
-      requireExact: false,
-      delayMinutes: 0,
-      manual: false,
-      conversationId: targetConv.id,
-      contextSnapshot: '[{"role":"user","content":"昨晚聊过了"}]',
-    );
-    final settings = _buildTestSettings().copyWith(
-      ttsEnabled: false,
-      autoReplySettings: const AutoReplySettings(),
-    );
-
-    late _RecordingImageConfigSendService sendService;
-    final container = ProviderContainer(
-      overrides: [
-        appSettingsProvider.overrideWith(
-          () => _FakeAppSettingsNotifier(settings),
-        ),
-        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
-        chatSendServiceProvider.overrideWith((ref) {
-          sendService = _RecordingImageConfigSendService(ref, settings);
-          return sendService;
-        }),
         conversationsProvider.overrideWith(
-          () => _FakeConversationsNotifier([activeConv, targetConv]),
-        ),
-        activeConversationProvider.overrideWith((ref) {
-          final list = ref.watch(conversationsProvider).valueOrNull;
-          if (list == null || list.isEmpty) return null;
-          return list.firstWhere((c) => c.id == activeConv.id);
-        }),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    await container.read(conversationsProvider.future);
-    await container.read(appSettingsProvider.future);
-    final actions = container.read(chatActionsProvider);
-
-    final result = await actions.sendProactiveTrigger(trigger);
-
-    expect(result.success, isTrue);
-    expect(sendService.lastConversationId, targetConv.id);
-  });
-
-  test('sendProactiveTrigger 遇到 Provider 刷新窗口错误时会自动重试一次', () async {
-    final now = DateTime.now();
-    final targetConv = Conversation(
-      id: 'conv_target_retry',
-      title: 'TargetRetry',
-      displayName: 'TargetRetry',
-      createdAt: now,
-      updatedAt: now,
-      messages: const [],
-    );
-    final trigger = AutoReplyTrigger(
-      id: 'trigger_retry',
-      title: '中午提醒',
-      type: AutoReplyTriggerType.fixed,
-      status: AutoReplyTriggerStatus.pending,
-      createdAt: now,
-      nextFireAt: now,
-      allowNight: true,
-      requireExact: false,
-      delayMinutes: 0,
-      manual: false,
-      conversationId: targetConv.id,
-      contextSnapshot: '[{"role":"user","content":"上次提醒失败了"}]',
-    );
-    final settings = _buildTestSettings().copyWith(
-      ttsEnabled: false,
-      autoReplySettings: const AutoReplySettings(),
-    );
-
-    late _RetryOnceProviderRefreshImageSendService sendService;
-    final container = ProviderContainer(
-      overrides: [
-        appSettingsProvider.overrideWith(
-          () => _FakeAppSettingsNotifier(settings),
-        ),
-        chatTtsHandlerProvider.overrideWith((ref) => _NoopChatTtsHandler(ref)),
-        chatSendServiceProvider.overrideWith((ref) {
-          sendService =
-              _RetryOnceProviderRefreshImageSendService(ref, settings);
-          return sendService;
-        }),
-        conversationsProvider.overrideWith(
-          () => _FakeConversationsNotifier([targetConv]),
+          () => _FakeConversationsNotifier([conv]),
         ),
         activeConversationProvider.overrideWith((ref) {
           final list = ref.watch(conversationsProvider).valueOrNull;
@@ -3822,11 +3888,10 @@ void main() {
     await container.read(appSettingsProvider.future);
     final actions = container.read(chatActionsProvider);
 
-    final result = await actions.sendProactiveTrigger(trigger);
+    await actions.send('用本会话的模型');
 
-    expect(result.success, isTrue);
-    expect(sendService.executeCalls, 2);
-    expect(sendService.markUserMessageFailedCalled, isFalse);
+    expect(spyService.preparedModels, isNotEmpty);
+    expect(spyService.preparedModels.first, 'openai:gpt-3.5-turbo');
   });
 
   test('sendComposerText 会拼接引用前缀并清空引用态', () async {
@@ -4007,7 +4072,7 @@ void main() {
 
     expect(sendService.executeCalls, 2);
     expect(sendService.lastEnableStreaming, isTrue);
-    expect(container.read(errorProvider), isNull);
+    expect(container.read(conversationErrorProvider(conv.id)), isNull);
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
     expect(container.read(chatStatusProvider), ChatStatus.idle);
   });
@@ -4063,7 +4128,7 @@ void main() {
     expect(sendService.executeCalls, 2);
     expect(sendService.addUserMessageCalls, 1);
     expect(sendService.lastEnableStreaming, isTrue);
-    expect(container.read(errorProvider), isNull);
+    expect(container.read(conversationErrorProvider(conv.id)), isNull);
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
     expect(container.read(chatStatusProvider), ChatStatus.idle);
   });
@@ -4145,7 +4210,7 @@ void main() {
     expect(sendService.executeCalls, 2);
     expect(sendService.addUserMessageCalls, 1);
     expect(failoverController?.requestCalls ?? 0, 0);
-    expect(container.read(errorProvider), isNull);
+    expect(container.read(conversationErrorProvider(conv.id)), isNull);
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
     expect(container.read(chatStatusProvider), ChatStatus.idle);
   });
@@ -4821,7 +4886,7 @@ void main() {
     }
   });
 
-  test('regenerate 截断到窗口外的原用户消息时，应立即把原用户消息补回前端时间线', () async {
+  test('regenerate 截断到窗口外的原用户消息时，新回复到达后应把原用户消息补回前端时间线', () async {
     final baseTime = DateTime(2026, 4, 1, 12, 0, 0);
     final targetUser = Message(
       id: 'msg_regen_window_anchor_user',
@@ -4913,25 +4978,35 @@ void main() {
     try {
       await Future<void>.delayed(const Duration(milliseconds: 200));
 
-      final frontendDuringRegenerate =
+      final frontendBeforeContent =
           await _loadFrontendTimelineMessages(container, conv.id);
-      final stableMessageIds = frontendDuringRegenerate
-          .where((message) => message.status != 'sending')
-          .map((message) => message.id)
-          .toList(growable: false);
       expect(
-        stableMessageIds,
-        [targetUser.id],
-        reason: '重生成开始后，即使原用户消息先前落在窗口外，前端也应立刻只保留这条原用户消息。',
+        frontendBeforeContent.any((message) => message.id == targetAssistant.id),
+        isTrue,
+        reason: '新内容到达前，旧回复应继续显示。',
       );
-
-      final stopped = await container
-          .read(chatActionsProvider)
-          .interruptCurrentGeneration();
-      expect(stopped, isTrue);
     } finally {
       await regenerateFuture;
     }
+
+    final frontendAfterRegenerate =
+        await _loadFrontendTimelineMessages(container, conv.id);
+    final stableMessageIds = frontendAfterRegenerate
+        .where((message) => message.status != 'sending')
+        .map((message) => message.id)
+        .toList(growable: false);
+    expect(
+      stableMessageIds.first,
+      targetUser.id,
+      reason: '旧回复被替换后，即使原用户消息先前落在窗口外，前端也应补回这条原用户消息。',
+    );
+    expect(
+      stableMessageIds.where(
+        (id) => id == targetAssistant.id || id.startsWith('msg_regen_window_tail_'),
+      ),
+      isEmpty,
+      reason: '新回复到达后，旧回复及其后的消息都应被替换掉。',
+    );
   });
 
   test('regenerate 在打断生成后，应恢复前端消息并保留原用户消息', () async {
@@ -4985,6 +5060,8 @@ void main() {
     await container.read(appSettingsProvider.future);
 
     var regenerateFinished = false;
+    final detachPresenter = container.read(modelFailoverPromptProvider.notifier).attachPresenter(conv.id);
+    addTearDown(detachPresenter);
     final regenerateFuture =
         container.read(chatActionsProvider).regenerate(aiMsg.id);
     regenerateFuture.whenComplete(() => regenerateFinished = true);
@@ -5154,6 +5231,185 @@ void main() {
     );
   });
 
+  for (final partial in [false, true]) {
+    test('regenerate 新内容到达前保留旧回复 partial=$partial', () async {
+      final now = DateTime.now();
+      final userMsg = Message(
+        id: 'msg_regen_keep_old_user',
+        role: 'user',
+        content: '重新生成前的原话',
+        createdAt: now.subtract(const Duration(seconds: 2)),
+        status: 'sent',
+      );
+      final aiMsg = Message(
+        id: 'msg_regen_keep_old_ai',
+        role: 'assistant',
+        content: '新内容到达前应该还在的旧回复',
+        createdAt: now.subtract(const Duration(seconds: 1)),
+        status: 'sent',
+      );
+      final conv = Conversation(
+        id: 'conv_regen_keep_old_$partial',
+        title: 'RegenKeepOld',
+        displayName: 'RegenKeepOld',
+        createdAt: now,
+        updatedAt: now,
+        messages: [userMsg, aiMsg],
+        lastMessage: aiMsg.displayText,
+        lastMessageTime: aiMsg.createdAt,
+      );
+      final settings = _buildTestSettings();
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      await _insertConversation(db, conv);
+      await _insertMessage(db, conv.id, userMsg);
+      await _insertMessage(db, conv.id, aiMsg);
+
+      late _HistoryRecordingPendingSendService sendService;
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          appSettingsProvider.overrideWith(
+            () => _FakeAppSettingsNotifier(settings),
+          ),
+          chatSendServiceProvider.overrideWith(
+            (ref) => sendService = _HistoryRecordingPendingSendService(
+              ref,
+              settings,
+              partial: partial,
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(activeConversationIdProvider.notifier).state = conv.id;
+      await container.read(conversationsProvider.future);
+      await container.read(appSettingsProvider.future);
+      container.read(chatSendServiceProvider);
+
+      final store = container.read(chatHistoryStoreProvider);
+      final regenerateFuture =
+          container.read(chatActionsProvider).regenerate(aiMsg.id);
+      await sendService.started.future;
+      // 等过占位延迟与一次刷新，确保首段内容（若有）已写进时间线。
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+
+      expect(
+        sendService.requestHistory?.map((message) => message.id),
+        [userMsg.id],
+        reason: '旧回复留在库里时，请求上下文仍只能到原用户消息为止。',
+      );
+      final rawWhileWaiting = await store.loadAllRawMessages(conv.id);
+      final frontendWhileWaiting =
+          await _loadFrontendTimelineMessages(container, conv.id);
+      expect(
+        rawWhileWaiting.any((message) => message.id == aiMsg.id),
+        !partial,
+        reason: '新内容到达前旧回复不能被删；到达后才替换。',
+      );
+      expect(
+        frontendWhileWaiting.any((message) => message.id == aiMsg.id),
+        !partial,
+        reason: '界面上旧回复应在新内容出现时才消失。',
+      );
+
+      sendService.pending.complete(
+        const ApiCallResult(
+          replyText: '新的回复。',
+          processedText: '新的回复。',
+          pluginEvents: [],
+          toolResults: <Map<String, dynamic>>[],
+        ),
+      );
+      await regenerateFuture;
+
+      final rawAfter = await store.loadAllRawMessages(conv.id);
+      expect(rawAfter.any((message) => message.id == aiMsg.id), isFalse);
+      expect(
+        rawAfter.any(
+          (message) =>
+              message.role == 'assistant' &&
+              message.displayText.contains('新的回复'),
+        ),
+        isTrue,
+      );
+    });
+  }
+
+  test('regenerate 在新内容到达前取消，旧回复保持不动', () async {
+    final now = DateTime.now();
+    final userMsg = Message(
+      id: 'msg_regen_cancel_keep_user',
+      role: 'user',
+      content: '取消前的原话',
+      createdAt: now.subtract(const Duration(seconds: 2)),
+      status: 'sent',
+    );
+    final aiMsg = Message(
+      id: 'msg_regen_cancel_keep_ai',
+      role: 'assistant',
+      content: '取消后应该还在的旧回复',
+      createdAt: now.subtract(const Duration(seconds: 1)),
+      status: 'sent',
+    );
+    final conv = Conversation(
+      id: 'conv_regen_cancel_keep',
+      title: 'RegenCancelKeep',
+      displayName: 'RegenCancelKeep',
+      createdAt: now,
+      updatedAt: now,
+      messages: [userMsg, aiMsg],
+      lastMessage: aiMsg.displayText,
+      lastMessageTime: aiMsg.createdAt,
+    );
+    final settings = _buildTestSettings();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    await _insertConversation(db, conv);
+    await _insertMessage(db, conv.id, userMsg);
+    await _insertMessage(db, conv.id, aiMsg);
+
+    late _HistoryRecordingPendingSendService sendService;
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        appSettingsProvider.overrideWith(
+          () => _FakeAppSettingsNotifier(settings),
+        ),
+        chatSendServiceProvider.overrideWith(
+          (ref) =>
+              sendService = _HistoryRecordingPendingSendService(ref, settings),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    container.read(activeConversationIdProvider.notifier).state = conv.id;
+    await container.read(conversationsProvider.future);
+    await container.read(appSettingsProvider.future);
+    container.read(chatSendServiceProvider);
+
+    final detachPresenter = container.read(modelFailoverPromptProvider.notifier).attachPresenter(conv.id);
+    addTearDown(detachPresenter);
+    final regenerateFuture =
+        container.read(chatActionsProvider).regenerate(aiMsg.id);
+    await sendService.started.future;
+    expect(
+      await container.read(chatActionsProvider).interruptCurrentGeneration(),
+      isTrue,
+    );
+    await regenerateFuture;
+
+    final raw =
+        await container.read(chatHistoryStoreProvider).loadAllRawMessages(
+              conv.id,
+            );
+    final frontend = await _loadFrontendTimelineMessages(container, conv.id);
+    expect(raw.map((message) => message.id), [userMsg.id, aiMsg.id]);
+    expect(frontend.map((message) => message.id), [userMsg.id, aiMsg.id]);
+  });
+
   test('regenerate 在模型切换提示里取消后，应恢复前端消息并保留原用户消息', () async {
     final now = DateTime.now();
     final userMsg = Message(
@@ -5234,12 +5490,14 @@ void main() {
     await container.read(conversationsProvider.future);
     await container.read(appSettingsProvider.future);
 
+    final detachPresenter = container.read(modelFailoverPromptProvider.notifier).attachPresenter(conv.id);
+    addTearDown(detachPresenter);
     final regenerateFuture =
         container.read(chatActionsProvider).regenerate(aiMsg.id);
 
     ModelFailoverPromptRequest? pendingRequest;
     for (var i = 0; i < 40; i++) {
-      pendingRequest = container.read(modelFailoverPromptProvider);
+      pendingRequest = container.read(modelFailoverPromptForProvider(conv.id));
       if ((failoverController?.requestCalls ?? 0) > 0 &&
           pendingRequest != null) {
         break;
@@ -5428,10 +5686,12 @@ void main() {
         .where((m) => m.displayText.trim().isNotEmpty)
         .where((m) => m.displayText.trim() != '生成中...')
         .toList(growable: false);
-    expect(finalAssistantMessages.length, 1);
+    expect(finalAssistantMessages.length, 3);
+    final canonical = await container.read(chatHistoryStoreProvider).loadAllRawMessages(conv.id);
+    expect(canonical.where((m) => m.role == 'assistant'), hasLength(1));
     expect(
-      finalAssistantMessages.map((m) => m.displayText).toList(),
-      <String>['第一段。第二段。第三段。'],
+      finalAssistantMessages.map((m) => m.displayText).join(),
+      '第一段。第二段。第三段。',
     );
   });
 
@@ -5484,7 +5744,7 @@ void main() {
             message.displayText.trim(),
     ];
     expect(sequence, ['我先看看目录。', 'tool', '看完了，一切正常。']);
-    expect(container.read(errorProvider), isNull);
+    expect(container.read(conversationErrorProvider(conv.id)), isNull);
   });
 
   test('send 流式收尾后不应在数据库残留占位消息和旧文本块', () async {
@@ -6615,7 +6875,7 @@ void main() {
       );
       expect(ttsService.startedTexts, <String>['流中语音']);
       expect(notificationCalls, brokenNotice ? 1 : 0);
-      expect(container.read(errorProvider), isNull);
+      expect(container.read(conversationErrorProvider(conv.id)), isNull);
     });
 
   }
@@ -6957,6 +7217,12 @@ void main() {
       streamPendingTtsMessages: <Message>[pendingTts],
     );
 
+    final pendingImages = (await _loadFrontendTimelineMessages(container, conv.id))
+        .where((m) => m.blocks?.whereType<ImageBlock>().any((b) => b.status == BlockStatus.pending) == true)
+        .toList();
+    expect(pendingImages, hasLength(1));
+    final pendingImageId = pendingImages.single.id;
+    final pendingBlockId = pendingImages.single.blocks!.whereType<ImageBlock>().single.id;
     var storedMessages = await container
         .read(chatHistoryStoreProvider)
         .loadProjectedMessagesFromRawStore(conv.id);
@@ -6994,6 +7260,10 @@ void main() {
       storedMessages.any((m) => m.blocks?.any((b) => b is ImageBlock) ?? false),
       isTrue,
     );
+    final finalImage = storedMessages.firstWhere((m) => m.blocks?.whereType<ImageBlock>().isNotEmpty == true);
+    expect(finalImage.id, pendingImageId);
+    expect(finalImage.blocks!.whereType<ImageBlock>().single.id, pendingBlockId);
+    expect(finalImage.blocks!.whereType<ImageBlock>().single.width, isNull);
     expect(imagePlugin.requestedPrompts, <String>['sunset beach']);
   });
 
@@ -7275,13 +7545,17 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 40));
 
+      final initialPending = (await _loadFrontendTimelineMessages(container, conv.id))
+          .where((m) => m.blocks?.whereType<ImageBlock>().any((b) => b.status == BlockStatus.pending) == true).toList();
+      expect(initialPending, hasLength(2));
+      final placeholderIds = initialPending.map((m) => m.id).toList();
       var storedMessages = await container
           .read(chatHistoryStoreProvider)
           .loadProjectedMessagesFromRawStore(conv.id);
       expect(
         _collectGeneratingPlaceholderMessages(storedMessages),
         isEmpty,
-        reason: '图片后补不再创建占位消息，慢图阶段也不应额外占一个消息位',
+        reason: 'pending 图片只在内存展示，raw 重投影不能产生未完成的图片',
       );
       expect(
         storedMessages.any(
@@ -7302,6 +7576,11 @@ void main() {
           .toList(growable: false);
       expect(imageBlocks, hasLength(1));
       expect(imageBlocks.single.prompt, 'fast portrait');
+      final middleImages = (await _loadFrontendTimelineMessages(container, conv.id))
+          .where((m) => m.blocks?.whereType<ImageBlock>().isNotEmpty == true).toList();
+      expect(middleImages.map((m) => m.id), placeholderIds);
+      expect(middleImages.map((m) => m.blocks!.whereType<ImageBlock>().single.status),
+          [BlockStatus.pending, BlockStatus.success]);
       expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
 
       await Future<void>.delayed(const Duration(milliseconds: 180));
@@ -7557,6 +7836,14 @@ void main() {
         ttsEnabled: true,
       );
 
+      final pendingImages = (await _loadFrontendTimelineMessages(container, conv.id))
+          .where((m) => m.blocks?.whereType<ImageBlock>().any((b) => b.status == BlockStatus.pending) == true).toList();
+      expect(pendingImages, hasLength(1));
+      final pendingImageId = pendingImages.single.id;
+      final pendingTimeline = await _loadFrontendTimelineMessages(container, conv.id);
+      final pendingIndex = pendingTimeline.indexWhere((m) => m.id == pendingImageId);
+      expect(pendingTimeline[pendingIndex - 1].displayText.trim(), startsWith('文本b'));
+      expect(pendingTimeline[pendingIndex + 1].displayText.trim(), '文本c。');
       var storedMessages = await container
           .read(chatHistoryStoreProvider)
           .loadProjectedMessagesFromRawStore(conv.id);
@@ -7595,7 +7882,7 @@ void main() {
       expect(
         _collectGeneratingPlaceholderMessages(storedMessages),
         isEmpty,
-        reason: '图片后补不再创建占位消息，慢图阶段不应额外占一个消息位',
+        reason: 'pending 图片不应变成文字生成占位或写入 raw',
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -7624,7 +7911,8 @@ void main() {
         (message) =>
             message.blocks?.any((block) => block is ImageBlock) ?? false,
       );
-      expect(imageIndex, greaterThan(textCIndex));
+      expect(imageIndex, lessThan(storedMessages.indexWhere((m) => m.displayText.trim() == '文本c。')));
+      expect(storedMessages[imageIndex].id, pendingImageId);
       expect(imagePlugin.requestedPrompts, <String>['slow landscape']);
       expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
     } finally {
@@ -7837,6 +8125,14 @@ void main() {
       await container.read(chatActionsProvider).send('测试混合尾部慢图');
       await Future<void>.delayed(const Duration(milliseconds: 40));
 
+      final pendingImages = (await _loadFrontendTimelineMessages(container, conv.id))
+          .where((m) => m.blocks?.whereType<ImageBlock>().any((b) => b.status == BlockStatus.pending) == true).toList();
+      expect(pendingImages, hasLength(1));
+      final pendingImageId = pendingImages.single.id;
+      final pendingTimeline = await _loadFrontendTimelineMessages(container, conv.id);
+      final pendingIndex = pendingTimeline.indexWhere((m) => m.id == pendingImageId);
+      expect(pendingTimeline[pendingIndex - 1].displayText.trim(), startsWith('文本b'));
+      expect(pendingTimeline[pendingIndex + 1].displayText.trim(), '文本c。');
       var storedMessages = await container
           .read(chatHistoryStoreProvider)
           .loadProjectedMessagesFromRawStore(conv.id);
@@ -7909,7 +8205,8 @@ void main() {
         (message) =>
             message.blocks?.any((block) => block is ImageBlock) ?? false,
       );
-      expect(imageIndex, greaterThan(finalTextCIndex));
+      expect(imageIndex, lessThan(finalTextCIndex));
+      expect(finalAssistantMessages[imageIndex].id, pendingImageId);
       expect(imagePlugin.requestedPrompts, <String>['slow landscape']);
       expect(_collectGeneratingPlaceholderMessages(storedMessages), isEmpty);
     } finally {
@@ -8688,7 +8985,7 @@ void main() {
 
     expect(sendService.executeCalls, 2);
     expect(sendService.markUserMessageFailedCalled, isFalse);
-    expect(container.read(errorProvider), isNull);
+    expect(container.read(conversationErrorProvider(conv.id)), isNull);
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
     expect(container.read(chatStatusProvider), ChatStatus.idle);
   });

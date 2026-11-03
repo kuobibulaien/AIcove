@@ -17,6 +17,7 @@ import 'package:aicove_flutter/src/features/task_agent/application/task_agent_ru
 import 'package:aicove_flutter/src/features/task_agent/task_agent_providers.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'extension_test_support.dart';
+import '../../agent_plugins/plugin_request_test_support.dart';
 
 final _key = Platform.environment['DEEPSEEK_API_KEY'];
 
@@ -35,8 +36,8 @@ void main() {
       ),
       requestConfig: ({required settings, required modelRef}) async =>
           BackgroundAgentRequestConfig(
-            modelFullId: 'openai:deepseek-flash',
-            providerApiBase: 'https://api.deepseek.com',
+            modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+            providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
             providerApiKey: _key,
             customConfig: const {},
             modelTemperature: 0,
@@ -60,7 +61,7 @@ void main() {
     );
     final capabilities = await resolveTaskPluginCapabilities(plugins, {
       for (final p in plugins) p.id,
-    });
+    }, inputs: createPluginRequestInputs());
     return runner.run(
       taskId: 'extension-real',
       runId: 'extension-real-run',

@@ -32,18 +32,81 @@ void main() {
       expect(chunks, ['等等......', '然后继续']);
     });
 
-    test('conservative mode should only split when spaces exceed 3', () {
-      final conservativeCfg = cfg.copyWith(chunkPunctuations: const []);
-      final threeSpaces = MessageFormatter.formatAndChunkText(
-        '你好   世界',
-        conservativeCfg,
+    test('default set splits on three or more spaces', () {
+      final standard = cfg.copyWith(chunkPunctuations: const []);
+      expect(MessageFormatter.formatAndChunkText('你好  世界', standard), [
+        '你好  世界',
+      ]);
+      expect(MessageFormatter.formatAndChunkText('你好   世界', standard), [
+        '你好',
+        '世界',
+      ]);
+    });
+
+    MessageFormatConfig withSet({
+      List<String> punctuations = const [],
+      bool splitOnNewline = true,
+      int spaceRun = kDefaultChunkSpaceRun,
+    }) => cfg.copyWith(
+      chunkPunctuationSets: [
+        MessageChunkPunctuationSet(
+          id: 'x',
+          punctuations: punctuations,
+          splitOnNewline: splitOnNewline,
+          spaceRun: spaceRun,
+        ),
+      ],
+      activeChunkPunctuationSetId: 'x',
+    );
+
+    test('a set can keep line breaks inside one chunk', () {
+      final config = withSet(splitOnNewline: false);
+      expect(MessageFormatter.formatAndChunkText('第一行\n第二行', config), [
+        '第一行\n第二行',
+      ]);
+      expect(MessageFormatter.formatAndChunkText('第一行\n第二行', withSet()), [
+        '第一行',
+        '第二行',
+      ]);
+    });
+
+    test('punctuation still splits across a kept line break', () {
+      final config = withSet(punctuations: ['。'], splitOnNewline: false);
+      expect(MessageFormatter.formatAndChunkText('好的。\n你呢\n还好吗', config), [
+        '好的。',
+        '你呢\n还好吗',
+      ]);
+    });
+
+    test('a set picks how many spaces split, or none', () {
+      expect(
+        MessageFormatter.formatAndChunkText('嗯 好的  走吧', withSet(spaceRun: 1)),
+        ['嗯', '好的', '走吧'],
       );
-      final fourSpaces = MessageFormatter.formatAndChunkText(
-        '你好    世界',
-        conservativeCfg,
+      expect(
+        MessageFormatter.formatAndChunkText('嗯 好的  走吧', withSet(spaceRun: 2)),
+        ['嗯 好的', '走吧'],
       );
-      expect(threeSpaces, ['你好   世界']);
-      expect(fourSpaces, ['你好', '世界']);
+      expect(
+        MessageFormatter.formatAndChunkText('你好    世界', withSet(spaceRun: 0)),
+        ['你好    世界'],
+      );
+    });
+
+    test('newline and space rules round-trip and default for old data', () {
+      const set = MessageChunkPunctuationSet(
+        id: 'x',
+        punctuations: ['。'],
+        splitOnNewline: false,
+        spaceRun: 2,
+      );
+      expect(MessageChunkPunctuationSet.fromJson(set.toJson()), set);
+      final legacy = MessageChunkPunctuationSet.fromJson({
+        'id': 'y',
+        'punctuations': ['。'],
+      });
+      expect(legacy.splitOnNewline, isTrue);
+      expect(legacy.spaceRun, kDefaultChunkSpaceRun);
     });
   });
 
@@ -173,88 +236,131 @@ void main() {
     });
   });
 
-  group('MessageFormatConfig punctuation sets', () {
-    test('should read active punctuation set from json', () {
-      final config = MessageFormatConfig.fromJson({
-        'chunkPunctuationSets': [
-          {
-            'id': 'set_a',
-            'name': 'A',
-            'punctuations': ['。', '！'],
-          },
-          {'id': 'set_b', 'name': 'B', 'punctuations': []},
-        ],
-        'activeChunkPunctuationSetId': 'set_b',
-      });
-
-      expect(config.activeChunkPunctuationSet?.id, 'set_b');
-      expect(config.chunkPunctuations, isEmpty);
-      expect(config.effectiveChunkPunctuations, isEmpty);
-    });
-
-    test('legacy chunk punctuations should become a named current set', () {
-      final config = MessageFormatConfig.fromJson({
-        'chunkPunctuations': ['...', '。'],
-      });
-
-      expect(config.activeChunkPunctuationSet?.id, 'legacy');
-      expect(config.chunkPunctuationSets.first.punctuations, ['...', '。']);
-    });
-  });
-
   group('MessageFormatConfig chunk punctuation sets', () {
     const legacyDefault = ['。', '！', '？', '，', '、', '；', '…'];
 
-    test('defaults to conservative and has no default set', () {
+    test('defaults to a standard set and an aggressive set', () {
       const config = MessageFormatConfig();
-      expect(config.activeChunkPunctuationSetId, 'conservative');
+      expect(config.chunkPunctuationSets.map((s) => s.displayName), [
+        '默认',
+        '激进',
+      ]);
+      expect(config.activeChunkPunctuationSetId, 'standard');
       expect(config.effectiveChunkPunctuations, isEmpty);
-      expect(
-        config.chunkPunctuationSets.map((item) => item.id),
-        isNot(contains('default')),
-      );
+      expect(config.splitOnNewline, isTrue);
+      expect(config.chunkSpaceRun, 3);
+      final aggressive = config.withActiveSet('aggressive')!;
+      expect(aggressive.effectiveChunkPunctuations, contains('，'));
       expect(MessageFormatConfig.fromJson(const {}), config);
     });
 
-    test('migrates saved untouched default set to conservative', () {
+    test('round-trips once migrated, keeping edits to built-in sets', () {
+      final edited = const MessageFormatConfig().withSetPunctuations(
+        'standard',
+        ['。'],
+      )!;
+      final restored = MessageFormatConfig.fromJson(edited.toJson());
+      expect(restored, edited);
+      expect(restored.effectiveChunkPunctuations, ['。']);
+    });
+
+    test('old built-in sets are replaced; a punctuated choice goes aggressive', () {
       final config = MessageFormatConfig.fromJson({
-        'chunkPunctuations': legacyDefault,
-        'activeChunkPunctuationSetId': 'default',
+        'chunkPunctuations': ['。', '！', '？'],
+        'activeChunkPunctuationSetId': 'simple',
         'chunkPunctuationSets': [
-          {'id': 'default', 'name': '默认', 'punctuations': legacyDefault},
-          {'id': 'simple', 'name': '精简', 'punctuations': ['。', '！', '？']},
+          {'id': 'legacy', 'name': '当前', 'punctuations': ['～']},
           {'id': 'conservative', 'name': '保守', 'punctuations': <String>[]},
-          {'id': 'custom', 'name': '我的', 'punctuations': ['～']},
+          {'id': 'simple', 'name': '精简', 'punctuations': ['。', '！', '？']},
+          {'id': 'detailed', 'name': '详细', 'punctuations': legacyDefault},
+          {'id': 'set_1', 'name': '我的', 'punctuations': ['♪']},
         ],
       });
-      expect(config.activeChunkPunctuationSetId, 'conservative');
-      expect(config.effectiveChunkPunctuations, isEmpty);
-      expect(
-        config.chunkPunctuationSets.map((item) => item.id),
-        ['simple', 'conservative', 'custom'],
-      );
+      expect(config.chunkPunctuationSets.map((s) => s.id), [
+        'standard',
+        'aggressive',
+        'set_1',
+      ]);
+      expect(config.activeChunkPunctuationSetId, 'aggressive');
+      expect(config.effectiveChunkPunctuations, contains('，'));
     });
 
-    test('keeps another active set when dropping default set', () {
+    test('an old choice without punctuation goes to the standard set', () {
       final config = MessageFormatConfig.fromJson({
-        'chunkPunctuations': ['～'],
-        'activeChunkPunctuationSetId': 'custom',
+        'chunkPunctuations': <String>[],
+        'activeChunkPunctuationSetId': 'conservative',
         'chunkPunctuationSets': [
-          {'id': 'default', 'name': '默认', 'punctuations': legacyDefault},
-          {'id': 'custom', 'name': '我的', 'punctuations': ['～']},
+          {'id': 'conservative', 'name': '保守', 'punctuations': <String>[]},
         ],
       });
-      expect(config.activeChunkPunctuationSetId, 'custom');
-      expect(config.effectiveChunkPunctuations, ['～']);
-      expect(config.chunkPunctuationSets.map((item) => item.id), ['custom']);
+      expect(config.activeChunkPunctuationSetId, 'standard');
+      expect(config.effectiveChunkPunctuations, isEmpty);
     });
 
-    test('migrates legacy flat default punctuation list', () {
+    test('an old user-made set stays chosen', () {
       final config = MessageFormatConfig.fromJson({
-        'chunkPunctuations': legacyDefault,
+        'chunkPunctuations': ['♪'],
+        'activeChunkPunctuationSetId': 'set_1',
+        'chunkPunctuationSets': [
+          {'id': 'simple', 'name': '精简', 'punctuations': ['。']},
+          {'id': 'set_1', 'name': '我的', 'punctuations': ['♪']},
+        ],
       });
-      expect(config.activeChunkPunctuationSetId, 'conservative');
-      expect(config.effectiveChunkPunctuations, isEmpty);
+      expect(config.activeChunkPunctuationSetId, 'set_1');
+      expect(config.effectiveChunkPunctuations, ['♪']);
+    });
+
+    test('a kept user set keeps the runtime list it was using', () {
+      final config = MessageFormatConfig.fromJson({
+        'chunkPunctuations': ['。', '！'],
+        'activeChunkPunctuationSetId': 'set_1',
+        'chunkPunctuationSets': [
+          {'id': 'set_1', 'name': '我的', 'punctuations': ['？']},
+        ],
+      });
+      expect(config.activeChunkPunctuationSetId, 'set_1');
+      expect(config.chunkPunctuations, ['。', '！']);
+    });
+
+    test('an old set is mapped by the punctuation actually in effect', () {
+      final config = MessageFormatConfig.fromJson({
+        'chunkPunctuations': ['。'],
+        'activeChunkPunctuationSetId': 'conservative',
+        'chunkPunctuationSets': [
+          {'id': 'conservative', 'name': '保守', 'punctuations': <String>[]},
+        ],
+      });
+      expect(config.activeChunkPunctuationSetId, 'aggressive');
+    });
+
+    test('migrated sets are cleaned, so copies and round-trips stay equal', () {
+      final config = MessageFormatConfig.fromJson({
+        'activeChunkPunctuationSetId': 'set_1',
+        'chunkPunctuationSets': [
+          {'id': 'set_1', 'punctuations': [' ♪ ', '♪', '']},
+          {'id': 'set_1', 'punctuations': ['★']},
+        ],
+      });
+      expect(config.chunkPunctuationSets[2].punctuations, ['♪']);
+      expect(config.copyWith(), config);
+      final once = MessageFormatConfig.fromJson(config.toJson());
+      expect(once, config);
+      expect(MessageFormatConfig.fromJson(once.toJson()), once);
+    });
+
+    test('a flat legacy list migrates by whether it has punctuation', () {
+      expect(
+        MessageFormatConfig.fromJson({
+          'chunkPunctuations': legacyDefault,
+        }).activeChunkPunctuationSetId,
+        'aggressive',
+      );
+      expect(
+        MessageFormatConfig.fromJson({
+          'chunkPunctuations': <String>[],
+        }).activeChunkPunctuationSetId,
+        'standard',
+      );
     });
   });
 }

@@ -5,7 +5,7 @@ import re
 from .contracts import canonical
 
 SETTING_KINDS = {'conversations', 'providers', 'settings'}
-META = {'setting_times_version', 'setting_times'}
+META = {'client_schema', 'setting_times_version', 'setting_times'}
 ABSENT = object()
 
 
@@ -110,6 +110,10 @@ def merge_settings(kind, current, incoming, blob_ids, media_ids):
         if stamp is not None:
             times[field] = stamp
     payload = dict(old)
+    schemas = [p['client_schema'] for p in (old, incoming)
+               if type(p.get('client_schema')) is int]
+    if schemas:
+        payload['client_schema'] = max(schemas)
     if kind in {'conversations', 'providers'}:
         row = {**a[0]['identity'], **fields}
         dates = [p['row'].get('updated_at') for p in (old, incoming)]

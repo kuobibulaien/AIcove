@@ -1,8 +1,13 @@
-/// MCP 连接器配置：用户自己接入的远程 MCP 服务（Streamable HTTP）。
+/// MCP 连接器配置：HTTP 服务或本机 stdio 程序。
 ///
 /// 每个连接器在插件层表现为一个独立插件 `mcp:<id>`，由角色在「管理插件」
 /// 里逐个开启；工具清单在测试连接／刷新时拉取并随配置保存，请求时不再联网列举。
 library;
+
+import 'dart:convert';
+import 'dart:io';
+
+enum McpTransportType { http, stdio }
 
 /// 服务端声明的一个工具（tools/list 的条目）。
 class McpToolInfo {
@@ -18,7 +23,7 @@ class McpToolInfo {
   final String title;
   final String description;
   final Map<String, dynamic> inputSchema;
-  final Map<String,dynamic>? outputSchema;
+  final Map<String, dynamic>? outputSchema;
 
   String get displayName => title.trim().isEmpty ? name : title.trim();
 
@@ -26,7 +31,9 @@ class McpToolInfo {
     name: (json['name'] ?? '').toString(),
     title: (json['title'] ?? '').toString(),
     description: (json['description'] ?? '').toString(),
-    outputSchema: json['outputSchema'] is Map ? Map<String,dynamic>.from(json['outputSchema'] as Map) : null,
+    outputSchema: json['outputSchema'] is Map
+        ? Map<String, dynamic>.from(json['outputSchema'] as Map)
+        : null,
     inputSchema: json['inputSchema'] is Map
         ? Map<String, dynamic>.from(json['inputSchema'] as Map)
         : const <String, dynamic>{},
@@ -37,7 +44,7 @@ class McpToolInfo {
     if (title.isNotEmpty) 'title': title,
     if (description.isNotEmpty) 'description': description,
     'inputSchema': inputSchema,
-    if(outputSchema!=null) 'outputSchema':outputSchema,
+    if (outputSchema != null) 'outputSchema': outputSchema,
   };
 }
 
@@ -45,6 +52,11 @@ class McpConnector {
   const McpConnector({
     required this.id,
     this.name = '',
+    this.type = McpTransportType.http,
+    this.command = '',
+    this.args = const [],
+    this.cwd = '',
+    this.env = const {},
     this.url = '',
     this.bearerToken = '',
     this.headers = const <String, String>{},
@@ -58,6 +70,21 @@ class McpConnector {
   /// 只含小写字母与数字，参与工具名拼接（见 [McpToolNaming]）。
   final String id;
   final String name;
+  final McpTransportType type;
+  final String command;
+  final List<String> args;
+  final String cwd;
+  final Map<String, String> env;
+  bool get isStdio => type == McpTransportType.stdio;
+  static bool get supportsStdio =>
+      Platform.isMacOS || Platform.isLinux || Platform.isWindows;
+  bool get hasValidConfiguration =>
+      isStdio ? supportsStdio && command.trim().isNotEmpty : hasValidUrl;
+  String get connectionFingerprint => jsonEncode(
+    isStdio
+        ? [type.name, command, args, cwd, env]
+        : [type.name, url.trim(), requestHeaders],
+  );
   final String url;
 
   /// 非空时作为 `Authorization: Bearer <token>` 发送。
@@ -83,6 +110,7 @@ class McpConnector {
   String get displayName {
     if (name.trim().isNotEmpty) return name.trim();
     if (serverName.trim().isNotEmpty) return serverName.trim();
+    if (isStdio) return '本地 MCP 连接器';
     final host = Uri.tryParse(url.trim())?.host ?? '';
     return host.isEmpty ? 'MCP 连接器' : host;
   }
@@ -94,8 +122,8 @@ class McpConnector {
         uri.host.isNotEmpty;
   }
 
-  /// 已启用、地址有效且拿到过工具清单，才会向模型提供工具。
-  bool get isUsable => enabled && hasValidUrl && tools.isNotEmpty;
+  /// 已启用、本机连接配置有效且拿到过工具清单，才会向模型提供工具。
+  bool get isUsable => enabled && hasValidConfiguration && tools.isNotEmpty;
 
   List<McpToolInfo> get activeTools => [
     for (final tool in tools)
@@ -112,6 +140,12 @@ class McpConnector {
 
   McpConnector copyWith({
     String? name,
+    McpTransportType? type,
+    String? command,
+    List<String>? args,
+    String? cwd,
+    Map<String, String>? env,
+    bool clearSnapshot = false,
     String? url,
     String? bearerToken,
     Map<String, String>? headers,
@@ -123,19 +157,29 @@ class McpConnector {
   }) => McpConnector(
     id: id,
     name: name ?? this.name,
+    type: type ?? this.type,
+    command: command ?? this.command,
+    args: args ?? this.args,
+    cwd: cwd ?? this.cwd,
+    env: env ?? this.env,
     url: url ?? this.url,
     bearerToken: bearerToken ?? this.bearerToken,
     headers: headers ?? this.headers,
     enabled: enabled ?? this.enabled,
-    tools: tools ?? this.tools,
+    tools: clearSnapshot ? const [] : tools ?? this.tools,
     disabledTools: disabledTools ?? this.disabledTools,
-    serverName: serverName ?? this.serverName,
-    toolsFetchedAt: toolsFetchedAt ?? this.toolsFetchedAt,
+    serverName: clearSnapshot ? '' : serverName ?? this.serverName,
+    toolsFetchedAt: clearSnapshot
+        ? null
+        : toolsFetchedAt ?? this.toolsFetchedAt,
   );
 
   factory McpConnector.fromJson(Map<String, dynamic> json) => McpConnector(
     id: (json['id'] ?? '').toString(),
     name: (json['name'] ?? '').toString(),
+    type: json['type'] == 'stdio'
+        ? McpTransportType.stdio
+        : McpTransportType.http,
     url: (json['url'] ?? '').toString(),
     bearerToken: (json['bearerToken'] ?? '').toString(),
     headers: json['headers'] is Map
@@ -146,32 +190,72 @@ class McpConnector {
         : const <String, String>{},
     enabled: json['enabled'] as bool? ?? true,
     tools: [
-      for (final item in json['tools'] as List? ?? const [])
+      for (final item
+          in json['type'] == 'stdio'
+              ? const []
+              : json['tools'] as List? ?? const [])
         if (item is Map) McpToolInfo.fromJson(Map<String, dynamic>.from(item)),
     ],
     disabledTools: {
       for (final item in json['disabledTools'] as List? ?? const [])
         item.toString(),
     },
-    serverName: (json['serverName'] ?? '').toString(),
+    serverName: json['type'] == 'stdio'
+        ? ''
+        : (json['serverName'] ?? '').toString(),
     toolsFetchedAt: DateTime.tryParse(
-      (json['toolsFetchedAt'] ?? '').toString(),
+      (json['type'] == 'stdio' ? '' : json['toolsFetchedAt'] ?? '').toString(),
     ),
   );
 
+  /// Shared preferences: local launch fields and stdio snapshots never sync.
   Map<String, dynamic> toJson() => {
     'id': id,
     'name': name,
-    'url': url,
-    'bearerToken': bearerToken,
-    'headers': headers,
+    'type': type.name,
     'enabled': enabled,
-    'tools': [for (final tool in tools) tool.toJson()],
     'disabledTools': disabledTools.toList()..sort(),
+    if (!isStdio) ...{
+      'url': url,
+      'bearerToken': bearerToken,
+      'headers': headers,
+      'tools': [for (final tool in tools) tool.toJson()],
+      'serverName': serverName,
+      if (toolsFetchedAt != null)
+        'toolsFetchedAt': toolsFetchedAt!.toIso8601String(),
+    },
+  };
+
+  Map<String, dynamic> localToJson() => {
+    'command': command,
+    'args': args,
+    'cwd': cwd,
+    'env': env,
+    'tools': [for (final tool in tools) tool.toJson()],
     'serverName': serverName,
     if (toolsFetchedAt != null)
       'toolsFetchedAt': toolsFetchedAt!.toIso8601String(),
   };
+
+  McpConnector withLocalJson(Map<String, dynamic> json) => isStdio
+      ? copyWith(
+          command: (json['command'] ?? '').toString(),
+          args: [for (final a in json['args'] as List? ?? []) a.toString()],
+          cwd: (json['cwd'] ?? '').toString(),
+          env: {
+            for (final e in (json['env'] as Map? ?? {}).entries)
+              e.key.toString(): e.value.toString(),
+          },
+          tools: [
+            for (final t in json['tools'] as List? ?? [])
+              if (t is Map) McpToolInfo.fromJson(Map<String, dynamic>.from(t)),
+          ],
+          serverName: (json['serverName'] ?? '').toString(),
+          toolsFetchedAt: DateTime.tryParse(
+            (json['toolsFetchedAt'] ?? '').toString(),
+          ),
+        )
+      : this;
 }
 
 class McpConnectorsConfig {

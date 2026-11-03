@@ -17,7 +17,9 @@ const cloudTables = <String, String>{
 // 19：conversations 新增 is_hidden（ADR0070）。
 // 20：conversations 新增 chat_background_framing（壁纸宽窄屏截取）。
 // 21：conversations 新增 agent_mode（角色工作模式，ADR0097）。
-const kCloudRowSchema = 21;
+// 22：conversations 新增 image_preview_scale、expand_audio_text、hide_user_avatar、
+//     chunk_enabled、filter_punctuation、chunk_punctuation_set_id。
+const kCloudRowSchema = 22;
 
 /// 已退役、不再同步的类型（ADR0038）。本地不采集、不上传；
 /// 云端推下来的旧记录只清掉收件箱，不写本地，也不回传删除。

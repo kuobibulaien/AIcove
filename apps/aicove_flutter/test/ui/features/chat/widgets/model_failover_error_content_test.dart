@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:aicove_flutter/src/features/chat/chat_providers.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/model_failover_error_content.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/meotalk_dialog.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/moe_content_surface.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -50,13 +51,27 @@ void main() {
         fontFamily: _preview ? 'Preview' : null,
         extensions: [dark ? MoeColors.dark() : MoeColors.light()],
       ),
-      builder: capture == null
-          ? null
-          : (context, child) => RepaintBoundary(key: capture, child: child!),
+      // 默认「模糊」档，失败原因卡必须跟随全局材质，不能是实心白块。
+      builder: (context, child) {
+        final themed = MoeGlassTheme(
+          enabled: true,
+          blurSigma: kDefaultGlassBlurSigma,
+          child: child!,
+        );
+        return capture == null
+            ? themed
+            : RepaintBoundary(key: capture, child: themed);
+      },
       home: Builder(
         builder: (context) => Scaffold(
           backgroundColor: dark ? Colors.black : const Color(0xFFEDEDED),
-          body: Center(
+          body: Stack(fit: StackFit.expand, children: [
+            if (capture != null)
+              Image.asset(
+                'assets/wallpapers/catnap_${dark ? 'dark' : 'light'}.webp',
+                fit: BoxFit.cover,
+              ),
+            Center(
             child: TextButton(
               onPressed: () => showMeoTalkDialog(
                 context: context,
@@ -74,12 +89,32 @@ void main() {
               child: const Text('open'),
             ),
           ),
+          ]),
         ),
       ),
     ));
+    if (capture != null) {
+      await tester.runAsync(() => precacheImage(
+            AssetImage(
+                'assets/wallpapers/catnap_${dark ? 'dark' : 'light'}.webp'),
+            tester.element(find.text('open')),
+          ));
+    }
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('error summary sits on the shared content surface',
+      (tester) async {
+    await pumpDialog(tester);
+    expect(
+      find.ancestor(
+        of: find.byKey(const ValueKey('model_failover_error_summary')),
+        matching: find.byType(MoeContentSurface),
+      ),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('shows main reason and copies full round log', (tester) async {
     String? copied;

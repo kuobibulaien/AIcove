@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 调试工具：消息分段节奏
@@ -81,13 +80,10 @@ class _MessageSegmentationDebugPageState
               builder: (context) => ListView(
                 padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
                 children: [
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.all(12),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Text(
                       '用途：给“每条分段消息”增加固定间隔，让流式逐条发送更明显。\n'
                       '0.0s 表示关闭延迟；例如 0.5s 表示每条分段之间等待 0.5 秒。',
@@ -111,16 +107,13 @@ class _MessageSegmentationDebugPageState
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

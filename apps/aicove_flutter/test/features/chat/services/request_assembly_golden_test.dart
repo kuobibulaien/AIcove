@@ -111,6 +111,7 @@ class _Scenario {
     this.tts = false,
     this.webSearch = false,
     this.agentMode,
+    this.presetTools = true,
   });
 
   final String name;
@@ -120,6 +121,7 @@ class _Scenario {
   final CallFlowMode mode;
   final bool tools;
   final bool preset;
+  final bool presetTools;
   final bool mcpConfigured;
   final bool imageFailure;
   final bool tts;
@@ -144,6 +146,9 @@ const _scenarios = [
       mcpConfigured: true),
   _Scenario('tts_enabled', plugins: ['tts', 'time_awareness'], tts: true),
   _Scenario('web_search_takeover', plugins: ['web_search'], webSearch: true),
+  _Scenario('tool_mode_preset_tools_off', plugins: ['image'], preset: true, presetTools: false, agentMode: RoleAgentMode.tool),
+  _Scenario('chat_mode_preset_tools_off', plugins: ['image'], preset: true, presetTools: false),
+  _Scenario('tool_mode_preset_tools_off_unsupported_model', plugins: ['image'], preset: true, presetTools: false, tools: false, agentMode: RoleAgentMode.tool),
   _Scenario('tool_mode_web_search', plugins: ['web_search'], webSearch: true,
       agentMode: RoleAgentMode.tool),
 ];
@@ -221,7 +226,11 @@ void main() {
   );
 
   for (final s in _scenarios) {
-    test('request copy is unchanged: ${s.name}', () async {
+    test(
+      s.presetTools
+          ? 'request copy is unchanged: ${s.name}'
+          : 'preset tool policy: ${s.name}',
+      () async {
       SharedPreferences.setMockInitialValues({
         if (s.tts)
           'aicove.plugins.tts.config': jsonEncode(TtsConfig(enabled: true).toJson()),
@@ -304,6 +313,7 @@ void main() {
             .importSource(
               jsonEncode({
                 'name': '黄金预设',
+                if (!s.presetTools) 'function_calling': false,
                 'prompts': [
                   {'identifier': 'main', 'role': 'system', 'content': '主提示。'},
                   {'identifier': 'chatHistory', 'marker': true},
@@ -341,6 +351,21 @@ void main() {
             userText: '帮我画一只猫',
           );
 
+      if (s.preset && !s.presetTools) {
+        final expectedTools = s.agentMode == RoleAgentMode.tool && s.tools;
+        expect(config.tools?.isNotEmpty ?? false, expectedTools);
+        expect((config.boundTools ?? []).any((t) => t.name == 'aicove_update_role'), expectedTools);
+      }
+      for (final tool in config.boundTools ?? []) {
+        if (tool.name != 'draw_image') continue;
+        for (final key in ['width', 'height', 'count', 'steps']) {
+          if (tool.parameters.containsKey(key)) {
+            expect(tool.parameters[key]!.type, 'number', reason: key);
+          }
+        }
+      }
+      // Preset policy cases assert behavior above without reading or writing goldens.
+      if (!s.presetTools) return;
       final actual =
           const JsonEncoder.withIndent('  ').convert(_snapshot(config));
       final file = File('${goldenDir.path}/${s.name}.json');

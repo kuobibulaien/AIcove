@@ -28,10 +28,24 @@ class LanRepository {
   onMessageApplied;
   Future<void> _tail = Future.value();
   bool _seeded = false;
+  // In memory only: the first untargeted scan after launch prunes, later
+  // untargeted scans in the same process prune at most once a day.
+  DateTime? _lastOrphanPrune;
   static const recentLimit = 128;
+
+  Future<bool> hasPendingChanges() async => (await local.rows('''
+    SELECT 1 FROM lan_dirty d WHERE NOT EXISTS (
+      SELECT 1 FROM messages m WHERE d.kind='messages'
+        AND m.id=d.entity_id AND m.status='sending'
+    ) LIMIT 1
+  ''')).isNotEmpty;
   final String _recentRun = DateTime.now().microsecondsSinceEpoch.toString();
   int _recentRevision = 0;
   final _recent = <String, (String, String, int)>{};
+  static const _revisionCacheLimit = 2048;
+  static const _revisionCacheByteLimit = 32 * 1024 * 1024;
+  final _revisionCache = <String, (String, LanRevision, int)>{};
+  int _revisionCacheBytes = 0;
 
   /// A bounded acceleration lane backed by the existing dirty journal. Full
   /// manifests remain the recovery path after eviction or process restart.
@@ -57,6 +71,11 @@ class LanRepository {
         }
         await _capture(kind: kind, id: id, seed: false);
       } catch (e) {
+        if (e is! LanSyncFailure &&
+            e is! CloudSyncFailure &&
+            e is! FormatException) {
+          rethrow;
+        }
         AppLogger.warning(
           'LanSync',
           'Recent capture failed',
@@ -77,7 +96,7 @@ class LanRepository {
     for (final (kind, id, _) in _recent.values) {
       final known = await _entity(kind, id);
       if (known == null) continue;
-      final heads = await _readableHeads(known);
+      final heads = await _readableHeads(known, requireSupported: true);
       if (heads == null) continue;
       final hashes = heads
           .where(
@@ -109,10 +128,12 @@ class LanRepository {
           !items.any(
             (i) => i['kind'] == 'conversations' && i['entity_id'] == id,
           )) {
+        final heads = await _readableHeads(known, requireSupported: true);
+        if (heads == null) continue;
         items.add({
           'kind': 'conversations',
           'entity_id': id,
-          'hashes': jsonDecode(known['heads_json'] as String),
+          'hashes': heads.map((head) => head.hash).toList(),
         });
       }
     }
@@ -153,6 +174,23 @@ class LanRepository {
     await local.execute('UPDATE lan_state SET device_id=? WHERE id=1', [
       deviceId,
     ]);
+    await local.repairLegacyStickerMedia(mediaStore: codec.media);
+    // This marker records durable enqueueing, not completion: the existing
+    // journal resumes unfinished upgrades after interruption or a batch limit.
+    await cloudLocalWrite(
+      () => local.db.transaction(() async {
+        if ((await local.rows(
+          "SELECT 1 FROM cloud_local_migrations WHERE name='lan_content_fingerprint_v1_queued'",
+        )).isEmpty) {
+          await local.execute(
+            'INSERT OR IGNORE INTO lan_dirty(kind,entity_id) SELECT kind,entity_id FROM lan_entities',
+          );
+          await local.execute(
+            "INSERT INTO cloud_local_migrations VALUES('lan_content_fingerprint_v1_queued')",
+          );
+        }
+      }),
+    );
     if (seed && !_seeded) {
       // Revision zero is a baseline candidate, not a real write. INSERT OR
       // IGNORE preserves preexisting WorkManager dirties; tracking triggers
@@ -160,8 +198,10 @@ class LanRepository {
       for (final kind in ['conversations', 'providers', 'messages']) {
         await local.execute(
           '''INSERT OR IGNORE INTO lan_dirty(kind,entity_id,revision)
-          SELECT ?,id,0 FROM "$kind"''',
-          [kind],
+          SELECT ?,c.id,0 FROM "$kind" c
+          WHERE NOT EXISTS (SELECT 1 FROM lan_entities e
+            WHERE e.kind=? AND e.entity_id=c.id)''',
+          [kind, kind],
         );
       }
       _seeded = true;
@@ -213,80 +253,290 @@ class LanRepository {
             ) ORDER BY d.kind,d.entity_id LIMIT 500''',
           );
     for (final item in dirty) {
-      await cloudLocalWrite(
-        () => local.db.transaction(() async {
-          final kind = item['kind'] as String, id = item['entity_id'] as String;
-          if (!lanKinds.contains(kind)) return;
-          final current =
-              external != null &&
-                  (kind == 'settings' || kind == 'plugin_presets')
-              ? external['$kind/$id']
-              : await local.read(kind, id);
-          // Also covers targeted capture and writes after the journal query.
-          // Keep the dirty revision and any previous immutable heads intact.
-          if (current?.isSendingMessage == true) return;
-          final known = await _entity(kind, id);
-          final fingerprint = await _fingerprint(current, kind, id);
-          if (fingerprint != known?['local_fingerprint']) {
+      var applied = false;
+      (String, String, int)? messageApplied;
+      var applying = false;
+      (String, String, int)? captured;
+      try {
+        await cloudLocalWrite(
+          () => local.db.transaction(() async {
+            final kind = item['kind'] as String,
+                id = item['entity_id'] as String;
+            if (!lanKinds.contains(kind)) return;
+            final current =
+                external != null &&
+                    (kind == 'settings' || kind == 'plugin_presets')
+                ? external['$kind/$id']
+                : await local.read(kind, id);
+            // Also covers targeted capture and writes after the journal query.
+            // Keep the dirty revision and any previous immutable heads intact.
+            if (current?.isSendingMessage == true) return;
+            final known = await _entity(kind, id);
             final heads = known == null ? <LanRevision>[] : await _heads(known);
-            if (current != null || heads.isNotEmpty) {
-              final vector = joinLanVectors(heads.map((r) => r.vector));
-              final counter =
-                  (await local.rows(
-                        'SELECT counter FROM lan_state WHERE id=1',
-                      )).single['counter']
-                      as int;
-              final next = counter >= (vector[deviceId] ?? 0)
-                  ? counter + 1
-                  : vector[deviceId]! + 1;
-              await local.execute('UPDATE lan_state SET counter=? WHERE id=1', [
-                next,
-              ]);
-              vector[deviceId] = next;
-              final wire = current == null ? null : await codec.encode(current);
-              final payload = current == null
-                  ? heads.first.payload
-                  : {
-                      ...wire!.payload,
-                      if (lanSettingKinds.contains(kind)) ...{
-                        'setting_times_version': 1,
-                        'setting_times': await _settingTimes(current, kind, id),
-                      },
-                    };
-              final revision = LanRevision(
-                kind: kind,
-                id: id,
-                vector: vector,
-                payload: payload,
-                deleted: current == null,
-                mediaIds: wire?.mediaIds ?? heads.firstOrNull?.mediaIds ?? [],
-              );
-              LanRevision.fromJson(revision.toJson());
-              await _save(revision);
-              await _setEntity(kind, id, [revision], fingerprint);
-              final row = current?.payload['row'] as Map?;
-              final created = (row?['created_at'] as num?)?.toInt() ?? 0;
-              final deleted = (row?['deleted_at'] as num?)?.toInt() ?? 0;
-              final priority = known != null || kind != 'messages'
-                  ? DateTime.now().millisecondsSinceEpoch
-                  : (created > deleted ? created : deleted);
-              _recent['$kind/$id'] = (kind, id, priority);
-              _recentRevision++;
-              while (_recent.length > recentLimit) {
-                final oldest = _recent.keys.reduce(
-                  (a, b) => _recent[a]!.$3 <= _recent[b]!.$3 ? a : b,
+            for (final head in heads) {
+              await local.validateRowPayload(head.kind, head.id, head.payload);
+            }
+            final fingerprint = await _fingerprint(current, kind, id);
+            final unchanged =
+                known != null &&
+                (fingerprint == known['local_fingerprint'] ||
+                    await _matchesLegacyFingerprint(
+                      current,
+                      kind,
+                      id,
+                      heads,
+                      known['local_fingerprint'] as String,
+                    ));
+            if (unchanged) {
+              final reduced = reduceLanHeads(heads);
+              var updatedFingerprint = fingerprint;
+              if (heads.length > 1 && reduced.length == 1) {
+                final chosen = reduced.single;
+                await _save(chosen);
+                final payload = chosen.deleted
+                    ? chosen.payload
+                    : await codec.decode(kind, chosen.payload);
+                final chosenFingerprint = await _fingerprint(
+                  chosen.deleted ? null : CloudLocalDocument(kind, id, payload),
+                  kind,
+                  id,
                 );
-                _recent.remove(oldest);
+                if (chosenFingerprint != fingerprint &&
+                    chosenFingerprint !=
+                        await _fingerprint(
+                          current == null ? null : _syncDocument(current),
+                          kind,
+                          id,
+                        )) {
+                  await local.execute(
+                    'UPDATE lan_state SET suspended=1 WHERE id=1',
+                  );
+                  await local.execute(
+                    'UPDATE cloud_client_state SET suspended=1 WHERE id=1',
+                  );
+                  try {
+                    applying = true;
+                    await local.apply(kind, id, payload, chosen.deleted);
+                    await local.markRelay(
+                      kind,
+                      id,
+                      DateTime.now().add(lanRelayDelay).millisecondsSinceEpoch,
+                    );
+                  } finally {
+                    await local.execute(
+                      'UPDATE lan_state SET suspended=0 WHERE id=1',
+                    );
+                    await local.execute(
+                      'UPDATE cloud_client_state SET suspended=0 WHERE id=1',
+                    );
+                  }
+                  updatedFingerprint = await _fingerprint(
+                    await local.read(kind, id),
+                    kind,
+                    id,
+                  );
+                  if (kind == 'messages' && onMessageApplied != null) {
+                    final row =
+                        (payload['row'] ?? current?.payload['row']) as Map?;
+                    final convId = row?['conversation_id'] as String?;
+                    final createdAt = (row?['created_at'] as num?)?.toInt();
+                    if (convId != null && createdAt != null) {
+                      messageApplied = (convId, id, createdAt);
+                    } else {
+                      applied = true;
+                    }
+                  } else {
+                    applied = true;
+                  }
+                }
+              }
+              await _setEntity(kind, id, reduced, updatedFingerprint);
+            } else {
+              if (current != null || heads.isNotEmpty) {
+                final vector = joinLanVectors(heads.map((r) => r.vector));
+                final counter =
+                    (await local.rows(
+                          'SELECT counter FROM lan_state WHERE id=1',
+                        )).single['counter']
+                        as int;
+                final next = counter >= (vector[deviceId] ?? 0)
+                    ? counter + 1
+                    : vector[deviceId]! + 1;
+                await local.execute(
+                  'UPDATE lan_state SET counter=? WHERE id=1',
+                  [next],
+                );
+                vector[deviceId] = next;
+                final wire = current == null
+                    ? null
+                    : await codec.encode(_syncDocument(current));
+                final payload = current == null
+                    ? heads.first.payload
+                    : {
+                        ...wire!.payload,
+                        if (lanSettingKinds.contains(kind)) ...{
+                          'setting_times_version': 1,
+                          'setting_times': await _settingTimes(
+                            current,
+                            kind,
+                            id,
+                          ),
+                        },
+                      };
+                final revision = LanRevision(
+                  kind: kind,
+                  id: id,
+                  vector: vector,
+                  payload: payload,
+                  deleted: current == null,
+                  mediaIds: wire?.mediaIds ?? heads.firstOrNull?.mediaIds ?? [],
+                );
+                LanRevision.fromJson(revision.toJson());
+                await _save(revision);
+                await _setEntity(kind, id, [revision], fingerprint);
+                final row = current?.payload['row'] as Map?;
+                final created = (row?['created_at'] as num?)?.toInt() ?? 0;
+                final deleted = (row?['deleted_at'] as num?)?.toInt() ?? 0;
+                final priority = known != null || kind != 'messages'
+                    ? DateTime.now().millisecondsSinceEpoch
+                    : (created > deleted ? created : deleted);
+                captured = (kind, id, priority);
               }
             }
-          }
-          await local.execute(
-            'DELETE FROM lan_dirty WHERE kind=? AND entity_id=? AND revision=?',
-            [kind, id, item['revision']],
+            await local.execute(
+              'DELETE FROM lan_dirty WHERE kind=? AND entity_id=? AND revision=?',
+              [kind, id, item['revision']],
+            );
+          }),
+        );
+      } catch (e) {
+        if (applying ||
+            (e is! LanSyncFailure &&
+                e is! CloudSyncFailure &&
+                e is! FormatException)) {
+          rethrow;
+        }
+        // The entity transaction has rolled back. A newer queued write must
+        // survive even when this snapshot cannot be packaged by this version.
+        AppLogger.warning(
+          'LanSync',
+          '跳过无法打包的同步记录',
+          metadata: {
+            'kind': item['kind'],
+            'entity_id': item['entity_id'],
+            'revision': item['revision'],
+            'errorType': e.runtimeType.toString(),
+          },
+        );
+        await local.execute(
+          'DELETE FROM lan_dirty WHERE kind=? AND entity_id=? AND revision=?',
+          [item['kind'], item['entity_id'], item['revision']],
+        );
+        continue;
+      }
+      final change = captured;
+      if (change != null) {
+        _recent['${change.$1}/${change.$2}'] = change;
+        _recentRevision++;
+        while (_recent.length > recentLimit) {
+          final oldest = _recent.keys.reduce(
+            (a, b) => _recent[a]!.$3 <= _recent[b]!.$3 ? a : b,
           );
-        }),
-      );
+          _recent.remove(oldest);
+        }
+      }
+      if (messageApplied != null) {
+        onMessageApplied!(
+          messageApplied!.$1,
+          messageApplied!.$2,
+          messageApplied!.$3,
+        );
+      } else if (applied) {
+        onApplied?.call({item['kind'] as String});
+      }
     }
+    if (!targeted &&
+        (_lastOrphanPrune == null ||
+            DateTime.now().difference(_lastOrphanPrune!) >=
+                const Duration(days: 1))) {
+      await _pruneOrphanRevisions();
+      _revisionCache.clear();
+      _revisionCacheBytes = 0;
+      _lastOrphanPrune = DateTime.now();
+    }
+  }
+
+  /// There is no durable per-peer version acknowledgement. Keep every version
+  /// of a tracked entity, including ancestors and hashes already advertised to
+  /// an offline peer. Only revisions whose entity has no row, no lan_entities
+  /// index, no pending sync work, and whose hash is no head of any index
+  /// (legacy rows may point at another entity's hash) are reclaimed.
+  Future<void> _pruneOrphanRevisions() => cloudLocalWrite(
+    () => local.db.transaction(() async {
+      // External settings/files have owners outside SQLite; their histories
+      // stay intact because this transaction cannot prove their absence.
+      for (final kind in ['conversations', 'providers', 'messages']) {
+        await local.execute(
+          '''DELETE FROM lan_revisions AS r
+          WHERE r.kind=?
+          AND NOT EXISTS (SELECT 1 FROM "$kind" c WHERE c.id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM lan_entities e
+            WHERE e.kind=r.kind AND e.entity_id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM lan_entities e,json_each(e.heads_json) h
+            WHERE h.value=r.hash)
+          AND NOT EXISTS (SELECT 1 FROM lan_dirty d
+            WHERE d.kind=r.kind AND d.entity_id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM cloud_dirty d
+            WHERE d.kind=r.kind AND d.entity_id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM cloud_outbox o
+            WHERE o.kind=r.kind AND o.entity_id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM cloud_inbox i
+            WHERE i.kind=r.kind AND i.entity_id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM cloud_versions v
+            WHERE v.kind=r.kind AND v.entity_id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM lan_pending_deletions p
+            WHERE p.hash=r.hash OR (
+              json_extract(p.document_json,'\$.kind')=r.kind AND
+              json_extract(p.document_json,'\$.entity_id')=r.entity_id))''',
+          [kind],
+        );
+      }
+    }),
+  );
+
+  /// Keep local history complete. Only the outgoing copy drops verbose shell
+  /// output, before media encoding and immutable revision hashing.
+  CloudLocalDocument _syncDocument(CloudLocalDocument current) {
+    if (current.kind != 'messages') return current;
+    final row = current.payload['row'];
+    if (row is! Map) return current;
+    final raw = row['raw_payload'];
+    if (raw is! String || raw.length <= 500000) return current;
+    final payload = jsonDecode(raw);
+    if (payload is! Map || payload['rawToolResults'] is! List) return current;
+    var changed = false;
+    for (final tool in payload['rawToolResults'] as List) {
+      if (tool is! Map || tool['structured'] is! Map) continue;
+      final structured = tool['structured'] as Map;
+      final output = structured['output'];
+      if (output is! String) continue;
+      final bytes = utf8.encode(output);
+      if (bytes.length <= 32 * 1024) continue;
+      // A 16 KiB tail preserves the useful final diagnostic without splitting
+      // a multibyte UTF-8 character or replacing it with a decoding marker.
+      var start = bytes.length - 16 * 1024;
+      while ((bytes[start] & 0xc0) == 0x80) {
+        start++;
+      }
+      structured['output'] = utf8.decode(bytes.sublist(start));
+      changed = true;
+    }
+    return changed
+        ? CloudLocalDocument(current.kind, current.id, {
+            ...current.payload,
+            'row': {...row, 'raw_payload': jsonEncode(payload)},
+          })
+        : current;
   }
 
   Future<String> _fingerprint(
@@ -297,11 +547,48 @@ class LanRepository {
       ? 'deleted'
       : cloudObjectId(
           canonicalJson({
-            'payload': current.payload,
+            'payload': Map<String, dynamic>.of(current.payload)
+              ..remove('client_schema'),
             if (lanSettingKinds.contains(kind))
               'setting_times': await _settingTimes(current, kind, id),
           }),
         );
+
+  /// Only a hash of the *current* business data under the legacy algorithm
+  /// qualifies. Comparing to head payloads would hide genuine offline edits.
+  Future<bool> _matchesLegacyFingerprint(
+    CloudLocalDocument? current,
+    String kind,
+    String id,
+    List<LanRevision> heads,
+    String known,
+  ) async {
+    if (current == null) return known == 'deleted';
+    final times = lanSettingKinds.contains(kind)
+        ? await _settingTimes(current, kind, id)
+        : null;
+    for (final schema in {
+      current.payload['client_schema'],
+      ...heads.map((head) => head.payload['client_schema']),
+    }) {
+      final payload = Map<String, dynamic>.of(current.payload);
+      if (schema == null) {
+        payload.remove('client_schema');
+      } else {
+        payload['client_schema'] = schema;
+      }
+      if (cloudObjectId(
+            canonicalJson({
+              'payload': payload,
+              if (times != null) 'setting_times': times,
+            }),
+          ) ==
+          known) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   Future<Map<String, dynamic>> _settingTimes(
     CloudLocalDocument current,
@@ -325,29 +612,102 @@ class LanRepository {
         'SELECT * FROM lan_entities WHERE kind=? AND entity_id=?',
         [kind, id],
       )).firstOrNull;
-  Future<List<LanRevision>> _heads(Map<String, dynamic> row) async {
+  Future<List<LanRevision>> _heads(
+    Map<String, dynamic> row, {
+    Map<String, String>? documents,
+  }) async {
     final result = <LanRevision>[];
-    for (final hash in jsonDecode(row['heads_json'] as String) as List) {
-      final stored = (await local.rows(
-        'SELECT document_json FROM lan_revisions WHERE hash=?',
-        [hash],
-      )).single;
-      result.add(
-        LanRevision.fromJson(
-          Map<String, dynamic>.from(
-            jsonDecode(stored['document_json'] as String) as Map,
-          ),
-        ),
-      );
+    for (final hash in _headHashes(row)) {
+      String? document;
+      if (documents != null) {
+        document = documents[hash];
+      } else {
+        final stored = await local.rows(
+          'SELECT document_json FROM lan_revisions WHERE hash=?',
+          [hash],
+        );
+        if (stored.isNotEmpty) {
+          document = stored.single['document_json'] as String;
+        }
+      }
+      if (document == null) throw const LanSyncFailure('同步修订已变化，请重试');
+      result.add(_storedRevision(hash, document));
     }
     return result;
   }
 
+  List<String> _headHashes(Map<String, dynamic> row) {
+    try {
+      return List<String>.from(jsonDecode(row['heads_json'] as String) as List);
+    } on FormatException {
+      throw const LanSyncFailure('同步修订列表格式无效');
+    } on TypeError {
+      throw const LanSyncFailure('同步修订列表格式无效');
+    }
+  }
+
+  /// Only persisted, checksum-validated documents enter this cache. Keep the
+  /// original text as well: a changed database row must never reuse stale data.
+  LanRevision _storedRevision(String hash, String document) {
+    final cached = _revisionCache.remove(hash);
+    if (cached != null) {
+      if (cached.$1 == document) {
+        _revisionCache[hash] = cached;
+        return cached.$2;
+      }
+      _revisionCacheBytes -= cached.$3;
+    }
+    final LanRevision revision;
+    try {
+      revision = LanRevision.fromJson(
+        Map<String, dynamic>.from(jsonDecode(document) as Map),
+      );
+    } on FormatException {
+      throw const LanSyncFailure('同步修订内容格式无效');
+    } on TypeError {
+      throw const LanSyncFailure('同步修订内容格式无效');
+    }
+    if (revision.hash != hash) throw const LanSyncFailure('同步内容校验失败');
+    final bytes = utf8.encode(document).length;
+    if (bytes <= _revisionCacheByteLimit) {
+      _revisionCache[hash] = (document, revision, bytes);
+      _revisionCacheBytes += bytes;
+      while (_revisionCache.length > _revisionCacheLimit ||
+          _revisionCacheBytes > _revisionCacheByteLimit) {
+        final oldest = _revisionCache.remove(_revisionCache.keys.first)!;
+        _revisionCacheBytes -= oldest.$3;
+      }
+    }
+    return revision;
+  }
+
   /// One unreadable entity must not take the whole conflict list (and LAN
   /// initialization) down with it; it is skipped and logged instead.
-  Future<List<LanRevision>?> _readableHeads(Map<String, dynamic> row) async {
+  Future<List<LanRevision>?> _readableHeads(
+    Map<String, dynamic> row, {
+    bool requireSupported = false,
+    Map<String, String>? documents,
+    bool hideSending = false,
+  }) async {
     try {
-      return await _heads(row);
+      final heads = (await _heads(row, documents: documents))
+          .where(
+            (head) =>
+                !hideSending ||
+                head.deleted ||
+                !CloudLocalDocument(
+                  head.kind,
+                  head.id,
+                  head.payload,
+                ).isSendingMessage,
+          )
+          .toList();
+      if (requireSupported) {
+        for (final head in heads) {
+          await local.validateRowPayload(head.kind, head.id, head.payload);
+        }
+      }
+      return heads;
     } on LanSyncFailure catch (e) {
       AppLogger.warning(
         'LanSync',
@@ -359,25 +719,38 @@ class LanRepository {
         },
       );
       return null;
+    } on CloudSyncFailure catch (e) {
+      AppLogger.warning(
+        'LanSync',
+        '跳过当前版本无法读取的同步记录',
+        metadata: {
+          'kind': row['kind'],
+          'entity_id': row['entity_id'],
+          'error': e.message,
+        },
+      );
+      return null;
     }
   }
 
-  Future<void> _save(LanRevision r) => local.execute(
-    'INSERT OR IGNORE INTO lan_revisions(hash,kind,entity_id,document_json) VALUES(?,?,?,?)',
-    [r.hash, r.kind, r.id, canonicalJson(r.toJson())],
-  );
+  Future<void> _save(LanRevision r) async {
+    await local.validateRowPayload(r.kind, r.id, r.payload);
+    await local.execute(
+      'INSERT OR IGNORE INTO lan_revisions(hash,kind,entity_id,document_json) VALUES(?,?,?,?)',
+      [r.hash, r.kind, r.id, canonicalJson(r.toJson())],
+    );
+  }
 
   Future<List<LanRevision>> _pendingHeads(String kind, String id) async {
     final rows = await local.rows(
-      r"SELECT document_json FROM lan_pending_deletions WHERE json_extract(document_json,'$.kind')=? AND json_extract(document_json,'$.entity_id')=?",
+      r"SELECT hash,document_json FROM lan_pending_deletions WHERE json_extract(document_json,'$.kind')=? AND json_extract(document_json,'$.entity_id')=?",
       [kind, id],
     );
     return rows
         .map(
-          (row) => LanRevision.fromJson(
-            Map<String, dynamic>.from(
-              jsonDecode(row['document_json'] as String) as Map,
-            ),
+          (row) => _storedRevision(
+            row['hash'] as String,
+            row['document_json'] as String,
           ),
         )
         .toList();
@@ -405,47 +778,79 @@ class LanRepository {
       throw const LanSyncFailure('摘要分页参数无效');
     }
     final rows = await local.rows(
-      // Old peers/versions may have persisted sending heads. Retain them for
-      // causal comparison, but do not advertise them for onward transmission.
-      // Keep the original page cursor even when every head on a page is hidden.
-      r"""SELECT e.kind,e.entity_id,
-      CASE WHEN e.kind='messages' THEN (
-        SELECT json_group_array(h.value) FROM json_each(e.heads_json) h
-        JOIN lan_revisions r ON r.hash=h.value
-        WHERE json_extract(r.document_json,'$.deleted')=1
-          OR json_extract(r.document_json,'$.payload.row.status') IS NOT 'sending'
-      ) ELSE e.heads_json END AS heads_json
+      // Read raw JSON so corrupt head lists/documents are isolated per entity,
+      // rather than aborting the entire page inside SQLite JSON functions.
+      r"""SELECT e.kind,e.entity_id,e.heads_json
       FROM lan_entities e WHERE e.kind||'/'||e.entity_id>?
       ORDER BY e.kind,e.entity_id LIMIT ?""",
       [after, limit + 1],
     );
     final selected = rows.take(limit).toList();
+    final hashes = <String>{};
+    for (final row in selected) {
+      try {
+        hashes.addAll(_headHashes(row));
+      } on LanSyncFailure {
+        // The per-entity read below reports the warning and skips this row.
+      }
+    }
+    final documents = <String, String>{};
+    if (hashes.isNotEmpty) {
+      for (final row in await local.rows(
+        'SELECT hash,document_json FROM lan_revisions WHERE hash IN (${List.filled(hashes.length, '?').join(',')})',
+        hashes.toList(),
+      )) {
+        documents[row['hash'] as String] = row['document_json'] as String;
+      }
+    }
+    final items = <Map<String, dynamic>>[];
+    for (final row in selected) {
+      final heads = await _readableHeads(
+        row,
+        requireSupported: true,
+        documents: documents,
+        // Legacy sending heads remain causal history, but are not advertised.
+        // Keep their entity in the page so hidden pages still advance cursors.
+        hideSending: true,
+      );
+      if (heads == null || heads.isEmpty) continue;
+      items.add({
+        'kind': row['kind'],
+        'entity_id': row['entity_id'],
+        'hashes': heads.map((head) => head.hash).toList(),
+      });
+    }
+    final total = after.isEmpty
+        ? (await local.rows(
+                'SELECT COUNT(*) AS n FROM lan_entities',
+              )).single['n']
+              as int
+        : null;
     return {
-      'items': [
-        for (final row in selected)
-          if ((jsonDecode(row['heads_json'] as String) as List).isNotEmpty)
-            {
-              'kind': row['kind'],
-              'entity_id': row['entity_id'],
-              'hashes': jsonDecode(row['heads_json'] as String),
-            },
-      ],
+      'items': items,
       'after': selected.isEmpty
           ? after
           : '${selected.last['kind']}/${selected.last['entity_id']}',
       'has_more': rows.length > limit,
+      if (total != null) 'total': total,
     };
   });
   Future<List<String>> missing(Iterable<String> hashes) => _serial(() async {
-    final result = <String>[];
-    for (final hash in hashes) {
-      if ((await local.rows('SELECT 1 FROM lan_revisions WHERE hash=?', [
-        hash,
-      ])).isEmpty) {
-        result.add(hash);
+    final candidates = hashes
+        .toSet()
+        .where((hash) => !_revisionCache.containsKey(hash))
+        .toList();
+    final present = <String>{};
+    for (var start = 0; start < candidates.length; start += 200) {
+      final batch = candidates.skip(start).take(200).toList();
+      for (final row in await local.rows(
+        'SELECT hash FROM lan_revisions WHERE hash IN (${List.filled(batch.length, '?').join(',')})',
+        batch,
+      )) {
+        present.add(row['hash'] as String);
       }
     }
-    return result;
+    return candidates.where((hash) => !present.contains(hash)).toList();
   });
   Future<LanRevision> revision(String hash) => _serial(() async {
     if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
@@ -456,10 +861,14 @@ class LanRepository {
       [hash],
     );
     if (rows.isEmpty) throw const LanSyncFailure('同步修订已变化，请重试');
-    final revision = LanRevision.fromJson(
-      Map<String, dynamic>.from(
-        jsonDecode(rows.single['document_json'] as String) as Map,
-      ),
+    final revision = _storedRevision(
+      hash,
+      rows.single['document_json'] as String,
+    );
+    await local.validateRowPayload(
+      revision.kind,
+      revision.id,
+      revision.payload,
     );
     if (!revision.deleted &&
         CloudLocalDocument(
@@ -475,8 +884,15 @@ class LanRepository {
   /// Persist incoming revisions before applying. A failed apply can be retried
   /// from the immutable record, and never acknowledges a newer local edit.
   Future<void> receive(LanRevision incoming) => _serial(() async {
+    await local.validateRowPayload(
+      incoming.kind,
+      incoming.id,
+      incoming.payload,
+    );
     try {
-      CloudMediaCodec.validateWirePaths(incoming.payload);
+      if (!incoming.deleted) {
+        CloudMediaCodec.validateWirePaths(incoming.payload);
+      }
     } on FormatException {
       throw const LanSyncFailure('附件必须使用媒体引用，不能接收另一台设备的本地文件路径');
     }
@@ -529,16 +945,24 @@ class LanRepository {
           try {
             // A missing/tombstoned conversation with retained messages can be
             // restored by an explicit choice, never a stale disconnected edit.
-            final unchangedMessage =
-                chosen.kind == 'messages' &&
+            var unchangedMessage = false;
+            if (chosen.kind == 'messages' &&
                 !chosen.deleted &&
-                current != null &&
-                fingerprint ==
-                    await _fingerprint(
-                      CloudLocalDocument(chosen.kind, chosen.id, payload),
-                      chosen.kind,
-                      chosen.id,
-                    );
+                current != null) {
+              final incomingFingerprint = await _fingerprint(
+                CloudLocalDocument(chosen.kind, chosen.id, payload),
+                chosen.kind,
+                chosen.id,
+              );
+              unchangedMessage =
+                  fingerprint == incomingFingerprint ||
+                  await _fingerprint(
+                        _syncDocument(current),
+                        chosen.kind,
+                        chosen.id,
+                      ) ==
+                      incomingFingerprint;
+            }
             if (!unchangedMessage) {
               await local.apply(
                 chosen.kind,
@@ -547,21 +971,22 @@ class LanRepository {
                 chosen.deleted,
               );
             }
-            if ((await local.state())['enabled'] == 1) {
-              await local.markRelay(
-                chosen.kind,
-                chosen.id,
-                DateTime.now().add(lanRelayDelay).millisecondsSinceEpoch,
-              );
-            }
+            await local.markRelay(
+              chosen.kind,
+              chosen.id,
+              DateTime.now().add(lanRelayDelay).millisecondsSinceEpoch,
+            );
             if (!unchangedMessage) {
               if (chosen.kind == 'messages' && onMessageApplied != null) {
-                final row = payload['row'] as Map;
-                messageApplied = (
-                  row['conversation_id'] as String,
-                  chosen.id,
-                  (row['created_at'] as num).toInt(),
-                );
+                final row =
+                    (payload['row'] ?? current?.payload['row']) as Map?;
+                final convId = row?['conversation_id'] as String?;
+                final createdAt = (row?['created_at'] as num?)?.toInt();
+                if (convId != null && createdAt != null) {
+                  messageApplied = (convId, chosen.id, createdAt);
+                } else {
+                  applied.add(chosen.kind);
+                }
               } else {
                 applied.add(chosen.kind);
               }
@@ -589,43 +1014,103 @@ class LanRepository {
     }
   });
 
-  Future<List<List<LanRevision>>> conflicts() => _serial(() async {
-    final result = <List<LanRevision>>[];
-    for (final row in await local.rows(
-      'SELECT * FROM lan_entities WHERE json_array_length(heads_json)>1',
-    )) {
-      final heads = await _readableHeads(row);
-      if (heads != null) result.add(heads);
-    }
-    final pending = await local.rows(
-      r"SELECT DISTINCT json_extract(document_json,'$.entity_id') AS entity_id FROM lan_pending_deletions",
-    );
-    for (final item in pending) {
-      final id = item['entity_id'] as String;
-      if ((await local.rows(
-        'SELECT 1 FROM messages WHERE conversation_id=? LIMIT 1',
-        [id],
-      )).isEmpty) {
-        continue;
+  Future<List<List<LanRevision>>> conflicts() async {
+    // The serial write lane can be waiting on files or media. Read only the
+    // database here, in one short snapshot; parse and assemble after it closes.
+    const entitiesSql = r"""SELECT e.*,
+      CASE WHEN json_valid(e.heads_json)
+        THEN json_array_length(e.heads_json)>1 ELSE 1 END AS is_conflict,
+      (e.kind='conversations'
+        AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=e.entity_id)
+        AND EXISTS (SELECT 1 FROM lan_pending_deletions p
+          WHERE CASE WHEN json_valid(p.document_json) THEN
+            json_extract(p.document_json,'$.kind')='conversations'
+            AND json_extract(p.document_json,'$.entity_id')=e.entity_id
+          ELSE 0 END)) AS has_pending
+      FROM lan_entities e WHERE is_conflict OR has_pending""";
+    final (entities, pending, documents) = await local.db.transaction(() async {
+      final entities = await local.rows(entitiesSql);
+      final pending = await local.rows(r"""SELECT hash,document_json,
+        CASE WHEN json_valid(document_json)
+          THEN json_extract(document_json,'$.kind') END AS kind,
+        CASE WHEN json_valid(document_json)
+          THEN json_extract(document_json,'$.entity_id') END AS entity_id
+        FROM lan_pending_deletions""");
+      // Let SQLite extract raw hashes, without decoding revision JSON while
+      // holding the transaction. Deduplicate across every selected entity.
+      final hashes = await local.rows('''SELECT DISTINCT h.value AS hash
+        FROM ($entitiesSql) e,
+        json_each(CASE WHEN json_valid(e.heads_json) THEN e.heads_json ELSE '[]' END) h
+        WHERE h.type='text' ''');
+      final documents = <String, String>{};
+      for (var start = 0; start < hashes.length; start += 200) {
+        final batch = hashes
+            .skip(start)
+            .take(200)
+            .map((r) => r['hash'] as String)
+            .toList();
+        for (final row in await local.rows(
+          'SELECT hash,document_json FROM lan_revisions WHERE hash IN (${List.filled(batch.length, '?').join(',')})',
+          batch,
+        )) {
+          documents[row['hash'] as String] = row['document_json'] as String;
+        }
       }
-      final row = await _entity('conversations', id);
-      if (row == null) continue;
-      final heads = await _readableHeads(row);
-      if (heads == null) continue;
-      final versions = {
-        for (final r in [...heads, ...await _pendingHeads('conversations', id)])
-          r.hash: r,
-      }.values.toList();
-      if (versions.length > 1) {
-        result.removeWhere(
-          (group) =>
-              group.first.kind == 'conversations' && group.first.id == id,
+      return (entities, pending, documents);
+    });
+    final pendingById = <String, List<Map<String, dynamic>>>{};
+    for (final row in pending) {
+      if (row['kind'] == 'conversations' && row['entity_id'] is String) {
+        (pendingById[row['entity_id'] as String] ??= []).add(row);
+      } else if (row['kind'] == null || row['entity_id'] is! String) {
+        AppLogger.warning(
+          'LanSync',
+          '跳过无法读取的待删除同步记录',
+          metadata: {'hash': row['hash']},
         );
-        result.add(versions);
+      }
+    }
+    final result = <List<LanRevision>>[];
+    for (final row in entities) {
+      try {
+        final heads = <LanRevision>[];
+        for (final hash in _headHashes(row)) {
+          final document = documents[hash];
+          if (document == null) throw const LanSyncFailure('同步修订已变化，请重试');
+          final head = _storedRevision(hash, document);
+          if (head.kind != row['kind'] || head.id != row['entity_id']) {
+            throw const LanSyncFailure('同步修订与实体不一致');
+          }
+          heads.add(head);
+        }
+        if (row['has_pending'] == 1) {
+          final versions = {for (final head in heads) head.hash: head};
+          for (final pending
+              in pendingById[row['entity_id']] ?? <Map<String, dynamic>>[]) {
+            final revision = _storedRevision(
+              pending['hash'] as String,
+              pending['document_json'] as String,
+            );
+            versions[revision.hash] = revision;
+          }
+          if (versions.length > 1) result.add(versions.values.toList());
+        } else if (row['is_conflict'] == 1) {
+          result.add(heads);
+        }
+      } on LanSyncFailure catch (e) {
+        AppLogger.warning(
+          'LanSync',
+          '跳过无法读取的同步记录',
+          metadata: {
+            'kind': row['kind'],
+            'entity_id': row['entity_id'],
+            'error': e.message,
+          },
+        );
       }
     }
     return result;
-  });
+  }
 
   Future<void> resolve(
     String kind,
@@ -634,10 +1119,18 @@ class LanRepository {
     List<String> previewHashes,
   ) => _serial(() async {
     await _capture(kind: kind, id: id);
+    var changedSinceCapture = false;
+    (String, String, int)? messageApplied;
     await cloudLocalWrite(
       () => local.db.transaction(() async {
         final row = await _entity(kind, id);
         if (row == null) throw const LanSyncFailure('同时修改记录不存在');
+        final current = await local.read(kind, id);
+        if (current?.isSendingMessage == true ||
+            await _fingerprint(current, kind, id) != row['local_fingerprint']) {
+          changedSinceCapture = true;
+          return;
+        }
         final heads = {
           for (final r in [
             ...await _heads(row),
@@ -729,7 +1222,16 @@ class LanRepository {
         );
         try {
           await local.apply(kind, id, decoded, resolution.deleted);
-          if ((await local.state())['enabled'] == 1) await local.mark(kind, id);
+          await local.mark(kind, id);
+          if (kind == 'messages' && onMessageApplied != null) {
+            final msgRow =
+                (decoded['row'] ?? current?.payload['row']) as Map?;
+            final convId = msgRow?['conversation_id'] as String?;
+            final createdAt = (msgRow?['created_at'] as num?)?.toInt();
+            if (convId != null && createdAt != null) {
+              messageApplied = (convId, id, createdAt);
+            }
+          }
         } finally {
           await local.execute('UPDATE lan_state SET suspended=0 WHERE id=1');
           await local.execute(
@@ -749,6 +1251,20 @@ class LanRepository {
         ], await _fingerprint(await local.read(kind, id), kind, id));
       }),
     );
-    onApplied?.call({kind});
+    if (changedSinceCapture) {
+      // Capture after releasing the failed compare-and-apply transaction so an
+      // intervening edit becomes a causal head before the next preview.
+      await _capture(kind: kind, id: id);
+      throw const LanSyncFailure('内容已有新修改，请刷新后选择');
+    }
+    if (messageApplied != null) {
+      onMessageApplied!(
+        messageApplied!.$1,
+        messageApplied!.$2,
+        messageApplied!.$3,
+      );
+    } else {
+      onApplied?.call({kind});
+    }
   });
 }

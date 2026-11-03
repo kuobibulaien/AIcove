@@ -12,8 +12,9 @@ import '../../data/auto_reply_trigger_controller.dart';
 
 Future<void> showCreateAutoReplyTriggerSheet(
   BuildContext context,
-  WidgetRef ref,
-) {
+  WidgetRef ref, {
+  String? initialConversationId,
+}) {
   final colors = context.moeColors;
   return showModalBottomSheet(
     context: context,
@@ -36,7 +37,11 @@ Future<void> showCreateAutoReplyTriggerSheet(
             duration: kAnimFast,
             curve: Curves.easeOutCubic,
             padding: EdgeInsets.only(bottom: viewInsets.bottom),
-            child: const SingleChildScrollView(child: _CreateTriggerSheet()),
+            child: SingleChildScrollView(
+              child: _CreateTriggerSheet(
+                initialConversationId: initialConversationId,
+              ),
+            ),
           ),
         ),
       );
@@ -45,7 +50,9 @@ Future<void> showCreateAutoReplyTriggerSheet(
 }
 
 class _CreateTriggerSheet extends ConsumerStatefulWidget {
-  const _CreateTriggerSheet();
+  final String? initialConversationId;
+
+  const _CreateTriggerSheet({this.initialConversationId});
 
   @override
   ConsumerState<_CreateTriggerSheet> createState() =>
@@ -64,6 +71,12 @@ class _CreateTriggerSheetState extends ConsumerState<_CreateTriggerSheet> {
   bool _submitting = false;
   String? _error;
   String? _selectedContactId;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedContactId = widget.initialConversationId;
+  }
 
   @override
   void dispose() {

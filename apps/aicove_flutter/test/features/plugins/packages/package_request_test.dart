@@ -2,6 +2,16 @@
 // request through the normal plugin path only when the role enables it.
 import 'dart:convert';
 import 'dart:io';
+import 'package:aicove_flutter/src/features/agent_context/domain/preset_script_runtime.dart';
+import 'package:aicove_flutter/src/features/agent_plugins/aicove_plugin.dart';
+import 'package:aicove_flutter/src/features/agent_plugins/plugin_request_scope.dart';
+import 'package:aicove_flutter/src/features/plugins/domain/base_plugin.dart';
+import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
+import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
+import 'package:aicove_flutter/src/features/plugins/plugin_manager.dart';
+import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
+import 'package:aicove_flutter/src/features/workspace/workspace_providers.dart';
+import 'package:flutter/material.dart';
 import 'extension_test_support.dart';
 import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 
@@ -27,6 +37,51 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _AssemblyPlugin extends BasePlugin {
+  _AssemblyPlugin(String id, this.events, {this.failure = ''})
+    : super(metadata: PluginMetadata(id: id, name: id, description: '',
+        version: '1', author: 'test', icon: Icons.extension));
+  final List<String> events;
+  final String failure;
+  @override
+  bool get enabled => true;
+  @override
+  AicovePlugin get agentPlugin => AicovePlugin(
+    id: id, name: name, capabilities: const {AppCapability.request},
+    setup: (r) => r.add(AppContributions.requestScope, (_) {
+      events.add('$id:factory');
+      if (failure == 'factory') throw StateError('factory');
+      return _AssemblyScope(this);
+    }),
+  );
+}
+
+class _AssemblyScope extends PluginRequestScope {
+  _AssemblyScope(this.plugin);
+  final _AssemblyPlugin plugin;
+  @override
+  String get pluginId => plugin.id;
+  @override
+  String get pluginName => plugin.name;
+  @override
+  bool get active => true;
+  @override
+  List<Map<String, dynamic>> filterRequestMessages(List<Map<String, dynamic>> messages) {
+    if (plugin.failure == 'history') throw StateError('history');
+    return messages;
+  }
+  @override
+  List<PluginReminder> reminders(DateTime time) => [PluginReminder(1, 'at:$time')];
+  @override
+  List<AITool> tools() => [AITool(name: pluginId, description: '',
+    parameters: const {}, handler: (_) async => 'returned:$pluginId')];
+  @override
+  Future<void> dispose() async {
+    plugin.events.add('$pluginId:dispose');
+    if (plugin.failure == 'dispose') throw StateError('dispose');
+  }
+}
 
 class _Paths extends PathProviderPlatform {
   _Paths(this.path);
@@ -180,6 +235,50 @@ void main() {
       (tool['function'] as Map)['name'] as String,
   ];
 
+  Future<ApiConfig> requestWithSpies(
+    List<_AssemblyPlugin> plugins, {bool workspaceFailure = false}
+  ) async {
+    final manager = PluginManager();
+    for (final plugin in plugins) { manager.register(plugin); }
+    final fresh = ProviderContainer(overrides: [
+      ...overrides,
+      pluginManagerProvider.overrideWithValue(manager),
+      if (workspaceFailure) workspaceStoreProvider.overrideWith(
+        (ref) async => throw StateError('workspace')),
+    ]);
+    addTearDown(fresh.dispose);
+    return fresh.read(chatSendServiceProvider).prepareApiConfig(
+      conv: conversation(plugins.map((p) => p.id).toList()).copyWith(
+        agentMode: workspaceFailure ? RoleAgentMode.tool : RoleAgentMode.chat),
+      history: _history, userText: 'test', deferReminders: true,
+    );
+  }
+
+  test('assembly cleanup preserves returned tools, deferred reminders and preset opener', () async {
+    final events = <String>[];
+    final config = await requestWithSpies([_AssemblyPlugin('spy', events)]);
+    expect(events, ['spy:factory', 'spy:dispose']);
+    expect((await config.boundTools!.firstWhere((t) => t.name == 'spy')
+      .invoke({})).text, 'returned:spy');
+    expect(config.reminders!(_now), contains('at:$_now'));
+    final preset = await config.openPresetRuntime!(const PresetScriptSnapshot(
+      '{"config":{},"transport":{},"macros":{},"activeIds":[]}'));
+    try { await preset.prepare(const []); } finally { await preset.close(); }
+  });
+
+  for (final failure in ['factory', 'history', 'workspace', 'dispose']) {
+    test('assembly closes every acquired scope on $failure failure', () async {
+      final events = <String>[];
+      await expectLater(requestWithSpies([
+        _AssemblyPlugin('first', events),
+        _AssemblyPlugin('bad', events, failure: failure),
+      ], workspaceFailure: failure == 'workspace'), throwsStateError);
+      expect(events.where((e) => e == 'first:dispose').length, 1);
+      expect(events.where((e) => e == 'bad:dispose').length,
+        failure == 'factory' ? 0 : 1);
+    });
+  }
+
   test(
     'an enabled package contributes its prompt, tags and skill tool',
     () async {
@@ -189,6 +288,8 @@ void main() {
       expect(messagesOf(config), contains('<mood>开心</mood>'));
       // delegate_task is built in for every chat run (ADR0088).
       expect(toolsOf(config), [_tool, 'delegate_task', 'steer_task', 'read_tool_result']);
+      expect(config.boundTools!.firstWhere((t) => t.name == _tool).description,
+        isNot(contains('run_skill_js_')));
       final tool = config.boundTools!.singleWhere((t) => t.name == _tool);
       expect(await tool.handler({'name': 'guide'}), '# 写诗指南\n押韵。');
     },

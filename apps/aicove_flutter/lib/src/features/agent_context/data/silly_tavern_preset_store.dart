@@ -22,8 +22,7 @@ import '../../../core/storage/app_data_directory.dart';
 typedef PresetDocumentsDirectoryResolver = Future<Directory> Function();
 
 /// 没有外部提示词预设时使用的最小组合：只装配人设、场景、世界书与聊天记录。
-const String kBasicContextPresetSource =
-    '''{"name":"基础上下文","prompts":[
+const String kBasicContextPresetSource = '''{"name":"基础上下文","prompts":[
       {"identifier":"worldInfoBefore","name":"世界书：角色定义前","marker":true},
       {"identifier":"charDescription","name":"角色定义","marker":true},
       {"identifier":"scenario","name":"场景","marker":true},
@@ -138,7 +137,10 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       final corruptBackup = File(
         '${target.path}.corrupt-${DateTime.now().millisecondsSinceEpoch}',
       );
-      await target.rename(corruptBackup.path);
+      await cloudLocalWrite(() async {
+        await target.rename(corruptBackup.path);
+        notifyExternalSyncChange();
+      });
     }
 
     await _writePreset(target, preset, regexAuthorized: regexAuthorized);
@@ -164,7 +166,7 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       envelope['regexAuthorized'] = authorized;
       final temp = File('${file.path}.tmp');
       await temp.writeAsString(jsonEncode(envelope), flush: true);
-      await cloudLocalWrite(() => temp.rename(file.path));
+      await _publishFile(temp, file);
       return true;
     } catch (error) {
       AppLogger.warning(
@@ -178,6 +180,30 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       return false;
     }
   }
+
+  /// 修改一套预设的显示名称（写回预设信封，不改动原始 rawPreset）。
+  Future<void> renamePreset(String id, String name) => _serialized(() async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) throw const FormatException('预设名称不能为空');
+    final preset = await get(id);
+    if (preset == null) throw StateError('酒馆预设不存在或损坏，请重新绑定');
+    if (preset.name == trimmed) return;
+    final updated = _parser.parseMap(
+      preset.rawPreset,
+      sourceFileName: preset.sourceFileName,
+      storedId: preset.id,
+      storedName: trimmed,
+      importedAt: preset.importedAt,
+      regexAuthorized: preset.regexAuthorized,
+      compatibilityData: preset.compatibilityData,
+    );
+    final directory = await _ensureDirectory();
+    await _writePreset(
+      File('${directory.path}/${preset.id}.json'),
+      updated,
+      regexAuthorized: preset.regexAuthorized,
+    );
+  });
 
   /// 删除一套预设文件；同时清掉指向它的默认选择。角色绑定由调用方先行拦截。
   Future<void> deletePreset(String id) => _serialized(() async {
@@ -197,10 +223,13 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
             jsonEncode(const TavernPluginSettings().toJson()),
             flush: true,
           );
-          await temp.rename(settingsFile.path);
+          await _publishFile(temp, settingsFile);
         }
       }
-      if (await file.exists()) await file.delete();
+      if (await file.exists()) {
+        await file.delete();
+        notifyExternalSyncChange();
+      }
     });
   });
 
@@ -307,24 +336,57 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     };
     final temp = File('${target.path}.tmp');
     await temp.writeAsString(jsonEncode(envelope), flush: true);
-    await cloudLocalWrite(() => temp.rename(target.path));
+    await _publishFile(temp, target);
   }
+
+  Future<void> _publishFile(File temp, File target) =>
+      cloudLocalWrite(() async {
+        var changed = true;
+        try {
+          if (await target.exists()) {
+            final previous = await target.readAsBytes();
+            final next = await temp.readAsBytes();
+            changed =
+                previous.length != next.length ||
+                previous.indexed.any((entry) => entry.$2 != next[entry.$1]);
+          }
+        } on FileSystemException {
+          // Comparing content must not prevent replacing an unreadable file.
+          changed = true;
+        }
+        await temp.rename(target.path);
+        if (changed) notifyExternalSyncChange();
+      });
 
   Future<void> _mutate(
     String id,
     void Function(Map<String, dynamic> data, SillyTavernPreset preset) change,
+  ) => _update(id, (_, data, preset) => change(data, preset));
+
+  /// 同 [_mutate]，但也可改写原始预设 JSON（用户自己编辑的提示词写在这里）。
+  Future<void> _update(
+    String id,
+    void Function(
+      Map<String, dynamic> raw,
+      Map<String, dynamic> data,
+      SillyTavernPreset preset,
+    )
+    change,
   ) => _serialized(() async {
     final preset = await get(id);
     if (preset == null) throw StateError('酒馆预设不存在或损坏，请重新绑定');
+    final raw = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(preset.rawPreset)) as Map,
+    );
     final data = Map<String, dynamic>.from(
       jsonDecode(jsonEncode(preset.compatibilityData)) as Map,
     );
-    change(data, preset);
+    change(raw, data, preset);
     if (utf8.encode(jsonEncode(data)).length > 16 * 1024 * 1024) {
       throw const FormatException('此组合资源超过 16 MB，请拆分预设');
     }
     final updated = _parser.parseMap(
-      preset.rawPreset,
+      raw,
       sourceFileName: preset.sourceFileName,
       storedId: preset.id,
       storedName: preset.name,
@@ -353,6 +415,94 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
             as Map)[promptId] =
         enabled;
   });
+
+  @override
+  Future<void> savePrompt(
+    String presetId, {
+    required String identifier,
+    required String name,
+    required String role,
+    required String content,
+  }) => _update(presetId, (raw, _, preset) {
+    final id = identifier.trim();
+    if (id.isEmpty) throw StateError('提示词条目缺少标识');
+    if (!const {'system', 'user', 'assistant'}.contains(role)) {
+      throw StateError('不支持的消息角色：$role');
+    }
+    if (preset.promptsById[id]?.marker == true) {
+      throw StateError('占位条目的内容由 AIcove 自动填入，不能编辑');
+    }
+    final body = preset.sourceFormat == 'prompt_manager_export'
+        ? raw['data'] as Map<String, dynamic>
+        : raw;
+    final prompts = body['prompts'] as List;
+    final index = prompts.lastIndexWhere(
+      (p) => p is Map && p['identifier']?.toString().trim() == id,
+    );
+    if (index >= 0) {
+      (prompts[index] as Map)
+        ..['name'] = name
+        ..['role'] = role
+        ..['content'] = content;
+    } else {
+      prompts.add(<String, dynamic>{
+        'identifier': id,
+        'name': name,
+        'role': role,
+        'content': content,
+        'system_prompt': false,
+        'marker': false,
+      });
+    }
+    if (!preset.selectedOrder.entries.any((e) => e.identifier == id)) {
+      final rawOrder = body['prompt_order'] as List;
+      final order =
+          rawOrder.every((g) => g is Map && g.containsKey('identifier'))
+          ? rawOrder
+          : (rawOrder[preset.selectedOrder.sourceIndex] as Map)['order']
+                as List;
+      final history = order.indexWhere(
+        (e) => e is Map && e['identifier'] == 'chatHistory',
+      );
+      order.insert(history < 0 ? order.length : history, <String, dynamic>{
+        'identifier': id,
+        'enabled': true,
+      });
+    }
+    if (utf8.encode(jsonEncode(raw)).length >
+        SillyTavernPresetParser.maxSourceBytes) {
+      throw const FormatException('预设提示词总量超过 2 MB，请精简内容');
+    }
+  });
+
+  @override
+  Future<void> deletePrompt(String presetId, String identifier) =>
+      _update(presetId, (raw, data, preset) {
+        final id = identifier.trim();
+        if (!id.startsWith(kUserPromptIdPrefix)) {
+          throw StateError('只能删除自己添加的提示词，导入的条目可以关掉');
+        }
+        final body = preset.sourceFormat == 'prompt_manager_export'
+            ? raw['data'] as Map<String, dynamic>
+            : raw;
+        bool matches(Object? e) =>
+            e is Map && e['identifier']?.toString().trim() == id;
+        final prompts = body['prompts'] as List;
+        final before = prompts.length;
+        prompts.removeWhere(matches);
+        if (prompts.length == before) throw StateError('提示词条目不存在');
+        final rawOrder = body['prompt_order'] as List;
+        if (rawOrder.every((g) => g is Map && g.containsKey('identifier'))) {
+          rawOrder.removeWhere(matches);
+        } else {
+          for (final group in rawOrder) {
+            if (group is Map && group['order'] is List) {
+              (group['order'] as List).removeWhere(matches);
+            }
+          }
+        }
+        (data['promptEnabled'] as Map?)?.remove(id);
+      });
 
   @override
   Future<void> setRegexEnabled(
@@ -389,6 +539,34 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       });
 
   @override
+  Future<void> setTemperature(String presetId, double? value) =>
+      _setSampling(presetId, 'temperature', value, max: 2);
+
+  @override
+  Future<void> setTopP(String presetId, double? value) =>
+      _setSampling(presetId, 'top_p', value, max: 1);
+
+  /// 采样参数只存在预设原文里，与导入时同一处，解析器照常读取。
+  Future<void> _setSampling(
+    String presetId,
+    String field,
+    double? value, {
+    required double max,
+  }) => _update(presetId, (raw, _, preset) {
+    if (value != null && (!value.isFinite || value < 0 || value > max)) {
+      throw RangeError('$field 需在 0～$max 之间');
+    }
+    final body = preset.sourceFormat == 'prompt_manager_export'
+        ? raw['data'] as Map<String, dynamic>
+        : raw;
+    if (value == null) {
+      body.remove(field);
+    } else {
+      body[field] = value;
+    }
+  });
+
+  @override
   Future<void> setTagPresentation(
     String presetId,
     String tagName,
@@ -418,7 +596,9 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
 
   /// 角色专用组合的复制来源：显式绑定→默认预设→内置基础上下文。
   /// 显式绑定缺失或损坏时报错，不回退（ADR0010）。
-  Future<SillyTavernPreset> resolveCardPresetBase(String? explicitBaseId) async {
+  Future<SillyTavernPreset> resolveCardPresetBase(
+    String? explicitBaseId,
+  ) async {
     final settings = await loadPluginSettings();
     final baseId = explicitBaseId?.trim().isNotEmpty == true
         ? explicitBaseId!.trim()
@@ -446,7 +626,8 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
   }) => _serialized(() async {
     final base = await resolveCardPresetBase(explicitBaseId);
     final fromTemplate = !(await _exists(base.id));
-    final authorized = regexAuthorized ?? (!fromTemplate && base.regexAuthorized);
+    final authorized =
+        regexAuthorized ?? (!fromTemplate && base.regexAuthorized);
 
     final data = Map<String, dynamic>.from(
       jsonDecode(jsonEncode(base.compatibilityData)) as Map,
@@ -470,7 +651,8 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       imported.add(script);
       added++;
     }
-    if (imported.length > 1000) throw const FormatException('正则超过 1000 条，已拒绝导入');
+    if (imported.length > 1000)
+      throw const FormatException('正则超过 1000 条，已拒绝导入');
     if (imported.isEmpty) data.remove('importedRegex');
 
     var worldEntryCount = 0;
@@ -492,9 +674,9 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
     if (utf8.encode(jsonEncode(data)).length > 16 * 1024 * 1024) {
       throw const FormatException('此组合资源超过 16 MB，请拆分预设');
     }
-    final resourceBytes = utf8.encode(
-      jsonEncode({'r': regexScripts, 'b': characterBook}),
-    ).length;
+    final resourceBytes = utf8
+        .encode(jsonEncode({'r': regexScripts, 'b': characterBook}))
+        .length;
     if (resourceBytes > SillyTavernPresetParser.maxSourceBytes) {
       throw const FormatException('卡内资源超过 2 MB，已拒绝导入');
     }
@@ -525,7 +707,10 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
       addedRegexCount: added,
       skippedRegexCount: skipped,
       worldEntryCount: worldEntryCount,
-      warnings: _cardPresetWarnings(preset, hasWorldBook: characterBook != null),
+      warnings: _cardPresetWarnings(
+        preset,
+        hasWorldBook: characterBook != null,
+      ),
     );
   });
 
@@ -648,7 +833,7 @@ class SillyTavernPresetStore implements TavernCompatibilityPort {
         final target = File('${directory.path}/plugin_settings.json');
         final temp = File('${target.path}.tmp');
         await temp.writeAsString(jsonEncode(settings.toJson()), flush: true);
-        await cloudLocalWrite(() => temp.rename(target.path));
+        await _publishFile(temp, target);
       });
 
   @override

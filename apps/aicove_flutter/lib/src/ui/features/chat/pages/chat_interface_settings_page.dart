@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/chat/application/chat_page_conversation_actions.dart';
+import '../../../../features/chat/application/chat_view_prefs.dart';
 import '../../../../features/chat/conversation_providers.dart';
 import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/settings/app_settings.dart';
@@ -16,7 +17,8 @@ import '../widgets/chat_wallpaper_background.dart';
 const Duration _kDeferredPreviewWindow = Duration(milliseconds: 420);
 
 /// 聊天菜单「聊天界面」：上方用真实消息气泡预览当前会话效果，
-/// 下方高级材质面板分「界面」「行为」两个标签页；壁纸的图片、遮罩、模糊与截取
+/// 下方高级材质面板分「界面」「行为」两个标签页；「界面」里的图片预览大小、
+/// 语音默认展开与隐藏用户头像只对这个联系人生效；壁纸的图片、遮罩、模糊与截取
 /// 在与全局壁纸共用的 [WallpaperEditorPage] 里调，样式下的「更多选项」
 /// 只列当前样式（气泡或文档）的细节。
 class ChatInterfaceSettingsPage extends ConsumerStatefulWidget {
@@ -120,10 +122,13 @@ class _ChatInterfaceSettingsPageState
         child: Column(
           children: [
             Expanded(
-              child: _MessagePreview(
-                conversation: conv,
-                documentStyle: style == ChatDisplayStyle.document,
-                topInset: MediaQuery.paddingOf(context).top,
+              child: ChatViewScope(
+                prefs: ChatViewPrefs.resolve(conv, settings),
+                child: _MessagePreview(
+                  conversation: conv,
+                  documentStyle: style == ChatDisplayStyle.document,
+                  topInset: MediaQuery.paddingOf(context).top,
+                ),
               ),
             ),
             _buildPanel(context, conv, settings),
@@ -230,13 +235,68 @@ class _ChatInterfaceSettingsPageState
             ],
           ),
           const SizedBox(height: 4),
+          ..._buildChatViewOptions(colors, conv, settings),
           _buildStyleOptionsHeader(colors, style),
           if (_styleOptionsExpanded && settings != null)
-            ..._buildStyleOptions(style, settings),
+            ..._buildStyleOptions(style, conv, settings),
           const SizedBox(height: 6),
         ],
       ),
     );
+  }
+
+  /// 只对这个联系人生效的显示偏好；没设过的项沿用全局值。
+  List<Widget> _buildChatViewOptions(
+    MoeColors colors,
+    Conversation conv,
+    AppSettings? settings,
+  ) {
+    final prefs = ChatViewPrefs.resolve(conv, settings);
+    final notifier = ref.read(conversationsProvider.notifier);
+    return [
+      Row(
+        children: [
+          SizedBox(width: 40, child: _label(colors, '图片')),
+          Expanded(
+            child: MoeSlider(
+              key: const ValueKey('chat_interface_image_scale_slider'),
+              value: prefs.imagePreviewScale,
+              min: kMinImagePreviewScale,
+              max: kMaxImagePreviewScale,
+              divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
+              onChanged: (value) => notifier.setConversationChatView(
+                conv.id,
+                imagePreviewScale: value,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 36,
+            child: Text(
+              prefs.imagePreviewScale.toStringAsFixed(2),
+              textAlign: TextAlign.end,
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+            ),
+          ),
+        ],
+      ),
+      MoeSettingsRow(
+        key: const ValueKey('chat_interface_expand_audio_switch'),
+        label: '语音消息默认展开文字',
+        trailingType: MoeSettingsRowTrailing.switchControl,
+        switchValue: prefs.expandAudioText,
+        onSwitchChanged: (value) =>
+            notifier.setConversationChatView(conv.id, expandAudioText: value),
+      ),
+      MoeSettingsRow(
+        key: const ValueKey('chat_interface_hide_user_avatar_switch'),
+        label: '隐藏用户头像',
+        trailingType: MoeSettingsRowTrailing.switchControl,
+        switchValue: prefs.hideUserAvatar,
+        onSwitchChanged: (value) =>
+            notifier.setConversationChatView(conv.id, hideUserAvatar: value),
+      ),
+    ];
   }
 
   Widget _buildStyleOptionsHeader(MoeColors colors, ChatDisplayStyle style) {
@@ -272,9 +332,11 @@ class _ChatInterfaceSettingsPageState
     );
   }
 
-  /// 当前样式的细节开关，所有聊天共用。
+  /// 当前样式的细节开关：是否分段只对这个联系人生效，分段标点、思维链与
+  /// 工具调用的显示所有聊天共用。
   List<Widget> _buildStyleOptions(
     ChatDisplayStyle style,
+    Conversation conv,
     AppSettings settings,
   ) {
     final notifier = ref.read(appSettingsProvider.notifier);
@@ -298,7 +360,8 @@ class _ChatInterfaceSettingsPageState
         ),
       ];
     }
-    final format = settings.messageFormatConfig;
+    final format = conv.chunkOverride.applyTo(settings.messageFormatConfig);
+    final conversations = ref.read(conversationsProvider.notifier);
     return [
       MoeSettingsRow(
         key: const ValueKey('bubble_chunking_switch'),
@@ -306,18 +369,8 @@ class _ChatInterfaceSettingsPageState
         subtitle: '长回复拆成多条气泡',
         trailingType: MoeSettingsRowTrailing.switchControl,
         switchValue: format.enableChunking,
-        onSwitchChanged: (value) => notifier.updateMessageFormatConfig(
-          format.copyWith(enableChunking: value),
-        ),
-      ),
-      MoeSettingsRow(
-        key: const ValueKey('bubble_filter_punctuation_switch'),
-        label: '过滤句末标点',
-        trailingType: MoeSettingsRowTrailing.switchControl,
-        switchValue: format.filterPunctuation,
-        onSwitchChanged: (value) => notifier.updateMessageFormatConfig(
-          format.copyWith(filterPunctuation: value),
-        ),
+        onSwitchChanged: (value) =>
+            conversations.setConversationChatView(conv.id, chunkEnabled: value),
       ),
       MoeSettingsRow(
         key: const ValueKey('bubble_show_thinking_switch'),
@@ -350,6 +403,14 @@ class _ChatInterfaceSettingsPageState
           trailingType: MoeSettingsRowTrailing.switchControl,
           switchValue: settings?.autoScrollOnAiReply ?? true,
           onSwitchChanged: notifier.setAutoScrollOnAiReply,
+        ),
+        MoeSettingsRow(
+          key: const ValueKey('allow_multi_message_send_switch'),
+          label: '允许单次发送多条消息',
+          subtitle: '点发送先暂存，点确认再让 AI 回复',
+          trailingType: MoeSettingsRowTrailing.switchControl,
+          switchValue: settings?.allowMultiMessageSend ?? false,
+          onSwitchChanged: notifier.setAllowMultiMessageSend,
         ),
       ],
     );

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/mcp/mcp_connector.dart';
 import '../../../../features/plugins/mcp/mcp_connector_providers.dart';
+import '../../../../features/plugins/mcp/mcp_stdio_launch.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -40,7 +41,14 @@ class McpConnectorsPage extends ConsumerWidget {
                       icon: Icons.hub_outlined,
                       label: connector.displayName,
                       labelColor: connector.isUsable ? null : colors.muted,
-                      subtitle: connector.url.trim().isEmpty
+                      subtitle: connector.isStdio
+                          ? (connector.command.isEmpty
+                                ? null
+                                : formatMcpCommandLine(
+                                    connector.command,
+                                    connector.args,
+                                  ))
+                          : connector.url.trim().isEmpty
                           ? null
                           : connector.url.trim(),
                       trailingType: MoeSettingsRowTrailing.text,
@@ -80,7 +88,9 @@ class McpConnectorsPage extends ConsumerWidget {
 
   static String _status(McpConnector connector) {
     if (!connector.enabled) return '已停用';
-    if (!connector.hasValidUrl) return '未填写地址';
+    if (connector.isStdio && !McpConnector.supportsStdio) return '仅电脑端可用';
+    if (connector.isStdio && !connector.hasValidConfiguration) return '未填写命令';
+    if (!connector.isStdio && !connector.hasValidUrl) return '未填写地址';
     if (connector.tools.isEmpty) return '尚未连接';
     return '${connector.activeTools.length} 个工具';
   }

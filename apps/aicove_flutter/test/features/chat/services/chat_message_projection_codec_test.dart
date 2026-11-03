@@ -20,6 +20,19 @@ void main() {
       expect(ChatMessageProjectionCodec.displayReplyText({'processedText': ''}), '');
     });
 
+    test('raw round text and display round text round-trip independently', () {
+      final payload = ChatMessageProjectionCodec.buildRawAssistantPayload(apiResult: const ApiCallResult(
+        replyText: '<div>展示</div>', processedText: '<div>展示</div>',
+        pluginEvents: [], toolResults: [], replyRounds: [
+          ReplyRound(rawText: '原文', replyText: '<div>展示</div>', processedText: '<div>展示</div>'),
+        ],
+      ));
+      final round = ChatMessageProjectionCodec.replyRounds(payload).single;
+      expect(round.rawText, '原文');
+      expect(round.replyText, '<div>展示</div>');
+      expect(ChatMessageProjectionCodec.replyRounds({'replyRounds': [{'replyText': '旧数据'}]}).single.rawText, isNull);
+    });
+
     test('buildRawAssistantPayload should persist hidden thought parts', () {
       final payload = ChatMessageProjectionCodec.buildRawAssistantPayload(
         apiResult: const ApiCallResult(

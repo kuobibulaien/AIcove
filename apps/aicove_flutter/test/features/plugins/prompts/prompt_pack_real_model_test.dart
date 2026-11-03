@@ -21,8 +21,8 @@ Future<String> _reply(String system, String user) async =>
     (await createApiRunner().executeApiCall(
       config: ApiConfig(
         settings: mapUiModelsToAppSettings({}),
-        modelFullId: 'openai:deepseek-flash',
-        providerApiBase: 'https://api.deepseek.com',
+        modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+        providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
         providerApiKey: _apiKey,
         customConfig: const {},
         modelTemperature: 0.7,

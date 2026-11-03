@@ -86,7 +86,23 @@ void main() {
   });
 
   testWidgets('OpenAI 导入时基础 URL 不以 /v1 结尾会显示推荐提示', (tester) async {
-    await tester.pumpWidget(buildSheet());
+    usePhoneSize(tester);
+    await loadReleasePreviewFonts(tester);
+    final previewKey = GlobalKey();
+    await tester.pumpWidget(
+      ProviderScope(
+        child: RepaintBoundary(
+          key: previewKey,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              fontFamily: captureReleaseSourcePreview ? 'ReleasePreview' : null,
+            ),
+            home: const Scaffold(body: AddProviderSheet()),
+          ),
+        ),
+      ),
+    );
 
     expect(find.textContaining('OpenAI 格式推荐'), findsNothing);
 
@@ -97,6 +113,7 @@ void main() {
     await tester.pump();
 
     expect(find.textContaining('OpenAI 格式推荐'), findsOneWidget);
+    await saveReleaseSourcePreview(tester, previewKey, 'add-provider-v1-hint');
 
     await tester.enterText(textFields.at(2), 'https://api.example.com/v1');
     await tester.pump();

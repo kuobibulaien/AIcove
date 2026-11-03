@@ -13,7 +13,10 @@ import 'package:workmanager/workmanager.dart';
 
 import '../../observability/background_delivery_diagnostics.dart';
 import '../../../core/database/database.dart' hide MessageBlock;
+import '../../../core/database/converters/database_converters.dart';
+import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/media/media_store.dart';
+import '../../../core/sync/cloud_setting_policy.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/database/repositories/repositories.dart';
 import '../../chat/services/chat_message_processor.dart';
@@ -64,8 +67,9 @@ BackgroundAssistantStoragePayload buildBackgroundAssistantStoragePayload(
     rawText: rawText,
     processedText: processedText,
   );
-  final payloadProcessedText =
-      processedText.isNotEmpty ? processedText : displayText;
+  final payloadProcessedText = processedText.isNotEmpty
+      ? processedText
+      : displayText;
   final rawPayload = ChatMessageProjectionCodec.buildRawAssistantPayload(
     apiResult: ApiCallResult(
       rawReplyText: rawText,
@@ -139,7 +143,7 @@ Duration delayUntilQuietHoursEnd(DateTime now, String end) {
   return candidate.difference(now) + const Duration(minutes: 1);
 }
 
-/// 与前台 `_pollDueTriggers()` 同源的发送门禁：quiet hours / dailyLimit / minInterval。
+/// 与前台 `_pollDueTriggers()` 同源的发送门禁：按联系人夜间免打扰时段判断。
 /// 返回 null 表示放行。
 @visibleForTesting
 BackgroundSendGateResult? evaluateBackgroundSendGates({
@@ -147,11 +151,14 @@ BackgroundSendGateResult? evaluateBackgroundSendGates({
   required Map<String, dynamic> autoReplySettings,
   required bool triggerAllowNight,
   required List<Map<String, dynamic>> allTriggers,
+  String? conversationId,
 }) {
-  final quietEnabled = autoReplySettings['quiet_hours_enabled'] != false;
-  final quietStart =
-      (autoReplySettings['quiet_hours_start'] as String?) ?? '22:00';
-  final quietEnd = (autoReplySettings['quiet_hours_end'] as String?) ?? '08:00';
+  final resolved = AutoReplySettings.fromJson(
+    autoReplySettings,
+  ).forContact(conversationId);
+  final quietEnabled = resolved.quietHoursEnabled;
+  final quietStart = resolved.quietHoursStart;
+  final quietEnd = resolved.quietHoursEnd;
   if (quietEnabled &&
       !triggerAllowNight &&
       isWithinQuietHoursWindow(now, start: quietStart, end: quietEnd)) {
@@ -159,46 +166,6 @@ BackgroundSendGateResult? evaluateBackgroundSendGates({
       reason: 'quiet_hours',
       retryDelay: delayUntilQuietHoursEnd(now, quietEnd),
     );
-  }
-
-  DateTime? parseFiredAt(Map<String, dynamic> trigger) {
-    if ((trigger['status'] as String?) != 'fired') return null;
-    final raw = trigger['last_fired_at'] as String?;
-    if (raw == null || raw.isEmpty) return null;
-    return DateTime.tryParse(raw)?.toLocal();
-  }
-
-  final firedTimes = allTriggers
-      .map(parseFiredAt)
-      .whereType<DateTime>()
-      .toList(growable: false);
-
-  final dailyLimit = (autoReplySettings['daily_limit'] as num?)?.toInt() ?? 3;
-  final firedToday = firedTimes
-      .where((t) =>
-          t.year == now.year && t.month == now.month && t.day == now.day)
-      .length;
-  if (firedToday >= dailyLimit) {
-    final nextMidnight = DateTime(now.year, now.month, now.day)
-        .add(const Duration(days: 1, minutes: 1));
-    return BackgroundSendGateResult(
-      reason: 'daily_limit',
-      retryDelay: nextMidnight.difference(now),
-    );
-  }
-
-  final minIntervalMinutes =
-      (autoReplySettings['min_interval_minutes'] as num?)?.toInt() ?? 120;
-  if (minIntervalMinutes > 0 && firedTimes.isNotEmpty) {
-    final latest = firedTimes.reduce((a, b) => a.isAfter(b) ? a : b);
-    final elapsed = now.difference(latest);
-    final required = Duration(minutes: minIntervalMinutes);
-    if (elapsed < required) {
-      return BackgroundSendGateResult(
-        reason: 'min_interval',
-        retryDelay: required - elapsed + const Duration(minutes: 1),
-      );
-    }
   }
 
   return null;
@@ -217,13 +184,16 @@ Future<Map<String, dynamic>> _loadAutoReplySettingsMap() async {
     return Map<String, dynamic>.from(settings.cast<String, dynamic>());
   } catch (e) {
     print('[Background] Failed to read auto-reply settings map: $e');
-    return const <String, dynamic>{};
+    rethrow;
   }
 }
 
 /// 执行时现读模型请求配置（默认聊天模型 + 供应商 + 直连兜底）。
 /// 返回 null 表示设置不可读，调用方回退旧任务携带的配置快照。
-Future<AutoReplyRequestConfig?> _loadBackgroundRequestConfig() async {
+Future<AutoReplyRequestConfig?> _loadBackgroundRequestConfig(
+  String convId,
+) async {
+  final AppSettings settings;
   try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
@@ -231,14 +201,30 @@ Future<AutoReplyRequestConfig?> _loadBackgroundRequestConfig() async {
     if (raw == null || raw.isEmpty) return null;
     final decoded = jsonDecode(raw);
     if (decoded is! Map) return null;
-    final settings = mapUiModelsToAppSettings(
+    settings = mapUiModelsToAppSettings(
       Map<String, dynamic>.from(decoded.cast<String, dynamic>()),
     );
-    return await resolveAutoReplyRequestConfig(settings);
   } catch (e) {
     print('[Background] Failed to resolve request config: $e');
-    return null;
+    rethrow;
   }
+  // 读库失败不能当成“没选模型”退回全局模型：直接抛出，交给 WorkManager 重试。
+  final sessionModel = await _loadSessionModel(convId);
+  return resolveAutoReplyRequestConfig(settings, sessionModel: sessionModel);
+}
+
+/// 目标会话自己选的聊天模型；没选过返回 null（退回默认队列），读库失败抛出。
+Future<String?> _loadSessionModel(String convId) async {
+  if (convId.isEmpty) return null;
+  return _withTaskDb((db) async {
+    final row = await db
+        .customSelect(
+          'SELECT session_provider FROM conversations WHERE id = ?',
+          variables: [Variable.withString(convId)],
+        )
+        .getSingleOrNull();
+    return row?.read<String?>('session_provider');
+  });
 }
 
 Future<List<Map<String, dynamic>>> _loadAllTriggerMaps() async {
@@ -255,7 +241,7 @@ Future<List<Map<String, dynamic>>> _loadAllTriggerMaps() async {
         .toList(growable: false);
   } catch (e) {
     print('[Background] Failed to load trigger list: $e');
-    return const <Map<String, dynamic>>[];
+    rethrow;
   }
 }
 
@@ -264,8 +250,9 @@ Future<void> _rescheduleBackgroundTask({
   required Map<String, dynamic> data,
   required Duration delay,
 }) async {
-  final normalizedDelay =
-      delay < const Duration(minutes: 1) ? const Duration(minutes: 1) : delay;
+  final normalizedDelay = delay < const Duration(minutes: 1)
+      ? const Duration(minutes: 1)
+      : delay;
   await Workmanager().registerOneOffTask(
     'trigger_$triggerId',
     taskNameActiveReply,
@@ -277,16 +264,15 @@ Future<void> _rescheduleBackgroundTask({
 }
 
 /// 后台尝试认领触发器执行权；返回令牌，null 表示未认领到。
-/// 数据库异常时按「保唯一性」原则返回 null，由前台补发。
-Future<String?> _tryClaimTriggerExecution(String triggerId) =>
-    _withClaimStore(
-      (store) => store.tryClaim(
-        triggerId: triggerId,
-        claimedBy: AutoReplyClaimOwner.background,
-      ),
-      fallback: null,
-      what: 'claim trigger execution',
-    );
+/// 数据库异常向上传递，由 WorkManager 重试。
+Future<String?> _tryClaimTriggerExecution(String triggerId) => _withClaimStore(
+  (store) => store.tryClaim(
+    triggerId: triggerId,
+    claimedBy: AutoReplyClaimOwner.background,
+  ),
+  fallback: null,
+  what: 'claim trigger execution',
+);
 
 /// 后台发送失败后释放执行权，让前台/重试可以重新认领。
 Future<void> _releaseTriggerExecutionClaim(String triggerId, String token) =>
@@ -303,17 +289,26 @@ Future<T> _withClaimStore<T>(
   required T fallback,
   required String what,
 }) async {
-  for (var attempt = 0;; attempt++) {
+  try {
+    return await _withTaskDb((db) => body(AutoReplyClaimStore(db)));
+  } catch (e) {
+    print('[Background] Failed to $what: $e');
+    rethrow;
+  }
+}
+
+/// 在任务连接上执行 [body]，撞锁时有界重试；仍失败就抛出。
+Future<T> _withTaskDb<T>(Future<T> Function(AppDatabase db) body) async {
+  for (var attempt = 0; ; attempt++) {
     try {
-      return await body(AutoReplyClaimStore(await _taskDatabase()));
+      return await body(await _taskDatabase());
     } catch (e) {
       // 前台连接的写事务可能占锁好几秒：退避总计约 12 秒，仍失败才放弃。
       if (_isSqliteLock(e) && attempt < 8) {
         await Future<void>.delayed(Duration(milliseconds: 50 * (1 << attempt)));
         continue;
       }
-      print('[Background] Failed to $what: $e');
-      return fallback;
+      rethrow;
     }
   }
 }
@@ -368,12 +363,14 @@ String _resolveBackgroundDisplayText({
   if (processedText.isNotEmpty) {
     return processedText;
   }
-  if (firstPartyContentTagScanner.scan(rawText).any(
-    (segment) =>
-        segment is ContentTagElement &&
-        segment.closed &&
-        ImagePlugin.isInlineImageElement(segment),
-  )) {
+  if (firstPartyContentTagScanner
+      .scan(rawText)
+      .any(
+        (segment) =>
+            segment is ContentTagElement &&
+            segment.closed &&
+            ImagePlugin.isInlineImageElement(segment),
+      )) {
     return '[图片]';
   }
   return rawText;
@@ -431,26 +428,60 @@ void callbackDispatcher() {
 
     if (task == taskNameActiveReply && inputData != null) {
       print('[Background] Active Reply Task Started');
-      try {
-        await _runActiveReplyTask(inputData);
-      } catch (e) {
-        print('[Background] Error: $e');
-        return Future.value(false);
-      }
+      return _backgroundTaskResult(() => _runActiveReplyTask(inputData));
     }
     return Future.value(true);
   });
 }
 
+Future<bool> _backgroundTaskResult(Future<void> Function() run) async {
+  try {
+    await run();
+    return true;
+  } catch (e) {
+    print('[Background] Error: $e');
+    return false;
+  }
+}
+
+/// Uses the callback's exact success/failure mapping without scheduling work.
+@visibleForTesting
+Future<bool> backgroundTaskResultForTest(Future<void> Function() run) =>
+    _backgroundTaskResult(run);
+
 /// WorkManager 任务本体的测试入口：同一个函数，不经 WorkManager 调度。
 @visibleForTesting
-Future<void> runActiveReplyTaskForTest(Map<String, dynamic> data) =>
-    _runActiveReplyTask(data);
+Future<void> runActiveReplyTaskForTest(
+  Map<String, dynamic> data, {
+  Future<void> Function()? beforePersist,
+  Future<void> Function()? beforeCallConfirm,
+  Future<void> Function()? afterPersist,
+  Future<String?> Function(String reminder)? generate,
+}) => runZoned(
+  () => _runActiveReplyTask(data),
+  zoneValues: {
+    _beforeBackgroundPersistKey: beforePersist,
+    #beforeBackgroundCallConfirm: beforeCallConfirm,
+    #afterBackgroundPersist: afterPersist,
+    #backgroundGenerate: generate,
+  },
+);
+
+const _beforeBackgroundPersistKey = #beforeBackgroundPersist;
 
 // 具体的任务逻辑
 Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   final String triggerId = data['triggerId'] ?? '';
-  final String prompt = data['prompt'] ?? '';
+  final latestTrigger = await _loadBackgroundTrigger(
+    triggerId,
+    data['convId'] ?? '',
+  );
+  // Persisted triggers own their current prompt; task data is legacy-only.
+  final String prompt = latestTrigger == null
+      ? (triggerId.isEmpty ? (data['prompt'] as String? ?? '') : '')
+      : (latestTrigger.prompt?.trim().isNotEmpty == true
+            ? latestTrigger.prompt!.trim()
+            : latestTrigger.title);
   final String? contextSnapshot = data['contextSnapshot'] as String?;
   final String convId = data['convId'] ?? '';
   final String characterName = data['characterName'] ?? 'AIcove';
@@ -459,7 +490,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   // 模型配置不随任务快照：执行时现读最新设置（换 key/换模型立即生效，
   // 密钥不落地 WorkManager）。旧版任务 inputData 中的配置仅作升级期兜底。
   // 即时生成与前台同走聊天装配入口（ADR0060），这里只用它判断能否生成。
-  final requestConfig = await _loadBackgroundRequestConfig();
+  final requestConfig = await _loadBackgroundRequestConfig(convId);
   final String apiKey;
   final String model;
   if (requestConfig != null) {
@@ -500,7 +531,8 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
     final active = await _isTriggerStillActive(triggerId, convId);
     if (!active) {
       print(
-          '[Background] Trigger is no longer active, skip task. triggerId=$triggerId');
+        '[Background] Trigger is no longer active, skip task. triggerId=$triggerId',
+      );
       await _appendHistoryLog(
         event: 'task_skipped_inactive_trigger',
         message: '后台主动回复任务已跳过：触发器已失效',
@@ -541,6 +573,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
       autoReplySettings: await _loadAutoReplySettingsMap(),
       triggerAllowNight: triggerAllowNight,
       allTriggers: allTriggers,
+      conversationId: convId,
     );
     if (gate != null) {
       var rescheduled = false;
@@ -554,10 +587,12 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
           rescheduled = true;
         } catch (e) {
           print('[Background] Failed to reschedule gated task: $e');
+          rethrow;
         }
       }
       print(
-          '[Background] Send gated by ${gate.reason}, rescheduled=$rescheduled');
+        '[Background] Send gated by ${gate.reason}, rescheduled=$rescheduled',
+      );
       await _appendHistoryLog(
         event: 'task_gated_${gate.reason}',
         message: rescheduled
@@ -599,7 +634,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
       claimToken = await _tryClaimTriggerExecution(triggerId);
     }
     // 上次已写入消息、却在标记 fired 前被杀：只补完收尾，不重复发送。
-    if (await _isTriggerMessageDelivered(convId, triggerId)) {
+    if (await _isTriggerDelivered(convId, triggerId)) {
       await _withClaimStore(
         (store) => store.beginDelivery(
           triggerId,
@@ -622,16 +657,49 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
     }
   }
 
+  Future<bool> cancelIfStale() async {
+    final reason = await _backgroundDeliveryInvalidReason(
+      await _taskDatabase(),
+      conversationId: convId,
+      triggerId: triggerId,
+    );
+    if (reason == null) return false;
+    if (claimToken != null) {
+      await _releaseTriggerExecutionClaim(triggerId, claimToken);
+    }
+    if (triggerId.isNotEmpty && reason != 'other_device') {
+      await _markTriggerTerminal(triggerId, status: 'expired', reason: reason);
+    }
+    await _appendHistoryLog(
+      event: 'task_skipped_stale_context',
+      message: '后台主动回复已取消：会话已删除或触发上下文已过期',
+      triggerId: triggerId.isEmpty ? null : triggerId,
+      conversationId: convId,
+      success: false,
+    );
+    return true;
+  }
+
+  if (await cancelIfStale()) return;
+
   // 1. 读取预生成缓存：新鲜缓存直接发送；过期缓存降级为兜底文案
   final cached = triggerId.isEmpty
       ? null
       : await _loadCachedTriggerReply(triggerId, convId);
   final cachedReply = cached?.content;
   final cacheNow = DateTime.now();
-  final cacheFresh = cached != null &&
+  final cacheFresh =
+      cached != null &&
       isCachedAutoReplyContentFresh(
         preparedAt: cached.preparedAt,
         now: cacheNow,
+      );
+  final canFallback =
+      cached != null &&
+      isCachedAutoReplyContentFresh(
+        preparedAt: cached.preparedAt,
+        now: cacheNow,
+        maxAge: const Duration(hours: 6),
       );
   final cacheAgeMinutes = cached?.preparedAt == null
       ? null
@@ -667,8 +735,8 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
         'cacheAgeMinutes': cacheAgeMinutes,
       },
     );
-  } else if (cachedReply != null && apiKey.trim().isEmpty) {
-    // 没有模型配置无法即时生成：过期缓存仍优于不发
+  } else if (canFallback && cachedReply != null && apiKey.trim().isEmpty) {
+    // 没有模型配置时，仅使用六小时内的缓存兜底。
     reply = cachedReply;
     usedCachedReply = true;
     await _appendHistoryLog(
@@ -688,20 +756,18 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   } else if (cachedReply != null) {
     await _appendHistoryLog(
       event: 'task_cache_stale_live_generation',
-      message: '预生成缓存已过期，后台任务优先即时生成，缓存降级为兜底',
+      message: '预生成缓存已过期，后台任务改为即时生成',
       triggerId: triggerId.isEmpty ? null : triggerId,
       title: triggerTitle,
       conversationId: convId,
       category: AutoReplyTriggerLogCategory.agent,
-      metadata: {
-        'cacheAgeMinutes': cacheAgeMinutes,
-      },
+      metadata: {'cacheAgeMinutes': cacheAgeMinutes},
     );
   }
 
   if (shouldSkipBackgroundActiveReplyForMissingModelConfig(
     apiKey: apiKey,
-    cachedReply: cachedReply,
+    cachedReply: canFallback ? cachedReply : null,
   )) {
     print('[Background] Missing model config, aborting live generation.');
     await _appendHistoryLog(
@@ -716,13 +782,16 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
     if (claimToken != null) {
       await _releaseTriggerExecutionClaim(triggerId, claimToken);
     }
-    return;
+    throw StateError('后台主动回复缺少可用模型配置');
   }
   reply ??= await _generateLiveReply(
     conversationId: convId,
     reminder: prompt,
     triggerId: triggerId,
   );
+  // Cancellation must precede the stale-cache fallback as well as persistence.
+  if (await cancelIfStale()) return;
+  reply = reply?.trim();
   if (!usedCachedReply && reply != null && reply.isNotEmpty) {
     await _appendHistoryLog(
       event: 'task_generated_live_reply',
@@ -732,12 +801,11 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
       conversationId: convId,
       category: AutoReplyTriggerLogCategory.agent,
       success: true,
-      metadata: {
-        'replyLength': reply.length,
-      },
+      metadata: {'replyLength': reply.length},
     );
   }
   if ((reply == null || reply.isEmpty) &&
+      canFallback &&
       cachedReply != null &&
       cachedReply.isNotEmpty) {
     // 即时生成失败：回退过期缓存兜底
@@ -772,7 +840,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
     if (claimToken != null) {
       await _releaseTriggerExecutionClaim(triggerId, claimToken);
     }
-    return;
+    throw StateError('后台主动回复生成失败或内容为空');
   }
 
   final storagePayload = buildBackgroundAssistantStoragePayload(reply);
@@ -788,14 +856,14 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   if (claimToken != null &&
       (handedOff ||
           !await _withClaimStore(
-        (store) => store.beginDelivery(
-          triggerId,
-          claimToken!,
-          messageId: backgroundTriggerMessageId(triggerId),
-        ),
-        fallback: false,
-        what: 'begin delivery',
-      ))) {
+            (store) => store.beginDelivery(
+              triggerId,
+              claimToken!,
+              messageId: backgroundTriggerMessageId(triggerId),
+            ),
+            fallback: false,
+            what: 'begin delivery',
+          ))) {
     await _appendHistoryLog(
       event: 'task_superseded',
       message: '后台主动回复已放弃：生成期间执行权被另一方或另一台设备接管',
@@ -809,13 +877,26 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   }
 
   // 2. 将消息写入本地存储
-  final persisted = await _saveMessageToStorage(
-    convId,
-    storagePayload,
-    messageId: triggerId.isEmpty
-        ? 'bg_${DateTime.now().millisecondsSinceEpoch}'
-        : backgroundTriggerMessageId(triggerId),
-  );
+  final bool persisted;
+  try {
+    persisted = await _saveMessageToStorage(
+      convId,
+      storagePayload,
+      triggerId: triggerId,
+      messageId: triggerId.isEmpty
+          ? 'bg_${DateTime.now().millisecondsSinceEpoch}'
+          : backgroundTriggerMessageId(triggerId),
+    );
+  } catch (_) {
+    if (claimToken != null) {
+      await _withClaimStore(
+        (store) => store.abortDelivery(triggerId, claimToken!),
+        fallback: null,
+        what: 'abort failed persistence',
+      );
+    }
+    rethrow;
+  }
   if (!persisted) {
     await _appendHistoryLog(
       event: 'task_failed_persist_message',
@@ -826,7 +907,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
       success: false,
       level: AutoReplyTriggerLogLevel.error,
     );
-    // 写入在事务里失败，什么都没写进去：撤销认领，让下一次重试接手。
+    // 返回 false 只表示终态取消；数据库异常已抛出并撤销送达认领。
     if (claimToken != null) {
       await _withClaimStore(
         (store) => store.abortDelivery(triggerId, claimToken!),
@@ -834,12 +915,30 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
         what: 'abort delivery',
       );
     }
+    if (await cancelIfStale()) return;
+    if (triggerId.isNotEmpty) {
+      await _markTriggerTerminal(
+        triggerId,
+        status: 'expired',
+        reason: 'delivery_anchor_no_longer_active',
+      );
+    }
     return;
   }
+  final afterPersist =
+      Zone.current[#afterBackgroundPersist] as Future<void> Function()?;
+  await afterPersist?.call();
 
   // 3. 尝试发送系统通知；通知失败不影响已写入的主动消息
+  final mayNotify = await _isBackgroundDeliveryCurrent(
+    await _taskDatabase(),
+    conversationId: convId,
+    triggerId: triggerId,
+  );
   try {
-    await _showNotification(characterName, storagePayload.displayText);
+    if (mayNotify) {
+      await _showNotification(characterName, storagePayload.displayText);
+    }
   } catch (e) {
     await _appendHistoryLog(
       event: 'task_notification_failed',
@@ -849,9 +948,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
       conversationId: convId,
       success: false,
       level: AutoReplyTriggerLogLevel.warning,
-      metadata: {
-        'error': e.toString(),
-      },
+      metadata: {'error': e.toString()},
     );
   }
 
@@ -882,16 +979,140 @@ Future<String?> _generateLiveReply({
   required String triggerId,
 }) async {
   try {
-    return await generateHeadlessProactiveReply(
+    final db = await _taskDatabase();
+    return await _generateBackgroundReplyIfCurrent(
+      database: db,
       conversationId: conversationId,
-      reminder: reminder,
-      turnId: 'auto_reply_background_$triggerId',
-      overrides: [databaseProvider.overrideWithValue(await _taskDatabase())],
+      triggerId: triggerId,
+      generate: () async {
+        final trigger = await _loadBackgroundTrigger(triggerId, conversationId);
+        final latestReminder = trigger == null
+            ? reminder
+            : (trigger.prompt?.trim().isNotEmpty == true
+                ? trigger.prompt!.trim() : trigger.title);
+        final generate =
+            Zone.current[#backgroundGenerate]
+                as Future<String?> Function(String)?;
+        if (generate != null) return generate(latestReminder);
+        return generateHeadlessProactiveReply(
+          conversationId: conversationId,
+          reminder: latestReminder,
+          turnId: 'auto_reply_background_$triggerId',
+          overrides: [databaseProvider.overrideWithValue(db)],
+        );
+      },
     );
   } catch (e) {
     print('[Background] Live generation failed: $e');
     return null;
   }
+}
+
+/// Runs the production lifecycle gates with an injectable generation boundary.
+@visibleForTesting
+Future<String?> generateBackgroundLiveReplyForTest({
+  required AppDatabase database,
+  required String conversationId,
+  required String triggerId,
+  required Future<String?> Function() generate,
+}) => _generateBackgroundReplyIfCurrent(
+  database: database,
+  conversationId: conversationId,
+  triggerId: triggerId,
+  generate: generate,
+);
+
+Future<String?> _generateBackgroundReplyIfCurrent({
+  required AppDatabase database,
+  required String conversationId,
+  required String triggerId,
+  required Future<String?> Function() generate,
+}) async {
+  if (!await _isBackgroundDeliveryCurrent(
+    database,
+    conversationId: conversationId,
+    triggerId: triggerId,
+  )) {
+    return null;
+  }
+  final reply = await generate();
+  if (!await _isBackgroundDeliveryCurrent(
+    database,
+    conversationId: conversationId,
+    triggerId: triggerId,
+  )) {
+    return null;
+  }
+  return reply;
+}
+
+Future<AutoReplyTrigger?> _loadBackgroundTrigger(
+  String triggerId,
+  String conversationId,
+) async {
+  if (triggerId.isEmpty) return null;
+  final trigger = (await _loadAllTriggerMaps())
+      .where((item) => item['id'] == triggerId)
+      .map(AutoReplyTrigger.fromJson)
+      .firstOrNull;
+  return trigger?.conversationId == conversationId ? trigger : null;
+}
+
+Future<bool> _isBackgroundDeliveryCurrent(
+  AppDatabase db, {
+  required String conversationId,
+  required String triggerId,
+}) async =>
+    await _backgroundDeliveryInvalidReason(
+      db,
+      conversationId: conversationId,
+      triggerId: triggerId,
+    ) ==
+    null;
+
+Future<String?> _backgroundDeliveryInvalidReason(
+  AppDatabase db, {
+  required String conversationId,
+  required String triggerId,
+}) async {
+  final conversation = await ConversationRepository(db).getById(conversationId);
+  if (conversation == null || conversation.deletedAt != null) {
+    return 'conversation_deleted';
+  }
+  if (!(await ProactiveOwnership.load()).owns(conversationId)) {
+    return 'other_device';
+  }
+  if (triggerId.isEmpty) return null; // Legacy tasks have no trigger snapshot.
+  final trigger = await _loadBackgroundTrigger(triggerId, conversationId);
+  if (trigger == null || !trigger.isActive) return 'trigger_inactive';
+  if (trigger.source == TriggerSource.aiScheduler &&
+      !ConversationConverter.fromDb(conversation).allowsPlugin('trigger')) {
+    return 'trigger_plugin_disabled';
+  }
+  final latestUser =
+      await (db.select(db.messages)
+            ..where(
+              (row) =>
+                  row.conversationId.equals(conversationId) &
+                  row.role.equals('user') &
+                  row.deletedAt.isNull() &
+                  row.replacedBy.isNull(),
+            )
+            ..orderBy([
+              (row) => OrderingTerm.desc(row.createdAt),
+              (row) => OrderingTerm.desc(row.id),
+            ])
+            ..limit(1))
+          .getSingleOrNull();
+  return trigger.shouldExpire(
+        currentLastUserMessageId: latestUser?.id,
+        currentLastUserMessageAt: latestUser == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(latestUser.createdAt),
+        isChatActive: false,
+      )
+      ? 'trigger_context_expired'
+      : null;
 }
 
 /// 一个触发器只对应一条主动消息：编号固定，崩溃后重试不会重复写入。
@@ -904,14 +1125,34 @@ Future<bool> _isTriggerMessageDelivered(
   String? messageId,
 }) async {
   try {
-    final existing = await MessageRepository(await _taskDatabase())
-        .getById(messageId ?? backgroundTriggerMessageId(triggerId));
+    final existing = await MessageRepository(
+      await _taskDatabase(),
+    ).getById(messageId ?? backgroundTriggerMessageId(triggerId));
     return existing != null &&
-        (messageId != null || existing.conversationId == conversationId);
+        existing.conversationId == conversationId &&
+        existing.deletedAt == null &&
+        existing.replacedBy == null;
   } catch (e) {
     print('[Background] Failed to check delivered message: $e');
-    return false;
+    rethrow;
   }
+}
+
+Future<bool> _isTriggerDelivered(
+  String conversationId,
+  String triggerId, {
+  String? messageId,
+}) async {
+  if (await _isTriggerMessageDelivered(
+    conversationId,
+    triggerId,
+    messageId: messageId,
+  )) {
+    return true;
+  }
+  final trigger = await _loadBackgroundTrigger(triggerId, conversationId);
+  return trigger?.action == ProactiveAction.callUser &&
+      await ProactiveCallLedger(await _taskDatabase()).isConfirmed(triggerId);
 }
 
 /// 角色想打电话、App 在后台（方案 12 §13）：占到唯一的响铃位后发一条带
@@ -928,9 +1169,11 @@ Future<bool> _ringInBackground({
   required String claimToken,
 }) async {
   if (defaultTargetPlatform != TargetPlatform.android) return false;
-  final settings = await _loadAutoReplySettingsMap();
+  final settings = AutoReplySettings.fromJson(
+    await _loadAutoReplySettingsMap(),
+  ).forContact(convId);
   final ledger = ProactiveCallLedger(await _taskDatabase());
-  final String? blocked = settings['allow_proactive_calls'] != true
+  final String? blocked = !settings.allowProactiveCalls
       ? '主动来电已关闭'
       : await ledger.callsPaused(convId)
       ? '连续没接，暂停主动来电'
@@ -977,7 +1220,50 @@ Future<bool> _ringInBackground({
     );
     return true;
   }
-  await ledger.confirm(triggerId);
+  final beforeConfirm =
+      Zone.current[#beforeBackgroundCallConfirm] as Future<void> Function()?;
+  await beforeConfirm?.call();
+  final String? invalid;
+  try {
+    invalid = await cloudLocalWrite(() async {
+      final db = await _taskDatabase();
+      var reason = await _backgroundDeliveryInvalidReason(
+        db,
+        conversationId: convId,
+        triggerId: triggerId,
+      );
+      if (reason != null) return reason;
+      await ledger.confirm(triggerId);
+      reason = await _backgroundDeliveryInvalidReason(
+        db,
+        conversationId: convId,
+        triggerId: triggerId,
+      );
+      return reason;
+    });
+  } catch (_) {
+    if (!await ledger.isConfirmed(triggerId)) {
+      await ledger.release(triggerId);
+      await _withClaimStore(
+        (store) => store.abortDelivery(triggerId, claimToken),
+        fallback: null,
+        what: 'abort failed call confirmation',
+      );
+    }
+    rethrow;
+  }
+  if (invalid != null) {
+    await ledger.release(triggerId);
+    await _withClaimStore(
+      (store) => store.abortDelivery(triggerId, claimToken),
+      fallback: null,
+      what: 'cancel invalid call',
+    );
+    if (invalid != 'other_device') {
+      await _markTriggerTerminal(triggerId, status: 'expired', reason: invalid);
+    }
+    return true;
+  }
   try {
     await showIncomingCallNotification(
       triggerId: triggerId,
@@ -1013,9 +1299,11 @@ Future<void> _finishDeliveredTrigger(
   String conversationId,
 ) async {
   await _markTriggerAsFired(triggerId);
-  await _advanceConversationProactiveStateAfterBackgroundSend(
-    triggerId: triggerId,
-    conversationId: conversationId,
+  await cloudLocalWrite(
+    () => _advanceConversationProactiveStateAfterBackgroundSend(
+      triggerId: triggerId,
+      conversationId: conversationId,
+    ),
   );
 }
 
@@ -1050,16 +1338,19 @@ Future<bool> _handleClaimLost({
       await _rescheduleBackgroundTask(
         triggerId: triggerId,
         data: data,
-        delay: startedAt
+        delay:
+            startedAt
                 .add(AutoReplyClaimStore.lease)
                 .difference(DateTime.now()) +
             const Duration(minutes: 1),
       );
-      print('[Background] Delivery in progress elsewhere, rescheduled past '
-          'its lease. triggerId=$triggerId');
+      print(
+        '[Background] Delivery in progress elsewhere, rescheduled past '
+        'its lease. triggerId=$triggerId',
+      );
       return false;
     case AutoReplyClaimDelivered(:final messageId):
-      final delivered = await _isTriggerMessageDelivered(
+      final delivered = await _isTriggerDelivered(
         convId,
         triggerId,
         messageId: messageId,
@@ -1075,9 +1366,7 @@ Future<bool> _handleClaimLost({
       }
       await _appendHistoryLog(
         event: 'task_delivery_interrupted_finalized',
-        message: delivered
-            ? '后台主动回复上次送达后中断，补记为已送达'
-            : '后台主动回复上次开始送达后中断，不重试',
+        message: delivered ? '后台主动回复上次送达后中断，补记为已送达' : '后台主动回复上次开始送达后中断，不重试',
         triggerId: triggerId,
         title: title,
         conversationId: convId,
@@ -1091,11 +1380,13 @@ Future<bool> _handleClaimLost({
       await _rescheduleBackgroundTask(
         triggerId: triggerId,
         data: data,
-        delay: leaseEndsAt.difference(DateTime.now()) +
-            const Duration(minutes: 1),
+        delay:
+            leaseEndsAt.difference(DateTime.now()) + const Duration(minutes: 1),
       );
-      print('[Background] Trigger claimed elsewhere, rescheduled past lease. '
-          'triggerId=$triggerId');
+      print(
+        '[Background] Trigger claimed elsewhere, rescheduled past lease. '
+        'triggerId=$triggerId',
+      );
       await _appendHistoryLog(
         event: 'task_skipped_claim_lost',
         message: '后台主动回复暂缓：另一方正在执行，租约过期后再试',
@@ -1140,24 +1431,12 @@ Future<bool> _saveMessageToStorage(
   String convId,
   BackgroundAssistantStoragePayload payload, {
   required String messageId,
+  required String triggerId,
 }) async {
   try {
     final db = await _taskDatabase();
     final convRepo = ConversationRepository(db);
     final msgRepo = MessageRepository(db);
-
-    // 检查会话是否存在
-    final conv = await convRepo.getById(convId);
-    if (conv == null) {
-      print('[Background] Conversation not found: $convId');
-      return false;
-    }
-
-    // 已写入过（崩溃后重试）：视为已送达，不重复插入、不重复加未读
-    if (await msgRepo.getById(messageId) != null) {
-      print('[Background] Message already delivered: $messageId');
-      return true;
-    }
 
     // 消息、会话摘要与未读数同一事务写入：有消息就一定有摘要和未读，
     // 崩溃恢复只需看消息是否存在。
@@ -1166,34 +1445,64 @@ Future<bool> _saveMessageToStorage(
       ...payload.rawPayload,
       'bg_origin_device_id': await MediaStore.localDeviceId,
     };
-    await db.transaction(() async {
-      await msgRepo.insert(MessagesCompanion(
-        id: Value(messageId),
-        conversationId: Value(convId),
-        role: const Value('assistant'),
-        content: Value(payload.rawText),
-        status: const Value('sent'),
-        createdAt: Value(now),
-        rawPayload: Value(jsonEncode(rawPayload)),
-      ));
+    final beforePersist =
+        Zone.current[_beforeBackgroundPersistKey] as Future<void> Function()?;
+    await beforePersist?.call();
+    final persisted = await db.transaction(() async {
+      // Check after all asynchronous preparation, under the same transaction
+      // that commits the message. A synced delete must win over delivery.
+      final conv = await convRepo.getById(convId);
+      if (conv == null || conv.deletedAt != null) {
+        print('[Background] Conversation missing or deleted: $convId');
+        return false;
+      }
+      if (!await _isBackgroundDeliveryCurrent(
+        db,
+        conversationId: convId,
+        triggerId: triggerId,
+      )) {
+        return false;
+      }
+      final existing = await msgRepo.getById(messageId);
+      if (existing != null) {
+        return existing.conversationId == convId &&
+            existing.deletedAt == null &&
+            existing.replacedBy == null;
+      }
+      await msgRepo.insert(
+        MessagesCompanion(
+          id: Value(messageId),
+          conversationId: Value(convId),
+          role: const Value('assistant'),
+          content: Value(payload.rawText),
+          status: const Value('sent'),
+          createdAt: Value(now),
+          rawPayload: Value(jsonEncode(rawPayload)),
+        ),
+      );
       await convRepo.updateSummary(convId, payload.displayText, now);
       await db.customUpdate(
         'UPDATE conversations SET unread_count = unread_count + 1 WHERE id = ?',
         variables: [Variable.withString(convId)],
         updates: {db.conversations},
       );
+      return true;
     });
 
-    print('[Background] Message saved to SQLite.');
-    return true;
+    if (persisted) {
+      print('[Background] Message saved to SQLite.');
+    }
+    return persisted;
   } catch (e) {
     print('[Background] SQLite Error: $e');
-    return false;
+    rethrow;
   }
 }
 
 Future<String?> _loadTriggerTitle(
-    String triggerId, String conversationId) async {
+  String triggerId,
+  String conversationId,
+) async {
   if (triggerId.isEmpty) return null;
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -1221,7 +1530,9 @@ Future<String?> _loadTriggerTitle(
 }
 
 Future<bool> _isTriggerStillActive(
-    String triggerId, String conversationId) async {
+  String triggerId,
+  String conversationId,
+) async {
   try {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
@@ -1247,7 +1558,7 @@ Future<bool> _isTriggerStillActive(
     return false;
   } catch (e) {
     print('[Background] Failed to inspect trigger state: $e');
-    return false;
+    rethrow;
   }
 }
 
@@ -1284,7 +1595,8 @@ Future<_BackgroundCachedReply?> _loadCachedTriggerReply(
         return null;
       }
       final status = (map['status'] as String?) ?? '';
-      final isActive = status == 'created' ||
+      final isActive =
+          status == 'created' ||
           status == 'preparing' ||
           status == 'prepared' ||
           status == 'pending';
@@ -1305,7 +1617,7 @@ Future<_BackgroundCachedReply?> _loadCachedTriggerReply(
     return null;
   } catch (e) {
     print('[Background] Failed to load cached trigger reply: $e');
-    return null;
+    rethrow;
   }
 }
 
@@ -1332,7 +1644,8 @@ Future<void> _markTriggerTerminal(
       final map = Map<String, dynamic>.from(item.cast<String, dynamic>());
       if ((map['id'] as String?) != triggerId) return map;
       final current = (map['status'] as String?) ?? '';
-      final isActive = current == 'created' ||
+      final isActive =
+          current == 'created' ||
           current == 'preparing' ||
           current == 'prepared' ||
           current == 'pending';
@@ -1345,10 +1658,11 @@ Future<void> _markTriggerTerminal(
     }).toList();
 
     if (changed) {
-      await prefs.setString(_triggerStoreKey, jsonEncode(updated));
+      await saveCloudPreference(prefs, _triggerStoreKey, jsonEncode(updated));
     }
   } catch (e) {
     print('[Background] Failed to mark trigger $status: $e');
+    rethrow;
   }
 }
 
@@ -1363,16 +1677,55 @@ Future<void> _advanceConversationProactiveStateAfterBackgroundSend({
     }
 
     final storage = ConversationProactiveStateStorage();
-    final states = await storage.loadStates();
-    final current = states[conversationId] ??
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final states = Map<String, ConversationProactiveState>.of(
+      await storage.loadStates(),
+    );
+    final current =
+        states[conversationId] ??
         ConversationProactiveState(conversationId: conversationId);
-    final next = current
-        .clearPendingAutoTrigger(triggerId: triggerId)
-        .afterSuccessfulAutoTriggerSend(occurredAt: DateTime.now());
+    final trigger = await _loadBackgroundTrigger(triggerId, conversationId);
+    final db = await _taskDatabase();
+    final user =
+        await (db.select(db.messages)
+              ..where(
+                (row) =>
+                    row.conversationId.equals(conversationId) &
+                    row.role.equals('user') &
+                    row.deletedAt.isNull() &
+                    row.replacedBy.isNull(),
+              )
+              ..orderBy([
+                (row) => OrderingTerm.desc(row.createdAt),
+                (row) => OrderingTerm.desc(row.id),
+              ])
+              ..limit(1))
+            .getSingleOrNull();
+    final userAt = user == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(user.createdAt);
+    final contextChanged =
+        trigger == null ||
+        (trigger.contextLastUserMessageId != null
+            ? trigger.contextLastUserMessageId != user?.id
+            : (trigger.contextLastUserMessageAt == null
+                  ? user != null
+                  : userAt == null ||
+                        userAt.isAfter(trigger.contextLastUserMessageAt!)));
+    final next = contextChanged
+        ? current.markUserMessage(
+            messageId: user?.id,
+            occurredAt: userAt ?? DateTime.now(),
+          )
+        : current
+              .clearPendingAutoTrigger(triggerId: triggerId)
+              .afterSuccessfulAutoTriggerSend(occurredAt: DateTime.now());
     states[conversationId] = next;
     await storage.saveStates(states);
   } catch (e) {
     print('[Background] Failed to advance proactive state: $e');
+    rethrow;
   }
 }
 
@@ -1401,7 +1754,7 @@ Future<String?> _loadTriggerSource(
     return null;
   } catch (e) {
     print('[Background] Failed to load trigger source: $e');
-    return null;
+    rethrow;
   }
 }
 

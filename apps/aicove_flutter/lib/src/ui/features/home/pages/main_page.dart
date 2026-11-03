@@ -7,6 +7,7 @@ import '../../../../features/app_update/app_update_dialog.dart';
 import '../../../../features/app_update/app_update_service.dart';
 import '../../../../features/app_update/release_announcement.dart';
 import '../../../../features/chat/presentation/widgets/custom_bottom_nav.dart';
+import '../../../theme/moe_frosted_material.dart';
 import '../../../theme/tokens.dart';
 import '../../../shared/widgets/moe_chat_wallpaper.dart';
 import '../../../shared/widgets/moe_floating_surface.dart';
@@ -65,23 +66,37 @@ class _MainPageState extends ConsumerState<MainPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.moeColors;
     final isWide = MoeWorkspace.maybeOf(context)?.isWide == true;
+    final hasWallpaper = MoeGlobalWallpaper.isActive(context);
     final content = MoeSurfaceGroup(
       key: _contentKey,
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: IndexedStack(
-          index: _currentIndex,
-          children: [
-            const ContactsPage(),
-            _visited.contains(1)
-                ? const WorkspaceListPage()
-                : const SizedBox.shrink(),
-            _visited.contains(2)
-                ? const SettingsPage()
-                : const SizedBox.shrink(),
-          ],
+        body: MoeSharedBackdrop(
+          child: MoeSolidBackdropScope(
+            color: !isWide && !hasWallpaper ? context.moeColors.surface : null,
+            child: IndexedStack(
+              index: _currentIndex,
+              children: [
+                TickerMode(
+                  enabled: _currentIndex == 0,
+                  child: const ContactsPage(),
+                ),
+                TickerMode(
+                  enabled: _currentIndex == 1,
+                  child: _visited.contains(1)
+                      ? const WorkspaceListPage()
+                      : const SizedBox.shrink(),
+                ),
+                TickerMode(
+                  enabled: _currentIndex == 2,
+                  child: _visited.contains(2)
+                      ? const SettingsPage()
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
         ),
         bottomNavigationBar: CustomBottomNav(
           currentIndex: _currentIndex,
@@ -109,11 +124,7 @@ class _MainPageState extends ConsumerState<MainPage> {
     // A full-screen narrow page is a page like any other: it shows the global
     // wallpaper with that wallpaper's own mask and blur, in every material.
     if (!isWide && MoeGlobalWallpaper.isActive(context)) {
-      return MoeGlobalWallpaper(
-        slot: GlobalWallpaperSlot.home,
-        color: colors.surface,
-        child: content,
-      );
+      return MoeGlobalWallpaper(slot: GlobalWallpaperSlot.home, child: content);
     }
     return MoePageSurface(
       // Full-screen narrow pages have nothing behind them to blur; a material

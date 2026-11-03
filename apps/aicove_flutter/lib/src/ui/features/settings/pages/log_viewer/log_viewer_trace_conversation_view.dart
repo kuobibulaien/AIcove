@@ -206,7 +206,6 @@ class _TraceTurnDropdown extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         decoration: BoxDecoration(
-          color: colors.surface,
           border: Border(
             bottom: BorderSide(color: colors.borderLight, width: 0.5),
           ),

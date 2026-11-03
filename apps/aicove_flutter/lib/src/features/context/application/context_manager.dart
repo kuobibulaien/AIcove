@@ -1,6 +1,8 @@
 import '../../../core/app_logger.dart';
 import '../../../core/utils/token_estimator.dart';
 import '../../chat/domain/message.dart';
+import '../../chat/services/chat_request_message_builder.dart';
+import '../../../core/models/message_block.dart';
 import '../domain/context_summary.dart';
 
 /// 压缩成功（摘要已落库）后的通知；长期记忆据此在后台整理，不阻塞调用方。
@@ -64,19 +66,19 @@ class ContextManager implements ManualCompactionPort, ConversationContextPort {
     required void Function(int completed, int total) onProgress,
     required bool Function() isCancelled,
   }) => _userAction(ownerId, () async {
-      final snapshot = await store.manualSnapshot(ownerId);
-      final summary = await (await summarizerFactory()).summarize(
-        snapshot,
-        kind: ContextSummaryKind.manual,
-        onProgress: onProgress,
-        isCancelled: isCancelled,
-      );
-      if (isCancelled()) {
-        throw const ContextCompactionException('已取消整理。');
-      }
-      validateContextSummary(summary);
-      return ManualCompactionDraft(snapshot: snapshot, summary: summary);
-    });
+    final snapshot = await store.manualSnapshot(ownerId);
+    final summary = await (await summarizerFactory()).summarize(
+      snapshot,
+      kind: ContextSummaryKind.manual,
+      onProgress: onProgress,
+      isCancelled: isCancelled,
+    );
+    if (isCancelled()) {
+      throw const ContextCompactionException('已取消整理。');
+    }
+    validateContextSummary(summary);
+    return ManualCompactionDraft(snapshot: snapshot, summary: summary);
+  });
 
   @override
   Future<ContextSummary> commit(ManualCompactionDraft draft, String summary) {
@@ -147,9 +149,7 @@ class ContextManager implements ManualCompactionPort, ConversationContextPort {
         if (again != null) return again;
         final all = await _loadThrough(ownerId, boundaryId);
         if (all == null) {
-          throw const ContextCompactionException(
-            '话题边界已失效，请先恢复或撤销上次压缩，本轮未发送。',
-          );
+          throw const ContextCompactionException('话题边界已失效，请先恢复或撤销上次压缩，本轮未发送。');
         }
         final eligible = all
             .where(
@@ -196,9 +196,7 @@ class ContextManager implements ManualCompactionPort, ConversationContextPort {
         } on ContextCompactionException {
           rethrow;
         } catch (error) {
-          throw ContextCompactionException(
-            '上一段话题的摘要缺失，补整理失败，本轮未发送：$error',
-          );
+          throw ContextCompactionException('上一段话题的摘要缺失，补整理失败，本轮未发送：$error');
         }
       });
 
@@ -242,7 +240,7 @@ class ContextManager implements ManualCompactionPort, ConversationContextPort {
       (n, m) =>
           n +
           estimateTokenCount(
-            '${m.content} ${m.blocks?.map((b) => b.toJson()).toList() ?? []}',
+            '${m.role == 'assistant' ? ChatRequestMessageBuilder.stripAssistantDraftTags(m.content) : m.content} ${m.blocks?.map((b) => m.role == 'assistant' && b is TextBlock ? {...b.toJson(), 'content': ChatRequestMessageBuilder.stripAssistantDraftTags(b.content)} : b.toJson()).toList() ?? []}',
           ),
     );
     var cut = starts.last;

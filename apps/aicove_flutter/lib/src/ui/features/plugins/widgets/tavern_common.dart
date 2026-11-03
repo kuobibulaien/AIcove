@@ -96,6 +96,69 @@ Future<void> runTavernAction(
   }
 }
 
+/// 弹窗重命名一套酒馆预设。
+Future<void> renameTavernPreset(
+  BuildContext context,
+  WidgetRef ref, {
+  required String presetId,
+  required String currentName,
+}) async {
+  var value = currentName;
+  final confirmed = await showMeoTalkDialog(
+    context: context,
+    title: '重命名预设',
+    cancelText: '取消',
+    confirmText: '保存',
+    content: _PresetNameInput(
+      initialValue: currentName,
+      onChanged: (next) => value = next,
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  final trimmed = value.trim();
+  if (trimmed == currentName.trim() && trimmed.isNotEmpty) return;
+  await runTavernAction(
+    context,
+    () => ref
+        .read(presetRecipeImportControllerProvider.notifier)
+        .renamePreset(presetId, trimmed),
+  );
+}
+
+class _PresetNameInput extends StatefulWidget {
+  const _PresetNameInput({
+    required this.initialValue,
+    required this.onChanged,
+  });
+
+  final String initialValue;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_PresetNameInput> createState() => _PresetNameInputState();
+}
+
+class _PresetNameInputState extends State<_PresetNameInput> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialValue,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => MoeTextField(
+    key: const ValueKey('tavern-preset-name-input'),
+    controller: _controller,
+    hint: '预设名称',
+    autofocus: true,
+    onChanged: widget.onChanged,
+  );
+}
+
 /// 确认后删除一套酒馆预设；成功返回 true。仍被角色绑定时由应用层拒绝并提示。
 Future<bool> confirmDeleteTavernPreset(
   BuildContext context,

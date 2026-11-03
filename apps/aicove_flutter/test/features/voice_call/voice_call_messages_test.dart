@@ -1,6 +1,7 @@
 import 'package:aicove_flutter/src/features/voice_call/data/api_runner_call_reply_generator.dart';
 import 'package:aicove_flutter/src/features/voice_call/domain/voice_call_ports.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_role_options.dart';
 
 void main() {
   const turns = [
@@ -117,6 +118,11 @@ void main() {
     expect(voiceCallPluginIds(null), ['memory', 'time_awareness']);
     expect(voiceCallPluginIds(['tts', 'image', 'memory']), ['memory']);
     expect(voiceCallPluginIds(const []), isEmpty);
+    expect(voiceCallPluginIds([
+      'tts', 'time_awareness', TimeAwarenessRoleOptions.noCurrentTimeId,
+    ]), ['time_awareness', TimeAwarenessRoleOptions.noCurrentTimeId]);
+    expect(voiceCallPluginIds([TimeAwarenessRoleOptions.noCurrentTimeId]),
+      [TimeAwarenessRoleOptions.noCurrentTimeId]);
   });
 
   test(

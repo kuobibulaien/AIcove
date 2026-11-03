@@ -4,6 +4,7 @@ globalThis.console = Object.freeze({log(){}, info(){}, warn(){}, error(){}, debu
 globalThis.__spreset = (() => {
   let config = {}, macros = {}, definitions = new Map();
   let processor = null, output = '', raw = '', hold = '', state = {};
+  let initialTools = [], currentTools = [], dynamicToolNames = new Set();
   const clone = value => JSON.parse(JSON.stringify(value));
   const functionValue = source => {
     const value = (0, eval)(String(source));
@@ -19,6 +20,34 @@ globalThis.__spreset = (() => {
           !(typeof m.content === 'string' || Array.isArray(m.content) || m.content == null)) {
         throw Error('Invalid message from preset');
       }
+    }
+    return messages;
+  }
+  function normalizeTool(tool) {
+    const d = tool?.type === 'function' && tool.function ? tool.function : tool;
+    if (!d || typeof d.name !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(d.name) || d.parameters?.type !== 'object') {
+      throw Error('Invalid tool from preset');
+    }
+    return {type:'function',function:{name:d.name,description:String(d.description||''),parameters:d.parameters}};
+  }
+  // Runs last, after squash and forced processing, and owns this round's tools.
+  async function finalRequest(prepared) {
+    currentTools = clone(initialTools); dynamicToolNames.clear();
+    const f = config.FinalRequestProcessing || {};
+    if (!f.enabled || !String(f.script || '').trim()) return prepared;
+    const request = {messages: prepared, tools: clone(initialTools)};
+    const changed = await functionValue(f.script)({request});
+    const result = changed && typeof changed === 'object' ? changed : request;
+    const messages = validateMessages(result.messages);
+    if (Array.isArray(result.tools)) {
+      const tools = result.tools.map(normalizeTool);
+      const names = new Set();
+      for (const t of tools) {
+        if (names.has(t.function.name)) throw Error('Duplicate preset tool: '+t.function.name);
+        names.add(t.function.name);
+      }
+      currentTools = clone(tools);
+      for (const name of names) if (!definitions.has(name)) dynamicToolNames.add(name);
     }
     return messages;
   }
@@ -139,6 +168,7 @@ globalThis.__spreset = (() => {
   return {
     async init(input) {
       config = input.config || {}; macros = input.macros || {}; definitions = new Map();
+      dynamicToolNames = new Set();
       if (config.MacroNest) throw Error('SPreset MacroNest not supported');
       const enabled = new Set(input.activeIds || []);
       for (const [id,b] of Object.entries(config.MessageInjections || {})) {
@@ -151,11 +181,17 @@ globalThis.__spreset = (() => {
         if (definitions.has(d.name)) throw Error('Duplicate preset tool: '+d.name);
         definitions.set(d.name,d);
       }
-      return {tools:[...definitions.values()].map(d=>({type:'function',function:{name:d.name,description:String(d.description||''),parameters:d.parameters}}))};
+      initialTools = clone([...definitions.values()].map(normalizeTool));
+      currentTools = clone(initialTools);
+      return {tools:currentTools};
     },
-    async prepare(messages) { return validateMessages(forced(await squash(clone(messages)))); },
+    async prepare(messages) { return finalRequest(validateMessages(forced(await squash(clone(messages))))); },
+    tools() { return currentTools; },
     async action({name,args}) {
-      const d = definitions.get(name); if (!d) throw Error('Unknown preset tool');
+      const d = definitions.get(name);
+      // Tools a script injected have no action of their own, e.g. context sync.
+      if (!d && dynamicToolNames.has(name)) return JSON.stringify({ok:true});
+      if (!d) throw Error('Unknown preset tool');
       const result = await d.action(args); return typeof result === 'string' ? result : JSON.stringify(result);
     },
     reset(stream) { streaming=!!stream; resetOutput(stream); return true; },

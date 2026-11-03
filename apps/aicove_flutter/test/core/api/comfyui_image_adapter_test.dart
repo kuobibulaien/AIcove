@@ -824,8 +824,20 @@ void main() {
         if (path == '/api/templates') {
           return json({
             'templates': [
-              {'name': 'zimage_turbo', 'bindings': ['prompt']},
-              {'name': 'moss_image', 'bindings': ['prompt']},
+              {
+                'name': 'zimage_turbo',
+                'providers': ['modal', 'colab'],
+                'bindings': ['prompt'],
+              },
+              {
+                'name': 'moss_image',
+                'bindings': ['prompt'],
+              },
+              {
+                'name': 'mj_dual',
+                'providers': ['modal2'],
+                'bindings': ['prompt'],
+              },
             ],
           });
         }
@@ -882,7 +894,9 @@ void main() {
       );
       expect(models, [
         'template/zimage_turbo',
+        'template/colab/zimage_turbo',
         'template/moss_image',
+        'template/mj_dual',
         ComfyUIWorkflow.modelId,
       ]);
       expect(
@@ -892,6 +906,33 @@ void main() {
           client: gateway,
         ),
         ['anime_style.safetensors'],
+      );
+    });
+
+    test('provider entry reaches the gateway with its prefix', () async {
+      await const ComfyUIImageAdapter(pollInterval: Duration.zero).generate(
+        client: gateway,
+        timeout: const Duration(seconds: 5),
+        request: ImageProviderRequest(
+          provider: 'comfyui',
+          model: 'template/colab/zimage_turbo',
+          prompt: '一只橘猫',
+          width: 1104,
+          height: 1472,
+          count: 1,
+          baseUrl: 'https://gw.modal.run/',
+          apiKey: 'gw-key',
+          customConfig: const {
+            ComfyUIWorkflow.modeKey: ComfyUIWorkflow.standardMode,
+          },
+        ),
+      );
+      final submitted = requests.singleWhere(
+        (r) => r.url.path == '/api/generate',
+      );
+      expect(
+        (jsonDecode(submitted.body) as Map)['template'],
+        'colab/zimage_turbo',
       );
     });
 
@@ -955,45 +996,48 @@ void main() {
       );
     });
 
-    test('preset JSON on a template model submits the graph natively', () async {
-      final workflow = ComfyUIWorkflow.buildStandardGraph(
-        checkpoint: 'own.safetensors',
-        values: const {},
-      );
-      await const ComfyUIImageAdapter(pollInterval: Duration.zero).generate(
-        client: MockClient((req) async {
-          requests.add(req);
-          if (req.method == 'POST') return json({'prompt_id': 'job'});
-          if (req.url.path.contains('history')) return json(finished());
-          return http.Response.bytes([1], 200);
-        }),
-        timeout: const Duration(seconds: 5),
-        request: ImageProviderRequest(
-          provider: 'comfyui',
-          model: 'template/zimage_turbo',
-          prompt: 'cat',
-          width: 512,
-          height: 512,
-          count: 1,
-          baseUrl: 'http://localhost:8188',
-          apiKey: '',
-          customConfig: {
-            ComfyUIWorkflow.modeKey: ComfyUIWorkflow.customMode,
-            ComfyUIWorkflow.workflowKey: workflow,
-            ComfyUIWorkflow.bindingsKey: ComfyUIWorkflow.inferBindings(
-              workflow,
-            ).bindings,
-          },
-        ),
-      );
-      final graph =
-          (jsonDecode(requests.firstWhere((r) => r.method == 'POST').body)
-                  as Map)['prompt']
-              as Map;
-      expect(requests.first.url.path, '/prompt');
-      // The template ID is not a Checkpoint name; keep the JSON's own model.
-      expect(graph['4']['inputs']['ckpt_name'], 'own.safetensors');
-    });
+    test(
+      'preset JSON on a template model submits the graph natively',
+      () async {
+        final workflow = ComfyUIWorkflow.buildStandardGraph(
+          checkpoint: 'own.safetensors',
+          values: const {},
+        );
+        await const ComfyUIImageAdapter(pollInterval: Duration.zero).generate(
+          client: MockClient((req) async {
+            requests.add(req);
+            if (req.method == 'POST') return json({'prompt_id': 'job'});
+            if (req.url.path.contains('history')) return json(finished());
+            return http.Response.bytes([1], 200);
+          }),
+          timeout: const Duration(seconds: 5),
+          request: ImageProviderRequest(
+            provider: 'comfyui',
+            model: 'template/zimage_turbo',
+            prompt: 'cat',
+            width: 512,
+            height: 512,
+            count: 1,
+            baseUrl: 'http://localhost:8188',
+            apiKey: '',
+            customConfig: {
+              ComfyUIWorkflow.modeKey: ComfyUIWorkflow.customMode,
+              ComfyUIWorkflow.workflowKey: workflow,
+              ComfyUIWorkflow.bindingsKey: ComfyUIWorkflow.inferBindings(
+                workflow,
+              ).bindings,
+            },
+          ),
+        );
+        final graph =
+            (jsonDecode(requests.firstWhere((r) => r.method == 'POST').body)
+                    as Map)['prompt']
+                as Map;
+        expect(requests.first.url.path, '/prompt');
+        // The template ID is not a Checkpoint name; keep the JSON's own model.
+        expect(graph['4']['inputs']['ckpt_name'], 'own.safetensors');
+      },
+    );
   });
 
   test('connection test only GETs system_stats', () async {

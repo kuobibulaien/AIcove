@@ -1,5 +1,7 @@
 library;
 
+import 'dart:async';
+
 import '../../conversation_state/domain/mvu_content.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -22,6 +24,8 @@ import '../../../core/utils/mime_utils.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../agent_plugins/plugin_response.dart';
 import '../../agent_plugins/plugin_runtime.dart';
+import '../../agent_context/domain/preset_tag_mapping.dart';
+import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../../plugins/tts/voice_preset_application.dart';
 import 'chat_history_store.dart';
 import 'chat_message_projection_codec.dart';
@@ -30,9 +34,10 @@ import '../../dialogue_options/domain/dialogue_options.dart';
 import 'chat_request_message_builder.dart';
 import 'chat_send_backend_service.dart';
 import 'chat_types.dart';
+import 'chat_reply_display_transform.dart';
 
 export 'chat_types.dart'
-    show SendRequest, ApiCallResult, ApiConfig, ToolAudioResult;
+    show ApiCallResult, ApiConfig, ToolAudioResult;
 
 /// 发送门面：对上层保持稳定接口，把重型请求装配/执行委托给后台发送服务。
 class ChatSendService {
@@ -202,6 +207,7 @@ class ChatSendService {
     DateTime? requestTime,
     bool persistSideEffects = true,
     bool deferReminders = false,
+    bool forceInlineImageRoute = false,
   }) =>
       _backendService.prepareApiConfig(
         conv: conv,
@@ -214,6 +220,7 @@ class ChatSendService {
         requestTime: requestTime,
         persistSideEffects: persistSideEffects,
         deferReminders: deferReminders,
+        forceInlineImageRoute: forceInlineImageRoute,
       );
 
   /// 按当前设置预览联系人下一次请求的完整上下文，不发送、不写数据。
@@ -263,46 +270,58 @@ class ChatSendService {
     required Conversation conv,
     required String rawReplyText,
   }) async {
-    final normalizedReply = rawReplyText.trim();
-    if (normalizedReply.isEmpty) {
-      return const ApiCallResult(
+    final source = AssistantReplyDisplaySource(rawReplyText);
+    if (source.text.isEmpty) {
+      return ApiCallResult(
         rawReplyText: '',
         replyText: '',
         processedText: '',
         pluginEvents: [],
         toolResults: [],
+        reasoning: source.reasoning,
       );
     }
 
+    final preset = await _ref.read(tavernCompatibilityPortProvider)
+        .resolvePreset(conv.recipeId?.trim());
+    final projection = await source.project(
+      scripts: preset == null ? const [] : inferPresetTagMapping(preset)
+          .displayScripts(preset.regexScripts),
+      authorized: preset?.regexAuthorized ?? false,
+    );
     final voiceRequest = await _ref.read(voicePresetApplicationProvider).forRole(conv);
-    // Same processors and traversal as a request reply; drawing has no
-    // request snapshot here and uses live configuration.
-    final pluginRuntime = PluginRuntime.fromPlugins(
-      _ref.read(pluginManagerProvider).getAllPlugins(),
-    );
-    final result = await runResponseProcessors(
-      pluginRuntime.responseProcessors(
-        pluginRuntime.snapshot(),
-        pluginRuntime.selectForRole(conv.enabledPlugins?.toSet()),
-        PluginResponseInputs(
-          ref: _ref,
-          voiceRequest: voiceRequest,
-          rolePluginIds: conv.enabledPlugins?.toSet(),
+    // Own only this temporary registration scope, not the shared plugin
+    // instances. Include installation/factory failures in its lifetime.
+    final pluginRuntime = PluginRuntime();
+    try {
+      for (final plugin in _ref.read(pluginManagerProvider).getAllPlugins()) {
+        pluginRuntime.install(plugin.agentPlugin, enabled: plugin.enabled);
+      }
+      final result = await projection.process(
+        processors: pluginRuntime.responseProcessors(
+          pluginRuntime.snapshot(),
+          pluginRuntime.selectForRole(conv.enabledPlugins?.toSet()),
+          PluginResponseInputs(
+            ref: _ref,
+            voiceRequest: voiceRequest,
+            rolePluginIds: conv.enabledPlugins?.toSet(),
+          ),
         ),
-      ),
-      normalizedReply,
-      logTag: _logTag,
-      failureMessage: '缓存回复插件响应处理失败',
-    );
-
-    return ApiCallResult(
-      rawReplyText: normalizedReply,
-      replyText: normalizedReply,
-      processedText: result.processedText,
-      pluginEvents: result.events,
-      pluginContents: result.contents,
-      toolResults: const [],
-    );
+        logTag: _logTag,
+        failureMessage: '缓存回复插件响应处理失败',
+      );
+      return ApiCallResult(
+        rawReplyText: source.text,
+        replyText: projection.regexResult.text,
+        processedText: result.processedText,
+        pluginEvents: result.events,
+        pluginContents: result.contents,
+        toolResults: const [],
+        reasoning: source.reasoning,
+      );
+    } finally {
+      await pluginRuntime.scope.dispose();
+    }
   }
 
   /// 构建助手消息。
@@ -310,57 +329,16 @@ class ChatSendService {
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
-    if (apiResult.hasToolAudio) {
-      AppLogger.info(_logTag, 'Use tool audio output', metadata: {
-        'audioCount': apiResult.toolAudioResults.length,
-      });
-      final audioMessages = <Message>[];
-      for (final audio in apiResult.toolAudioResults) {
-        final audioId = genId('msg');
-        audioMessages.add(
-          Message.fromBlocks(
-            id: audioId,
-            role: 'assistant',
-            blocks: [
-              AudioBlock(
-                messageId: audioId,
-                url: audio.audioUrl,
-                text: audio.text,
-              ),
-            ],
-            createdAt: DateTime.now(),
-            status: 'sent',
-          ),
-        );
-      }
-      final textContent = apiResult.processedText.trim();
-      if (textContent.isNotEmpty) {
-        audioMessages.add(
-          Message(
-            id: genId('msg'),
-            role: 'assistant',
-            content: textContent,
-            createdAt: DateTime.now(),
-            status: 'sent',
-          ),
-        );
-      }
-      return _composeAssistantBuildResult(
-        apiResult: apiResult,
-        projectedMessages: ChatMessageProcessor.attachModelThinking(
-          audioMessages,
-          apiResult.reasoning,
-        ),
-        lastMessageText:
-            audioMessages.isNotEmpty ? audioMessages.last.displayText : '',
-      );
-    }
-
+    final rawMessageId = genId('raw_msg');
+    final rawCreatedAt = DateTime.now();
     final projectedResult = chatMessageProcessor.buildAssistantMessages(
+      rawMessageId: rawMessageId,
+      rawCreatedAt: rawCreatedAt,
       replyText: apiResult.rawReplyText,
       displayReplyText: apiResult.replyText,
       processedText: apiResult.processedText,
       pluginEvents: apiResult.pluginEvents,
+      toolAudioResults: apiResult.toolAudioResults,
       contents: apiResult.pluginContents,
       toolCalls: apiResult.toolCalls,
       rawToolResults: apiResult.rawToolResults,
@@ -368,6 +346,8 @@ class ChatSendService {
       replyRounds: apiResult.replyRounds,
     );
     return _composeAssistantBuildResult(
+      rawMessageId: rawMessageId,
+      rawCreatedAt: rawCreatedAt,
       apiResult: apiResult,
       projectedMessages: projectedResult.messages,
       lastMessageText: projectedResult.lastMessageText,
@@ -375,11 +355,12 @@ class ChatSendService {
   }
 
   AssistantMessageBuildResult _composeAssistantBuildResult({
+    required String rawMessageId,
+    required DateTime rawCreatedAt,
     required ApiCallResult apiResult,
     required List<Message> projectedMessages,
     required String lastMessageText,
   }) {
-    final rawMessageId = genId('raw_msg');
     final normalizedProjectedMessages = ChatMessageProjectionCodec.applyRunStatus(<Message>[
       for (final message in projectedMessages)
         message.copyWith(
@@ -389,8 +370,8 @@ class ChatSendService {
     ], ChatMessageProjectionCodec.buildRawAssistantPayload(apiResult: apiResult));
     final rawMessage = _buildRawAssistantMessage(
       rawMessageId: rawMessageId,
+      rawCreatedAt: rawCreatedAt,
       apiResult: apiResult,
-      projectedMessages: normalizedProjectedMessages,
     );
     return AssistantMessageBuildResult(
       rawMessage: rawMessage,
@@ -401,11 +382,11 @@ class ChatSendService {
 
   Message _buildRawAssistantMessage({
     required String rawMessageId,
+    required DateTime rawCreatedAt,
     required ApiCallResult apiResult,
-    required List<Message> projectedMessages,
   }) {
     final rawReplyText = apiResult.rawReplyText;
-    final createdAt = DateTime.now();
+    final createdAt = rawCreatedAt;
     final rawPayload = ChatMessageProjectionCodec.buildRawAssistantPayload(
       apiResult: apiResult,
     );
@@ -482,6 +463,7 @@ class ChatSendService {
     required AssistantMessageBuildResult buildResult,
     TraceLogger? trace,
     bool updateShortWindow = true,
+    FutureOr<bool> Function()? shouldCommit,
     List<Message>? projectedMessages,
     String? lastMessagePreview,
   }) async {
@@ -509,6 +491,7 @@ class ChatSendService {
           projectedMessages: effectiveProjectedMessages,
           lastMessagePreview: effectiveLastMessagePreview,
           updateShortWindow: updateShortWindow,
+          shouldCommit: shouldCommit,
         );
 
     forwardTrace?.info('消息已转发到用户', metadata: {
@@ -542,37 +525,21 @@ class ChatSendService {
 
   /// 计算时间感知插件的“上一条用户消息时间”。
   ///
-  /// 当 history 末尾已经包含当前轮 user 消息时，会跳过这条当前消息，
-  /// 返回它之前最近的一条 user 消息时间；否则返回 history 中最后一条 user 消息时间。
+  /// 跳过 history 末尾当前轮连续的 user 消息，返回此前最近的 user 消息时间。
+  /// history 不以 user 结尾时，直接返回最近一条 user 消息时间。
   static DateTime? resolveTimeAwarenessPreviousUserMessageTime(
     List<Message> history,
   ) {
     if (history.isEmpty) return null;
 
-    final shouldSkipLatestUser = history.last.role == 'user';
-    var skippedLatestUser = false;
-    for (var i = history.length - 1; i >= 0; i--) {
-      final message = history[i];
-      if (message.role != 'user') continue;
-      if (shouldSkipLatestUser && !skippedLatestUser) {
-        skippedLatestUser = true;
-        continue;
-      }
-      return message.createdAt;
+    var index = history.length - 1;
+    while (index >= 0 && history[index].role == 'user') {
+      index--;
+    }
+    for (; index >= 0; index--) {
+      if (history[index].role == 'user') return history[index].createdAt;
     }
     return null;
-  }
-
-  /// 准备历史消息。
-  List<Message> prepareHistory({
-    required Conversation conv,
-    required Message userMsg,
-  }) {
-    final all = [...conv.messages, userMsg];
-    return _sliceContextWindow(
-      allMessages: all,
-      contextStartId: conv.contextStartMessageId,
-    );
   }
 
   /// 从数据库加载会话有效消息（排除 deleted/replaced），并按需补上当前用户消息。

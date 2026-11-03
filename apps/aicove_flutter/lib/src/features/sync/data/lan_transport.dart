@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
+import '../../../core/app_logger.dart';
 import '../../../core/storage/device_credential_storage.dart';
 import '../domain/lan_contract.dart';
 import 'lan_crypto.dart';
@@ -221,11 +222,13 @@ class LanTransport {
     this.loopback = false,
     this.preferredPort = lanPreferredPort,
     this.recentChanges = false,
+    this.onPeerAvailable,
   });
   final String deviceId;
   final LanPeerStore store;
   final LanRpcHandler handle;
   final void Function() changed;
+  final void Function(LanPeer)? onPeerAvailable;
   final bool loopback;
   final int preferredPort;
   final bool recentChanges;
@@ -401,7 +404,10 @@ class LanTransport {
     };
     return [
       for (final prefix in prefixes)
-        [for (var i = 1; i < 255; i++) LanEndpoint('$prefix.$i', preferredPort)],
+        [
+          for (var i = 1; i < 255; i++)
+            LanEndpoint('$prefix.$i', preferredPort),
+        ],
     ];
   }
 
@@ -585,6 +591,8 @@ class LanTransport {
 
   Future<void> _serve(HttpRequest request) async {
     _active++;
+    final generation = _generation;
+    LanPeer? availablePeer;
     String? secret, from, id;
     try {
       if (_server == null ||
@@ -705,11 +713,16 @@ class LanTransport {
         };
         changed();
       } else {
-        if (_server == null || store.peers[from] != peer) {
+        if (_server == null ||
+            generation != _generation ||
+            store.peers[from] != peer) {
           throw const LanSyncFailure('设备已取消配对');
         }
+        var approvedNow = false;
         if (body['method'] == 'status') {
-          if (peer!.approved && body['endpoints'] is List) {
+          final approve =
+              !peer!.incoming && !peer.approved && body['approved'] == true;
+          if (approve || (peer.approved && body['endpoints'] is List)) {
             var endpoints = (body['endpoints'] as List)
                 .map((e) => LanEndpoint.fromJson(e as Map, loopback: loopback))
                 .toList();
@@ -725,13 +738,21 @@ class LanTransport {
               ...endpoints.where((endpoint) => endpoint.host == observedHost),
               ...endpoints.where((endpoint) => endpoint.host != observedHost),
             ];
-            if (jsonEncode(endpoints.map((e) => e.toJson()).toList()) !=
+            if (approve ||
+                jsonEncode(endpoints.map((e) => e.toJson()).toList()) !=
                     jsonEncode(
                       peer.endpoints.map((e) => e.toJson()).toList(),
                     ) ||
                 name != peer.name) {
               peer.endpoints = endpoints;
               peer.name = name;
+              if (approve) {
+                peer.approved = true;
+                // Claim the transition before save() yields to another RPC.
+                peer.online = true;
+                peer.error = null;
+                approvedNow = true;
+              }
               await store.save();
               changed();
             }
@@ -746,6 +767,31 @@ class LanTransport {
             result = await handle(peer, body);
           } on LanSyncFailure catch (error) {
             result = {'error': error.message};
+          } catch (error) {
+            // The peer is authenticated here; tell it the request failed
+            // instead of answering as if the pairing were rejected.
+            AppLogger.warning(
+              'LanSync',
+              'Request handling failed',
+              metadata: {
+                'category': 'sync',
+                'event': 'lanServe',
+                'result': 'failed',
+                'errorType': error.runtimeType.toString(),
+              },
+            );
+            result = {'error': '另一端处理同步记录时出错，已保留数据，将自动重试'};
+          }
+        }
+        if (generation == _generation &&
+            identical(store.peers[from], peer) &&
+            peer.approved) {
+          final wasOffline = !peer.online;
+          peer.online = true;
+          peer.error = null;
+          if (approvedNow || wasOffline) {
+            availablePeer = peer;
+            changed();
           }
         }
       }
@@ -764,6 +810,7 @@ class LanTransport {
       );
     } catch (_) {
       // Authentication failures do not reveal whether a device or record exists.
+      availablePeer = null;
       request.response.statusCode = HttpStatus.forbidden;
     } finally {
       try {
@@ -772,6 +819,14 @@ class LanTransport {
         /* Peer left. */
       } finally {
         _active--;
+      }
+      final peer = availablePeer;
+      if (peer != null &&
+          generation == _generation &&
+          _server != null &&
+          identical(store.peers[peer.id], peer) &&
+          peer.approved) {
+        onPeerAvailable?.call(peer);
       }
     }
   }

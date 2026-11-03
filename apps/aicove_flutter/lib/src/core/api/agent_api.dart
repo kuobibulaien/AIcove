@@ -1,8 +1,13 @@
 import 'tool_media.dart';
+import 'manga_prompt_sanitizer.dart';
 import 'request_control.dart';
+import 'image_request_gate.dart';
+import 'media_request_retry.dart';
 import 'dart:async';
+import 'dart:isolate';
 import 'dart:convert';
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../config.dart';
@@ -10,6 +15,8 @@ import '../api_logger.dart';
 import '../app_logger.dart';
 import '../utils/content_normalizer.dart';
 import 'image_providers/image_provider_adapter.dart';
+import 'image_providers/comfyui_image_adapter.dart';
+import 'image_providers/openai_compatible_image_adapter.dart';
 import 'image_providers/image_provider_adapter_factory.dart';
 import 'providers/finish_reason.dart';
 import 'providers/google_api_mode.dart';
@@ -367,7 +374,8 @@ class AgentApiClient {
     required String provider,
     required String modelFullId,
     required String model,
-    required String requestBodyJson,
+    required int requestBodyBytes,
+    required String requestBodyPreview,
     required Map<String, dynamic> payload,
     required List<Map<String, dynamic>> chatMessages,
     required Map<String, dynamic>? customConfig,
@@ -398,8 +406,8 @@ class AgentApiClient {
       'providerApiBaseLooksLikeEndpoint':
           _looksLikeEndpointUrl(providerApiBase),
       'payloadKeys': payload.keys.toList(),
-      'requestBodyBytes': utf8.encode(requestBodyJson).length,
-      'requestBodyPreview': ApiLogger.safeSnippet(requestBodyJson, max: 2000),
+      'requestBodyBytes': requestBodyBytes,
+      'requestBodyPreview': requestBodyPreview,
       'messagesCount': chatMessages.length,
       'messageRoles': messageRoles,
       'messagesWithParts': messagesWithParts,
@@ -565,7 +573,16 @@ class AgentApiClient {
       payload['stream'] = true;
     }
 
-    final requestBodyJson = jsonEncode(payload);
+    final requestBodyBytes = utf8.encode(jsonEncode(payload));
+    final logRequestBodyJson = jsonEncode(ToolMedia.log(payload));
+    final logChatMessages = (ToolMedia.log(chatMessages) as List)
+        .cast<Map<String, dynamic>>();
+    final logContextJson = jsonEncode(logChatMessages);
+    final requestBodyPreview =
+        ApiLogger.safeSnippet(logRequestBodyJson, max: 2000);
+    final requestBodySnippet = requestBodyPreview.length > 800
+        ? '${requestBodyPreview.substring(0, 800)}…'
+        : requestBodyPreview;
     final headers = _buildChatRequestHeaders(
       adapter: adapter,
       providerApiKey: providerApiKey,
@@ -580,7 +597,8 @@ class AgentApiClient {
       provider: requestContext.provider,
       modelFullId: modelFullId,
       model: requestContext.model,
-      requestBodyJson: requestBodyJson,
+      requestBodyBytes: requestBodyBytes.length,
+      requestBodyPreview: requestBodyPreview,
       payload: payload,
       chatMessages: chatMessages,
       customConfig: requestCustomConfig,
@@ -599,7 +617,11 @@ class AgentApiClient {
       endpointForLogs: requestContext.endpointForLogs,
       chatMessages: chatMessages,
       payload: payload,
-      requestBodyJson: requestBodyJson,
+      requestBodyBytes: requestBodyBytes,
+      logRequestBodyJson: logRequestBodyJson,
+      logChatMessages: logChatMessages,
+      logContextJson: logContextJson,
+      requestBodySnippet: requestBodySnippet,
       headers: headers,
       requestDiagnostics: requestDiagnostics,
     );
@@ -811,26 +833,7 @@ class AgentApiClient {
     );
   }
 
-  /// 同步触发器心跳（用于云端接管判定）
-  Future<void> syncTriggerHeartbeat(DateTime timestamp, {String? token}) async {
-    try {
-      final uri = _uri('/api/v1/sync/trigger_heartbeat');
-      final headers = <String, String>{
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      };
 
-      await _client
-          .post(
-            uri,
-            headers: headers,
-            body: jsonEncode({'timestamp': timestamp.toIso8601String()}),
-          )
-          .timeout(const Duration(seconds: 5));
-    } catch (e) {
-      // 心跳失败不应阻断流程，仅记录日志
-      _evt('syncTriggerHeartbeat', {'error': e.toString()}, level: 'WARN');
-    }
-  }
 }
 
 class _PreparedChatRequest {
@@ -844,7 +847,11 @@ class _PreparedChatRequest {
     required this.endpointForLogs,
     required this.chatMessages,
     required this.payload,
-    required this.requestBodyJson,
+    required this.requestBodyBytes,
+    required this.logRequestBodyJson,
+    required this.logChatMessages,
+    required this.logContextJson,
+    required this.requestBodySnippet,
     required this.headers,
     required this.requestDiagnostics,
   });
@@ -858,7 +865,11 @@ class _PreparedChatRequest {
   final String endpointForLogs;
   final List<Map<String, dynamic>> chatMessages;
   final Map<String, dynamic> payload;
-  final String requestBodyJson;
+  final List<int> requestBodyBytes;
+  final String logRequestBodyJson;
+  final List<Map<String, dynamic>> logChatMessages;
+  final String logContextJson;
+  final String requestBodySnippet;
   final Map<String, String> headers;
   final Map<String, dynamic> requestDiagnostics;
 }

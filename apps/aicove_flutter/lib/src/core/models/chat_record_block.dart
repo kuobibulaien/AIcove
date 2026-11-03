@@ -5,6 +5,7 @@ part of 'message_block.dart';
 class ChatRecordBlock extends TextBlock {
   ChatRecordBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.sourceName,
     required List<ChatRecordEntry> entries,
@@ -26,6 +27,7 @@ class ChatRecordBlock extends TextBlock {
     final record = Map<String, dynamic>.from(json['chatRecord'] as Map);
     return ChatRecordBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       sourceName: record['sourceName'] as String,
       entries: (record['entries'] as List)

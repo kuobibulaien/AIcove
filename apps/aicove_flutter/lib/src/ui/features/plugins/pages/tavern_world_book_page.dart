@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/agent_context/domain/silly_tavern_world_book.dart';
 import '../../../../features/agent_context/domain/tavern_compatibility_port.dart';
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
-import '../../../shared/effects/smooth_clip.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../widgets/tavern_common.dart';
@@ -126,16 +125,10 @@ class _TavernWorldBookPageState extends ConsumerState<TavernWorldBookPage> {
         ),
         SliverPadding(
           padding: const EdgeInsets.only(bottom: 24),
-          sliver: DecoratedSliver(
-            decoration: ShapeDecoration(
-              color: colors.componentBackground,
-              shape: moeG2Shape(
-                radius: MoeSettingsLayout.cardRadius,
-                side: BorderSide(
-                  color: colors.border.withValues(alpha: 0.06),
-                  width: 0.6,
-                ),
-              ),
+          sliver: MoeSliverContentSurface(
+            border: BorderSide(
+              color: colors.border.withValues(alpha: 0.06),
+              width: 0.6,
             ),
             sliver: SliverPadding(
               padding: const EdgeInsets.symmetric(vertical: 4),

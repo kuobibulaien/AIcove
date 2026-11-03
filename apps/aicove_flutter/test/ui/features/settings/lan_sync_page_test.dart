@@ -271,6 +271,78 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets(
+    'large conflict set builds lazily and still resolves all items by device',
+    (tester) async {
+      final padding = '长内容' * 400;
+      LanRevision rev(int index, String device) => LanRevision(
+        kind: 'messages',
+        id: 'm$index',
+        vector: {device: 2, 'base': 1},
+        payload: {
+          'row': {'content': '$device-$index-$padding'},
+        },
+      );
+      final conflicts = [
+        for (var i = 0; i < 300; i++) [rev(i, 'pc'), rev(i, 'phone')],
+      ];
+      final port = PreviewLanPort(
+        LanSyncState(
+          enabled: true,
+          name: '电脑',
+          deviceId: 'pc',
+          peers: const [LanPeerView('phone', '我的手机')],
+          conflicts: conflicts,
+        ),
+      );
+      await mount(tester, port, 360);
+      final expand = find.text('逐项选择');
+      await tester.ensureVisible(expand);
+      await tester.tap(expand);
+      await tester.pumpAndSettle();
+      // Only the initial batch (30 items) is built on expand, not all 300.
+      expect(find.byType(ListTile).evaluate().length, 30);
+      expect(find.text('继续显示'), findsOneWidget);
+      await tester.tap(find.text('收起逐项列表'));
+      await tester.pumpAndSettle();
+      final resolveDevice = find.text('以此设备为准处理差异').at(1);
+      await tester.ensureVisible(resolveDevice);
+      await tester.tap(resolveDevice);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('开始处理'));
+      await tester.pumpAndSettle();
+      expect(
+        port.actions.where((a) => a.startsWith('resolve:')).length,
+        300,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('LAN page renders sync progress bar and stage label when busy', (
+    tester,
+  ) async {
+    final port = PreviewLanPort(
+      const LanSyncState(
+        enabled: true,
+        busy: true,
+        progress: 0.6,
+        progressLabel: '正在接收聊天与设置（60 / 100）',
+        name: '我的电脑',
+        peers: [LanPeerView('phone', '我的手机', online: true)],
+        pendingFiles: 4,
+      ),
+    );
+    await mount(tester, port, 360);
+    expect(find.text('正在同步…'), findsOneWidget);
+    expect(find.text('正在接收聊天与设置（60 / 100）'), findsOneWidget);
+    expect(find.text('60%'), findsOneWidget);
+    expect(find.text('4 份附件等待传输'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(bar.value, closeTo(0.6, 0.001));
+    expect(tester.takeException(), isNull);
+  });
   for (final width in [360.0, 1040.0]) {
     testWidgets('LAN source rendered preview $width', (tester) async {
       if (!capture) return;
@@ -301,6 +373,10 @@ void main() {
       final port = PreviewLanPort(
         LanSyncState(
           enabled: true,
+          busy: true,
+          progress: 0.65,
+          progressLabel: '正在接收聊天与设置（65 / 100）',
+          pendingFiles: 3,
           name: '我的电脑',
           invitation: width == 1040 ? code : null,
           pin: width == 1040 ? '048213' : null,

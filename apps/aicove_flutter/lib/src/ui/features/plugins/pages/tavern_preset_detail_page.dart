@@ -118,6 +118,18 @@ class _TavernPresetDetailPageState
                   _change((port) => port.setUserNameMacroEnabled(_id, v)),
             ),
           ),
+          _samplingRow(
+            label: '温度',
+            value: preset.temperature,
+            max: 2,
+            save: (v) => _change((port) => port.setTemperature(_id, v)),
+          ),
+          _samplingRow(
+            label: 'Top P',
+            value: preset.topP,
+            max: 1,
+            save: (v) => _change((port) => port.setTopP(_id, v)),
+          ),
           MoeSettingsRow(
             label: '预设信息',
             subtitle: preset.warnings.isEmpty
@@ -160,6 +172,42 @@ class _TavernPresetDetailPageState
       ),
     ];
   }
+
+  /// 预设里写了数值就盖过模型设置；清空后改用模型自己的设置。
+  Widget _samplingRow({
+    required String label,
+    required double? value,
+    required double max,
+    required void Function(double? value) save,
+  }) => MoeSettingsRow(
+    key: ValueKey('sampling-$label'),
+    label: label,
+    trailingType: MoeSettingsRowTrailing.text,
+    detailText: value == null ? '跟随模型' : _formatSampling(value),
+    onTap: () async {
+      var text = value == null ? '' : _formatSampling(value);
+      final confirmed = await showMeoTalkDialog(
+        context: context,
+        title: label,
+        cancelText: '取消',
+        confirmText: '保存',
+        content: _SamplingInput(
+          initialValue: text,
+          helperText: '范围 0～${_formatSampling(max)}，填了会代替模型里的设置',
+          onChanged: (next) => text = next,
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      text = text.trim();
+      if (text.isEmpty) return save(null);
+      final parsed = double.tryParse(text);
+      if (parsed == null || parsed < 0 || parsed > max) {
+        MoeToast.error(context, '$label要在 0～${_formatSampling(max)} 之间');
+        return;
+      }
+      save(parsed);
+    },
+  );
 
   // ==================== 正则 ====================
 
@@ -529,4 +577,44 @@ Future<String?> _askTagName(BuildContext context) async {
   } finally {
     controller.dispose();
   }
+}
+
+String _formatSampling(double value) => value == value.roundToDouble()
+    ? value.toStringAsFixed(0)
+    : value.toString();
+
+/// 输入框自己持有文字，弹窗关闭动画期间不会用到已释放的控制器。
+class _SamplingInput extends StatefulWidget {
+  const _SamplingInput({
+    required this.initialValue,
+    required this.helperText,
+    required this.onChanged,
+  });
+
+  final String initialValue;
+  final String helperText;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_SamplingInput> createState() => _SamplingInputState();
+}
+
+class _SamplingInputState extends State<_SamplingInput> {
+  late final _controller = TextEditingController(text: widget.initialValue);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => MoeTextField(
+    controller: _controller,
+    hint: '留空则跟随模型设置',
+    helperText: widget.helperText,
+    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+    autofocus: true,
+    onChanged: widget.onChanged,
+  );
 }

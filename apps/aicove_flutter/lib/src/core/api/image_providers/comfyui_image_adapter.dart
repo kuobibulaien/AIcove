@@ -5,8 +5,11 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../media_request_retry.dart';
+import '../request_control.dart';
 import 'comfyui_workflow.dart';
 import 'image_provider_adapter.dart';
+import 'moss_manga_layout_compiler.dart';
 
 class ComfyUIImageAdapter implements ImageProviderAdapter {
   const ComfyUIImageAdapter({this.pollInterval = const Duration(seconds: 1)});
@@ -55,7 +58,9 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
     return text;
   }
 
-  /// Template names from a modal-comfy gateway, as image model IDs.
+  /// Template names from a modal-comfy gateway, as image model IDs. The plain
+  /// name runs on the template's default provider; each other provider it
+  /// supports gets its own `provider/name` entry, which the gateway routes.
   static Future<List<String>> fetchTemplates({
     required String baseUrl,
     String apiKey = '',
@@ -74,8 +79,13 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
     if (items is! List) throw const FormatException('网关模板列表格式无效');
     return [
       for (final item in items)
-        if (item is Map && (item['name']?.toString().trim() ?? '').isNotEmpty)
+        if (item is Map &&
+            (item['name']?.toString().trim() ?? '').isNotEmpty) ...[
           '${ComfyUIWorkflow.templatePrefix}${item['name'].toString().trim()}',
+          if (item['providers'] case final List providers)
+            for (final provider in providers.skip(1))
+              '${ComfyUIWorkflow.templatePrefix}$provider/${item['name'].toString().trim()}',
+        ],
     ];
   }
 
@@ -89,9 +99,13 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
   }) async {
     final httpClient = client ?? http.Client();
     try {
-      final response = await httpClient
-          .get(endpoint(baseUrl, path), headers: headers(apiKey))
-          .timeout(timeout);
+      final response = await _send(
+        client: httpClient,
+        method: 'GET',
+        uri: endpoint(baseUrl, path),
+        headers: headers(apiKey),
+        timeout: timeout,
+      );
       if (response.statusCode != 200) {
         throw StateError(
           'ComfyUI 拉取$label列表失败：HTTP ${response.statusCode}（${errorMessage(response)}）',
@@ -105,6 +119,28 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
     } finally {
       if (client == null) httpClient.close();
     }
+  }
+
+  static Future<http.Response> _send({
+    required http.Client client,
+    required String method,
+    required Uri uri,
+    required Map<String, String> headers,
+    required Duration timeout,
+    String? body,
+  }) async {
+    final request = RequestControl.request(method, uri)
+      ..headers.addAll(headers);
+    if (body != null) request.body = body;
+    final response = await client
+        .send(request)
+        .then((streamed) {
+          RequestControl.cancellation?.throwIfCancelled();
+          return http.Response.fromStream(streamed);
+        })
+        .timeout(timeout);
+    RequestControl.cancellation?.throwIfCancelled();
+    return response;
   }
 
   static Map<String, String> headers(String key) => {
@@ -208,12 +244,13 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
   }) async {
     final httpClient = client ?? http.Client();
     try {
-      final response = await httpClient
-          .get(
-            endpoint(baseUrl, 'object_info/$nodeClass'),
-            headers: headers(apiKey),
-          )
-          .timeout(timeout);
+      final response = await _send(
+        client: httpClient,
+        method: 'GET',
+        uri: endpoint(baseUrl, 'object_info/$nodeClass'),
+        headers: headers(apiKey),
+        timeout: timeout,
+      );
       if (response.statusCode != 200) {
         final reason = switch (response.statusCode) {
           401 || 403 => '鉴权失败，请检查 API Key 和访问权限',
@@ -259,6 +296,7 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
     ImageProviderRequest request,
     String model,
     int seed,
+    String prompt,
     String? Function(String key) option,
   ) => ComfyUIWorkflow.build(config, {
     // Placeholder and gateway template models keep the Checkpoint in the JSON.
@@ -268,7 +306,7 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
             ComfyUIWorkflow.isTemplateModel(model)
         ? null
         : model,
-    'prompt': request.prompt,
+    'prompt': prompt,
     'negative_prompt': request.negativePrompt ?? '',
     'width': request.width,
     'height': request.height,
@@ -293,6 +331,11 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
     }
 
     final model = request.model.trim();
+    final prompt = compileMossMangaPromptIfApplicable(
+      request.prompt,
+      width: request.width,
+      height: request.height,
+    );
     final seed = request.seed ?? Random.secure().nextInt(0x7fffffff);
     // A gateway template is used as-is unless the preset imported its own JSON.
     final template =
@@ -308,7 +351,7 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
       // Steps, CFG and sampler stay with the template's tuned values.
       body = {
         'template': template,
-        'prompt': request.prompt,
+        'prompt': prompt,
         'negative_prompt': request.negativePrompt ?? '',
         'width': request.width,
         'height': request.height,
@@ -328,7 +371,7 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
       };
       submitPath = 'api/generate';
     } else {
-      body = {'prompt': _graph(config, request, model, seed, option)};
+      body = {'prompt': _graph(config, request, model, seed, prompt, option)};
       submitPath = 'prompt';
     }
     final watch = Stopwatch()..start();
@@ -352,14 +395,37 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
     }
 
     final auth = headers(request.apiKey);
+    Future<http.Response> send({
+      required String method,
+      required Uri uri,
+      required String phase,
+      String? body,
+    }) async {
+      // Preserve the task-may-still-be-running message when polling has used
+      // the budget, without throwing during the retry helper's final-response check.
+      remaining();
+      return sendMediaRequestWithRetry(
+        send: () {
+          final httpRequest = RequestControl.request(method, uri)
+            ..headers.addAll(auth);
+          if (body != null) httpRequest.body = body;
+          return client.send(httpRequest);
+        },
+        policy: method == 'POST'
+            ? MediaRetryPolicy.submission
+            : MediaRetryPolicy.readOnly,
+        remaining: () => timeout - watch.elapsed,
+        phase: phase,
+      );
+    }
+
     final submitted = decode(
-      await client
-          .post(
-            endpoint(request.baseUrl, submitPath),
-            headers: auth,
-            body: jsonEncode(body),
-          )
-          .timeout(remaining()),
+      await send(
+        method: 'POST',
+        uri: endpoint(request.baseUrl, submitPath),
+        body: jsonEncode(body),
+        phase: 'ComfyUI submission',
+      ),
       '提交任务',
     );
     final id = submitted['prompt_id']?.toString() ?? '';
@@ -367,13 +433,13 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
       throw StateError('ComfyUI 拒绝工作流：${jsonEncode(submitted)}');
     }
     while (true) {
+      RequestControl.cancellation?.throwIfCancelled();
       final history = decode(
-        await client
-            .get(
-              endpoint(request.baseUrl, 'history/${Uri.encodeComponent(id)}'),
-              headers: auth,
-            )
-            .timeout(remaining()),
+        await send(
+          method: 'GET',
+          uri: endpoint(request.baseUrl, 'history/${Uri.encodeComponent(id)}'),
+          phase: 'ComfyUI history',
+        ),
         '读取任务',
       );
       final task = history[id];
@@ -403,16 +469,15 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
             if (file is! Map || file['type'] != 'output') continue;
             final filename = file['filename']?.toString() ?? '';
             if (filename.isEmpty) continue;
-            final response = await client
-                .get(
-                  endpoint(request.baseUrl, 'view', {
-                    'filename': filename,
-                    'subfolder': file['subfolder']?.toString() ?? '',
-                    'type': 'output',
-                  }),
-                  headers: auth,
-                )
-                .timeout(remaining());
+            final response = await send(
+              method: 'GET',
+              uri: endpoint(request.baseUrl, 'view', {
+                'filename': filename,
+                'subfolder': file['subfolder']?.toString() ?? '',
+                'type': 'output',
+              }),
+              phase: 'ComfyUI image download',
+            );
             if (response.statusCode != 200 || response.bodyBytes.isEmpty) {
               throw StateError('ComfyUI 下载图片失败：HTTP ${response.statusCode}');
             }
@@ -430,7 +495,17 @@ class ComfyUIImageAdapter implements ImageProviderAdapter {
         );
       }
       final left = remaining();
-      await Future<void>.delayed(left < pollInterval ? left : pollInterval);
+      RequestControl.cancellation?.throwIfCancelled();
+      final delay = Future<void>.delayed(
+        left < pollInterval ? left : pollInterval,
+      );
+      final cancellation = RequestControl.cancellation;
+      if (cancellation == null) {
+        await delay;
+      } else {
+        await Future.any([delay, cancellation.whenCancelled]);
+      }
+      cancellation?.throwIfCancelled();
     }
   }
 }

@@ -52,3 +52,63 @@ class _RegenerateGuidanceDialogState extends State<RegenerateGuidanceDialog> {
     );
   }
 }
+
+/// 改词重画：编辑这一页的提示词后重新生成图片。
+///
+/// 返回 null 表示取消；返回修剪后的非空提示词。
+Future<String?> showEditImagePromptDialog(
+  BuildContext context, {
+  required String initialPrompt,
+}) {
+  return showDialog<String>(
+    context: context,
+    barrierColor: Colors.transparent,
+    builder: (context) => EditImagePromptDialog(initialPrompt: initialPrompt),
+  );
+}
+
+class EditImagePromptDialog extends StatefulWidget {
+  const EditImagePromptDialog({super.key, required this.initialPrompt});
+
+  final String initialPrompt;
+
+  @override
+  State<EditImagePromptDialog> createState() => _EditImagePromptDialogState();
+}
+
+class _EditImagePromptDialogState extends State<EditImagePromptDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialPrompt,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _confirm() {
+    final trimmed = _controller.text.trim();
+    if (trimmed.isEmpty) return;
+    Navigator.of(context).pop(trimmed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MeoTalkDialog(
+      title: '改词重画',
+      confirmText: '重画',
+      onCancel: () => Navigator.of(context).pop(),
+      onConfirm: _confirm,
+      content: MoeTextField(
+        controller: _controller,
+        hint: '修改这一页的画面描述或台词',
+        minLines: 4,
+        maxLines: 10,
+        autofocus: true,
+        textInputAction: TextInputAction.newline,
+        keyboardType: TextInputType.multiline,
+      ),
+    );
+  }
+}

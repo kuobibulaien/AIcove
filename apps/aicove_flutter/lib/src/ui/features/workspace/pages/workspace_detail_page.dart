@@ -128,6 +128,8 @@ class _WorkspaceDetailPageState extends ConsumerState<WorkspaceDetailPage> {
                 key: ValueKey('workspace-entry-${entry.name}'),
                 icon: entry.isDirectory
                     ? Icons.folder_outlined
+                    : WorkspaceFilePage.isImage(entry.name)
+                    ? Icons.image_outlined
                     : Icons.description_outlined,
                 label: entry.name,
                 trailingType: entry.isDirectory

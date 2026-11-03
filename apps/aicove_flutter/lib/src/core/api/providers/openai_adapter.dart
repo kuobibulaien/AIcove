@@ -82,7 +82,65 @@ class OpenAIAdapter implements ProviderAdapter {
       if (hasTools) body['tools'] = tools;
     }
     _applyRequestOptions(body, requestOptions);
+    body['messages'] = _serializeMessages(
+      body['messages'] as List,
+      model: body['model'].toString(),
+    );
     return body;
+  }
+
+  /// The same boundary handles history, raw provider replies and rebuilt streams.
+  /// Gemini's OpenAI extension is valid only for a Gemini destination model.
+  List<dynamic> _serializeMessages(List messages, {required String model}) {
+    final googleSignatures = RegExp(
+      r'(^|[/:])gemini-',
+    ).hasMatch(model.toLowerCase());
+    return [
+      for (final message in messages)
+        if (message is Map && message['tool_calls'] is List)
+          {
+            ...message,
+            'tool_calls': [
+              for (final call in message['tool_calls'] as List)
+                if (call is Map)
+                  _serializeToolCall(call, googleSignatures: googleSignatures)
+                else
+                  call,
+            ],
+          }
+        else
+          message,
+    ];
+  }
+
+  Map<String, dynamic> _serializeToolCall(
+    Map original, {
+    required bool googleSignatures,
+  }) {
+    final call = Map<String, dynamic>.from(original)
+      ..remove('thoughtSignature')
+      ..remove('thought_signature');
+    final signature = ToolCall.readThoughtSignature(original);
+    final rawExtra = original['extra_content'];
+    final extra = <String, dynamic>{if (rawExtra is Map) ...rawExtra};
+    final rawGoogle = extra['google'];
+    final google = <String, dynamic>{if (rawGoogle is Map) ...rawGoogle};
+    if (googleSignatures && signature != null) {
+      google['thought_signature'] = signature;
+    } else {
+      google.remove('thought_signature');
+    }
+    if (google.isEmpty) {
+      extra.remove('google');
+    } else {
+      extra['google'] = google;
+    }
+    if (extra.isEmpty) {
+      call.remove('extra_content');
+    } else {
+      call['extra_content'] = extra;
+    }
+    return call;
   }
 
   void _applyRequestOptions(

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/prompts/plugin_prompts.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
+import 'plugin_prompts_page.dart';
 
 class TimeAwarenessPluginDetailPage extends ConsumerWidget {
   const TimeAwarenessPluginDetailPage({super.key});
@@ -11,8 +12,7 @@ class TimeAwarenessPluginDetailPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.moeColors;
-    final config = ref.watch(timeAwarenessPluginConfigProvider);
-    final notifier = ref.read(timeAwarenessPluginConfigProvider.notifier);
+    final prompts = ref.watch(pluginPromptsProvider).valueOrNull;
 
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
@@ -27,22 +27,12 @@ class TimeAwarenessPluginDetailPage extends ConsumerWidget {
             ),
             children: [
               MoeSettingsGroup(
+                title: '提示词（所有角色共用）',
                 children: [
-                  MoeSettingsRow(
-                    label: '历史消息时间戳',
-                    subtitle: '让 AI 知道每条消息的发送时间',
-                    trailingType: MoeSettingsRowTrailing.switchControl,
-                    switchValue: config.includeMessageTimestamp,
-                    onSwitchChanged: notifier.setIncludeMessageTimestamp,
-                  ),
-                  MoeSettingsRow(
-                    label: '当前时间注入',
-                    subtitle: '让 AI 知道现在几点',
-                    trailingType: MoeSettingsRowTrailing.switchControl,
-                    switchValue: config.includeCurrentTime,
-                    onSwitchChanged: notifier.setIncludeCurrentTime,
-                    showDivider: false,
-                  ),
+                  for (final slot in PluginPromptSlot.forPlugin(
+                    'time_awareness',
+                  ))
+                    PluginPromptSlotRow(slot: slot, prompts: prompts),
                 ],
               ),
             ],

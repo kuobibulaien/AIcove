@@ -2,43 +2,19 @@ import '../domain/handlers/tool_output.dart';
 import '../../workspace/application/workspace_image.dart';
 import 'dart:async';
 import '../../../core/api/request_control.dart';
+import '../../../core/app_logger.dart';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show KernelCancelledException;
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
+    show KernelCancelledException;
 
 import 'mcp_connector.dart';
-
-/// MCP 调用失败（网络、HTTP 状态、JSON-RPC 错误或响应格式不对）。
-class McpException implements Exception {
-  const McpException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-/// initialize＋tools/list 的结果。
-class McpServerSnapshot {
-  const McpServerSnapshot({required this.serverName, required this.tools});
-
-  final String serverName;
-  final List<McpToolInfo> tools;
-}
-
-/// tools/call 的结果，已压平成可回给模型的文本。
-class McpToolCallResult {
-  const McpToolCallResult({
-    required this.text,
-    required this.isError,
-    this.output,
-  });
-
-  final String text;
-  final bool isError;
-  final ToolOutput? output;
-}
+import 'mcp_client_port.dart';
+import 'mcp_stdio_client.dart';
+import 'package:flutter/widgets.dart';
+import 'dart:ui' show AppExitResponse;
+export 'mcp_client_port.dart';
 
 /// 远程 MCP 服务客户端，只实现 Streamable HTTP 传输上的工具能力：
 /// initialize、tools/list、tools/call。响应既接受 application/json，
@@ -46,7 +22,7 @@ class McpToolCallResult {
 ///
 /// 会话 id 由服务端在 initialize 时下发；会话过期（带会话 id 时返回 404）
 /// 自动重新握手一次。
-class McpHttpClient {
+class McpHttpClient implements McpClientPort {
   McpHttpClient({
     required this.url,
     this.headers = const <String, String>{},
@@ -74,6 +50,7 @@ class McpHttpClient {
   Future<void>? _initializing;
   int _nextId = 1;
 
+  @override
   Future<McpServerSnapshot> listTools() async {
     await _ensureInitialized();
     final tools = <McpToolInfo>[];
@@ -95,6 +72,7 @@ class McpHttpClient {
     return McpServerSnapshot(serverName: _serverName, tools: tools);
   }
 
+  @override
   Future<McpToolCallResult> callTool(
     String name,
     Map<String, dynamic> arguments,
@@ -104,6 +82,14 @@ class McpHttpClient {
       'name': name,
       'arguments': arguments,
     }, timeout: callTimeout);
+    return decodeToolResult(name, result);
+  }
+
+  /// Shared rich-result decoding for both transports.
+  static Future<McpToolCallResult> decodeToolResult(
+    String name,
+    Map<String, dynamic> result,
+  ) async {
     final images = <ToolImage>[];
     final omitted = <String>[];
     for (final block in result['content'] as List? ?? const []) {
@@ -139,6 +125,7 @@ class McpHttpClient {
     );
   }
 
+  @override
   void close() {
     if (_ownsClient) _client.close();
   }
@@ -165,8 +152,9 @@ class McpHttpClient {
         case 'resource_link':
           parts.add('[链接 ${block['name'] ?? ''} ${block['uri'] ?? ''}]'.trim());
         case 'image':
-          if (includeImagePlaceholder)
+          if (includeImagePlaceholder) {
             parts.add(omittedToolImage('MCP ${block['mimeType'] ?? ''}'));
+          }
         case 'audio':
           parts.add('[音频 ${block['mimeType'] ?? ''}，未转给模型]');
       }
@@ -392,28 +380,72 @@ class _SessionExpired implements Exception {
 }
 
 /// 按连接器复用客户端，保持 MCP 会话；地址或请求头变化时换新客户端。
-class McpClientPool {
-  McpClientPool._();
+class McpClientPool with WidgetsBindingObserver {
+  McpClientPool._() {
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   static final McpClientPool instance = McpClientPool._();
 
-  final _clients = <String, (String, McpHttpClient)>{};
+  final _clients = <String, (String, McpClientPort)>{};
+  final _retiring = <Future<void>>{};
 
-  McpHttpClient clientFor(McpConnector connector) {
-    final fingerprint = jsonEncode([
-      connector.url.trim(),
-      connector.requestHeaders,
-    ]);
+  McpClientPort clientFor(McpConnector connector) {
+    final fingerprint = connector.connectionFingerprint;
     final cached = _clients[connector.id];
-    if (cached != null && cached.$1 == fingerprint) return cached.$2;
-    cached?.$2.close();
-    final client = McpHttpClient(
-      url: connector.url.trim(),
-      headers: connector.requestHeaders,
-    );
+    if (cached != null &&
+        cached.$1 == fingerprint &&
+        !(cached.$2 is McpStdioClient &&
+            (cached.$2 as McpStdioClient).isClosed)) {
+      return cached.$2;
+    }
+    if (cached != null) _retire(cached.$2);
+    final McpClientPort client = connector.isStdio
+        ? McpStdioClient(connector: connector)
+        : McpHttpClient(
+            url: connector.url.trim(),
+            headers: connector.requestHeaders,
+          );
     _clients[connector.id] = (fingerprint, client);
     return client;
   }
 
-  void remove(String connectorId) => _clients.remove(connectorId)?.$2.close();
+  void _retire(McpClientPort client) {
+    client.close();
+    if (client is! McpStdioClient) return;
+    final stopped = client.stopped.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {
+        AppLogger.warning(
+          'McpClientPool',
+          '本地 MCP 进程清理未正常完成',
+          metadata: {'error': error.runtimeType.toString()},
+        );
+      },
+    );
+    _retiring.add(stopped);
+    unawaited(stopped.whenComplete(() => _retiring.remove(stopped)));
+  }
+
+  Future<void> closeAll() async {
+    final clients = _clients.values.map((entry) => entry.$2).toList();
+    _clients.clear();
+    for (final client in clients) {
+      _retire(client);
+    }
+    while (_retiring.isNotEmpty) {
+      await Future.wait(_retiring.toList());
+    }
+  }
+
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    await closeAll();
+    return AppExitResponse.exit;
+  }
+
+  void remove(String connectorId) {
+    final client = _clients.remove(connectorId)?.$2;
+    if (client != null) _retire(client);
+  }
 }

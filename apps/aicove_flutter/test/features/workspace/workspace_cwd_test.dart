@@ -39,13 +39,34 @@ void main() {
         mobile
             .where((t) => t.exposure == ToolExposure.direct)
             .map((t) => t.name),
-        ['codemode', 'read', 'write', 'edit'],
+        [
+          'codemode',
+          'workspace_open',
+          'workspace_create',
+          'read',
+          'write',
+          'edit',
+          'workspace_list',
+          'workspace_glob',
+          'workspace_grep',
+        ],
       );
       expect(
         tools
             .where((t) => t.exposure == ToolExposure.direct)
             .map((t) => t.name),
-        ['bash', 'codemode', 'read', 'write', 'edit'],
+        [
+          'bash',
+          'codemode',
+          'workspace_open',
+          'workspace_create',
+          'read',
+          'write',
+          'edit',
+          'workspace_list',
+          'workspace_glob',
+          'workspace_grep',
+        ],
       );
       for (final tool in tools)
         expect(

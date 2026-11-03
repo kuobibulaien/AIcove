@@ -27,6 +27,15 @@ class MoeAutoSaveController extends ChangeNotifier {
   bool get composing => _fields
       .any((c) => c.value.composing.isValid && !c.value.composing.isCollapsed);
 
+  void commitComposing() {
+    for (final field in _fields) {
+      final range = field.value.composing;
+      if (range.isValid && !range.isCollapsed) {
+        field.value = field.value.copyWith(composing: TextRange.empty);
+      }
+    }
+  }
+
   void configure({
     required Future<void> Function() save,
     required Object? Function() snapshot,
@@ -201,7 +210,10 @@ class _MoeAutoSaveScopeState extends State<MoeAutoSaveScope>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) widget.controller.flush();
+    if (state != AppLifecycleState.resumed) {
+      widget.controller.commitComposing();
+      widget.controller.flush();
+    }
   }
 
   @override
@@ -217,6 +229,7 @@ class _MoeAutoSaveScopeState extends State<MoeAutoSaveScope>
     if (_leaving) return;
     _leaving = true;
     FocusScope.of(context).unfocus();
+    widget.controller.commitComposing();
     try {
       while (mounted) {
         if (await widget.controller.flush()) {
@@ -312,8 +325,6 @@ Future<void> showMoeAutoSaveTextEditor({
       context: context,
       title: title,
       showCloseButton: true,
-      isDismissible: false,
-      enableDrag: false,
       builder: (_) => _AutoSaveTextEditor(
           initialValue: initialValue,
           onSave: onSave,
@@ -368,6 +379,10 @@ class _AutoSaveTextEditorState extends State<_AutoSaveTextEditor>
             autofocus: true,
             maxLines: widget.maxLines,
             obscureText: widget.obscureText,
-            keyboardType: widget.keyboardType),
+            keyboardType: widget.keyboardType,
+            textInputAction: widget.maxLines == 1 ? TextInputAction.done : null,
+            onSubmitted: widget.maxLines == 1
+                ? (_) => Navigator.maybePop(context)
+                : null),
       ));
 }

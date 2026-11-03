@@ -16,7 +16,6 @@ import 'package:aicove_flutter/src/features/plugins/mcp/mcp_connector_providers.
 import 'package:aicove_flutter/src/ui/features/character/widgets/character_plugins_section.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/mcp_connector_detail_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/mcp_connectors_page.dart';
-import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
 import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
@@ -43,11 +42,26 @@ const _memory = McpConnector(
   url: 'https://memory.example.com/mcp',
 );
 
-void _seed() {
+const _local = McpConnector(
+  id: 'local123',
+  name: '本地笔记',
+  type: McpTransportType.stdio,
+  command: 'npx',
+  args: ['-y', 'notes-mcp', '/path/to/home/My Notes'],
+  cwd: '~/Documents',
+  env: {'API_KEY': 'preview-private-value'},
+);
+
+void _seed({bool local = false}) {
   SharedPreferences.setMockInitialValues({
     McpConnectorsConfigNotifier.storageKey: jsonEncode(
-      McpConnectorsConfig(connectors: [_weather, _memory]).toJson(),
+      McpConnectorsConfig(
+        connectors: [_weather, _memory, if (local) _local],
+      ).toJson(),
     ),
+    McpConnectorsConfigNotifier.localStorageKey: jsonEncode({
+      'local123': _local.localToJson(),
+    }),
   });
 }
 
@@ -117,7 +131,7 @@ class _SectionHostState extends State<_SectionHost> {
 }
 
 void main() {
-  setUp(_seed);
+  setUp(() => _seed());
 
   for (final width in [360.0, 1040.0]) {
     testWidgets('连接器列表显示状态，无溢出（$width）', (tester) async {
@@ -155,6 +169,77 @@ void main() {
       isEmpty,
     );
     expect(find.text('工具（2/2 已开启）'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [360.0, 1040.0]) {
+    testWidgets('本地命令详情：输入命令与环境变量（$width）', (tester) async {
+      _seed(local: true);
+      await _mount(
+        tester,
+        const McpConnectorDetailPage(connectorId: 'local123'),
+        width: width,
+        height: 1100,
+      );
+      expect(find.text('本地命令'), findsOneWidget);
+      expect(find.text('启动命令'), findsOneWidget);
+      expect(find.text("npx -y notes-mcp '/path/to/home/My Notes'"), findsOneWidget);
+      expect(find.text('每行一个，格式为 名称=值'), findsOneWidget);
+      expect(find.text('服务地址'), findsNothing);
+      expect(find.text('1 个'), findsOneWidget);
+      expect(find.textContaining('preview-private-value'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('mcp-connector-command')));
+      await tester.pumpAndSettle();
+      final field = find.byType(EditableText);
+      await tester.enterText(field, "node '/path with spaces/server.js' ''");
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(McpConnectorDetailPage)),
+      );
+      final updated = container
+          .read(mcpConnectorsConfigProvider)
+          .byId('local123')!;
+      expect(updated.command, 'node');
+      expect(updated.args, ['/path with spaces/server.js', '']);
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('mcp-connector-env')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<EditableText>(find.byType(EditableText)).maxLines,
+        6,
+      );
+      await tester.enterText(
+        find.byType(EditableText),
+        'API_KEY=new-secret\nPATH=/custom/bin',
+      );
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(
+        container.read(mcpConnectorsConfigProvider).byId('local123')!.env,
+        {'API_KEY': 'new-secret', 'PATH': '/custom/bin'},
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('本地命令为空时显示未填写', (tester) async {
+    _seed(local: true);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      McpConnectorsConfigNotifier.localStorageKey,
+      jsonEncode({
+        'local123': _local.copyWith(command: '', args: []).localToJson(),
+      }),
+    );
+    await _mount(
+      tester,
+      const McpConnectorDetailPage(connectorId: 'local123'),
+      width: 360,
+      height: 1100,
+    );
+    expect(find.text('未填写'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -208,7 +293,7 @@ void main() {
               key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
           final image = await boundary.toImage(pixelRatio: 2);
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          final dir = Directory('../../.codex-temp/mcp-connectors/previews')
+          final dir = Directory('test/features/plugins/mcp/previews')
             ..createSync(recursive: true);
           await File(
             '${dir.path}/$name.png',
@@ -218,6 +303,7 @@ void main() {
 
     testWidgets('列表、详情与角色开关', (tester) async {
       if (!_capture) return;
+      _seed(local: true);
       await loadFonts(tester);
       final key = GlobalKey();
 
@@ -237,6 +323,17 @@ void main() {
         boundary: key,
       );
       await save(tester, key, 'detail-360');
+
+      for (final width in [360.0, 1040.0]) {
+        await _mount(
+          tester,
+          const McpConnectorDetailPage(connectorId: 'local123'),
+          width: width,
+          height: 1100,
+          boundary: key,
+        );
+        await save(tester, key, 'stdio-detail-${width.toInt()}');
+      }
 
       await _mount(tester, const _SectionHost(), width: 360, boundary: key);
       await tester.tap(find.text('管理插件'));

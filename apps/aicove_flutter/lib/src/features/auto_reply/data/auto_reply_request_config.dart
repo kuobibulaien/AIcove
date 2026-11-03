@@ -1,5 +1,6 @@
+import '../../chat/application/conversation_model.dart';
 import '../../settings/app_settings.dart';
-import '../../settings/direct_mode.dart' as direct;
+import '../../chat/services/chat_request_config.dart';
 
 /// 主动回复后台执行所需的模型请求配置。
 ///
@@ -21,59 +22,25 @@ class AutoReplyRequestConfig {
   final Map<String, dynamic> customConfig;
 }
 
-/// 从 [settings] 解析主动回复使用的默认聊天模型与供应商配置，
-/// 并叠加直连模式（direct mode）兜底。
+/// 从 [settings] 解析主动回复使用的聊天模型与供应商配置，
+/// 并叠加直连模式（direct mode）兜底。[sessionModel] 是目标会话存的
+/// `session_provider`，可用时优先，否则用默认队列首位。
 Future<AutoReplyRequestConfig> resolveAutoReplyRequestConfig(
-  AppSettings settings,
-) async {
-  final modelRef = settings.defaultChatModels.isNotEmpty
-      ? settings.defaultChatModels.first
-      : settings.defaultModelName;
-  final providerId = settings.getModelProviderId(modelRef) ?? 'openai';
-  var modelFullId = settings.toModelFullId(
-    modelRef,
-    fallbackProvider: providerId,
+  AppSettings settings, {
+  String? sessionModel,
+}) async {
+  final modelRef = sessionPrimaryModel(settings, sessionModel);
+  // Availability probes must not consume the next real request's key.
+  final request = await ChatRequestConfigBuilder().buildRequestConfig(
+    settings,
+    modelRef: modelRef,
+    consumeKeyRotation: false,
   );
-
-  final providerAuth = settings.providers.firstWhere(
-    (provider) => provider.id == providerId,
-    orElse: () => ProviderAuth(
-      id: providerId,
-      apiKeys: const <String>[],
-      apiBaseUrl: settings.apiBaseUrl,
-    ),
-  );
-
-  var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
-      ? settings.apiBaseUrl
-      : providerAuth.apiBaseUrl.trim();
-  String? providerApiKey = providerAuth.apiKeys.isNotEmpty
-      ? providerAuth.apiKeys.first.trim()
-      : null;
-
-  try {
-    final directConfig = await direct.loadDirectConfig();
-    if (directConfig.enabled) {
-      if ((providerApiBase.isEmpty || providerApiBase == settings.apiBaseUrl) &&
-          directConfig.apiBase.trim().isNotEmpty) {
-        providerApiBase = directConfig.apiBase.trim();
-      }
-      if ((providerApiKey == null || providerApiKey.isEmpty) &&
-          directConfig.apiKey.trim().isNotEmpty) {
-        providerApiKey = directConfig.apiKey.trim();
-      }
-      if (!modelFullId.contains(':') && directConfig.model.trim().isNotEmpty) {
-        modelFullId = 'openai:${directConfig.model.trim()}';
-      }
-    }
-  } catch (_) {}
 
   return AutoReplyRequestConfig(
-    modelFullId: modelFullId,
-    providerApiBase: providerApiBase,
-    providerApiKey: providerApiKey == null || providerApiKey.isEmpty
-        ? null
-        : providerApiKey,
-    customConfig: providerAuth.customConfig,
+    modelFullId: request.modelFullId,
+    providerApiBase: request.providerApiBase,
+    providerApiKey: request.providerApiKey,
+    customConfig: request.customConfig,
   );
 }

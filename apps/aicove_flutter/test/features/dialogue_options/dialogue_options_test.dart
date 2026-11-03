@@ -1,5 +1,6 @@
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/content_tags/domain/tag_presentation.dart';
 import 'package:aicove_flutter/src/features/dialogue_options/domain/dialogue_options.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list_items.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -112,5 +113,117 @@ void main() {
       parseDialogueOptions(text, tags: {'options', 'branches'}),
       ['去吃饭', '去散步'],
     );
+  });
+
+  group('code and fold boundaries', () {
+    test('backticked and fenced tags are never options', () {
+      const inline = '用 `<options>a</options>` 写选项';
+      expect(parseDialogueOptions(inline), isEmpty);
+      expect(stripDialogueOptions(inline), inline);
+      const fenced = '示例：\n```\n<options>a</options>\n```\n结束';
+      expect(parseDialogueOptions(fenced), isEmpty);
+      expect(stripDialogueOptions(fenced), fenced);
+      expect(
+        parseDialogueOptions('`<options>x</options>`<options>真的</options>'),
+        ['真的'],
+      );
+      expect(
+        parseDialogueOptions('<options><option>写 `<b>` 标签</option></options>'),
+        ['写 `<b>` 标签'],
+      );
+      expect(
+        stripDialogueOptions('`<options>` 留下<options>a</options>'),
+        '`<options>` 留下',
+      );
+    });
+
+    test('options written inside a fold stay inside it', () {
+      const nya = '<think_nya>要写 <options> 吗</think_nya>正文';
+      expect(stripDialogueOptions(nya), nya);
+      expect(parseDialogueOptions(nya), isEmpty);
+      const nyaTilde = '<think_nya~><options>假</options></think_nya~>正文';
+      expect(parseDialogueOptions(nyaTilde), isEmpty);
+      expect(stripDialogueOptions(nyaTilde), nyaTilde);
+      const think = '<think><options>假</options></think>正文<options>真</options>';
+      expect(parseDialogueOptions(think), ['真']);
+      expect(
+        stripDialogueOptions(think),
+        '<think><options>假</options></think>正文',
+      );
+    });
+
+    test('an unclosed fold still wraps options written after it', () {
+      const text = '<think><options><option>离开</option></options>';
+      expect(parseDialogueOptions(text), isEmpty);
+      expect(stripDialogueOptions(text), text);
+      const custom = '<tuiyan>推演<options>假</options>';
+      expect(parseDialogueOptions(custom, foldTags: {'tuiyan'}), isEmpty);
+      expect(stripDialogueOptions(custom, foldTags: {'tuiyan'}), custom);
+    });
+
+    test('caller fold tags wrap options; option tags win a name clash', () {
+      const text = '<tuiyan><options>假</options></tuiyan>正文';
+      expect(parseDialogueOptions(text), ['假']);
+      expect(parseDialogueOptions(text, foldTags: {'tuiyan'}), isEmpty);
+      expect(stripDialogueOptions(text, foldTags: {'tuiyan'}), text);
+      expect(
+        parseDialogueOptions('<details>甲\n乙</details>', tags: {'details'}),
+        ['甲', '乙'],
+      );
+    });
+
+    test('only closed tags produce clickable options', () {
+      expect(parseDialogueOptions('正文<options><option>a</option>'), isEmpty);
+      expect(parseDialogueOptions('<options><option>a</options>'), isEmpty);
+      expect(
+        parseDialogueOptions('<options><option>a</option><option>b</options>'),
+        ['a'],
+      );
+    });
+
+    test('unclosed tail is cut only while the reply is being generated', () {
+      const text = '正文<options><option>a';
+      expect(stripDialogueOptions(text, allowUnclosedTail: false), text);
+      expect(
+        stripDialogueOptions('前<options>a</options>后', allowUnclosedTail: false),
+        '前后',
+      );
+      expect(
+        stripDialogueOptionsForDisplay(
+          _assistant('a', text, status: 'sending'),
+        ).displayText,
+        '正文',
+      );
+      expect(
+        stripDialogueOptionsForDisplay(_assistant('b', text)).displayText,
+        text,
+      );
+    });
+
+    test('display copy reads option and fold tags from the presentation map', () {
+      const map = {
+        'branches': TagPresentationEntry(TagPresentation.options, '选项'),
+        'tuiyan': TagPresentationEntry(TagPresentation.fold, '推演'),
+      };
+      final shown = stripDialogueOptionsForDisplay(
+        _assistant(
+          'a',
+          '<tuiyan><branches>假</branches></tuiyan>正文<branches>真</branches>',
+        ),
+        tagPresentation: map,
+      );
+      expect(shown.displayText, '<tuiyan><branches>假</branches></tuiyan>正文');
+    });
+
+    test('a finished unclosed tail stays visible through the list items', () {
+      const map = {
+        'options': TagPresentationEntry(TagPresentation.options, '选项'),
+      };
+      final items = buildChatMessageListItems(
+        messages: [_assistant('a', '正文<options>半截')],
+        tagPresentation: map,
+      ).whereType<ChatMessageItem>().toList();
+      expect(items.single.message.displayText, contains('半截'));
+    });
   });
 }

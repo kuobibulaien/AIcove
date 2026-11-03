@@ -162,6 +162,9 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
           'sourceMessageId': facts.sourceMessageId,
         if (facts.pageInstanceId != null)
           'pageInstanceId': facts.pageInstanceId,
+        if (facts.pageName != null &&
+            RegExp(r'^[A-Za-z_][A-Za-z0-9_]{0,63}$').hasMatch(facts.pageName!))
+          'pageName': facts.pageName,
         'state': {
           for (final entry in facts.state.entries.take(32))
             if (RegExp(r'^[a-zA-Z][a-zA-Z0-9]{0,47}$').hasMatch(entry.key) &&

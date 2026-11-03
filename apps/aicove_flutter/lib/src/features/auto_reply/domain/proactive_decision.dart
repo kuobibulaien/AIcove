@@ -53,6 +53,14 @@ abstract class ProactiveDecisionPort {
     required String state,
     required List<ProactiveQuestion> questions,
   });
+
+  /// Returns one or more planned trigger answer sets from a single judgment.
+  Future<List<Map<String, ProactiveAnswer>>> answerAll({
+    required String state,
+    required List<ProactiveQuestion> questions,
+  }) async => <Map<String, ProactiveAnswer>>[
+    await answer(state: state, questions: questions),
+  ];
 }
 
 /// What the role should do now.

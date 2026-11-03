@@ -86,7 +86,7 @@ void main() {
 
         final providerB = find.byWidgetPredicate(
           (widget) =>
-              widget is MoeSettingsRow && widget.subtitle == ' · audit-b',
+              widget is MoeSettingsRow && widget.subtitle == 'audit-b',
         );
         expect(providerB, findsOneWidget);
         await tester.tap(providerB);
@@ -124,8 +124,12 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(MoeSettingsRow), findsOneWidget);
         expect(
+          tester.widget<MoeSettingsRow>(find.byType(MoeSettingsRow)).label,
+          'Distinctive Alias',
+        );
+        expect(
           tester.widget<MoeSettingsRow>(find.byType(MoeSettingsRow)).subtitle,
-          'Distinctive Alias · audit-a',
+          'audit-a',
         );
         expect(tester.takeException(), isNull);
       },
@@ -135,12 +139,20 @@ void main() {
     tester,
   ) async {
     await openSearch(tester, duplicate: true);
+    expect(find.byType(MoeSettingsRow), findsNWidgets(2));
+    expect(
+      find.descendant(
+        of: find.byType(MoeSettingsRow),
+        matching: find.text('Distinctive Alias'),
+      ),
+      findsOneWidget,
+    );
     expect(
       find.descendant(
         of: find.byType(MoeSettingsRow),
         matching: find.text('shared'),
       ),
-      findsNWidgets(2),
+      findsOneWidget,
     );
   });
   testWidgets('model search matches provider qualified display names', (
@@ -159,7 +171,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(MoeSettingsRow),
-        matching: find.text('shared'),
+        matching: find.text('Distinctive Alias'),
       ),
       findsOneWidget,
     );
@@ -171,7 +183,7 @@ void main() {
     await tester.tap(
       find.descendant(
         of: find.byType(MoeSettingsRow),
-        matching: find.text('shared'),
+        matching: find.text('Distinctive Alias'),
       ),
     );
     await tester.pumpAndSettle();

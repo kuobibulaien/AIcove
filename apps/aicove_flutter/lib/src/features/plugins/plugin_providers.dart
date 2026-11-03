@@ -797,16 +797,6 @@ class TimeAwarenessPluginConfigNotifier
     }
   }
 
-  Future<void> setIncludeMessageTimestamp(bool include) async {
-    state = state.copyWith(includeMessageTimestamp: include);
-    await _saveConfig();
-  }
-
-  Future<void> setIncludeCurrentTime(bool include) async {
-    state = state.copyWith(includeCurrentTime: include);
-    await _saveConfig();
-  }
-
   Future<void> setCurrentTimePromptTemplate(String template) async {
     state = state.copyWith(currentTimePromptTemplate: template);
     await _saveConfig();

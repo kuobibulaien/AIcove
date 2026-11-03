@@ -36,9 +36,6 @@ class PackagePlugin extends BasePlugin {
     return fragments.isEmpty ? null : fragments.join('\n\n');
   }
 
-  static bool isExecutionTool(String name) =>
-      name.startsWith('pkg_') || name.startsWith('run_skill_js_');
-
   @override
   bool get enabled => true;
 
@@ -54,7 +51,10 @@ class PackagePlugin extends BasePlugin {
     contentTags: package.contentTagProvider(readSkillTool: readSkillTool),
     setup: (registrar) => registrar.add(
       AppContributions.requestScope,
-      (_) => PackageRequestScope(this),
+      (inputs) => PackageRequestScope(
+        this,
+        packageExecutable: inputs.packageExecutable,
+      ),
     ),
   );
 
@@ -67,9 +67,10 @@ class PackagePlugin extends BasePlugin {
 /// Prompts go to the end of the system prompt; skills through the
 /// package's read tool.
 class PackageRequestScope extends PluginRequestScope {
-  PackageRequestScope(this.plugin);
+  PackageRequestScope(this.plugin, {this.packageExecutable = true});
 
   final PackagePlugin plugin;
+  final bool packageExecutable;
 
   @override
   String get pluginId => plugin.id;
@@ -86,5 +87,5 @@ class PackageRequestScope extends PluginRequestScope {
   }
 
   @override
-  List<AITool> tools() => plugin.getTools();
+  List<AITool> tools() => plugin.getTools(executable: packageExecutable);
 }

@@ -4,6 +4,8 @@ import '../domain/message.dart';
 import '../../plugins/domain/plugin.dart';
 import 'chat_message_processor.dart';
 
+typedef PendingImagePlaceholderBuilder = Message Function(String prompt);
+
 typedef PendingTtsPlaceholderBuilder = Message Function(String ttsText);
 typedef StickerMessageBuilder = Message? Function(MultimodalSegment segment);
 
@@ -60,11 +62,13 @@ class ChatStreamSupplementPlan {
     this.insertOps = const <ChatSupplementInsertOp>[],
     this.pendingTtsMessages = const <Message>[],
     this.imagePrompts = const <String>[],
+    this.pendingImageMessages = const <Message>[],
   });
 
   final List<ChatSupplementInsertOp> insertOps;
   final List<Message> pendingTtsMessages;
   final List<String> imagePrompts;
+  final List<Message> pendingImageMessages;
 }
 
 class ChatMultimodalDeliveryPlanner {
@@ -126,11 +130,13 @@ class ChatMultimodalDeliveryPlanner {
     required bool includeTts,
     required int startOrder,
     required PendingTtsPlaceholderBuilder pendingTtsPlaceholderBuilder,
+    PendingImagePlaceholderBuilder? pendingImagePlaceholderBuilder,
     required StickerMessageBuilder stickerMessageBuilder,
   }) {
     final insertOps = <ChatSupplementInsertOp>[];
     final pendingTtsMessages = <Message>[];
     final imagePrompts = <String>[];
+    final pendingImageMessages = <Message>[];
     final segments =
         chatMessageProcessor.parseMultimodalSegments(replyText, pluginEvents);
     var textChars = 0;
@@ -166,6 +172,12 @@ class ChatMultimodalDeliveryPlanner {
           final imagePrompt = _resolveImagePrompt(segment);
           if (imagePrompt != null) {
             imagePrompts.add(imagePrompt);
+            final pending = pendingImagePlaceholderBuilder?.call(imagePrompt);
+            if (pending != null) {
+              pendingImageMessages.add(pending);
+              insertOps.add(ChatSupplementInsertOp(textCharsBefore: textChars,
+                order: startOrder + insertOps.length, message: pending));
+            }
           }
           break;
       }
@@ -175,6 +187,7 @@ class ChatMultimodalDeliveryPlanner {
       insertOps: insertOps,
       pendingTtsMessages: pendingTtsMessages,
       imagePrompts: imagePrompts,
+      pendingImageMessages: pendingImageMessages,
     );
   }
 

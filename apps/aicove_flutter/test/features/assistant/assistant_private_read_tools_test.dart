@@ -8,6 +8,9 @@ import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
 import 'package:aicove_flutter/src/features/assistant/application/assistant_private_read_tools.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_review.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/memory/domain/memory_item.dart';
+import 'package:aicove_flutter/src/features/context/domain/context_summary.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -53,6 +56,105 @@ void main() {
     );
     return jsonDecode(text!) as Map<String, dynamic>;
   }
+
+  test(
+    'aggregate context preserves grants, revocation and write approval',
+    () async {
+      const name = 'aicove_role_context';
+      final args = <String, dynamic>{
+        'target': 'chat',
+        'action': 'read',
+        'role_id': 'xue',
+      };
+      await tools.prepare();
+      expect(tools.riskOf(name, args), AssistantRisk.major);
+      expect(
+        tools.describe(name, args).title,
+        tools.describe(AssistantPrivateReadTools.readChat, args).title,
+      );
+      expect((await run(name, args))['error'], 'invalid');
+      expect((await run(name, args, approved: true))['count'], 1);
+      expect(tools.riskOf(name, args), AssistantRisk.readOnly);
+      final write = {...args, 'action': 'append', 'content': 'test'};
+      expect(tools.riskOf(name, write), AssistantRisk.review);
+      expect(
+        tools.describe(name, write).title,
+        tools.describe(AssistantPrivateReadTools.appendChat, write).title,
+      );
+      expect((await run(name, write))['message'], contains('读取授权不能代替修改审批'));
+      await run(AssistantPrivateReadTools.revoke, {'role_id': 'xue'});
+      expect(tools.riskOf(name, args), AssistantRisk.major);
+      expect((await run(name, args))['error'], 'invalid');
+      expect(
+        (await run(name, {
+          ...args,
+          'role_id': 'secret',
+        }, approved: true))['error'],
+        'invalid',
+      );
+      expect(
+        (await run(name, {
+          ...args,
+          'target': 'summary',
+          'action': 'append',
+        }, approved: true))['error'],
+        'invalid',
+      );
+    },
+  );
+
+  test(
+    'context action matrix shares atomic risks, prompts and validation',
+    () async {
+      final cases = <(String, String, String)>[
+        ('chat', 'read', AssistantPrivateReadTools.readChat),
+        ('chat', 'append', AssistantPrivateReadTools.appendChat),
+        ('chat', 'update', AssistantPrivateReadTools.updateChat),
+        ('chat', 'write', AssistantPrivateReadTools.updateChat),
+        ('chat', 'delete', AssistantPrivateReadTools.deleteChat),
+        ('summary', 'read', AssistantPrivateReadTools.readSummary),
+        ('summary', 'write', AssistantPrivateReadTools.editSummary),
+        ('summary', 'update', AssistantPrivateReadTools.editSummary),
+        ('summary', 'delete', AssistantPrivateReadTools.deleteSummary),
+        ('memory', 'read', AssistantPrivateReadTools.readMemory),
+        ('memory', 'write', AssistantPrivateReadTools.writeMemory),
+        ('memory', 'update', AssistantPrivateReadTools.writeMemory),
+        ('memory', 'delete', AssistantPrivateReadTools.deleteMemory),
+      ];
+      for (final (target, action, atomic) in cases) {
+        final args = <String, dynamic>{
+          'target': target,
+          'action': action,
+          'role_id': 'xue',
+        };
+        expect(AssistantPrivateReadTools.contextToolName(args), atomic);
+        expect(
+          tools.riskOf(AssistantPrivateReadTools.roleContext, args),
+          tools.riskOf(atomic, {'role_id': 'xue'}),
+        );
+        final prompt = tools.describe(
+          AssistantPrivateReadTools.roleContext,
+          args,
+        );
+        final original = tools.describe(atomic, {'role_id': 'xue'});
+        expect(prompt.title, original.title);
+        expect(prompt.detail, original.detail);
+        if (action != 'read') {
+          final invalid = await run(
+            AssistantPrivateReadTools.roleContext,
+            args,
+            approved: true,
+          );
+          expect(invalid['error'], 'invalid', reason: '$target/$action');
+          expect(
+            invalid['details'],
+            isNotEmpty,
+            reason: '$target/$action must retain required fields',
+          );
+        }
+      }
+    },
+  );
 
   test('asks once per role, then reads directly until revoked', () async {
     await tools.prepare();
@@ -111,4 +213,140 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'raw chat supports exact messages, boundaries and stable id paging',
+    () async {
+      tools = AssistantPrivateReadTools(
+        roles: () async => [_role('xue')],
+        rolesNow: () => [_role('xue')],
+        grants: AssistantReadGrants(),
+        messages: (id, {required limit, before, keyword}) async => [],
+        memories: (id) async => [],
+        readBoundary: (_) async => 'm1',
+        rawMessages: (_) async => [
+          Message(id: 'm1', role: 'user', content: 'old', createdAt: _now),
+          Message(
+            id: 'm2',
+            role: 'assistant',
+            content: 'x' * 3000,
+            createdAt: _now,
+          ),
+          Message(id: 'm3', role: 'user', content: 'new', createdAt: _now),
+        ],
+      );
+      final topic = await run(AssistantPrivateReadTools.readChat, {
+        'role_id': 'xue',
+        'active_topic_only': true,
+      }, approved: true);
+      expect(topic['context_start_message_id'], 'm1');
+      expect((topic['messages'] as List).map((m) => m['id']), ['m3', 'm2']);
+      final one = await run(AssistantPrivateReadTools.readChat, {
+        'role_id': 'xue',
+        'message_id': 'm2',
+      });
+      expect((one['messages'] as List).single['content'], 'x' * 3000);
+      final page = await run(AssistantPrivateReadTools.readChat, {
+        'role_id': 'xue',
+        'before_message_id': 'm3',
+      });
+      expect((page['messages'] as List).map((m) => m['id']), ['m2', 'm1']);
+      final wrong = await run(AssistantPrivateReadTools.readChat, {
+        'role_id': 'xue',
+        'message_id': 'not-owned',
+      });
+      expect(wrong['error'], 'invalid');
+    },
+  );
+
+  test(
+    'memory read returns ids and supports layer and keyword filters',
+    () async {
+      tools = AssistantPrivateReadTools(
+        roles: () async => [_role('xue')],
+        rolesNow: () => [_role('xue')],
+        grants: AssistantReadGrants(),
+        messages: (id, {required limit, before, keyword}) async => [],
+        memories: (id) async => [],
+        memoryItems: (_) async => [
+          MemoryItem(
+            id: 'a',
+            ownerId: 'xue',
+            layer: MemoryLayer.core,
+            title: '生日',
+            content: '三月',
+            sourceIds: const [],
+            locked: true,
+            createdAt: _now,
+            updatedAt: _now,
+          ),
+          MemoryItem(
+            id: 'b',
+            ownerId: 'xue',
+            layer: MemoryLayer.archive,
+            title: '旅行',
+            content: '三月',
+            sourceIds: const [],
+            locked: false,
+            createdAt: _now,
+            updatedAt: _now,
+          ),
+        ],
+      );
+      final result = await run(AssistantPrivateReadTools.readMemory, {
+        'role_id': 'xue',
+        'layer': 'archive',
+        'keyword': '旅行',
+      }, approved: true);
+      final item = (result['memories'] as List).single;
+      expect(item['id'], 'b');
+      expect(item['layer'], 'archive');
+      expect(item['locked'], false);
+    },
+  );
+
+  test(
+    'summary read excludes invalid current records and exposes history',
+    () async {
+      ContextSummary summary(String id, ContextSummaryKind kind) =>
+          ContextSummary(
+            id: id,
+            ownerId: 'xue',
+            kind: kind,
+            boundaryId: 'm1',
+            topicBoundary: null,
+            summary: id,
+            sourceIds: const ['m1'],
+            sourceDigest: 'digest',
+            createdAt: _now,
+          );
+      tools = AssistantPrivateReadTools(
+        roles: () async => [_role('xue')],
+        rolesNow: () => [_role('xue')],
+        grants: AssistantReadGrants(),
+        messages: (id, {required limit, before, keyword}) async => [],
+        memories: (id) async => [],
+        readBoundary: (_) async => 'm1',
+        summaryHistory: (_) async => [
+          ContextSummaryHistoryEntry(
+            record: summary('manual', ContextSummaryKind.manual),
+            isValid: true,
+            isCurrent: true,
+          ),
+          ContextSummaryHistoryEntry(
+            record: summary('auto', ContextSummaryKind.auto),
+            isValid: false,
+            isCurrent: true,
+          ),
+        ],
+      );
+      final result = await run(AssistantPrivateReadTools.readSummary, {
+        'role_id': 'xue',
+        'include_history': true,
+      }, approved: true);
+      expect((result['manual'] as Map)['summary'], 'manual');
+      expect(result['auto'], isNull);
+      expect(result['history'], hasLength(2));
+    },
+  );
 }

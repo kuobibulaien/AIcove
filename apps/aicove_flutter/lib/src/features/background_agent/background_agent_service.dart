@@ -16,7 +16,8 @@ import '../observability/trace_models.dart';
 import '../observability/trace_store.dart';
 import '../plugins/domain/handlers/ai_tool.dart';
 import '../settings/app_settings.dart';
-import '../settings/direct_mode.dart' as direct;
+import '../chat/services/chat_request_config.dart';
+import '../chat/services/provider_key_failure.dart';
 import 'domain/background_agent_definition.dart';
 import 'domain/background_agent_run_result.dart';
 
@@ -48,6 +49,7 @@ final backgroundAgentServiceProvider = Provider<BackgroundAgentService>((ref) {
         .read(chatHistoryStoreProvider)
         .loadCanonicalContextMessages(conversationId, limit: limit),
     loadSettings: () => ref.read(appSettingsProvider.future),
+    keyFailureRecorder: ref.read(providerKeyFailureRecorderProvider),
     executor:
         ({
           required ApiConfig config,
@@ -76,6 +78,7 @@ class BackgroundAgentService {
     BackgroundAgentExecutor? executor,
     BuildBackgroundAgentSessionId? sessionIdFactory,
     TraceStore? traceStore,
+    this.keyFailureRecorder,
   }) : _loadRecentMessages = loadRecentMessages,
        _loadSettings = loadSettings,
        _requestConfigResolver = requestConfigResolver ?? resolveRequestConfig,
@@ -83,6 +86,7 @@ class BackgroundAgentService {
        _sessionIdFactory = sessionIdFactory ?? _defaultSessionIdFactory,
        _traceStore = traceStore ?? TraceStore.instance;
 
+  final ProviderKeyFailureRecorder? keyFailureRecorder;
   final LoadBackgroundAgentMessages _loadRecentMessages;
   final LoadBackgroundAgentSettings _loadSettings;
   final ResolveBackgroundAgentRequestConfig _requestConfigResolver;
@@ -113,56 +117,22 @@ class BackgroundAgentService {
     required AppSettings settings,
     required String? modelRef,
   }) async {
-    final resolvedModelRef = (modelRef != null && modelRef.trim().isNotEmpty)
-        ? modelRef.trim()
-        : settings.defaultModelName;
-    var modelFullId = settings.toModelFullId(resolvedModelRef);
-    final providerId =
-        settings.getModelProviderId(resolvedModelRef) ?? 'openai';
-    final providerAuth = settings.providers.firstWhere(
-      (provider) => provider.id == providerId,
-      orElse: () => ProviderAuth(
-        id: providerId,
-        apiKeys: const <String>[],
-        apiBaseUrl: settings.apiBaseUrl,
-      ),
+    final request = await ChatRequestConfigBuilder().buildRequestConfig(
+      settings,
+      modelRef: modelRef,
     );
-    var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
-        ? settings.apiBaseUrl
-        : providerAuth.apiBaseUrl.trim();
-    String? providerApiKey = providerAuth.apiKeys.isNotEmpty
-        ? providerAuth.apiKeys.first.trim()
-        : null;
-
-    try {
-      final directConfig = await direct.loadDirectConfig();
-      if (directConfig.enabled) {
-        if ((providerApiBase.isEmpty ||
-                providerApiBase == settings.apiBaseUrl) &&
-            directConfig.apiBase.trim().isNotEmpty) {
-          providerApiBase = directConfig.apiBase.trim();
-        }
-        if ((providerApiKey == null || providerApiKey.isEmpty) &&
-            directConfig.apiKey.trim().isNotEmpty) {
-          providerApiKey = directConfig.apiKey.trim();
-        }
-        if (!modelFullId.contains(':') &&
-            directConfig.model.trim().isNotEmpty) {
-          modelFullId = 'openai:${directConfig.model.trim()}';
-        }
-      }
-    } catch (_) {}
-
-    final modelConfig = settings.getModelConfig(resolvedModelRef);
     return BackgroundAgentRequestConfig(
-      modelFullId: modelFullId,
-      providerId: providerId,
-      providerApiBase: providerApiBase,
-      providerApiKey: providerApiKey?.isEmpty == true ? null : providerApiKey,
-      customConfig: providerAuth.customConfig,
-      modelTemperature: modelConfig.temperature,
-      modelTopP: modelConfig.topP,
-      modelContextMessageLimit: modelConfig.contextMessageLimit,
+      modelFullId: request.modelFullId,
+      providerId: request.providerId,
+      providerApiBase: request.providerApiBase,
+      providerApiKey: request.providerApiKey,
+      providerApiKeyItemId: request.providerApiKeyItemId,
+      providerApiKeyItemIndex: request.providerApiKeyItemIndex,
+      providerApiKeyStrategy: request.providerApiKeyStrategy,
+      customConfig: request.customConfig,
+      modelTemperature: request.modelTemperature,
+      modelTopP: request.modelTopP,
+      modelContextMessageLimit: request.modelContextMessageLimit,
     );
   }
 
@@ -211,6 +181,10 @@ class BackgroundAgentService {
         modelFullId: requestConfig.modelFullId,
         providerApiBase: requestConfig.providerApiBase,
         providerApiKey: requestConfig.providerApiKey,
+        providerId: requestConfig.effectiveProviderId,
+        providerApiKeyItemId: requestConfig.providerApiKeyItemId,
+        providerApiKeyItemIndex: requestConfig.providerApiKeyItemIndex,
+        providerApiKeyStrategy: requestConfig.providerApiKeyStrategy,
         customConfig: requestConfig.customConfig,
         messages: requestMessages,
         tools: allowedTools.isEmpty
@@ -235,10 +209,14 @@ class BackgroundAgentService {
         requestMessages: requestMessages,
         allowedTools: allowedTools,
       );
-      final result = await _executor(
+      final result = await executeWithProviderKeyFailureRecording(
         config: config,
-        availableTools: allowedTools,
-        sessionId: sessionId,
+        recorder: keyFailureRecorder,
+        execute: () => _executor(
+          config: config,
+          availableTools: allowedTools,
+          sessionId: sessionId,
+        ),
       );
       final finalReply = result.processedText.trim().isNotEmpty
           ? result.processedText
@@ -609,10 +587,22 @@ class BackgroundAgentRequestConfig {
     required this.modelTopP,
     required this.modelContextMessageLimit,
     this.providerId = '',
+    this.providerApiKeyItemId,
+    this.providerApiKeyItemIndex,
+    this.providerApiKeyStrategy,
   });
 
   final String modelFullId;
   final String providerId;
+  // Keep older injected resolvers usable without silently changing providers.
+  String get effectiveProviderId => providerId.trim().isNotEmpty
+      ? providerId
+      : modelFullId.contains(':')
+      ? modelFullId.split(':').first
+      : 'openai';
+  final String? providerApiKeyItemId;
+  final int? providerApiKeyItemIndex;
+  final String? providerApiKeyStrategy;
   final String providerApiBase;
   final String? providerApiKey;
   final Map<String, dynamic> customConfig;

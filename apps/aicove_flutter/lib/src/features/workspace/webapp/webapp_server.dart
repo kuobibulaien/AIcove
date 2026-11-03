@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
@@ -11,6 +12,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/services/android_keep_alive_manager.dart';
 import '../data/workspace_store.dart';
+import '../data/local_workspace_files.dart';
 import '../domain/workspace_errors.dart';
 import '../domain/workspace_models.dart';
 import '../domain/workspace_path_rules.dart';
@@ -79,6 +81,7 @@ class WebAppServer {
   final _aiCalls = <String, int>{};
   final _servers = <HttpServer>[];
   final _allowed = <String, String>{};
+  final _local = <String, _LocalDirectory>{};
   final _runs = <String, _Run>{};
   final _undoing = <String>{};
   final _writes = <String, int>{};
@@ -214,6 +217,7 @@ class WebAppServer {
     }
     _servers.clear();
     _allowed.clear();
+    _local.clear();
     _runs.clear();
     await _activity(false);
   }
@@ -253,7 +257,8 @@ class WebAppServer {
       final label = host.substring(0, host.length - suffix.length);
       if (!RegExp(r'^[a-z0-9-]+$').hasMatch(label)) throw const _HttpError(403);
       final ws = _allowed[label];
-      if (ws == null || await store.get(ws) == null) {
+      if (ws == null ||
+          (!_local.containsKey(ws) && await store.get(ws) == null)) {
         throw const _HttpError(404);
       }
       if (request.headers.value('service-worker')?.toLowerCase() == 'script') {
@@ -304,6 +309,87 @@ class WebAppServer {
     }
   }
 
+  /// Registers a real directory without importing files into WorkspaceStore.
+  Future<String> allowLocalDirectory(String rootPath, String pagePath) async {
+    if (!p.isAbsolute(rootPath)) {
+      throw const WorkspaceException.invalidPath('本机目录必须使用绝对路径');
+    }
+    try {
+      final root = await Directory(rootPath).resolveSymbolicLinks();
+      final protected = await store.root.resolveSymbolicLinks();
+      if (p.equals(root, protected) ||
+          p.isWithin(root, protected) ||
+          p.isWithin(protected, root)) {
+        throw const WorkspaceException.invalidPath('不能预览内部空间目录或它的上级目录');
+      }
+      // Verify directory traversal permission before returning a browser URL.
+      await Directory(root).list(followLinks: false).take(1).drain<void>();
+      final backend = _LocalDirectory(root, store.root.path);
+      final page = _LocalDirectory.checkedPath(pagePath);
+      if (!isHtml(page)) {
+        throw const WorkspaceException('not_html', '只能运行 .html 或 .htm 文件');
+      }
+      _LocalDirectory.checkedPath('${p.withoutExtension(page)}.save.json');
+      if (await backend.stat(page) == null) {
+        throw const WorkspaceException.notFound('网页不存在');
+      }
+      if (isUtf16(await backend.readRange(page, offset: 0, length: 2))) {
+        throw const WorkspaceException(
+          'unsupported_encoding',
+          '这个网页是 UTF-16 编码，只支持 UTF-8 编码的网页',
+        );
+      }
+      final existing = _local.entries.where(
+        (e) => p.equals(e.value.root, root),
+      );
+      if (existing.isNotEmpty) return existing.first.key;
+      final id = 'local-${const Uuid().v4()}';
+      _local[id] = backend;
+      allow(id);
+      return id;
+    } on FileSystemException catch (error) {
+      throw WorkspaceException(
+        'local_access_failed',
+        '无法读取本机目录或网页：${error.message}',
+      );
+    }
+  }
+
+  String _checkedPath(String ws, String path) => _local.containsKey(ws)
+      ? _LocalDirectory.checkedPath(path)
+      : checkedPath(path);
+
+  Future<WorkspaceFile?> _stat(String ws, String path) =>
+      _local[ws]?.stat(path) ?? store.stat(ws, path);
+
+  Future<(Uint8List, String)> _read(String ws, String path) =>
+      _local[ws]?.read(path) ?? store.read(ws, path);
+
+  Future<Uint8List> _readRange(
+    String ws,
+    String path, {
+    required int offset,
+    required int length,
+  }) =>
+      _local[ws]?.readRange(path, offset: offset, length: length) ??
+      store.readRange(ws, path, offset: offset, length: length);
+
+  Future<WorkspaceFile> _write(
+    String ws,
+    String path,
+    List<int> bytes, {
+    String? expectedRevision,
+    required String runId,
+  }) =>
+      _local[ws]?.write(path, bytes, expectedRevision: expectedRevision) ??
+      store.write(
+        ws,
+        path,
+        bytes,
+        expectedRevision: expectedRevision,
+        runId: runId,
+      );
+
   static String checkedPath(String path) {
     final normalized = WorkspacePathRules.normalize(path);
     if (normalized.split('/').any((s) => s.toLowerCase() == '.aicove')) {
@@ -335,12 +421,15 @@ class WebAppServer {
         throw const _HttpError(404);
       }
     }
-    var path = segments.isEmpty ? '' : checkedPath(segments.join('/'));
+    var path = segments.isEmpty ? '' : _checkedPath(ws, segments.join('/'));
     WorkspaceFile? file;
     if (directory) {
       for (final index in ['index.html', 'index.htm']) {
-        final candidate = checkedPath(path.isEmpty ? index : '$path/$index');
-        file = await store.stat(ws, candidate);
+        final candidate = _checkedPath(
+          ws,
+          path.isEmpty ? index : '$path/$index',
+        );
+        file = await _stat(ws, candidate);
         if (file != null) {
           path = candidate;
           break;
@@ -348,12 +437,11 @@ class WebAppServer {
       }
     } else {
       if (path.isEmpty) throw const _HttpError(404);
-      file = await store.stat(ws, path);
+      file = await _stat(ws, path);
     }
     if (file == null) throw const _HttpError(404);
-    final small = file.size <= 4 << 20 ? (await store.read(ws, path)).$1 : null;
-    final header =
-        small ?? await store.readRange(ws, path, offset: 0, length: 32);
+    final small = file.size <= 4 << 20 ? (await _read(ws, path)).$1 : null;
+    final header = small ?? await _readRange(ws, path, offset: 0, length: 32);
     final html = isHtml(path);
     var mime = html
         ? 'text/html'
@@ -428,7 +516,7 @@ class WebAppServer {
       return;
     }
     for (var offset = start; offset < end; offset += _chunkSize) {
-      final bytes = await store.readRange(
+      final bytes = await _readRange(
         ws,
         path,
         offset: offset,
@@ -484,7 +572,7 @@ class WebAppServer {
     String path,
   ) async {
     try {
-      final (bytes, revision) = await store.read(ws, path);
+      final (bytes, revision) = await _read(ws, path);
       return (
         revision: revision,
         text: utf8.decode(bytes, allowMalformed: true),
@@ -507,11 +595,11 @@ class WebAppServer {
       await _openAi(request, ws, route.substring(3));
       return;
     }
-    final page = checkedPath(request.uri.queryParameters['page'] ?? '');
-    if (!isHtml(page) || await store.stat(ws, page) == null) {
+    final page = _checkedPath(ws, request.uri.queryParameters['page'] ?? '');
+    if (!isHtml(page) || await _stat(ws, page) == null) {
       throw const _HttpError(404);
     }
-    final savePath = savePathFor(page);
+    final savePath = _checkedPath(ws, '${p.withoutExtension(page)}.save.json');
     if (request.method == 'GET' || request.method == 'HEAD') {
       if (route != 'shim.js' && route != 'state') throw const _HttpError(405);
       final state = await _state(ws, savePath);
@@ -576,7 +664,7 @@ class WebAppServer {
         return;
       }
       try {
-        final file = await store.write(
+        final file = await _write(
           ws,
           savePath,
           bytes,
@@ -819,5 +907,109 @@ class _HtmlPreamble {
       return fallback;
     }
     return null;
+  }
+}
+
+/// Native preview only: no index, history or undo records.
+class _LocalDirectory {
+  _LocalDirectory(this.root, String protectedRoot)
+    : _files = LocalWorkspaceFiles(
+        root,
+        protectedRoot: protectedRoot,
+        beforeCommit: () {},
+      );
+  final String root;
+  final LocalWorkspaceFiles _files;
+
+  static bool _regular(FileStat info) =>
+      info.type == FileSystemEntityType.file &&
+      (Platform.isWindows || (info.mode & 0xf000) == 0x8000);
+
+  Future<File> _readableFile(String path) async {
+    final target = await file(path);
+    if (!_regular(await target.stat())) {
+      throw const WorkspaceException.notFound('不是普通文件');
+    }
+    return target;
+  }
+
+  static String checkedPath(String path) {
+    if (path.isEmpty ||
+        p.isAbsolute(path) ||
+        path.contains('\\') ||
+        path.contains('\x00') ||
+        path
+            .split('/')
+            .any(
+              (s) =>
+                  s.isEmpty ||
+                  s == '.' ||
+                  s == '..' ||
+                  s.toLowerCase() == '.aicove',
+            )) {
+      throw const WorkspaceException.invalidPath('网页路径必须在指定目录内');
+    }
+    return path;
+  }
+
+  Future<File> file(String path) async {
+    checkedPath(path);
+    var current = root;
+    // Reject links at every component (including broken links and save targets).
+    // Recheck the root too, in case its path was replaced after registration.
+    if (await Directory(root).resolveSymbolicLinks() != root) {
+      throw const WorkspaceException.invalidPath('预览目录已改变');
+    }
+    for (final part in path.split('/')) {
+      current = p.join(current, part);
+      if (await FileSystemEntity.type(current, followLinks: false) ==
+          FileSystemEntityType.link) {
+        throw const WorkspaceException.invalidPath('不能通过符号链接访问网页文件');
+      }
+    }
+    if (!p.isWithin(root, current)) {
+      throw const WorkspaceException.invalidPath('路径超出预览目录');
+    }
+    return File(current);
+  }
+
+  Future<WorkspaceFile?> stat(String path) async {
+    final target = await file(path);
+    final info = await target.stat();
+    if (!_regular(info)) return null;
+    return WorkspaceFile(
+      path: path,
+      revision: '',
+      size: info.size,
+      updatedAt: info.modified,
+    );
+  }
+
+  Future<(Uint8List, String)> read(String path) async {
+    final bytes = await (await _readableFile(path)).readAsBytes();
+    return (bytes, sha256.convert(bytes).toString());
+  }
+
+  Future<Uint8List> readRange(
+    String path, {
+    required int offset,
+    required int length,
+  }) async {
+    final handle = await (await _readableFile(path)).open();
+    try {
+      await handle.setPosition(offset);
+      return await handle.read(length);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  Future<WorkspaceFile> write(
+    String path,
+    List<int> bytes, {
+    String? expectedRevision,
+  }) async {
+    await file(path); // Keep HTTP's stricter no-links and root boundary checks.
+    return _files.write(path, bytes, expectedRevision: expectedRevision);
   }
 }

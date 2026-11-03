@@ -34,8 +34,8 @@ import '../../plugins/pages/drawing_preset_editor_page.dart';
 import '../../plugins/pages/voice_preset_editor_page.dart';
 import '../../settings/pages/provider_detail_page.dart';
 
-/// Renderers of AIcove酱's quick panels (ADR0094), given to the chat list of
-/// the assistant chat only. The lists are read live; the model only names
+/// Renderers of the quick panels (ADR0094), given to the chat list of
+/// tool-mode chats only (ADR0111). The lists are read live; the model only names
 /// the panel and what to focus on.
 final Map<String, UiActionPanelBuilder> kAssistantQuickPanels = {
   'roles': (_, request) => _RolesPanel(request: request),
@@ -318,7 +318,7 @@ Widget _action(
 
 Widget _askAction(void Function(String) ask, String text, bool enabled) =>
     _action(
-      '交给 AIcove酱',
+      '写进输入框',
       Icons.edit_note_rounded,
       enabled ? () => ask(text) : null,
     );
@@ -594,7 +594,7 @@ class _DrawingPresetsPanelState extends ConsumerState<_DrawingPresetsPanel>
       style: style,
       title: title,
       hint: role == null
-          ? '点一个预设，再选编辑或交给 AIcove酱'
+          ? '点一个预设，再选编辑或写进输入框'
           : '点一个预设：编辑它，或换给${role.displayName}用',
       children: [
         if (role != null)
@@ -729,7 +729,7 @@ class _VoicePresetsPanelState extends ConsumerState<_VoicePresetsPanel>
       style: style,
       title: _textProp(request, 'title') ?? '音色预设',
       hint: role == null
-          ? '点一个音色，再选编辑或交给 AIcove酱'
+          ? '点一个音色，再选编辑或写进输入框'
           : '点一个音色：编辑它，或换给${role.displayName}用',
       children: [
         if (role != null)
@@ -1081,7 +1081,7 @@ class _SettingsPanelState extends ConsumerState<_SettingsPanel>
             ),
           for (final model in models)
             MoeListTile(
-              title: Text(model),
+              title: Text(settings.getModelDisplayName(model)),
               trailing: model == current ? const Icon(Icons.check) : null,
               onTap: () => Navigator.pop(sheet, model),
             ),

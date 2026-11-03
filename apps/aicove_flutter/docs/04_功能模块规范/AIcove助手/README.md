@@ -2,6 +2,9 @@
 
 - 状态：方向已确认（2026-10-17）；T1～T4 已实现（2026-10-17，离线测试与真实 DeepSeek 通过，Codex 验收，实机未验）；10-19 改名 AIcove酱并扩到全权限（ADR0093）
 - 10-21 起：恒为工具模式（ADR0097），直接用插件和内置 aicove 空间，不再派活；剧本台词改用文档模式消息渲染，选项与 Key 输入放进跟随材质的交互组件卡片（仍是本机界面状态，不写消息表）；界面类设置（皮肤颜色、壁纸、分段、工具提示词、会话样式）全部开放给她改，另有「恢复默认界面设置」（通用设置·高级、设置加载失败页、她的工具三处）。
+- 10-30 起：默认工具瘦身。桌面默认直出 `read`、`write`、`edit`、`codemode`、`workspace_open`、`workspace_search`、`aicove_role`、`aicove_role_context`、`web_search`、`draw_image`、`bash`，手机没有 `bash`；其余原子工具（下文的 `aicove_read_role`、`aicove_update_role`、`aicove_read_role_chat` 等）还在，收进 `codemode` 按需查询。`aicove_role` 的 action 是 list／read／create／update；`aicove_role_context` 的 target 是 chat／summary／memory，action 是 read／append／update／write／delete，沿用原授权、确认和撤销。另有内置工具模式角色「漫画家」（`preset_mangaka`）。
+- 审批现状以 ADR0107 为准：工具默认直接执行，开「修改前每次问我」才逐次确认；下文「自动审批」是 T3 当时的方案，审核模型不再是默认路径。
+- 下文「T1～T4」实现位置中的「只在助手会话安装」已由 ADR0111 改为所有工具模式角色都装。
 - 关联：ADR0073（引导 Agent，本方案定稿其授权与形态）、ADR0087 第 6 条（AIcove 默认空间）、ADR0064（内核与内置插件）、ADR0066（本地隐私优先）
 
 ## 目标
@@ -67,6 +70,24 @@
 | 改设置（T3b ✅） | `aicove_settings_get`／`aicove_settings_set` | 类型化、白名单键：每个键声明类型、取值范围、中文说明、所在页面和**风险档**；经 `AppSettingsNotifier` 写入，写可撤销记录 |
 | 要 Key（T3b ✅） | `aicove_request_key(provider_id)`＋只读的 `aicove_list_providers` | 在助手聊天页放一张 Key 输入卡片，值经 `editProvider` 直接写进渠道（没启用的同时启用），模型只拿到「卡片已显示」；不阻塞工具（工具超时只有 30 秒），用户什么时候填都行。渠道列表只给是否有 Key，不给 Key |
 | 跳转（T3b ✅） | `aicove_open_page(target, id)` | 只接受预定义页面（模型、默认模型、渠道详情、通用、插件、个人资料、角色编辑、联系人上下文、预设详情），带 id 的先校验存在（隐私空间角色不存在），生成「去看看」按钮 |
+
+### 为角色开启扩展、切换模式和专属模型（2026-10-24）
+
+安装技能包后，先用 `aicove_list_available_plugins` 查本机插件，再用 `aicove_set_role_plugins` 显式开启。列表包含内置插件、已安装 `pkg:<id>`、已配置 `mcp:<id>`，并给出 MCP 的启用／可用状态；不返回令牌、请求头或包文件正文。配置了但未启用或不可用的 MCP 也能绑定角色，绑定不会修改连接器配置。
+
+只调整扩展时，省略 `plugins`，保留内置选择：
+
+```json
+{"role_id": "role_x", "extensions": ["pkg:my-skill", "mcp:local"]}
+```
+
+- `extensions` 是要保留的完整扩展列表；`[]` 关闭全部扩展。不传该字段时，旧的内置-only `plugins` 调用仍保留已有扩展。
+- `plugins` 可以同时列内置与扩展 ID；含 `pkg:`／`mcp:` 时替换扩展选择，不可再同时传 `extensions`。
+- `all: true` 只全开七个内置插件；不传列表时保留已有扩展，传 `plugins` 时扩展按其中的 ID 替换，也可用 `extensions` 明确指定。
+- 未安装的包／不存在的连接器返回 `error: invalid`，包括 `all: true` 的调用。原有 `ws:` 等不可管理授权始终保留。改动可撤销，下一次 run 生效。
+- 新开启 `pkg:`／`mcp:` 与联网搜索同为 `major`；遵循现行 ADR0107：默认直接执行，开启「修改前每次问我」后向用户确认。
+
+`aicove_create_role`、`aicove_update_role` 支持 `agent_mode: chat|tool` 和 `model_override: providerId:modelId`；模型 ID 可含冒号，空字符串清空模型覆盖并恢复跟随默认。模式只接受这两个枚举值，AIcove酱拒绝改为 `chat`。新建时 `tool` 默认文档样式、`chat` 默认气泡样式；修改已有角色的模式不改变其聊天样式。模式与模型和其他角色字段在同一次保存写入，撤销恢复原始值（包括未设置的模式），不会把原始 `null` 改写成显式 `chat`。
 
 ### 自动审批（参考 Claude Code auto mode 与 Codex Auto-review）
 
@@ -187,14 +208,14 @@ AIcove 的取舍：设置项数量有限、每项都能事先标风险，所以*
 
 | 工具组 | 文件 | 工具 | 风险 |
 |---|---|---|---|
-| 设置 | `assistant_settings.dart` 白名单 | 原 13 项＋压缩／记忆模型、材质模糊与底色、内置壁纸、图片预览、句末标点、Windows 窗口行为、主动关怀各项 | 可撤销；跨渠道换模型重大 |
+| 设置 | `assistant_settings.dart` 白名单 | 原 13 项＋压缩／记忆模型、材质模糊与底色、内置壁纸、图片预览、句末标点、Windows 窗口行为、主动回复各项 | 可撤销；跨渠道换模型重大 |
 | 模型渠道 | `assistant_provider_tools.dart` | add（Key 卡片带草稿，粘贴后才建渠道）、update、list_remote_models、set_provider_models、test、delete | 改名启停选模型可撤销；停用需审核；改地址、删除重大 |
 | 角色 | `assistant_role_tools.dart` | set_role_look（内置图／其他角色的图）、pick_role_image（选图卡片）、voice、thinking、flags、delete、clear_chat、import_role_card（按钮打开新建页并自动导入） | 可撤销（走角色撤销日志）；删除、清空重大 |
 | 酒馆预设 | `assistant_preset_tools.dart` | import_preset（链接直接导、无链接给按钮）、add_preset_regex、add_world_book（她自己写或下载的 JSON）、set_preset_options、set_default_preset、delete_preset | 需审核；删除重大 |
 | 插件选项 | `assistant_plugin_option_tools.dart` | 时间感知两项、联网搜索三项 | 可撤销 |
 | 读正文 | `assistant_private_read_tools.dart` | read_role_chat、read_role_memory、revoke_read | 未授权角色重大，同意后本机记住；隐私空间永不可读 |
 
-页面按钮（aicove_open_page）补了酒馆、语音、绘图、表情包、联网搜索、时间感知、MCP、主动关怀、同步与备份、局域网同步、账号。暂不覆盖的范围见 ADR0093「代价」。
+页面按钮（aicove_open_page）补了酒馆、语音、绘图、表情包、联网搜索、时间感知、MCP、主动回复、同步与备份、局域网同步、账号。暂不覆盖的范围见 ADR0093「代价」。
 
 测试：`test/features/assistant/assistant_{provider,role,preset,private_read,plugin_option}_tools_test.dart`、`assistant_settings_test.dart` 嵌套设置用例、`assistant_real_model_test.dart`「channel and tune a role」真实 DeepSeek 用例。
 

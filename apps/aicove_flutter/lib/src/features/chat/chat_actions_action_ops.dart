@@ -1,176 +1,6 @@
 part of 'chat_actions.dart';
 
-class ProactiveSendResult {
-  final bool success;
-  final bool retryable;
-  final String reason;
-
-  const ProactiveSendResult._({
-    required this.success,
-    required this.retryable,
-    required this.reason,
-  });
-
-  const ProactiveSendResult.success()
-      : this._(success: true, retryable: false, reason: 'sent');
-
-  const ProactiveSendResult.skipped(String reason)
-      : this._(success: false, retryable: false, reason: reason);
-
-  const ProactiveSendResult.failed(String reason, {bool retryable = true})
-      : this._(success: false, retryable: retryable, reason: reason);
-}
-
 extension ChatActionsActionOps on ChatActions {
-  Future<ProactiveSendResult> sendProactiveTrigger(
-      AutoReplyTrigger trigger) async {
-    // 确定目标会话：优先使用触发器绑定的会话，否则使用当前活跃会话
-    final targetConvId = trigger.conversationId.isNotEmpty
-        ? trigger.conversationId
-        : _ref.read(activeConversationIdProvider);
-
-    if (targetConvId == null || targetConvId.isEmpty) {
-      AppLogger.warning('ChatActions', '触发器发送失败：无目标会话',
-          metadata: {'triggerId': trigger.id});
-      return const ProactiveSendResult.skipped('target_conversation_missing');
-    }
-
-    // 获取目标会话
-    final conversations = _ref.read(conversationsProvider).valueOrNull ?? [];
-    final conv = conversations.where((c) => c.id == targetConvId).firstOrNull;
-    if (conv == null) {
-      AppLogger.warning('ChatActions', '触发器发送失败：会话不存在',
-          metadata: {'convId': targetConvId});
-      return const ProactiveSendResult.skipped('target_conversation_not_found');
-    }
-
-    final traceContext = await _startTurnTrace(
-      convId: targetConvId,
-      turnId: 'trigger_${trigger.id}',
-      entry: 'proactive_trigger',
-      meta: {'triggerId': trigger.id},
-    );
-
-    try {
-      return await _runWithProviderRefreshRetry<ProactiveSendResult>(
-        entry: 'proactive_trigger',
-        convId: targetConvId,
-        task: () async {
-          final settings = await _ref.read(appSettingsProvider.future);
-
-          if (trigger.hasCachedContent) {
-            final cachedReply = trigger.cachedContent!.trim();
-            if (cachedReply.isNotEmpty) {
-              final cachedResult = await _ref
-                  .read(chatSendServiceProvider)
-                  .processAssistantReplyWithPlugins(
-                    conv: conv,
-                    rawReplyText: cachedReply,
-                  );
-              final buildResult = _sendPort.buildAssistantMessages(
-                apiResult: cachedResult,
-                settings: settings,
-              );
-              await _ttsHandler.deliverSegmentedMessages(
-                convId: targetConvId,
-                userMsgId: '',
-                buildResult: buildResult,
-                replyText: cachedResult.rawReplyText,
-                pluginEvents: cachedResult.pluginEvents,
-                ttsEnabled: settings.ttsEnabled,
-              );
-              _recordTurnTrace(
-                traceContext,
-                TraceStage.messageDelivered,
-                meta: {
-                  'assistantMessageCount': buildResult.messages.length,
-                  'pluginEvents': cachedResult.pluginEvents.length,
-                },
-              );
-              _recordTurnTrace(traceContext, TraceStage.turnCompleted);
-              AppLogger.info('ChatActions', '触发器发送成功（cached）', metadata: {
-                'triggerId': trigger.id,
-                'title': trigger.title,
-              });
-              return const ProactiveSendResult.success();
-            }
-          }
-
-          final proactiveHistory = await _ref
-              .read(chatHistoryStoreProvider)
-              .loadCanonicalContextMessages(
-                targetConvId,
-                limit: 0,
-              );
-          final modelsToTry = _resolvePreferredChatModels(settings);
-          final (apiResult, usedSettings) = await _executeWithFailover(
-            convId: targetConvId,
-            modelsToTry: modelsToTry,
-            buildConfig: (model) async {
-              final baseConfig = await _sendPort.prepareApiConfig(
-                conv: conv,
-                history: proactiveHistory,
-                userText: null,
-                overrideModel: model,
-                conversationId: targetConvId,
-                traceContext: traceContext,
-              );
-              return _injectTriggerReminderIntoApiConfig(baseConfig, trigger);
-            },
-            execute: (config) => _sendPort.executeApiCall(
-              config: config,
-              sessionId: targetConvId,
-              userText: null,
-              turnId: 'trigger_${trigger.id}',
-              onToolExecuting: (toolName) =>
-                  _updateStatusForTool(targetConvId, toolName),
-            ),
-            settings: settings,
-          );
-          final buildResult = _sendPort.buildAssistantMessages(
-            apiResult: apiResult,
-            settings: usedSettings,
-          );
-          await _ttsHandler.deliverSegmentedMessages(
-            convId: targetConvId,
-            userMsgId: '',
-            buildResult: buildResult,
-            replyText: apiResult.rawReplyText,
-            pluginEvents: apiResult.pluginEvents,
-            ttsEnabled: usedSettings.ttsEnabled,
-          );
-
-          _recordTurnTrace(
-            traceContext,
-            TraceStage.messageDelivered,
-            meta: {
-              'assistantMessageCount': buildResult.messages.length,
-            },
-          );
-          _recordTurnTrace(traceContext, TraceStage.turnCompleted);
-
-          AppLogger.info('ChatActions', '触发器发送成功', metadata: {
-            'triggerId': trigger.id,
-            'title': trigger.title,
-          });
-          return const ProactiveSendResult.success();
-        },
-      );
-    } catch (e) {
-      _recordTurnTrace(
-        traceContext,
-        TraceStage.turnFailed,
-        status: TraceEventStatus.failed,
-        meta: {'error': e.toString(), 'triggerId': trigger.id},
-      );
-      AppLogger.error('ChatActions', '触发器发送失败', metadata: {
-        'triggerId': trigger.id,
-        'error': e.toString(),
-      });
-      return ProactiveSendResult.failed(e.toString());
-    }
-  }
-
   Future<void> retry(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
@@ -184,10 +14,12 @@ extension ChatActionsActionOps on ChatActions {
       throw Exception('消息不存在或状态不正确');
     }
 
-    final runId = await _startGeneration(
+    final runId = _startGeneration(
       convId: convId,
       userMsgId: messageId,
     );
+    final generation = _activeGenerations[convId]!;
+    await _awaitGenerationKeepAlive(convId, runId);
     final traceContext = await _startTurnTrace(
       convId: convId,
       turnId: messageId,
@@ -205,7 +37,7 @@ extension ChatActionsActionOps on ChatActions {
     var streamCommitted = false;
     _setGenerationInterruptCleanup(convId, runId, () async {
       await _savePartialStream(delivery: streamDelivery, convId: convId, userMsgId: failedMsg.id,
-        status: ApiRunStatus.cancelled, settings: _ref.read(appSettingsProvider.future));
+        status: ApiRunStatus.cancelled, settings: _ref.read(appSettingsProvider.future), task: generation);
       await streamDelivery?.removePlaceholders();
       streamDelivery?.dispose();
       await _restoreFrontendMessagesFromHistory(convId);
@@ -223,12 +55,12 @@ extension ChatActionsActionOps on ChatActions {
           streamCommitted = false;
         },
         task: () async {
-          final turnResult = await _executeTurnCommand(
+          final turnResult = await _executeStreamingTurn(
             command: ChatTurnCommand.streaming(
               conversation: conv,
               userMessage: failedMsg,
               sessionId: convId,
-              apiText: failedMsg.displayText,
+              apiText: _resolveUserMessageApiText(failedMsg),
               traceContext: traceContext,
             ),
             loadSettings: () => _ref.read(appSettingsProvider.future),
@@ -238,16 +70,26 @@ extension ChatActionsActionOps on ChatActions {
                 messageId,
               );
               final rawHistory =
-                  msgIndex > 0 ? messages.sublist(0, msgIndex + 1) : messages;
+                  msgIndex >= 0 ? messages.sublist(0, msgIndex + 1) : messages;
               final history = rawHistory
                   .where((m) => m.status != 'failed' || m.id == messageId)
                   .toList();
-              return ChatPreparedTurn(
+              final prepared = ChatPreparedTurn(
                 requestConversation: conv,
                 history: history,
                 sessionId: convId,
-                modelsToTry: _resolvePreferredChatModels(settings),
+                modelsToTry: _resolvePreferredChatModels(settings, conv),
               );
+              if (_isGenerationCurrent(convId, runId)) {
+                streamDelivery = await _createStreamDelivery(
+                  convId: convId,
+                  runId: runId,
+                  settings: settings,
+                  traceContext: traceContext,
+                );
+                await streamDelivery!.start();
+              }
+              return prepared;
             },
             executeWithFailover: ({
               required modelsToTry,
@@ -262,94 +104,16 @@ extension ChatActionsActionOps on ChatActions {
               execute: execute,
               settings: settings,
             ),
-            prepareStreaming: (settings) async {
-              streamDelivery = _StreamPlaceholderDelivery(
-                _ref,
-                convId: convId,
-                generationSeq: runId,
-                diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
-                formatConfig: _streamFormatConfig(convId, settings),
-                tagPresentation: await _streamTagPresentation(convId),
-                enableTtsPlaceholders: settings.ttsEnabled,
-                segmentDelay: Duration(
-                  milliseconds:
-                      (settings.streamSegmentDelaySeconds * 1000).round(),
-                ),
-                onPendingAudioAppeared: (pendingMessage) {
-                  if (!_isGenerationCurrent(convId, runId)) return;
-                  _scheduleStreamPendingTtsResolution(
-                    convId: convId,
-                    pendingMessage: pendingMessage,
-                    streamDelivery: streamDelivery!,
-                  );
-                },
-              );
-              await streamDelivery!.start();
-            },
-            onToolExecuting: (toolName) =>
-                _updateStatusForTool(convId, toolName),
-            onProcessingResponse: () =>
-                _setConversationStatus(convId, ChatStatus.processingResponse),
-            deliverResult: ({
-              required settings,
-              required apiResult,
-              required buildResult,
-            }) async {
-              await _historyPort.markMessageStatus(
-                conversationId: convId,
-                messageId: messageId,
-                status: 'sent',
-              );
-              if (!_isGenerationCurrent(convId, runId)) return;
-
-              final streamFinalText =
-                  _resolveFinalStreamText(apiResult, buildResult);
-              final shouldCommitStream =
-                  streamDelivery!.canFinalizeWith(finalText: streamFinalText);
-
-              if (shouldCommitStream) {
-                await streamDelivery!.finalize(finalText: streamFinalText);
-                if (!_isGenerationCurrent(convId, runId)) return;
-                await _commitStreamDelivery(
-                  streamDelivery: streamDelivery!,
-                  convId: convId,
-                  userMsgId: messageId,
-                  buildResult: buildResult,
-                  replyText: apiResult.rawReplyText,
-                  pluginEvents: apiResult.pluginEvents,
-                  ttsEnabled: settings.ttsEnabled,
-                );
-                streamCommitted = true;
-                return;
-              }
-
-              await streamDelivery!.removePlaceholders();
-              await _ttsHandler.deliverSegmentedMessages(
-                convId: convId,
-                userMsgId: messageId,
-                buildResult: buildResult,
-                replyText: apiResult.rawReplyText,
-                pluginEvents: apiResult.pluginEvents,
-                ttsEnabled: settings.ttsEnabled,
-              );
-            },
-            isCurrent: () => _isGenerationCurrent(convId, runId),
-            onStreamTextDelta: (delta) {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onDelta(delta);
-            },
-            onStreamTextReset: () {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onStreamReset();
-            },
-            onStreamToolCallObserved: () {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onToolCallObserved();
-            },
-            onStreamingFallback: () {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onStreamingFallback();
-            },
+            convId: convId,
+            runId: runId,
+            userMsgId: messageId,
+            streamDelivery: () => streamDelivery,
+            onStreamCommitted: () => streamCommitted = true,
+            beforeDelivery: () => _historyPort.markMessageStatus(
+              conversationId: convId,
+              messageId: messageId,
+              status: 'sent',
+            ),
           );
           if (turnResult == null) return;
           if (!_isGenerationCurrent(convId, runId)) return;
@@ -379,15 +143,20 @@ extension ChatActionsActionOps on ChatActions {
       );
       _setConversationError(convId, e.toString());
     } finally {
-      if (!streamCommitted) {
-        await streamDelivery?.removePlaceholders();
+      try {
+        if (!streamCommitted) await streamDelivery?.removePlaceholders();
+      } finally {
+        try {
+          streamDelivery?.dispose();
+        } finally {
+          await _finishGeneration(convId, runId);
+        }
       }
-      streamDelivery?.dispose();
-      await _finishGeneration(convId, runId);
     }
   }
 
-  /// 重新生成AI回复（删除指定AI消息及其后的所有消息，重新生成）
+  /// 重新生成AI回复：新回复开始到达时才删除指定AI消息及其后的所有消息，
+  /// 请求失败或在内容到达前取消时旧回复保持不动。
   ///
   /// [guidance] 为用户本次填写的指导意见，只进入请求，不写入历史。
   Future<void> regenerate(String aiMessageId, {String? guidance}) async {
@@ -474,6 +243,18 @@ extension ChatActionsActionOps on ChatActions {
     return _canonicalizeActionMessage(convId, messages[userMsgIndex]);
   }
 
+  /// 旧回复在新内容到达前仍在库里，请求上下文只取到原用户消息为止。
+  List<Message> _historyThroughMessage(List<Message> history, Message userMsg) {
+    final index = history.lastIndexWhere(
+      (message) =>
+          message.id == userMsg.id ||
+          (message.sourceMessageId != null &&
+              message.sourceMessageId == userMsg.id),
+    );
+    if (index < 0 || index == history.length - 1) return history;
+    return history.sublist(0, index + 1);
+  }
+
   bool _canReuseTextSendForRegenerate(Message userMsg) {
     if (userMsg.role != 'user') return false;
     final blocks = userMsg.blocks;
@@ -509,10 +290,18 @@ extension ChatActionsActionOps on ChatActions {
           'enhanced': useEnhancement,
           'guided': normalizeRegenerateGuidance(guidance) != null,
         }));
-    final runId = await _startGeneration(convId: convId);
+    final runId = _startGeneration(convId: convId);
+    await _awaitGenerationKeepAlive(convId, runId);
     TraceContext? traceContext;
     _StreamPlaceholderDelivery? streamDelivery;
     var streamCommitted = false;
+    Future<void> Function()? truncateOldReply;
+    Future<void>? oldReplyRemoved;
+    // 只执行一次：流式首段内容、非流式交付、取消时保存半截回复，谁先到谁触发。
+    Future<void> removeOldReply() => oldReplyRemoved ??= () async {
+          await truncateOldReply?.call();
+          streamDelivery?.markFirstContentPrepared();
+        }();
     try {
       if (!_isGenerationCurrent(convId, runId)) return;
       final readClock = Stopwatch()..start();
@@ -532,13 +321,14 @@ extension ChatActionsActionOps on ChatActions {
         return;
       }
       final lookupMs = readClock.elapsedMilliseconds - historyReadMs;
-      final userText = userMsg.displayText;
-      _activeGenerations[convId] = _GenerationTask(
+      final userText = _resolveUserMessageApiText(userMsg);
+      final task = _activeGenerations[convId] = _GenerationTask(
         cancellation: _activeGenerations[convId]?.cancellation,
         id: runId,
         convId: convId,
         userMsgId: userMsg.id,
-      );
+      )..toolProgress.beforeFirstWrite = removeOldReply;
+      _applyQueuedSteer(convId, task);
       traceContext = await _startTurnTrace(
         convId: convId,
         turnId: userMsg.id,
@@ -547,14 +337,15 @@ extension ChatActionsActionOps on ChatActions {
       );
       if (!_isGenerationCurrent(convId, runId)) return;
       _setGenerationInterruptCleanup(convId, runId, () async {
+        if (streamDelivery?.receivedDelta ?? false) await removeOldReply();
         await _savePartialStream(delivery: streamDelivery, convId: convId, userMsgId: userMsg.id,
-          status: ApiRunStatus.cancelled, settings: _ref.read(appSettingsProvider.future));
+          status: ApiRunStatus.cancelled, settings: _ref.read(appSettingsProvider.future), task: task);
         await streamDelivery?.removePlaceholders();
         streamDelivery?.dispose();
         await _restoreFrontendMessagesFromHistory(convId);
       });
       final truncateClock = Stopwatch()..start();
-      await _historyPort.truncateAfterMessage(
+      truncateOldReply = await _historyPort.prepareTruncateAfterMessage(
         conversationId: convId,
         anchorMessageId: userMsg.id,
       );
@@ -580,7 +371,7 @@ extension ChatActionsActionOps on ChatActions {
           streamCommitted = false;
         },
         task: () async {
-          final turnResult = await _executeTurnCommand(
+          final turnResult = await _executeStreamingTurn(
             command: ChatTurnCommand.streaming(
               conversation: conv,
               userMessage: userMsg,
@@ -595,72 +386,89 @@ extension ChatActionsActionOps on ChatActions {
                   _ref.read(conversationSnapshotByIdProvider(convId)) ?? conv;
               final canUseEnhancement =
                   useEnhancement && settings.enhancedDialogueSettings.enabled;
+              late final ChatPreparedTurn prepared;
               if (!canUseEnhancement) {
-                return ChatPreparedTurn(
+                prepared = ChatPreparedTurn(
                   requestConversation: updatedConv,
                   history: applyRegenerateGuidance(
-                    await _sendPort.prepareHistoryFromStore(
-                      conv: updatedConv,
-                      userMsg: userMsg,
+                    _historyThroughMessage(
+                      await _sendPort.prepareHistoryFromStore(
+                        conv: updatedConv,
+                        userMsg: userMsg,
+                      ),
+                      userMsg,
                     ),
                     userMessageId: userMsg.id,
                     guidance: guidance,
                   ),
                   sessionId: convId,
-                  modelsToTry: _resolvePreferredChatModels(settings),
+                  modelsToTry: _resolvePreferredChatModels(settings, conv),
+                );
+              } else {
+                final persistedMessages = _historyThroughMessage(
+                  await _sendPort.loadConversationMessagesFromStore(
+                    conv: updatedConv,
+                    ensureTailMessage: userMsg,
+                  ),
+                  userMsg,
+                );
+                final persistedConv =
+                    updatedConv.copyWith(messages: persistedMessages);
+                final enhancedContext = _enhancedDialogueService.buildContext(
+                  conversation: persistedConv,
+                  targetUserMessage: userMsg,
+                  enhancerSystemPrompt: _resolveEnhancedPrompt(
+                    settings.enhancedDialogueSettings.systemPrompt,
+                    'enhanced_dialogue.system.default',
+                    EnhancedDialogueSettings.defaultSystemPrompt,
+                  ),
+                  bootstrapUserMessage: _resolveEnhancedPrompt(
+                    settings.enhancedDialogueSettings.bootstrapUserMessage,
+                    'enhanced_dialogue.bootstrap_user.default',
+                    EnhancedDialogueSettings.defaultBootstrapUserMessage,
+                  ),
+                  recentRounds: settings.enhancedDialogueSettings.recentRounds,
+                );
+                prepared = ChatPreparedTurn(
+                  requestConversation: enhancedContext.conversation,
+                  history: enhancedContext.history,
+                  sessionId: enhancedContext.sessionId,
+                  modelsToTry: _resolvePreferredChatModels(settings, conv),
+                  transformApiResult: (rawResult) {
+                    final enhancedText =
+                        _enhancedDialogueService.extractEnhancedText(
+                      processedText: rawResult.processedText,
+                      rawReplyText: rawResult.replyText,
+                    );
+                    return ApiCallResult(
+                      status: rawResult.status,
+                      stopReason: rawResult.stopReason,
+                      lastModelText: rawResult.lastModelText,
+                      rawReplyText: enhancedText,
+                      replyText: enhancedText,
+                      processedText: enhancedText,
+                      pluginEvents: rawResult.pluginEvents,
+                      pluginContents: rawResult.pluginContents,
+                      toolResults: rawResult.toolResults,
+                      toolAudioResults: rawResult.toolAudioResults,
+                      toolCalls: rawResult.toolCalls,
+                      rawToolResults: rawResult.rawToolResults,
+                      reasoning: rawResult.reasoning,
+                    );
+                  },
                 );
               }
-
-              final persistedMessages =
-                  await _sendPort.loadConversationMessagesFromStore(
-                conv: updatedConv,
-                ensureTailMessage: userMsg,
-              );
-              final persistedConv =
-                  updatedConv.copyWith(messages: persistedMessages);
-              final enhancedContext = _enhancedDialogueService.buildContext(
-                conversation: persistedConv,
-                targetUserMessage: userMsg,
-                enhancerSystemPrompt: _resolveEnhancedPrompt(
-                  settings.enhancedDialogueSettings.systemPrompt,
-                  'enhanced_dialogue.system.default',
-                  EnhancedDialogueSettings.defaultSystemPrompt,
-                ),
-                bootstrapUserMessage: _resolveEnhancedPrompt(
-                  settings.enhancedDialogueSettings.bootstrapUserMessage,
-                  'enhanced_dialogue.bootstrap_user.default',
-                  EnhancedDialogueSettings.defaultBootstrapUserMessage,
-                ),
-                recentRounds: settings.enhancedDialogueSettings.recentRounds,
-              );
-              return ChatPreparedTurn(
-                requestConversation: enhancedContext.conversation,
-                history: enhancedContext.history,
-                sessionId: enhancedContext.sessionId,
-                modelsToTry: _resolvePreferredChatModels(settings),
-                transformApiResult: (rawResult) {
-                  final enhancedText =
-                      _enhancedDialogueService.extractEnhancedText(
-                    processedText: rawResult.processedText,
-                    rawReplyText: rawResult.replyText,
-                  );
-                  return ApiCallResult(
-                    status: rawResult.status,
-                    stopReason: rawResult.stopReason,
-                    lastModelText: rawResult.lastModelText,
-                    rawReplyText: enhancedText,
-                    replyText: enhancedText,
-                    processedText: enhancedText,
-                    pluginEvents: rawResult.pluginEvents,
-                    pluginContents: rawResult.pluginContents,
-                    toolResults: rawResult.toolResults,
-                    toolAudioResults: rawResult.toolAudioResults,
-                    toolCalls: rawResult.toolCalls,
-                    rawToolResults: rawResult.rawToolResults,
-                    reasoning: rawResult.reasoning,
-                  );
-                },
-              );
+              if (_isGenerationCurrent(convId, runId)) {
+                streamDelivery = await _createStreamDelivery(
+                  convId: convId,
+                  runId: runId,
+                  settings: settings,
+                  traceContext: traceContext,
+                  beforeFirstContent: removeOldReply,
+                );
+                await streamDelivery!.start();
+              }
+              return prepared;
             },
             executeWithFailover: ({
               required modelsToTry,
@@ -675,87 +483,12 @@ extension ChatActionsActionOps on ChatActions {
               execute: execute,
               settings: settings,
             ),
-            prepareStreaming: (settings) async {
-              streamDelivery = _StreamPlaceholderDelivery(
-                _ref,
-                convId: convId,
-                generationSeq: runId,
-                diagnosticContext: _diagnostics.forTurn(traceContext?.turnId),
-                formatConfig: _streamFormatConfig(convId, settings),
-                tagPresentation: await _streamTagPresentation(convId),
-                enableTtsPlaceholders: settings.ttsEnabled,
-                segmentDelay: Duration(
-                  milliseconds:
-                      (settings.streamSegmentDelaySeconds * 1000).round(),
-                ),
-                onPendingAudioAppeared: (pendingMessage) {
-                  if (!_isGenerationCurrent(convId, runId)) return;
-                  _scheduleStreamPendingTtsResolution(
-                    convId: convId,
-                    pendingMessage: pendingMessage,
-                    streamDelivery: streamDelivery!,
-                  );
-                },
-              );
-              await streamDelivery!.start();
-            },
-            onToolExecuting: (toolName) =>
-                _updateStatusForTool(convId, toolName),
-            onProcessingResponse: () =>
-                _setConversationStatus(convId, ChatStatus.processingResponse),
-            deliverResult: ({
-              required settings,
-              required apiResult,
-              required buildResult,
-            }) async {
-              final streamFinalText =
-                  _resolveFinalStreamText(apiResult, buildResult);
-              final shouldCommitStream =
-                  streamDelivery!.canFinalizeWith(finalText: streamFinalText);
-
-              if (shouldCommitStream) {
-                await streamDelivery!.finalize(finalText: streamFinalText);
-                if (!_isGenerationCurrent(convId, runId)) return;
-                await _commitStreamDelivery(
-                  streamDelivery: streamDelivery!,
-                  convId: convId,
-                  userMsgId: userMsg.id,
-                  buildResult: buildResult,
-                  replyText: apiResult.rawReplyText,
-                  pluginEvents: apiResult.pluginEvents,
-                  ttsEnabled: settings.ttsEnabled,
-                );
-                streamCommitted = true;
-                return;
-              }
-
-              await streamDelivery!.removePlaceholders();
-              await _ttsHandler.deliverSegmentedMessages(
-                convId: convId,
-                userMsgId: userMsg.id,
-                buildResult: buildResult,
-                replyText: apiResult.rawReplyText,
-                pluginEvents: apiResult.pluginEvents,
-                ttsEnabled: settings.ttsEnabled,
-              );
-            },
-            isCurrent: () => _isGenerationCurrent(convId, runId),
-            onStreamTextDelta: (delta) {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onDelta(delta);
-            },
-            onStreamTextReset: () {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onStreamReset();
-            },
-            onStreamToolCallObserved: () {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onToolCallObserved();
-            },
-            onStreamingFallback: () {
-              if (!_isGenerationCurrent(convId, runId)) return;
-              streamDelivery?.onStreamingFallback();
-            },
+            convId: convId,
+            runId: runId,
+            userMsgId: userMsg.id,
+            streamDelivery: () => streamDelivery,
+            onStreamCommitted: () => streamCommitted = true,
+            beforeDelivery: removeOldReply,
           );
           if (turnResult == null) return;
           if (!_isGenerationCurrent(convId, runId)) return;
@@ -822,6 +555,11 @@ extension ChatActionsActionOps on ChatActions {
     );
     if (failedMsg == null || failedMsg.status != 'failed') return;
 
+    if (failedMsg.blocks?.any((b) => b is EmojiBlock) ?? false) {
+      await retry(failedMsg.id);
+      return;
+    }
+
     // 将失败消息文本填入输入框
     final text = _extractEditableTextForRecall(failedMsg);
     if (text.isNotEmpty) {
@@ -834,6 +572,18 @@ extension ChatActionsActionOps on ChatActions {
       [failedMsg.id],
       clearContextStartIfDeleted: true,
     );
+  }
+
+  String _resolveUserMessageApiText(Message msg) {
+    final blocks = msg.blocks;
+    if (blocks != null) {
+      for (final block in blocks) {
+        if (block is EmojiBlock) {
+          return formatEmojiBlockContextText(block);
+        }
+      }
+    }
+    return msg.displayText;
   }
 
   String _extractEditableTextForRecall(Message msg) {
@@ -893,6 +643,7 @@ extension ChatActionsActionOps on ChatActions {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
+    if (_removeStagedMessages(convId, {messageId}).isNotEmpty) return;
     final quoted = _ref.read(quotedMessageProvider);
     final quotedNotifier = _ref.read(quotedMessageProvider.notifier);
     final actionMessage = await _resolveFrontendActionMessage(
@@ -918,6 +669,17 @@ extension ChatActionsActionOps on ChatActions {
     );
   }
 
+  /// 暂存消息只撤回本地队列，正式消息沿用单条删除的前端隐藏语义。
+  Future<void> deleteMessages(List<String> messageIds) async {
+    final conv = _ref.read(activeConversationProvider);
+    if (conv == null || messageIds.isEmpty) return;
+    final removed = _removeStagedMessages(conv.id, messageIds.toSet());
+    for (final id in messageIds.toSet().difference(removed)) {
+      if (_ref.read(activeConversationProvider)?.id != conv.id) return;
+      await deleteMessage(id);
+    }
+  }
+
   /// 准备编辑草稿，不改变历史；只有确认发送后才提交新分支。
   Future<String?> editMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
@@ -931,6 +693,22 @@ extension ChatActionsActionOps on ChatActions {
     }
     if (_ref.read(activeConversationProvider)?.id != convId) {
       throw StateError('会话状态已变化，未进入编辑');
+    }
+    final stagedMsg = _ref
+        .read(stagedUserMessagesProvider(convId))
+        .where((item) => item.id == messageId)
+        .firstOrNull;
+    if (stagedMsg != null) {
+      _removeStagedMessages(convId, {messageId});
+      final text = _extractEditableTextForRecall(stagedMsg);
+      final attachment = _extractAttachmentForRecall(stagedMsg);
+      if (text.isNotEmpty) {
+        _ref.read(editingTextProvider.notifier).state = text;
+      }
+      if (attachment != null) {
+        _ref.read(recalledAttachmentProvider.notifier).state = attachment;
+      }
+      return text;
     }
     final historyStore = _ref.read(chatHistoryStoreProvider);
     final frontendMessage = await historyStore.loadFrontendMessageById(

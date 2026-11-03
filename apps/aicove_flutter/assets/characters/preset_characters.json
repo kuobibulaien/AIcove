@@ -16,6 +16,22 @@
       "characterImage": "assets/characters/images/aicove_assistant.png",
       "avatarUrl": "assets/characters/images/aicove_assistant.png",
       "personaPromptFile": "assets/characters/prompts/aicove_assistant.md"
+    },
+    {
+      "id": "preset_mangaka",
+      "displayName": "漫画家",
+      "description": "专职分镜与连载的漫画导演，可读其他角色的故事继续画漫画",
+      "characterImage": "assets/characters/images/mangaka.png",
+      "avatarUrl": "assets/characters/images/mangaka.png",
+      "personaPromptFile": "assets/characters/prompts/mangaka.md",
+      "agentMode": "tool",
+      "enabledPlugins": [
+        "memory",
+        "time_awareness",
+        "image"
+      ],
+      "chatDisplayStyle": "document",
+      "firstMessage": "画板和分镜稿都已经铺好啦。今天想让我把哪位角色的故事画成漫画，还是我们从头构思一部新连载？"
     }
   ]
 }

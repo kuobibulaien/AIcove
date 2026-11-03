@@ -11,22 +11,6 @@ class RoundStarted extends KernelEvent {
   const RoundStarted(super.round);
 }
 
-class TextDelta extends KernelEvent {
-  const TextDelta(super.round, this.delta);
-  final String delta;
-}
-
-class TextReset extends KernelEvent {
-  const TextReset(super.round);
-}
-
-/// Incremental tool-call snapshot from a streaming response, including partial
-/// arguments, so transport previews can render before the call completes.
-class ToolCallsObserved extends KernelEvent {
-  const ToolCallsObserved(super.round, this.snapshot);
-  final List<KernelToolCall> snapshot;
-}
-
 class ToolCallsDetected extends KernelEvent {
   const ToolCallsDetected(super.round, this.calls);
   final ResolvedToolCalls calls;

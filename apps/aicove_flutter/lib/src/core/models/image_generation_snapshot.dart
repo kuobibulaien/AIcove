@@ -17,15 +17,46 @@ class ImageGenerationSnapshot {
     this.customParameters = const {},
     this.basePrompt,
     this.baseNegativePrompt,
+    this.postProcessor,
   });
 
   final String providerId, modelId, requestProvider, prompt;
   final String? negativePrompt;
+  final String? postProcessor;
   // Content before the artist preset was applied. Null means legacy metadata.
   final String? basePrompt, baseNegativePrompt;
   final int width, height, steps;
   final double guidanceScale;
   final Map<String, dynamic> customParameters;
+
+  ImageGenerationSnapshot copyWith({
+    String? providerId, String? modelId, String? requestProvider, String? prompt,
+    String? negativePrompt, String? basePrompt, String? baseNegativePrompt,
+    String? postProcessor, int? width, int? height, int? steps,
+    double? guidanceScale, Map<String, dynamic>? customParameters,
+  }) => ImageGenerationSnapshot(
+    providerId: providerId ?? this.providerId, modelId: modelId ?? this.modelId,
+    requestProvider: requestProvider ?? this.requestProvider, prompt: prompt ?? this.prompt,
+    negativePrompt: negativePrompt ?? this.negativePrompt, basePrompt: basePrompt ?? this.basePrompt,
+    baseNegativePrompt: baseNegativePrompt ?? this.baseNegativePrompt,
+    postProcessor: postProcessor ?? this.postProcessor, width: width ?? this.width,
+    height: height ?? this.height, steps: steps ?? this.steps,
+    guidanceScale: guidanceScale ?? this.guidanceScale,
+    customParameters: customParameters ?? this.customParameters,
+  );
+
+  @override
+  bool operator ==(Object other) => identical(this, other) || other is ImageGenerationSnapshot &&
+      providerId == other.providerId && modelId == other.modelId && requestProvider == other.requestProvider &&
+      prompt == other.prompt && negativePrompt == other.negativePrompt && basePrompt == other.basePrompt &&
+      baseNegativePrompt == other.baseNegativePrompt && postProcessor == other.postProcessor &&
+      width == other.width && height == other.height && steps == other.steps && guidanceScale == other.guidanceScale &&
+      jsonEncode(customParameters) == jsonEncode(other.customParameters);
+
+  @override
+  int get hashCode => Object.hash(providerId, modelId, requestProvider, prompt, negativePrompt,
+      basePrompt, baseNegativePrompt, postProcessor, width, height, steps, guidanceScale,
+      jsonEncode(customParameters));
 
   // Only known generation fields can enter message metadata. Unknown provider
   // extensions make a snapshot unavailable rather than silently dropping inputs.
@@ -113,6 +144,7 @@ class ImageGenerationSnapshot {
         negativePrompt: value['negativePrompt'] as String?,
         basePrompt: value['basePrompt'] as String?,
         baseNegativePrompt: value['baseNegativePrompt'] as String?,
+        postProcessor: value['postProcessor'] as String?,
         width: value['width'] as int,
         height: value['height'] as int,
         steps: value['steps'] as int,
@@ -121,12 +153,15 @@ class ImageGenerationSnapshot {
           jsonDecode(jsonEncode(extra)) as Map<String, dynamic>,
         ),
       );
+      final emptyDeferredPrompt =
+          snapshot.prompt.isEmpty && snapshot.basePrompt == '';
       if (snapshot.providerId.isEmpty ||
           snapshot.modelId.isEmpty ||
           snapshot.requestProvider.isEmpty ||
-          snapshot.prompt.trim().isEmpty ||
+          (snapshot.prompt.trim().isEmpty && !emptyDeferredPrompt) ||
           (snapshot.basePrompt != null &&
-              snapshot.basePrompt!.trim().isEmpty) ||
+              snapshot.basePrompt!.trim().isEmpty &&
+              !emptyDeferredPrompt) ||
           snapshot.width < 256 ||
           snapshot.width > 2048 ||
           snapshot.height < 256 ||
@@ -135,7 +170,7 @@ class ImageGenerationSnapshot {
           snapshot.steps > 100 ||
           !snapshot.guidanceScale.isFinite ||
           snapshot.guidanceScale < 0 ||
-          snapshot.guidanceScale > 10) {
+          snapshot.guidanceScale > 20) {
         return null;
       }
       return snapshot;
@@ -151,6 +186,7 @@ class ImageGenerationSnapshot {
     'requestProvider': requestProvider,
     'prompt': prompt,
     'negativePrompt': negativePrompt,
+    if (postProcessor != null) 'postProcessor': postProcessor,
     if (basePrompt != null) ...{
       'basePrompt': basePrompt,
       'baseNegativePrompt': baseNegativePrompt,

@@ -112,6 +112,7 @@
           "parts": [
             {
               "functionResponse": {
+                "id": "g1",
                 "name": "lookup",
                 "response": {
                   "result": "result-of-lookup"

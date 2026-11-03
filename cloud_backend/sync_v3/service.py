@@ -40,7 +40,7 @@ class SyncEngine:
         return self.db.get(Account, self.user, populate_existing=True)
 
     def status(self):
-        account = self._account()
+        account = self._reconciled_account()
         result = {'protocol_version': 3, 'payload_version': 1,
                   'epoch': account.epoch, 'cursor': account.cursor,
                   'kinds': sorted(KINDS), 'max_batch': 100,
@@ -58,6 +58,42 @@ class SyncEngine:
 
     def _decode(self, entity):
         return public_document(self.vault.open(entity.document)) if entity else None
+
+    def _retire_equivalent_conflicts(self, account, kind=None, entity_id=None):
+        """Retire only proposals already represented by the current entity."""
+        rows = self.db.scalars(select(Entity).where(
+            Entity.user_id == self.user, Entity.kind == '_conflicts',
+            Entity.deleted.is_(False))).all()
+        for row in rows:
+            conflict = self._decode(row)
+            incoming = conflict['payload']['incoming']
+            if kind is not None and (incoming['kind'], incoming['entity_id']) != (kind, entity_id):
+                continue
+            current = self._decode(self.db.get(Entity, (
+                self.user, incoming['kind'], incoming['entity_id'])))
+            deleting = incoming['action'] == 'delete'
+            if current is None or current['deleted'] != deleting:
+                continue
+            if not deleting and (
+                    canonical(content(incoming['payload'])) != canonical(content(current['payload']))
+                    or set(incoming['blob_ids']) != set(current['blob_ids'])
+                    or set(incoming.get('media_ids', [])) != set(current.get('media_ids', []))):
+                continue
+            self._write(account, '_conflicts', conflict['entity_id'], conflict['payload'],
+                        conflict['blob_ids'], True, conflict.get('media_ids', []))
+
+    def _reconciled_account(self, epoch=None):
+        """Commit historical repairs before choosing a read watermark."""
+        try:
+            account = self._account(lock=True)
+            if epoch is not None:
+                self._check_epoch(account, epoch)
+            self._retire_equivalent_conflicts(account)
+            self.db.commit()
+            return account
+        except Exception:
+            self.db.rollback()
+            raise
 
     def _write(self, account, kind, entity_id, payload, blob_ids, deleted=False, media_ids=None):
         entity = self.db.get(Entity, (self.user, kind, entity_id))
@@ -159,8 +195,7 @@ class SyncEngine:
                 document = self._write(account, mutation.kind, mutation.entity_id, payload, blobs)
             result = {'op_id': mutation.op_id, 'status': 'applied', 'document': document}
         elif (mutation.action == 'put' and current and not current['deleted']
-              and canonical(content(mutation.payload) if mutation.kind in SETTING_KINDS else mutation.payload)
-                  == canonical(content(current['payload']) if mutation.kind in SETTING_KINDS else current['payload'])
+              and canonical(content(mutation.payload)) == canonical(content(current['payload']))
               and set(mutation.blob_ids) == set(current['blob_ids'])
               and set(mutation.media_ids) == set(current.get('media_ids', []))
               and not (mutation.kind in SETTING_KINDS
@@ -197,6 +232,8 @@ class SyncEngine:
             media_ids = current.get('media_ids', []) if deleting and current else mutation.media_ids
             document = self._write(account, mutation.kind, mutation.entity_id, payload, blobs, deleting, media_ids)
             result = {'op_id': mutation.op_id, 'status': 'applied', 'document': document}
+        if result['status'] != 'conflict':
+            self._retire_equivalent_conflicts(account, mutation.kind, mutation.entity_id)
         self._save_receipt(mutation.op_id, fingerprint, result)
         return result
 
@@ -213,8 +250,7 @@ class SyncEngine:
             raise
 
     def pull(self, epoch, after=0, limit=100, through=None):
-        account = self._account()
-        self._check_epoch(account, epoch)
+        account = self._reconciled_account(epoch)
         if not 1 <= limit <= 100 or after < 0:
             raise SyncError('invalid_page', '无效的分页参数', 422)
         boundary = account.cursor if through is None else through
@@ -226,8 +262,7 @@ class SyncEngine:
         return {'epoch': account.epoch, **self._page(query, boundary, limit, 'changes')}
 
     def read_page(self, epoch, after=0, limit=512, through=None, stage='delta'):
-        account = self._account()
-        self._check_epoch(account, epoch)
+        account = self._reconciled_account(epoch)
         boundary = account.cursor if through is None else through
         if (not 0 <= after <= boundary <= account.cursor or not 1 <= limit <= 512
                 or stage not in ('head', 'history', 'delta')):
@@ -275,6 +310,7 @@ class SyncEngine:
         return self._page(query, boundary, limit, 'entities')
 
     def conflicts(self):
+        self._reconciled_account()
         rows = self.db.scalars(select(Entity).where(
             Entity.user_id == self.user, Entity.kind == '_conflicts')).all()
         return [dict(d['payload'], conflict_id=d['entity_id'], latest=self._decode(self.db.get(Entity,

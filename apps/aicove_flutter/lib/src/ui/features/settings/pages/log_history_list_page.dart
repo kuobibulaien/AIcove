@@ -4,8 +4,8 @@ import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_rout
 
 import '../../../../core/log_history_service.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/meotalk_dialog.dart';
+import '../../../../ui/shared/widgets/moe_content_surface.dart';
 import '../../../../ui/shared/widgets/moe_toast.dart';
 import 'log_history_detail_page.dart';
 import '../../../../ui/shared/widgets/moe_scroll_edge.dart';
@@ -138,43 +138,42 @@ class _LogHistoryListPageState extends State<LogHistoryListPage> {
         typeColor = colors.primary;
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: MoeG2Decoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: MoeContentSurface(
         radius: 8,
-        color: colors.componentBackground,
-        border: Border.all(color: colors.borderLight, width: borderWidth),
-      ),
-      child: ListTile(
-        leading: Icon(typeIcon, color: typeColor),
-        title: Text(
-          file.formattedTime,
-          style: TextStyle(color: colors.text, fontSize: 14),
-        ),
-        subtitle: Text(
-          '${file.typeLabel} · ${file.formattedSize}',
-          style: TextStyle(color: colors.textSecondary, fontSize: 12),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(
-                Icons.visibility_outlined,
-                color: colors.text,
-                size: 20,
+        border: BorderSide(color: colors.borderLight, width: borderWidth),
+        child: ListTile(
+          leading: Icon(typeIcon, color: typeColor),
+          title: Text(
+            file.formattedTime,
+            style: TextStyle(color: colors.text, fontSize: 14),
+          ),
+          subtitle: Text(
+            '${file.typeLabel} · ${file.formattedSize}',
+            style: TextStyle(color: colors.textSecondary, fontSize: 12),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: Icon(
+                  Icons.visibility_outlined,
+                  color: colors.text,
+                  size: 20,
+                ),
+                onPressed: () => _viewFile(file),
+                tooltip: '查看',
               ),
-              onPressed: () => _viewFile(file),
-              tooltip: '查看',
-            ),
-            IconButton(
-              icon: Icon(Icons.delete_outline, color: colors.muted, size: 20),
-              onPressed: () => _deleteFile(file),
-              tooltip: '删除',
-            ),
-          ],
+              IconButton(
+                icon: Icon(Icons.delete_outline, color: colors.muted, size: 20),
+                onPressed: () => _deleteFile(file),
+                tooltip: '删除',
+              ),
+            ],
+          ),
+          onTap: () => _viewFile(file),
         ),
-        onTap: () => _viewFile(file),
       ),
     );
   }

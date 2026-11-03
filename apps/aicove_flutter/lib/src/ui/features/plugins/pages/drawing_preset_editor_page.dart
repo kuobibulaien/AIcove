@@ -9,14 +9,12 @@ import '../../../../features/plugins/image/drawing_parameters.dart';
 import '../../../../features/plugins/image/drawing_preset.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/plugins/image/image_config.dart';
-import '../../../../features/plugins/prompts/plugin_prompt_resolution.dart';
 import '../../../../features/plugins/prompts/prompt_pack.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 import '../../settings/widgets/comfyui_workflow_editor.dart';
-import '../widgets/preset_prompt_group.dart';
 import 'image_generation_test_page.dart';
 
 class DrawingPresetEditorPage extends ConsumerStatefulWidget {
@@ -729,40 +727,6 @@ class _DrawingPresetEditorPageState
                           _field('timeout', '请求超时（5–600 秒）', number: true),
                         ],
                       ),
-                      if (provider != null &&
-                          _config.selectedModelId != null) ...[
-                        const SizedBox(height: 16),
-                        PresetPromptGroup(
-                          pluginId: 'image',
-                          binding: _prompts,
-                          onChanged: (next) => setState(() => _prompts = next),
-                          format: imagePromptFormat(
-                            provider.id,
-                            provider.customConfig,
-                          ),
-                          model: settings.getRawModelId(
-                            _config.selectedModelId!,
-                          ),
-                          presetName: _text('name'),
-                          variables: {
-                            'default_width':
-                                int.tryParse(_text('width')) ??
-                                _config.defaultWidth,
-                            'default_height':
-                                int.tryParse(_text('height')) ??
-                                _config.defaultHeight,
-                            'default_count':
-                                int.tryParse(_text('count')) ??
-                                _config.defaultCount,
-                            'default_steps':
-                                int.tryParse(_text('steps')) ??
-                                _config.defaultSteps,
-                            'default_guidance_scale':
-                                double.tryParse(_text('guidance_scale')) ??
-                                _config.defaultGuidanceScale,
-                          },
-                        ),
-                      ],
                       const SizedBox(height: 8),
                       MoeSecondaryButton(
                         label: '生图测试',

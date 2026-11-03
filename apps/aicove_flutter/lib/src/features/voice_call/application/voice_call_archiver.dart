@@ -76,13 +76,17 @@ class VoiceCallArchiver {
     return block;
   }
 
-  /// 没接通（[connectedAt] 为 null）的电话不留记录。
+  /// 没接通（[connectedAt] 为 null）的电话只在用户拨出后自己挂断时
+  /// （[cancelled]）留一条「已取消」，接通失败不留记录。
   Future<CallRecordBlock?> archive({
     required String conversationId,
     required DateTime? connectedAt,
     required List<CallTurn> turns,
+    bool cancelled = false,
   }) async {
-    if (connectedAt == null) return null;
+    if (connectedAt == null) {
+      return cancelled ? _archiveCancelled(conversationId) : null;
+    }
     final endedAt = _now();
     final callId = newId('call');
     final messageId = newId('call_msg');
@@ -104,6 +108,27 @@ class VoiceCallArchiver {
     if (turns.any((turn) => turn.isUser && turn.text.trim().isNotEmpty)) {
       _runInBackground(_attachSummary(conversationId, block, turns));
     }
+    return block;
+  }
+
+  Future<CallRecordBlock> _archiveCancelled(String conversationId) async {
+    final messageId = newId('call_msg');
+    final block = CallRecordBlock.missed(
+      messageId: messageId,
+      callId: newId('call'),
+      kind: MissedCall.cancelled,
+    );
+    await appendBubble(
+      conversationId,
+      Message(
+        id: messageId,
+        role: 'user',
+        content: block.content,
+        blocks: [block],
+        createdAt: _now(),
+        status: 'sent',
+      ),
+    );
     return block;
   }
 

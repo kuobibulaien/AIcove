@@ -1,11 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
-import 'package:aicove_flutter/src/features/agent_context/domain/agent_runtime_contracts.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_ports.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_send_use_case.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_turn_command.dart';
-import 'package:aicove_flutter/src/features/chat/application/standard_chat_agent.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
@@ -25,6 +23,8 @@ class _FakeChatSendPort implements ChatSendPort {
   final List<String?> prepareApiConfigOverrideModels = <String?>[];
   final List<List<Message>> prepareApiConfigHistories = <List<Message>>[];
   final List<String> callOrder = <String>[];
+  bool? streamingEnabled;
+  int buildCalls = 0;
 
   ApiCallResult executeApiCallResult = const ApiCallResult(
     replyText: 'reply',
@@ -35,9 +35,9 @@ class _FakeChatSendPort implements ChatSendPort {
 
   AssistantMessageBuildResult buildAssistantMessagesResult =
       const AssistantMessageBuildResult(
-    messages: <Message>[],
-    lastMessageText: 'assistant',
-  );
+        messages: <Message>[],
+        lastMessageText: 'assistant',
+      );
 
   @override
   Future<void> addUserMessage({
@@ -53,6 +53,7 @@ class _FakeChatSendPort implements ChatSendPort {
     required ApiCallResult apiResult,
     required AppSettings settings,
   }) {
+    buildCalls++;
     return buildAssistantMessagesResult;
   }
 
@@ -92,6 +93,11 @@ class _FakeChatSendPort implements ChatSendPort {
     void Function()? onStreamingFallback,
   }) async {
     callOrder.add('executeApiCall');
+    streamingEnabled = enableStreaming;
+    onStreamTextDelta?.call('delta');
+    onStreamTextReset?.call();
+    onStreamToolCallObserved?.call();
+    onStreamingFallback?.call();
     return executeApiCallResult;
   }
 
@@ -130,7 +136,7 @@ class _FakeChatSendPort implements ChatSendPort {
       providerApiKey: 'test-key',
       customConfig: const <String, dynamic>{},
       messages: <Map<String, dynamic>>[
-        for (final message in history) <String, dynamic>{'id': message.id}
+        for (final message in history) <String, dynamic>{'id': message.id},
       ],
     );
   }
@@ -228,45 +234,51 @@ void main() {
       var resolveCalled = false;
       List<String>? executedModels;
 
-      final result = await useCase.executeNonStreamingTurn(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: conversation.id,
-        apiText: 'hello',
-        traceContext: null,
-        loadSettings: () async => settings,
-        prepareTurn: (_) async => ChatPreparedTurn(
-          requestConversation: conversation,
-          history: history,
+      final result = await useCase.executeTurn(
+        command: ChatTurnCommand.nonStreaming(
+          conversation: conversation,
+          userMessage: userMessage,
           sessionId: conversation.id,
-          modelsToTry: const <String>[
-            ' prepared-a ',
-            'prepared-b',
-            'prepared-a'
-          ],
+          apiText: 'hello',
+          traceContext: null,
         ),
-        resolveModelsToTry: (_) {
-          resolveCalled = true;
-          return <String>['fallback-x'];
-        },
-        executeWithFailover: ({
-          required modelsToTry,
-          required buildConfig,
-          required execute,
-          required settings,
-        }) async {
-          executedModels = modelsToTry;
-          final config = await buildConfig(modelsToTry.first);
-          final apiResult = await execute(config);
-          return (apiResult, settings);
-        },
-        onToolExecuting: (_) {},
-        deliverResult: ({
-          required settings,
-          required apiResult,
-          required buildResult,
-        }) async {},
-        isCurrent: () => true,
+        options: ChatTurnExecutionOptions(
+          loadSettings: () async => settings,
+          prepareTurn: (_) async => ChatPreparedTurn(
+            requestConversation: conversation,
+            history: history,
+            sessionId: conversation.id,
+            modelsToTry: const <String>[
+              ' prepared-a ',
+              'prepared-b',
+              'prepared-a',
+            ],
+          ),
+          resolveModelsToTry: (_) {
+            resolveCalled = true;
+            return <String>['fallback-x'];
+          },
+          executeWithFailover:
+              ({
+                required modelsToTry,
+                required buildConfig,
+                required execute,
+                required settings,
+              }) async {
+                executedModels = modelsToTry;
+                final config = await buildConfig(modelsToTry.first);
+                final apiResult = await execute(config);
+                return (apiResult, settings);
+              },
+          onToolExecuting: (_) {},
+          deliverResult:
+              ({
+                required settings,
+                required apiResult,
+                required buildResult,
+              }) async {},
+          isCurrent: () => true,
+        ),
       );
 
       expect(result, isNotNull);
@@ -279,88 +291,104 @@ void main() {
     test('未提供 prepareTurn 时会从 port 加载 history', () async {
       final settings = _fakeSettings();
       final port = _FakeChatSendPort(settings)
-        ..historyFromStore = <Message>[
-          _message('history_1', 'persisted'),
-        ];
+        ..historyFromStore = <Message>[_message('history_1', 'persisted')];
       final useCase = ChatSendUseCase(port);
       final conversation = _conversation();
       final userMessage = _message('user_1', 'hello');
 
-      await useCase.executeNonStreamingTurn(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: conversation.id,
-        apiText: 'hello',
-        traceContext: null,
-        loadSettings: () async => settings,
-        resolveModelsToTry: (_) => <String>['model-a'],
-        executeWithFailover: ({
-          required modelsToTry,
-          required buildConfig,
-          required execute,
-          required settings,
-        }) async {
-          final config = await buildConfig(modelsToTry.first);
-          final apiResult = await execute(config);
-          return (apiResult, settings);
-        },
-        onToolExecuting: (_) {},
-        deliverResult: ({
-          required settings,
-          required apiResult,
-          required buildResult,
-        }) async {},
-        isCurrent: () => true,
+      await useCase.executeTurn(
+        command: ChatTurnCommand.nonStreaming(
+          conversation: conversation,
+          userMessage: userMessage,
+          sessionId: conversation.id,
+          apiText: 'hello',
+          traceContext: null,
+        ),
+        options: ChatTurnExecutionOptions(
+          loadSettings: () async => settings,
+          resolveModelsToTry: (_) => <String>['model-a'],
+          executeWithFailover:
+              ({
+                required modelsToTry,
+                required buildConfig,
+                required execute,
+                required settings,
+              }) async {
+                final config = await buildConfig(modelsToTry.first);
+                final apiResult = await execute(config);
+                return (apiResult, settings);
+              },
+          onToolExecuting: (_) {},
+          deliverResult:
+              ({
+                required settings,
+                required apiResult,
+                required buildResult,
+              }) async {},
+          isCurrent: () => true,
+        ),
       );
 
+      expect(port.streamingEnabled, isFalse);
       expect(port.prepareHistoryFromStoreCalls, 1);
       expect(port.lastPrepareHistoryConversation, same(conversation));
       expect(port.lastPrepareHistoryUserMessage, same(userMessage));
-      expect(port.prepareApiConfigHistories.single.map((m) => m.id).toList(),
-          <String>['history_1']);
+      expect(
+        port.prepareApiConfigHistories.single.map((m) => m.id).toList(),
+        <String>['history_1'],
+      );
     });
 
-    test('streaming 路径会先调用 prepareStreaming 再执行 API', () async {
+    test('executeTurn 将流式标志与增量回调交给 port', () async {
       final settings = _fakeSettings();
       final port = _FakeChatSendPort(settings)
-        ..historyFromStore = <Message>[
-          _message('history_1', 'persisted'),
-        ];
+        ..historyFromStore = <Message>[_message('history_1', 'persisted')];
       final useCase = ChatSendUseCase(port);
       final conversation = _conversation();
       final userMessage = _message('user_1', 'hello');
+      final streamEvents = <String>[];
 
-      await useCase.executeStreamingTurn(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: conversation.id,
-        apiText: 'hello',
-        traceContext: null,
-        loadSettings: () async => settings,
-        resolveModelsToTry: (_) => <String>['model-a'],
-        executeWithFailover: ({
-          required modelsToTry,
-          required buildConfig,
-          required execute,
-          required settings,
-        }) async {
-          final config = await buildConfig(modelsToTry.first);
-          final apiResult = await execute(config);
-          return (apiResult, settings);
-        },
-        prepareStreaming: (_) async {
-          port.callOrder.add('prepareStreaming');
-        },
-        onToolExecuting: (_) {},
-        deliverResult: ({
-          required settings,
-          required apiResult,
-          required buildResult,
-        }) async {},
-        isCurrent: () => true,
+      await useCase.executeTurn(
+        command: ChatTurnCommand.streaming(
+          conversation: conversation,
+          userMessage: userMessage,
+          sessionId: conversation.id,
+          apiText: 'hello',
+          traceContext: null,
+        ),
+        options: ChatTurnExecutionOptions(
+          loadSettings: () async => settings,
+          resolveModelsToTry: (_) => <String>['model-a'],
+          executeWithFailover:
+              ({
+                required modelsToTry,
+                required buildConfig,
+                required execute,
+                required settings,
+              }) async {
+                final config = await buildConfig(modelsToTry.first);
+                final apiResult = await execute(config);
+                return (apiResult, settings);
+              },
+          onToolExecuting: (_) {},
+          onStreamTextDelta: streamEvents.add,
+          onStreamTextReset: () => streamEvents.add('reset'),
+          onStreamToolCallObserved: () => streamEvents.add('tools'),
+          onStreamingFallback: () => streamEvents.add('fallback'),
+          deliverResult:
+              ({
+                required settings,
+                required apiResult,
+                required buildResult,
+              }) async {},
+          isCurrent: () => true,
+        ),
       );
 
-      expect(port.callOrder, <String>['prepareStreaming', 'executeApiCall']);
+      expect(port.callOrder, <String>['executeApiCall']);
+      expect(port.streamingEnabled, isTrue);
+      expect(streamEvents, ['delta', 'reset', 'tools', 'fallback']);
+      expect(port.prepareHistoryFromStoreCalls, 1);
     });
 
     test('deliverResult 使用 buildAssistantMessages 产出的结果', () async {
@@ -378,9 +406,7 @@ void main() {
         lastMessageText: 'done',
       );
       final port = _FakeChatSendPort(settings)
-        ..historyFromStore = <Message>[
-          _message('history_1', 'persisted'),
-        ]
+        ..historyFromStore = <Message>[_message('history_1', 'persisted')]
         ..buildAssistantMessagesResult = buildResult;
       final useCase = ChatSendUseCase(port);
       final conversation = _conversation();
@@ -389,34 +415,40 @@ void main() {
       AssistantMessageBuildResult? deliveredBuildResult;
       ApiCallResult? deliveredApiResult;
 
-      final result = await useCase.executeNonStreamingTurn(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: conversation.id,
-        apiText: 'hello',
-        traceContext: null,
-        loadSettings: () async => settings,
-        resolveModelsToTry: (_) => <String>['model-a'],
-        executeWithFailover: ({
-          required modelsToTry,
-          required buildConfig,
-          required execute,
-          required settings,
-        }) async {
-          final config = await buildConfig(modelsToTry.first);
-          final apiResult = await execute(config);
-          return (apiResult, settings);
-        },
-        onToolExecuting: (_) {},
-        deliverResult: ({
-          required settings,
-          required apiResult,
-          required buildResult,
-        }) async {
-          deliveredBuildResult = buildResult;
-          deliveredApiResult = apiResult;
-        },
-        isCurrent: () => true,
+      final result = await useCase.executeTurn(
+        command: ChatTurnCommand.nonStreaming(
+          conversation: conversation,
+          userMessage: userMessage,
+          sessionId: conversation.id,
+          apiText: 'hello',
+          traceContext: null,
+        ),
+        options: ChatTurnExecutionOptions(
+          loadSettings: () async => settings,
+          resolveModelsToTry: (_) => <String>['model-a'],
+          executeWithFailover:
+              ({
+                required modelsToTry,
+                required buildConfig,
+                required execute,
+                required settings,
+              }) async {
+                final config = await buildConfig(modelsToTry.first);
+                final apiResult = await execute(config);
+                return (apiResult, settings);
+              },
+          onToolExecuting: (_) {},
+          deliverResult:
+              ({
+                required settings,
+                required apiResult,
+                required buildResult,
+              }) async {
+                deliveredBuildResult = buildResult;
+                deliveredApiResult = apiResult;
+              },
+          isCurrent: () => true,
+        ),
       );
 
       expect(result, isNotNull);
@@ -425,143 +457,64 @@ void main() {
       expect(deliveredApiResult, same(port.executeApiCallResult));
       expect(result.settings, same(settings));
     });
-
-    test('StandardChatAgent 通过 AgentScheduler 委托现有 ChatSendUseCase', () async {
-      final settings = _fakeSettings();
-      final port = _FakeChatSendPort(settings)
-        ..historyFromStore = <Message>[
-          _message('history_1', 'persisted'),
-        ];
-      final useCase = ChatSendUseCase(port);
-      final runtime = StandardChatAgentRuntime(useCase);
-      final scheduler = DirectAgentScheduler<StandardChatAgentRunRequest,
-          StandardChatAgentRunResult>(runtime);
-      final agent = StandardChatAgent(scheduler);
-      final conversation = _conversation();
-      final userMessage = _message('user_1', 'hello');
-      final command = ChatTurnCommand.nonStreaming(
-        conversation: conversation,
-        userMessage: userMessage,
-        sessionId: conversation.id,
-        apiText: 'hello',
-        traceContext: null,
-      );
-
-      final result = await agent.executeTurn(
-        command: command,
-        options: ChatTurnExecutionOptions(
-          loadSettings: () async => settings,
-          resolveModelsToTry: (_) => <String>['model-a'],
-          executeWithFailover: ({
-            required modelsToTry,
-            required buildConfig,
-            required execute,
-            required settings,
-          }) async {
-            final config = await buildConfig(modelsToTry.first);
-            final apiResult = await execute(config);
-            return (apiResult, settings);
-          },
-          onToolExecuting: (_) {},
-          deliverResult: ({
-            required settings,
-            required apiResult,
-            required buildResult,
-          }) async {},
-          isCurrent: () => true,
-        ),
-      );
-
-      expect(result, isNotNull);
-      expect(port.prepareHistoryFromStoreCalls, 1);
-      expect(port.prepareApiConfigOverrideModels, <String?>['model-a']);
-
-      final request = StandardChatAgentRunRequest(
-        command: command,
-        options: ChatTurnExecutionOptions(
-          loadSettings: () async => settings,
-          resolveModelsToTry: (_) => <String>['model-a'],
-          executeWithFailover: ({
-            required modelsToTry,
-            required buildConfig,
-            required execute,
-            required settings,
-          }) async {
-            throw UnimplementedError();
-          },
-          onToolExecuting: (_) {},
-          deliverResult: ({
-            required settings,
-            required apiResult,
-            required buildResult,
-          }) async {},
-          isCurrent: () => true,
-        ),
-      );
-      expect(
-        request.agentId,
-        StandardChatAgentIds.agentIdForContact(conversation.id),
-      );
-      expect(request.contactId, conversation.id);
-      expect(
-        request.contextOverrides['contextRecipeId'],
-        StandardChatAgentIds.contextRecipeIdForContact(conversation.id),
-      );
-      expect(request.metadata['contactDisplayName'], conversation.displayName);
-      expect(request.metadata['contextAssemblyScope'], 'full_chat');
-      expect(
-        request.metadata['assemblyPermissions'],
-        contains(AgentContextAssemblyPermission.sillyTavernPreset.id),
-      );
-      expect(request.agentKind, AgentKind.chat);
-      expect(request.deliveryChannel,
-          AgentDeliveryChannelKind.foregroundConversation);
-      expect(request.traceKind, AgentTraceKind.foreground);
-      expect(request.triggerKind, AgentTriggerKind.userMessage);
-
-      final definition =
-          StandardChatAgentIds.definitionForConversation(conversation);
-      expect(definition.id, request.agentId);
-      expect(definition.contextRecipeId,
-          StandardChatAgentIds.contextRecipeIdForContact(conversation.id));
-      expect(definition.agentKind, AgentKind.chat);
-      expect(
-        definition.contextProfile
-            .canAssemble(AgentContextAssemblyPermission.sillyTavernPreset),
-        isTrue,
-      );
-      expect(
-        definition.contextProfile
-            .canAssemble(AgentContextAssemblyPermission.lorebook),
-        isTrue,
-      );
-      expect(
-        ContextProfile.backgroundAnalyzer
-            .canAssemble(AgentContextAssemblyPermission.sillyTavernPreset),
-        isFalse,
-      );
-    });
-
-    test('bound preset id becomes the ChatAgent context recipe id', () {
-      final now = DateTime(2026, 8, 27);
-      final conversation = Conversation(
-        id: 'conv_bound_recipe',
-        title: 'Chat',
-        displayName: 'Chat',
-        recipeId: 'st_preset_aaaaaaaaaaaaaaaaaaaaaaaa',
-        createdAt: now,
-        updatedAt: now,
-      );
-
-      expect(
-        StandardChatAgentIds.contextRecipeIdForConversation(conversation),
-        conversation.recipeId,
-      );
-      expect(
-        StandardChatAgentIds.definitionForConversation(conversation)
-            .contextRecipeId,
-        conversation.recipeId,
-      );
-    });
+    for (final boundary in ['settings', 'history']) {
+      test('executeTurn stops after cancelled $boundary preparation', () async {
+        final settings = _fakeSettings();
+        final port = _FakeChatSendPort(settings);
+        final useCase = ChatSendUseCase(port);
+        final conversation = _conversation();
+        final user = _message('cancelled', 'hello');
+        var current = true;
+        var prepared = 0;
+        var delivered = false;
+        final result = await useCase.executeTurn(
+          command: ChatTurnCommand.streaming(
+            conversation: conversation,
+            userMessage: user,
+            sessionId: conversation.id,
+            apiText: 'hello',
+            traceContext: null,
+          ),
+          options: ChatTurnExecutionOptions(
+            loadSettings: () async {
+              if (boundary == 'settings') current = false;
+              return settings;
+            },
+            prepareTurn: (_) async {
+              prepared++;
+              current = false;
+              return ChatPreparedTurn(
+                requestConversation: conversation,
+                history: [user],
+                sessionId: conversation.id,
+              );
+            },
+            executeWithFailover:
+                ({
+                  required modelsToTry,
+                  required buildConfig,
+                  required execute,
+                  required settings,
+                }) async =>
+                    throw StateError('cancelled turn must not request a model'),
+            onToolExecuting: (_) {},
+            deliverResult:
+                ({
+                  required settings,
+                  required apiResult,
+                  required buildResult,
+                }) async {
+                  delivered = true;
+                },
+            isCurrent: () => current,
+          ),
+        );
+        expect(result, isNull);
+        expect(prepared, boundary == 'history' ? 1 : 0);
+        expect(port.callOrder, isEmpty);
+        expect(port.buildCalls, 0);
+        expect(delivered, isFalse);
+      });
+    }
   });
 }

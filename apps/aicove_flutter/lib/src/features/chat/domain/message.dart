@@ -147,6 +147,11 @@ class Message {
             'image_url': {'url': 'data:image/jpeg;base64,${block.base64}'},
           });
         }
+      } else if (block is EmojiBlock) {
+        contentParts.add({
+          'type': 'text',
+          'text': addTimestampPrefix(formatEmojiBlockContextText(block)),
+        });
       } else if (block is ToolBlock) {
         if (block.toolCallId != null && block.toolCallId!.isNotEmpty) {
           toolCalls.add({
@@ -272,4 +277,16 @@ class Message {
           : rawPayload as Map<String, dynamic>?,
     );
   }
+}
+
+/// 将表情包消息块格式化为模型上下文可读文本。
+String formatEmojiBlockContextText(EmojiBlock block) {
+  final tag = block.matchedTag?.trim() ?? '';
+  final desc = block.originalText?.trim() ?? '';
+  if (tag.isNotEmpty && desc.isNotEmpty && tag != desc) {
+    return '[表情：$tag（$desc）]';
+  }
+  if (tag.isNotEmpty) return '[表情：$tag]';
+  if (desc.isNotEmpty) return '[表情：$desc]';
+  return '[表情]';
 }

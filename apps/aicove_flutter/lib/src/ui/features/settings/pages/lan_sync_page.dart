@@ -31,6 +31,9 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
   }
 
   bool _showItems = false;
+  int _itemLimit = 30;
+  List<List<LanRevision>>? _cachedConflicts;
+  Map<String, List<(LanRevision, List<String>)>>? _cachedByDevice;
 
   Future<void> _run(Future<void> Function(LanSyncPort) operation) async {
     if (_action) return;
@@ -159,7 +162,11 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
 
   /// Devices whose counter in [version] is ahead of every other version.
   Set<String> _authors(LanRevision version, List<LanRevision> versions) {
-    final others = versions.where((v) => v.hash != version.hash);
+    final versionHash = version.hash;
+    final others = [
+      for (final v in versions)
+        if (v.hash != versionHash) v,
+    ];
     return {
       for (final entry in version.vector.entries)
         if (others.every(
@@ -191,10 +198,33 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
         : '多台设备合并的版本';
   }
 
+  bool _sameConflicts(
+    List<List<LanRevision>> a,
+    List<List<LanRevision>> b,
+  ) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final left = a[i], right = b[i];
+      if (left.length != right.length) return false;
+      for (var j = 0; j < left.length; j++) {
+        if (left[j].hash != right[j].hash) return false;
+      }
+    }
+    return true;
+  }
+
   /// The version each device alone wrote, per conflict, for one-tap resolving.
   Map<String, List<(LanRevision, List<String>)>> _byDevice(
     List<List<LanRevision>> conflicts,
   ) {
+    final cachedConflicts = _cachedConflicts;
+    final cachedByDevice = _cachedByDevice;
+    if (cachedConflicts != null &&
+        cachedByDevice != null &&
+        _sameConflicts(cachedConflicts, conflicts)) {
+      return cachedByDevice;
+    }
     final result = <String, List<(LanRevision, List<String>)>>{};
     for (final versions in conflicts) {
       final hashes = versions.map((v) => v.hash).toList();
@@ -205,6 +235,8 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
         }
       }
     }
+    _cachedConflicts = conflicts;
+    _cachedByDevice = result;
     return result;
   }
 
@@ -474,6 +506,37 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                               ? null
                               : () => _run((port) => port.synchronize()),
                         ),
+                      if (state.busy || state.progressLabel != null) ...[
+                        const SizedBox(height: 12),
+                        LinearProgressIndicator(
+                          value: state.progress,
+                          minHeight: 6,
+                          color: colors.focus,
+                          backgroundColor: colors.borderLight,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                state.progressLabel ?? '正在同步…',
+                                style: TextStyle(color: colors.muted),
+                              ),
+                            ),
+                            if (state.progress != null)
+                              Text(
+                                '${(state.progress!.clamp(0.0, 1.0) * 100).round()}%',
+                                style: TextStyle(
+                                  color: colors.muted,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
                       if (state.pendingFiles > 0)
                         Text('${state.pendingFiles} 份附件等待传输'),
                       if (state.unavailableFiles > 0)
@@ -530,11 +593,15 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                           MoeSecondaryButton(
                             label: _showItems ? '收起逐项列表' : '逐项选择',
                             enabled: !_action,
-                            onPressed: () =>
-                                setState(() => _showItems = !_showItems),
+                            onPressed: () => setState(() {
+                              _showItems = !_showItems;
+                              if (!_showItems) _itemLimit = 30;
+                            }),
                           ),
-                        if (state.conflicts.length <= 5 || _showItems)
-                          for (final conflict in state.conflicts)
+                        if (state.conflicts.length <= 5 || _showItems) ...[
+                          for (final conflict in state.conflicts.take(
+                            _itemLimit,
+                          ))
                             ListTile(
                               contentPadding: EdgeInsets.zero,
                               title: Text(
@@ -550,6 +617,15 @@ class _LanSyncPageState extends ConsumerState<LanSyncPage> {
                               trailing: const Icon(Icons.chevron_right),
                               onTap: _action ? null : () => _conflict(conflict),
                             ),
+                          if (state.conflicts.length > _itemLimit)
+                            MoeSecondaryButton(
+                              label: '继续显示',
+                              size: MoeSecondaryButtonSize.sm,
+                              enabled: !_action,
+                              onPressed: () =>
+                                  setState(() => _itemLimit += 30),
+                            ),
+                        ],
                       ],
                       const SizedBox(height: 20),
                       Text(

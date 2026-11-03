@@ -416,6 +416,12 @@ buildProviderMultiKeyFailurePatch({
   final normalizedId = failedItemId?.trim();
   if (normalizedId != null && normalizedId.isNotEmpty) {
     targetIndex = items.indexWhere((item) => item.id == normalizedId);
+    // An item id is stable across edits, but its credential is not. A stale
+    // request must never fall through and mark a replacement/duplicated item.
+    if (targetIndex < 0 || items[targetIndex].key.trim() != normalizedKey) {
+      return (customConfig: provider.customConfig, apiKeys: provider.apiKeys,
+          changed: false);
+    }
   }
   if (targetIndex < 0 &&
       failedItemIndex != null &&

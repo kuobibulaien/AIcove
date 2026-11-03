@@ -23,21 +23,20 @@ class ModelFailoverErrorContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          key: const ValueKey('model_failover_error_summary'),
-          width: double.infinity,
+        MoeContentSurface(
+          radius: 12,
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: SelectableText(
-            summary,
-            style: TextStyle(
-              fontSize: 15,
-              height: 1.5,
-              fontWeight: MoeFontWeights.emphasis,
-              color: colors.text,
+          child: SizedBox(
+            key: const ValueKey('model_failover_error_summary'),
+            width: double.infinity,
+            child: SelectableText(
+              summary,
+              style: TextStyle(
+                fontSize: 15,
+                height: 1.5,
+                fontWeight: MoeFontWeights.emphasis,
+                color: colors.text,
+              ),
             ),
           ),
         ),

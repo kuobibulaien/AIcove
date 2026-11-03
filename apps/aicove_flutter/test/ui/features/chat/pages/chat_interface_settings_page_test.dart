@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:aicove_flutter/src/features/chat/application/chat_view_prefs.dart';
+import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
@@ -9,6 +11,7 @@ import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'chat_interface_test_support.dart';
@@ -161,14 +164,16 @@ void main() {
     await tester.tap(find.text('气泡样式更多选项'));
     await tester.pumpAndSettle();
     expect(find.text('消息分段'), findsOneWidget);
-    expect(find.text('过滤句末标点'), findsOneWidget);
+    // 分段标点和省略句末标点是全局设置，不在这里。
+    expect(find.text('过滤句末标点'), findsNothing);
+    expect(find.text('分段标点'), findsNothing);
     expect(find.text('显示工具调用'), findsNothing);
-    await shot(tester, key, 'chat-interface-bubble-options');
-
     await tester.ensureVisible(
       find.byKey(const ValueKey('bubble_show_thinking_switch')),
     );
     await tester.pumpAndSettle();
+    await shot(tester, key, 'chat-interface-bubble-options');
+
     await tester.tap(find.byKey(const ValueKey('bubble_show_thinking_switch')));
     await tester.pumpAndSettle();
     expect(settings.settings.bubbleShowThinking, isFalse);
@@ -203,7 +208,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('行为标签分用户与 AI 两个自动回底', (tester) async {
+  testWidgets('行为标签分用户与 AI 两个自动回底及允许单次发送多条消息', (tester) async {
     final settings = FakeChatInterfaceSettingsNotifier(
       chatInterfaceTestSettings(),
     );
@@ -212,7 +217,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('编辑壁纸'), findsNothing);
     expect(settings.settings.autoScrollOnSend, isTrue);
+    expect(settings.settings.allowMultiMessageSend, isFalse);
+    expect(find.text('允许单次发送多条消息'), findsOneWidget);
     await shot(tester, key, 'chat-interface-behavior');
+
+    await tester.tap(find.text('允许单次发送多条消息'));
+    await tester.pumpAndSettle();
+    expect(settings.settings.allowMultiMessageSend, isTrue);
 
     await tester.tap(find.text('用户发消息自动回底'));
     await tester.pumpAndSettle();
@@ -222,6 +233,111 @@ void main() {
     await tester.tap(find.text('AI 发消息自动回底'));
     await tester.pumpAndSettle();
     expect(settings.settings.autoScrollOnAiReply, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('图片大小、语音展开、隐藏头像只改这个联系人', (tester) async {
+    final now = DateTime(2026, 10, 3);
+    final other = Conversation(
+      id: 'conv_2',
+      title: 'Other',
+      displayName: '芙宁娜',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final conv = conversation();
+    tester.view.physicalSize = viewSize * 2;
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    late WidgetRef ref;
+    await tester.pumpWidget(
+      chatInterfaceTestScope(
+        conversation: conv,
+        others: [other],
+        child: MaterialApp(
+          theme: ThemeData(extensions: [MoeColors.light()]),
+          home: Consumer(
+            builder: (context, r, _) {
+              ref = r;
+              return ChatInterfaceSettingsPage(conversation: conv);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pumpAndSettle();
+    expect(find.text('通用设置'), findsNothing);
+
+    // 默认沿用全局值：隐藏用户头像、语音默认展开。
+    final hideSwitch = find.byKey(
+      const ValueKey('chat_interface_hide_user_avatar_switch'),
+    );
+    await tester.ensureVisible(hideSwitch);
+    await tester.tap(hideSwitch);
+    await tester.pumpAndSettle();
+    final audioSwitch = find.byKey(
+      const ValueKey('chat_interface_expand_audio_switch'),
+    );
+    await tester.ensureVisible(audioSwitch);
+    await tester.tap(audioSwitch);
+    await tester.pumpAndSettle();
+
+    final stored = ref.read(conversationsProvider).value!;
+    expect(stored[0].hideUserAvatar, isFalse);
+    expect(stored[0].expandAudioText, isFalse);
+    expect(stored[1].hideUserAvatar, isNull);
+    expect(stored[1].expandAudioText, isNull);
+    expect(ref.read(appSettingsProvider).value!.hideUserAvatar, isTrue);
+    // 预览气泡跟着这个联系人的设置走。
+    final preview = tester.element(find.byType(MessageBubble).first);
+    expect(ChatViewScope.maybeOf(preview)?.hideUserAvatar, isFalse);
+    expect(
+      find.byKey(const ValueKey('chat_interface_image_scale_slider')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('消息分段只改这个联系人', (tester) async {
+    final settings = FakeChatInterfaceSettingsNotifier(
+      chatInterfaceTestSettings(),
+    );
+    final conv = conversation();
+    tester.view.physicalSize = viewSize * 2;
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    late WidgetRef ref;
+    await tester.pumpWidget(
+      chatInterfaceTestScope(
+        conversation: conv,
+        settings: settings,
+        child: MaterialApp(
+          theme: ThemeData(extensions: [MoeColors.light()]),
+          home: Consumer(
+            builder: (context, r, _) {
+              ref = r;
+              return ChatInterfaceSettingsPage(conversation: conv);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 450));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('气泡样式更多选项'));
+    await tester.pumpAndSettle();
+    final chunking = find.byKey(const ValueKey('bubble_chunking_switch'));
+    await tester.ensureVisible(chunking);
+    await tester.tap(chunking);
+    await tester.pumpAndSettle();
+
+    final stored = ref.read(conversationsProvider).value!.single;
+    expect(stored.chunkEnabled, isFalse);
+    // 全局默认不动。
+    expect(settings.settings.messageFormatConfig.enableChunking, isTrue);
     expect(tester.takeException(), isNull);
   });
 }

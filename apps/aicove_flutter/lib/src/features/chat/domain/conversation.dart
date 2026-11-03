@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../../core/api/thinking/thinking_level.dart';
 import '../../assistant/domain/assistant_onboarding.dart';
 import 'chat_display_policy.dart';
@@ -61,6 +63,22 @@ class Conversation {
       chatDisplayStyle ??
       (id == kAicoveAssistantId ? ChatDisplayStyle.document : null);
 
+  // 聊天界面里按联系人生效的显示偏好；null 沿用旧的全局值（ChatViewPrefs）
+  final double? imagePreviewScale;
+  final bool? expandAudioText;
+  final bool? hideUserAvatar;
+
+  // 气泡分段（按联系人）：是否分段，null 跟随全局默认
+  final bool? chunkEnabled;
+
+  // 旧版按联系人存的句末标点与标点方案，现已改为全局设置，不再生效；
+  // 列仍保留以免改库结构和同步格式
+  final bool? filterPunctuation;
+  final String? chunkPunctuationSetId;
+
+  ChatChunkOverride get chunkOverride =>
+      ChatChunkOverride(enableChunking: chunkEnabled);
+
   // 角色工作模式（ADR0097）；null 为聊天模式，AIcove酱恒为工具模式
   final RoleAgentMode? agentMode;
 
@@ -107,6 +125,12 @@ class Conversation {
     this.recipeId,
     this.thinkingLevels = const {},
     this.chatDisplayStyle,
+    this.imagePreviewScale,
+    this.expandAudioText,
+    this.hideUserAvatar,
+    this.chunkEnabled,
+    this.filterPunctuation,
+    this.chunkPunctuationSetId,
     this.agentMode,
     this.contextStartMessageId,
     this.lastMessage,
@@ -125,6 +149,105 @@ class Conversation {
   }
 
   bool blocksPlugin(String pluginId) => !allowsPlugin(pluginId);
+
+  /// 聊天页用到的字段是否一致：忽略列表摘要（lastMessage、lastMessageTime、
+  /// unreadCount）、updatedAt 与 messages，落库摘要更新时聊天页不必重建。
+  bool sameChatPageConfig(Conversation? other) {
+    if (other == null) return false;
+    if (identical(this, other)) return true;
+    return id == other.id &&
+        title == other.title &&
+        displayName == other.displayName &&
+        avatarUrl == other.avatarUrl &&
+        characterImage == other.characterImage &&
+        chatBackgroundImage == other.chatBackgroundImage &&
+        chatBackgroundMaskOpacity == other.chatBackgroundMaskOpacity &&
+        chatBackgroundBlurSigma == other.chatBackgroundBlurSigma &&
+        chatBackgroundFraming == other.chatBackgroundFraming &&
+        blurredBackground == other.blurredBackground &&
+        selfAddress == other.selfAddress &&
+        addressUser == other.addressUser &&
+        voiceFile == other.voiceFile &&
+        description == other.description &&
+        personaPrompt == other.personaPrompt &&
+        createdAt == other.createdAt &&
+        defaultProvider == other.defaultProvider &&
+        sessionProvider == other.sessionProvider &&
+        isPinned == other.isPinned &&
+        isHidden == other.isHidden &&
+        isFavorite == other.isFavorite &&
+        isMuted == other.isMuted &&
+        notificationSound == other.notificationSound &&
+        listEquals(enabledPlugins, other.enabledPlugins) &&
+        recipeId == other.recipeId &&
+        mapEquals(thinkingLevels, other.thinkingLevels) &&
+        chatDisplayStyle == other.chatDisplayStyle &&
+        imagePreviewScale == other.imagePreviewScale &&
+        expandAudioText == other.expandAudioText &&
+        hideUserAvatar == other.hideUserAvatar &&
+        chunkEnabled == other.chunkEnabled &&
+        filterPunctuation == other.filterPunctuation &&
+        chunkPunctuationSetId == other.chunkPunctuationSetId &&
+        agentMode == other.agentMode &&
+        contextStartMessageId == other.contextStartMessageId;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Conversation &&
+          sameChatPageConfig(other) &&
+          listEquals(messages, other.messages) &&
+          updatedAt == other.updatedAt &&
+          lastMessage == other.lastMessage &&
+          lastMessageTime == other.lastMessageTime &&
+          unreadCount == other.unreadCount;
+
+  @override
+  int get hashCode => Object.hashAll([
+    id,
+    title,
+    displayName,
+    avatarUrl,
+    characterImage,
+    chatBackgroundImage,
+    chatBackgroundMaskOpacity,
+    chatBackgroundBlurSigma,
+    chatBackgroundFraming,
+    blurredBackground,
+    selfAddress,
+    addressUser,
+    voiceFile,
+    description,
+    personaPrompt,
+    createdAt,
+    updatedAt,
+    defaultProvider,
+    sessionProvider,
+    isPinned,
+    isHidden,
+    isFavorite,
+    isMuted,
+    notificationSound,
+    enabledPlugins == null ? null : Object.hashAll(enabledPlugins!),
+    recipeId,
+    Object.hashAllUnordered(
+      thinkingLevels.entries.map((e) => Object.hash(e.key, e.value)),
+    ),
+    chatDisplayStyle,
+    imagePreviewScale,
+    expandAudioText,
+    hideUserAvatar,
+    chunkEnabled,
+    filterPunctuation,
+    chunkPunctuationSetId,
+    agentMode,
+    contextStartMessageId,
+    lastMessage,
+    lastMessageTime,
+    unreadCount,
+    Object.hashAll(messages),
+  ]);
 
   /// Fields that are inherently nullable and may need to be explicitly cleared
   /// use [Object] type with [_sentinel] default so that `copyWith(field: null)`
@@ -159,6 +282,12 @@ class Conversation {
     Object? recipeId = _sentinel,
     Map<String, ThinkingLevel>? thinkingLevels,
     Object? chatDisplayStyle = _sentinel,
+    Object? imagePreviewScale = _sentinel,
+    Object? expandAudioText = _sentinel,
+    Object? hideUserAvatar = _sentinel,
+    Object? chunkEnabled = _sentinel,
+    Object? filterPunctuation = _sentinel,
+    Object? chunkPunctuationSetId = _sentinel,
     Object? agentMode = _sentinel,
     Object? contextStartMessageId = _sentinel,
     Object? lastMessage = _sentinel,
@@ -218,6 +347,23 @@ class Conversation {
       chatDisplayStyle: chatDisplayStyle == _sentinel
           ? this.chatDisplayStyle
           : chatDisplayStyle as ChatDisplayStyle?,
+      imagePreviewScale: imagePreviewScale == _sentinel
+          ? this.imagePreviewScale
+          : imagePreviewScale as double?,
+      expandAudioText: expandAudioText == _sentinel
+          ? this.expandAudioText
+          : expandAudioText as bool?,
+      hideUserAvatar: hideUserAvatar == _sentinel
+          ? this.hideUserAvatar
+          : hideUserAvatar as bool?,
+      chunkEnabled:
+          chunkEnabled == _sentinel ? this.chunkEnabled : chunkEnabled as bool?,
+      filterPunctuation: filterPunctuation == _sentinel
+          ? this.filterPunctuation
+          : filterPunctuation as bool?,
+      chunkPunctuationSetId: chunkPunctuationSetId == _sentinel
+          ? this.chunkPunctuationSetId
+          : chunkPunctuationSetId as String?,
       agentMode: agentMode == _sentinel
           ? this.agentMode
           : agentMode as RoleAgentMode?,

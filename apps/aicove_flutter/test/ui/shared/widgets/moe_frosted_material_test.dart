@@ -289,6 +289,84 @@ void main() {
     expect(find.byType(BackdropFilter), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  for (final brightness in Brightness.values) {
+    testWidgets(
+      'saturateColor + surfaceTint matches BackdropFilter over solid backdrop $brightness',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(80, 60);
+        addTearDown(tester.view.reset);
+        final key = GlobalKey();
+        final colors = brightness == Brightness.dark
+            ? MoeColors.dark()
+            : MoeColors.light();
+        final backdrop = colors.surface;
+
+        Future<ByteData> render(Widget overlay) async {
+          await tester.pumpWidget(
+            RepaintBoundary(
+              key: key,
+              child: Stack(
+                textDirection: TextDirection.ltr,
+                children: [
+                  Positioned.fill(child: ColoredBox(color: backdrop)),
+                  Positioned.fill(child: overlay),
+                ],
+              ),
+            ),
+          );
+          final boundary =
+              key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+          final image = (await tester.runAsync(() => boundary.toImage()))!;
+          final bytes = (await tester.runAsync(
+            () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+          ))!;
+          image.dispose();
+          return bytes;
+        }
+
+        for (final fill in [0.0, 0.25, 0.5, 0.85, 1.0]) {
+          final tint = Color.alphaBlend(
+            moeContentSurfaceInk(brightness),
+            MoeFrostedMaterial.surfaceTint(brightness, fill: fill),
+          );
+          final blurred = await render(
+            ClipRect(
+              child: BackdropFilter(
+                filter: MoeFrostedMaterial.surfaceFilter(
+                  brightness,
+                  sigma: 10,
+                  fill: fill,
+                ),
+                child: ColoredBox(color: tint, child: const SizedBox.expand()),
+              ),
+            ),
+          );
+          final precomputed = Color.alphaBlend(
+            tint,
+            MoeFrostedMaterial.saturateColor(
+              brightness,
+              backdrop,
+              fill: fill,
+            ),
+          );
+          final staticFill = await render(
+            ColoredBox(color: precomputed, child: const SizedBox.expand()),
+          );
+          // Compare center pixel RGBA channels.
+          const offset = (30 * 80 + 40) * 4;
+          for (var c = 0; c < 4; c++) {
+            expect(
+              staticFill.getUint8(offset + c),
+              closeTo(blurred.getUint8(offset + c), 1),
+              reason: 'Solid backdrop parity failed for $brightness fill=$fill',
+            );
+          }
+        }
+      },
+    );
+  }
 }
 
 class _Backdrop extends CustomPainter {

@@ -9,6 +9,7 @@ import '../../agent_plugins/tool_policy.dart' show redactorForCredentials;
 import '../../background_agent/background_agent_service.dart';
 import '../../chat/services/api_runner.dart';
 import '../../chat/services/chat_types.dart';
+import '../../chat/services/provider_key_failure.dart';
 import '../../settings/app_settings.dart';
 
 /// One model call requested by a workspace web page (ADR0109).
@@ -54,7 +55,10 @@ class WebAppAiRequest {
       });
     }
     if (messages.every((message) => message['role'] == 'system')) {
-      throw const WebAppAiException('bad_request', '至少要有一条 user 或 assistant 消息');
+      throw const WebAppAiException(
+        'bad_request',
+        '至少要有一条 user 或 assistant 消息',
+      );
     }
     final temperature = body['temperature'];
     if (temperature != null &&
@@ -129,6 +133,7 @@ WebAppAiChat createWebAppAiChat({
   required Future<AppSettings> Function() loadSettings,
   WebAppAiExecutor? executor,
   ResolveBackgroundAgentRequestConfig? requestConfig,
+  ProviderKeyFailureRecorder? keyFailureRecorder,
 }) {
   final execute = executor ?? _defaultExecutor;
   final resolve = requestConfig ?? BackgroundAgentService.resolveRequestConfig;
@@ -149,6 +154,10 @@ WebAppAiChat createWebAppAiChat({
       modelFullId: resolved.modelFullId,
       providerApiBase: resolved.providerApiBase,
       providerApiKey: resolved.providerApiKey,
+      providerId: resolved.effectiveProviderId,
+      providerApiKeyItemId: resolved.providerApiKeyItemId,
+      providerApiKeyItemIndex: resolved.providerApiKeyItemIndex,
+      providerApiKeyStrategy: resolved.providerApiKeyStrategy,
       customConfig: resolved.customConfig,
       messages: [
         for (final message in request.messages)
@@ -166,7 +175,11 @@ WebAppAiChat createWebAppAiChat({
     );
     ApiCallResult result;
     try {
-      result = await execute(config: config).timeout(timeout);
+      result = await executeWithProviderKeyFailureRecording(
+        config: config,
+        recorder: keyFailureRecorder,
+        execute: () => execute(config: config),
+      ).timeout(timeout);
     } on TimeoutException {
       cancellation.cancel();
       throw WebAppAiException(

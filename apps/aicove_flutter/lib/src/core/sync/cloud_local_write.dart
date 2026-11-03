@@ -1,5 +1,14 @@
 import 'dart:async';
 
+final _externalSyncChanges = StreamController<String?>.broadcast();
+
+/// Successful local preference (key) or synchronized file (null) changes.
+Stream<String?> get externalSyncChanges => _externalSyncChanges.stream;
+
+void notifyExternalSyncChange([String? preferenceKey]) {
+  _externalSyncChanges.add(preferenceKey);
+}
+
 /// Serializes publication of settings/files with the sync compare-and-apply
 /// section. User edits arriving during a cloud write publish afterwards and are
 /// picked up by the next scan. Nested writes remain in the same operation.
@@ -14,6 +23,10 @@ Future<void>? _cloudWriteTail;
 class _WriteLease {
   bool active = true;
 }
+
+/// Whether the current Zone runs inside an active [cloudLocalWrite].
+bool get cloudLocalWriteHeld =>
+    (Zone.current[_cloudWriteZone] as _WriteLease?)?.active == true;
 
 Future<T> cloudLocalWrite<T>(Future<T> Function() operation) async {
   final inherited = Zone.current[_cloudWriteZone] as _WriteLease?;

@@ -14,11 +14,10 @@ import 'mcp_http_client.dart';
 ///
 /// 只走 Function Calling：工具来自连接器保存的工具清单，调用时经
 /// [McpClientPool] 复用会话转发到远程服务。角色未显式开启时不生效
-/// （见 `ChatPluginContextBuilder.getEffectivePlugins`）。
+/// （见 `PluginRuntime.selectForRole`）。
 class McpConnectorPlugin extends BasePlugin {
-  McpConnectorPlugin(this.connector, {McpHttpClient Function()? clientFactory})
-    : _clientFactory = clientFactory,
-      super(
+  McpConnectorPlugin(this.connector, {this._clientFactory})
+    : super(
         metadata: PluginMetadata(
           id: McpToolNaming.pluginIdOf(connector.id),
           name: connector.displayName,
@@ -30,7 +29,7 @@ class McpConnectorPlugin extends BasePlugin {
       );
 
   final McpConnector connector;
-  final McpHttpClient Function()? _clientFactory;
+  final McpClientPort Function()? _clientFactory;
 
   static const _logTag = 'McpConnectorPlugin';
 
@@ -62,8 +61,12 @@ class McpConnectorPlugin extends BasePlugin {
           controlledHandler: (args, control) async {
             control.progress('Calling MCP ${tool.name}');
             final signal = control.cancellation;
-            final output = signal == null ? await _callRich(tool.name, args)
-                : await RequestControl.run(signal, () => _callRich(tool.name, args));
+            final output = signal == null
+                ? await _callRich(tool.name, args)
+                : await RequestControl.run(
+                    signal,
+                    () => _callRich(tool.name, args),
+                  );
             control.progress('MCP ${tool.name} finished');
             return output;
           },

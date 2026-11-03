@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
@@ -51,6 +52,50 @@ class ModelHttpException implements Exception {
   }
 }
 
+/// A run owns only errors reported by its own model transport. Nested runs
+/// (for example compaction on another channel) get independent scopes.
+/// Keep the original error object/type so retries and diagnostics retain their
+/// existing TimeoutException/SocketException contracts.
+class ModelRequestFailureTracker {
+  static final _key = Object();
+  final Set<Object> _failures = HashSet.identity();
+
+  bool owns(Object error) => _failures.contains(error);
+
+  Future<T> run<T>(Future<T> Function() execute) =>
+      runZoned(execute, zoneValues: {_key: this});
+}
+
+T modelRequestFailure<T extends Object>(T error) {
+  final scope =
+      Zone.current[ModelRequestFailureTracker._key]
+          as ModelRequestFailureTracker?;
+  scope?._failures.add(error);
+  return error;
+}
+
+bool _isTransportError(Object error) =>
+    error is TimeoutException ||
+    error is SocketException ||
+    error is HttpException ||
+    error is HandshakeException ||
+    error is http.ClientException && error is! http.RequestAbortedException;
+
+Future<T> modelTransportRequest<T>(Future<T> Function() send) async {
+  try {
+    return await send();
+  } catch (error) {
+    if (_isTransportError(error)) modelRequestFailure(error);
+    rethrow;
+  }
+}
+
+Stream<T> modelTransportStream<T>(Stream<T> stream) =>
+    stream.handleError((Object error, StackTrace stack) {
+      if (_isTransportError(error)) modelRequestFailure(error);
+      Error.throwWithStackTrace(error, stack);
+    });
+
 bool isTransientModelError(Object error) =>
     error is ModelHttpException &&
         (error.status == 429 || error.status >= 500 && error.status <= 599) ||
@@ -64,6 +109,7 @@ Future<T> retryModelRound<T>({
   required Future<T> Function() send,
   required KernelCancellation cancellation,
   void Function(int attempt, Duration delay)? onRetry,
+  void Function(int attempt, int maxRetries, Duration delay)? onRetryWithLimit,
   Future<void> Function(Duration)? wait,
   int maxRetries = 3,
   Duration? attemptTimeout,
@@ -78,20 +124,27 @@ Future<T> retryModelRound<T>({
         return await (attemptTimeout == null
             ? pending
             : pending.timeout(attemptTimeout));
-      } finally {
-        // Also abort an attempt that timed out or failed after receiving only
-        // partial output, before another request can start.
+      } catch (_) {
+        // Abort an attempt that timed out or failed after receiving only
+        // partial output, before another request can start. A completed attempt
+        // stays uncancelled: work its stream callbacks started (streaming TTS)
+        // inherits this signal and must outlive the response.
         attemptSignal.cancel();
+        rethrow;
       }
     } catch (error) {
       cancellation.throwIfCancelled();
-      if (attempt >= maxRetries || !isTransientModelError(error)) rethrow;
+      final retryLimit = error is TimeoutException && maxRetries > 1
+          ? 1
+          : maxRetries;
+      if (attempt >= retryLimit || !isTransientModelError(error)) rethrow;
       final exponential = Duration(milliseconds: 500 * (1 << attempt));
       final retryAfter = error is ModelHttpException ? error.retryAfter : null;
       final delay = retryAfter != null && retryAfter > exponential
           ? retryAfter
           : exponential;
       onRetry?.call(attempt + 1, delay);
+      onRetryWithLimit?.call(attempt + 1, retryLimit, delay);
       await cancellation.bind((wait ?? Future<void>.delayed)(delay));
     }
   }

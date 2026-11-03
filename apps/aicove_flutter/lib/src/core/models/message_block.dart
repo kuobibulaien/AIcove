@@ -95,6 +95,7 @@ abstract class MessageBlock {
 class PlaceholderBlock extends MessageBlock {
   PlaceholderBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     super.status = BlockStatus.pending,
   }) : super(
@@ -104,6 +105,7 @@ class PlaceholderBlock extends MessageBlock {
   factory PlaceholderBlock.fromJson(Map<String, dynamic> json) {
     return PlaceholderBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       status: BlockStatus.values.firstWhere(
         (e) => e.name == json['status'],
@@ -129,6 +131,7 @@ class TextBlock extends MessageBlock {
 
   TextBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.content,
     super.status,
@@ -143,6 +146,7 @@ class TextBlock extends MessageBlock {
     if (json['taskControl'] is Map) return TaskControlBlock.fromJson(json);
     return TextBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       content: json['content'] as String,
       status: BlockStatus.values.firstWhere(
@@ -165,6 +169,7 @@ class TextBlock extends MessageBlock {
   TextBlock copyWith({String? content, BlockStatus? status}) {
     return TextBlock(
       id: id,
+      createdAt: createdAt,
       messageId: messageId,
       content: content ?? this.content,
       status: status ?? this.status,
@@ -186,6 +191,7 @@ class ThinkingBlock extends MessageBlock {
 
   ThinkingBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.content,
     this.durationMs,
@@ -198,6 +204,7 @@ class ThinkingBlock extends MessageBlock {
   factory ThinkingBlock.fromJson(Map<String, dynamic> json) {
     return ThinkingBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       content: json['content'] as String,
       durationMs: json['durationMs'] as int?,
@@ -222,6 +229,55 @@ class ThinkingBlock extends MessageBlock {
       };
 }
 
+/// A previously generated version of an image block.
+class ImageVersionEntry {
+  ImageVersionEntry({
+    this.localPath,
+    this.url,
+    this.base64,
+    this.width,
+    this.height,
+    this.prompt,
+    this.generationSnapshot,
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  final String? localPath;
+  final String? url;
+  final String? base64;
+  final int? width;
+  final int? height;
+  final String? prompt;
+  final ImageGenerationSnapshot? generationSnapshot;
+  final DateTime createdAt;
+
+  factory ImageVersionEntry.fromJson(Map<String, dynamic> json) =>
+      ImageVersionEntry(
+        localPath: json['localPath'] as String?,
+        url: json['url'] as String?,
+        base64: json['base64'] as String?,
+        width: json['width'] as int?,
+        height: json['height'] as int?,
+        prompt: json['prompt'] as String?,
+        generationSnapshot: ImageGenerationSnapshot.tryRead(
+          json['generationSnapshot'],
+        ),
+        createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
+      );
+
+  Map<String, dynamic> toJson() => {
+    'localPath': localPath,
+    'url': url,
+    if (base64 != null) 'base64': base64,
+    'width': width,
+    'height': height,
+    'prompt': prompt,
+    if (generationSnapshot != null)
+      'generationSnapshot': generationSnapshot!.toJson(),
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
 /// 图片Block
 class ImageBlock extends MessageBlock {
   /// 图片URL（网络图片或生成的图片）
@@ -233,8 +289,10 @@ class ImageBlock extends MessageBlock {
   /// Base64编码的图片
   final String? base64;
 
-  String? get mediaId => mediaIdFromReference(localPath) ??
-      mediaIdFromReference(url) ?? mediaIdFromReference(base64);
+  String? get mediaId =>
+      mediaIdFromReference(localPath) ??
+      mediaIdFromReference(url) ??
+      mediaIdFromReference(base64);
 
   /// 图片宽度
   final int? width;
@@ -246,6 +304,8 @@ class ImageBlock extends MessageBlock {
   final String? prompt;
 
   final ImageGenerationSnapshot? generationSnapshot;
+  final List<ImageVersionEntry> versions;
+  final int activeVersionIndex;
 
   ImageBlock({
     super.id,
@@ -257,13 +317,19 @@ class ImageBlock extends MessageBlock {
     this.height,
     this.prompt,
     this.generationSnapshot,
+    this.versions = const [],
+    this.activeVersionIndex = 0,
     super.status,
     super.createdAt,
-  })  : assert(url != null || localPath != null || base64 != null,
-            'At least one of url, localPath, or base64 must be provided'),
-        super(
-          type: BlockType.image,
-        );
+  }) : assert(
+         status == BlockStatus.pending ||
+             status == BlockStatus.error ||
+             url != null ||
+             localPath != null ||
+             base64 != null,
+         'At least one of url, localPath, or base64 must be provided',
+       ),
+       super(type: BlockType.image);
 
   factory ImageBlock.fromJson(Map<String, dynamic> json) {
     return ImageBlock(
@@ -276,7 +342,17 @@ class ImageBlock extends MessageBlock {
       width: json['width'] as int?,
       height: json['height'] as int?,
       prompt: json['prompt'] as String?,
-      generationSnapshot: ImageGenerationSnapshot.tryRead(json['generationSnapshot']),
+      generationSnapshot: ImageGenerationSnapshot.tryRead(
+        json['generationSnapshot'],
+      ),
+      versions: (json['versions'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (entry) =>
+                ImageVersionEntry.fromJson(Map<String, dynamic>.from(entry)),
+          )
+          .toList(),
+      activeVersionIndex: json['activeVersionIndex'] as int? ?? 0,
       status: BlockStatus.values.firstWhere(
         (e) => e.name == json['status'],
         orElse: () => BlockStatus.success,
@@ -286,19 +362,66 @@ class ImageBlock extends MessageBlock {
 
   @override
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'messageId': messageId,
-        'type': type.name,
-        'status': status.name,
-        'url': url,
-        'localPath': localPath,
-        'base64': base64,
-        'width': width,
-        'height': height,
-        'prompt': prompt,
-        if (generationSnapshot != null) 'generationSnapshot': generationSnapshot!.toJson(),
-        'createdAt': createdAt.toIso8601String(),
-      };
+    'id': id,
+    'messageId': messageId,
+    'type': type.name,
+    'status': status.name,
+    'url': url,
+    'localPath': localPath,
+    'base64': base64,
+    'width': width,
+    'height': height,
+    'prompt': prompt,
+    if (generationSnapshot != null)
+      'generationSnapshot': generationSnapshot!.toJson(),
+    if (versions.isNotEmpty)
+      'versions': versions.map((v) => v.toJson()).toList(),
+    if (versions.isNotEmpty) 'activeVersionIndex': activeVersionIndex,
+    'createdAt': createdAt.toIso8601String(),
+  };
+
+  ImageBlock withAddedVersion(ImageVersionEntry nextVersion) {
+    final entries = <ImageVersionEntry>[
+      if (versions.isEmpty &&
+          (localPath != null || url != null || base64 != null))
+        ImageVersionEntry(
+          localPath: localPath,
+          url: url,
+          base64: base64,
+          width: width,
+          height: height,
+          prompt: prompt,
+          generationSnapshot: generationSnapshot,
+          createdAt: createdAt,
+        )
+      else
+        ...versions,
+      nextVersion,
+    ];
+    return _withVersion(entries, entries.length - 1);
+  }
+
+  ImageBlock withActiveVersion(int index) => _withVersion(versions, index);
+
+  ImageBlock _withVersion(List<ImageVersionEntry> entries, int index) {
+    RangeError.checkValidIndex(index, entries, 'index');
+    final version = entries[index];
+    return ImageBlock(
+      id: id,
+      messageId: messageId,
+      createdAt: createdAt,
+      localPath: version.localPath,
+      url: version.url,
+      base64: version.base64,
+      width: version.width ?? (index == activeVersionIndex ? width : null),
+      height: version.height ?? (index == activeVersionIndex ? height : null),
+      prompt: version.prompt,
+      generationSnapshot: version.generationSnapshot,
+      status: BlockStatus.success,
+      versions: List.unmodifiable(entries),
+      activeVersionIndex: index,
+    );
+  }
 }
 
 /// 音频Block（TTS生成的语音）
@@ -317,6 +440,7 @@ class AudioBlock extends MessageBlock {
 
   AudioBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.url,
     this.text,
@@ -329,6 +453,7 @@ class AudioBlock extends MessageBlock {
 
   AudioBlock withUnread(bool value) => AudioBlock(
         id: id,
+        createdAt: createdAt,
         messageId: messageId,
         url: url,
         text: text,
@@ -340,6 +465,7 @@ class AudioBlock extends MessageBlock {
   factory AudioBlock.fromJson(Map<String, dynamic> json) {
     return AudioBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       url: json['url'] as String,
       text: json['text'] as String?,
@@ -382,6 +508,7 @@ class ToolBlock extends MessageBlock {
 
   ToolBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.toolName,
     this.toolCallId,
@@ -395,6 +522,7 @@ class ToolBlock extends MessageBlock {
   factory ToolBlock.fromJson(Map<String, dynamic> json) {
     return ToolBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       toolName: json['toolName'] as String,
       toolCallId: json['toolCallId'] as String?,
@@ -431,6 +559,7 @@ class CodeBlock extends MessageBlock {
 
   CodeBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.content,
     required this.language,
@@ -442,6 +571,7 @@ class CodeBlock extends MessageBlock {
   factory CodeBlock.fromJson(Map<String, dynamic> json) {
     return CodeBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       content: json['content'] as String,
       language: json['language'] as String,
@@ -480,6 +610,7 @@ class FileBlock extends MessageBlock {
 
   FileBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.fileName,
     required this.fileSize,
@@ -493,6 +624,7 @@ class FileBlock extends MessageBlock {
   factory FileBlock.fromJson(Map<String, dynamic> json) {
     return FileBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       fileName: json['fileName'] as String,
       fileSize: json['fileSize'] as int,
@@ -535,6 +667,7 @@ class EmojiBlock extends MessageBlock {
 
   EmojiBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.emojiId,
     required this.path,
@@ -548,6 +681,7 @@ class EmojiBlock extends MessageBlock {
   factory EmojiBlock.fromJson(Map<String, dynamic> json) {
     return EmojiBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       emojiId: json['emojiId'] as String,
       path: json['path'] as String,
@@ -584,6 +718,7 @@ class ErrorBlock extends MessageBlock {
 
   ErrorBlock({
     super.id,
+    super.createdAt,
     required super.messageId,
     required this.message,
     this.errorCode,
@@ -596,6 +731,7 @@ class ErrorBlock extends MessageBlock {
   factory ErrorBlock.fromJson(Map<String, dynamic> json) {
     return ErrorBlock(
       id: json['id'] as String,
+      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? ''),
       messageId: json['messageId'] as String,
       message: json['message'] as String,
       errorCode: json['errorCode'] as String?,

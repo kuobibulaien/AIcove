@@ -65,17 +65,6 @@ final lanSyncStateProvider = StreamProvider<LanSyncState>((ref) async* {
   yield* service.changes;
 });
 
-/// Paired LAN devices stay connected, so Android keeps the process alive.
-final lanKeepsAliveProvider = Provider<bool>(
-  (ref) => ref.watch(
-    lanSyncStateProvider.select(
-      (state) =>
-          state.valueOrNull?.enabled == true &&
-          state.valueOrNull!.peers.any((peer) => !peer.pending),
-    ),
-  ),
-);
-
 /// Synced device names, re-read per page visit and on every LAN state change.
 final deviceNamesProvider = FutureProvider.autoDispose<Map<String, String>>((
   ref,

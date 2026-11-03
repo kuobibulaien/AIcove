@@ -1,5 +1,6 @@
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show ToolEffect;
 
+import '../../chat/application/conversation_model.dart';
 import '../../chat/domain/conversation.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/tts/tts_config.dart' show VoicePreset;
@@ -12,6 +13,7 @@ import 'assistant_write_tools.dart';
 
 /// Built-in pictures a role can use, by the name the tools take.
 const kAssistantBuiltinImages = <String, String>{
+  'mangaka': 'assets/characters/images/mangaka.png',
   'nahida': 'assets/characters/images/nahida.jpg',
   'aicove': 'assets/characters/images/aicove_assistant.png',
 };
@@ -156,7 +158,7 @@ class AssistantRoleTools extends AssistantToolGroup {
     assistantTool(
       setThinking,
       '设置角色在某个模型上的思考档位（${ThinkingLevel.values.map((l) => l.name).join('、')}）；'
-      'level 传空字符串表示跟随模型默认。model 不填就用当前默认聊天模型。直接生效，可撤销。',
+      'level 传空字符串表示跟随模型默认。model 不填就用该角色当前使用的模型。直接生效，可撤销。',
       {
         'role_id': _roleId,
         'level': {'type': 'string'},
@@ -182,7 +184,10 @@ class AssistantRoleTools extends AssistantToolGroup {
       setChatView,
       '设置和这个角色的聊天自己的样式（只传要改的）：display_style 是 bubble（气泡）、document（文档）或 follow／null（清除这里的选择，跟随默认）；'
       'wallpaper_mask（0～1）和 wallpaper_blur（0～$kMaxWallpaperBlur）调这个聊天专属壁纸的遮罩和模糊，传 null 恢复默认。'
-      '没有专属壁纸时调不了（全局壁纸用 aicove_settings_set）。直接生效，可撤销。',
+      '没有专属壁纸时调不了（全局壁纸用 aicove_settings_set）。'
+      'image_preview_scale（$kMinImagePreviewScale～$kMaxImagePreviewScale）是图片预览大小，expand_audio_text 是语音消息默认展开文字，'
+      'hide_user_avatar 是隐藏用户头像；chunk_enabled 是气泡消息分段（分段标点和省略句末标点是全局设置，用 aicove_settings_set）。'
+      '这些都只对这个聊天生效，传 null 跟随新会话默认。直接生效，可撤销。',
       {
         'role_id': _roleId,
         'display_style': {
@@ -198,6 +203,18 @@ class AssistantRoleTools extends AssistantToolGroup {
         },
         'wallpaper_blur': {
           'type': ['number', 'null'],
+        },
+        'image_preview_scale': {
+          'type': ['number', 'null'],
+        },
+        'expand_audio_text': {
+          'type': ['boolean', 'null'],
+        },
+        'hide_user_avatar': {
+          'type': ['boolean', 'null'],
+        },
+        'chunk_enabled': {
+          'type': ['boolean', 'null'],
         },
       },
       ['role_id'],
@@ -377,7 +394,7 @@ class AssistantRoleTools extends AssistantToolGroup {
         final role = await _role(args['role_id']);
         final s = await settings();
         final model = '${args['model'] ?? ''}'.trim().isEmpty
-            ? s.defaultModelName.trim()
+            ? conversationPrimaryModel(s, role).trim()
             : '${args['model']}'.trim();
         if (model.isEmpty) throw const FormatException('还没有默认聊天模型');
         final level = '${args['level'] ?? ''}'.trim();
@@ -437,6 +454,31 @@ class AssistantRoleTools extends AssistantToolGroup {
             );
           }
           fields[field] = (value as num?)?.toDouble();
+        }
+        if (args.containsKey('image_preview_scale')) {
+          final value = args['image_preview_scale'];
+          if (value != null &&
+              (value is! num ||
+                  !value.isFinite ||
+                  value < kMinImagePreviewScale ||
+                  value > kMaxImagePreviewScale)) {
+            throw const FormatException(
+              'image_preview_scale 应为 $kMinImagePreviewScale～$kMaxImagePreviewScale 的数',
+            );
+          }
+          fields[RoleField.imagePreviewScale] = (value as num?)?.toDouble();
+        }
+        for (final (key, field) in [
+          ('expand_audio_text', RoleField.expandAudioText),
+          ('hide_user_avatar', RoleField.hideUserAvatar),
+          ('chunk_enabled', RoleField.chunkEnabled),
+        ]) {
+          if (!args.containsKey(key)) continue;
+          final value = args[key];
+          if (value != null && value is! bool) {
+            throw FormatException('$key 应为 true、false 或 null');
+          }
+          fields[field] = value;
         }
         if (fields.isEmpty) throw const FormatException('没有要改的项');
         final result = await writes.editRole(

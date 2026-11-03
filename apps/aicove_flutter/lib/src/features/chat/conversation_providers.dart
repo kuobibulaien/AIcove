@@ -1,29 +1,38 @@
 import 'dart:async';
+
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart' show debugPrint, protected;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import '../../core/api/thinking/thinking_level.dart';
-import '../../core/utils/blurred_background_service.dart';
-import 'domain/chat_display_policy.dart';
-import 'domain/conversation.dart';
-import 'domain/role_agent_mode.dart';
-import 'id_gen.dart';
-import 'data/preset_characters_loader.dart';
-import '../assistant/domain/assistant_onboarding.dart' show kAicoveAssistantId;
-import '../assistant/domain/assistant_rename.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../core/database/converters/database_converters.dart';
 import '../../core/database/database.dart' as db;
 import '../../core/database/database_provider.dart';
-import '../../core/database/converters/database_converters.dart';
 import '../../core/database/repositories/repositories.dart';
-import 'services/conversation_short_window_store.dart';
+import '../../core/sync/cloud_local_write.dart';
+import '../../core/utils/blurred_background_service.dart';
+import '../../core/utils/message_formatter.dart';
 import '../../ui/features/character/services/contact_edit_snapshot_store.dart';
+
+import '../assistant/domain/assistant_onboarding.dart' show kAicoveAssistantId;
+import '../assistant/domain/assistant_rename.dart';
+import '../auto_reply/data/analyzer_scheduler.dart';
 import '../context/providers/context_providers.dart';
 import '../memory/providers/memory_providers.dart';
-import '../settings/app_settings.dart';
 import '../plugins/tts/tts_config.dart';
-import '../../core/utils/message_formatter.dart';
+import '../settings/app_settings.dart';
+import '../task_agent/task_agent_providers.dart';
+
+import 'chat_actions.dart' show chatActionsProvider;
+import 'data/preset_characters_loader.dart';
+import 'domain/chat_display_policy.dart';
+import 'domain/conversation.dart';
+import 'domain/message.dart';
+import 'services/chat_message_projection_codec.dart';
+import 'services/chat_types.dart';
+import 'domain/role_agent_mode.dart';
+import 'id_gen.dart';
+import 'services/conversation_short_window_store.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   StreamSubscription<List<db.Conversation>>? _watchSub;
@@ -48,6 +57,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     }
     final assistant = await _seedAssistantOnce(list);
     if (assistant != null) list.insert(0, assistant);
+    await _ensureMangaka(list);
     await _syncAssistantPreset(list);
     await _updateNahidaPersonaOnce(list);
     await _narrowDefaultPluginsOnce(list);
@@ -56,6 +66,97 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     // disposed meanwhile has closed the database.
     if (!disposed) _bindWatch(convRepo);
     return list;
+  }
+
+  static const _mangakaSeededKey = 'preset_mangaka_seeded_v1';
+
+  Future<void> _ensureMangaka(List<Conversation> list) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final repo = ref.read(conversationRepositoryProvider);
+      // getById includes tombstones; absence from the visible list is not
+      // permission to recreate a deleted contact.
+      final changed = await cloudLocalWrite(
+        () => repo.transaction<Conversation?>(() async {
+          final existing = await repo.getById(kMangakaPresetId);
+          if (existing != null) {
+            if (existing.deletedAt == null) {
+              final presets = await PresetCharactersLoader.load();
+              final preset = presets
+                  .where((c) => c.id == kMangakaPresetId)
+                  .firstOrNull;
+              if (preset == null) return null;
+              final updated = updatedMangakaPersona(
+                ConversationConverter.fromDb(existing),
+                preset,
+              );
+              if (updated != null) {
+                await _saveOne(updated);
+                return updated;
+              }
+            }
+            return null;
+          }
+          if (prefs.getBool(_mangakaSeededKey) == true) return null;
+          final presets = await PresetCharactersLoader.load();
+          final preset = presets
+              .where((c) => c.id == kMangakaPresetId)
+              .firstOrNull;
+          if (preset == null || preset.personaPrompt.trim().isEmpty) {
+            throw StateError('漫画家预设尚未加载完成');
+          }
+          final greeting = await PresetCharactersLoader.firstMessageFor(
+            kMangakaPresetId,
+          );
+          if (greeting == null || greeting.trim().isEmpty) {
+            throw StateError('漫画家开场白尚未加载完成');
+          }
+          final now = DateTime.now();
+          final mangaka = preset.copyWith(
+            createdAt: now,
+            updatedAt: now,
+            lastMessage: greeting,
+            lastMessageTime: now,
+          );
+          await _saveOne(mangaka);
+          // Same raw format and stable greeting id as character-card imports.
+          // Role, raw greeting and summary commit together; display is projected
+          // by the normal timeline reader, never saved as a second message.
+          final message = Message(
+            id: 'msg_greeting_$kMangakaPresetId',
+            role: 'assistant',
+            content: greeting,
+            createdAt: now,
+            status: 'sent',
+            rawPayload: ChatMessageProjectionCodec.buildRawAssistantPayload(
+              apiResult: ApiCallResult(
+                rawReplyText: greeting,
+                replyText: greeting,
+                processedText: greeting,
+                pluginEvents: const [],
+                toolResults: const [],
+              ),
+            ),
+          );
+          await ref
+              .read(messageRepositoryProvider)
+              .insert(MessageConverter.toCompanion(message, kMangakaPresetId));
+          return mangaka;
+        }),
+      );
+      if (changed != null) {
+        final index = list.indexWhere((c) => c.id == kMangakaPresetId);
+        if (index < 0) {
+          list.add(changed);
+        } else {
+          list[index] = changed;
+        }
+      }
+      // Preferences are not transactional: mark only after the DB commit.
+      await prefs.setBool(_mangakaSeededKey, true);
+    } catch (error) {
+      debugPrint('[ConversationsNotifier] 漫画家预设写入失败：$error');
+    }
   }
 
   static const _assistantSeededKey = 'aicove_assistant_seeded_v1';
@@ -292,9 +393,13 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   @protected
   Future<void> saveOne(Conversation conv) => _saveOne(conv);
 
-  Future<String> createNew() async {
+  /// [chatDisplayStyle] is written with the new row; a separate write right
+  /// after could be undone by the list catching up with the database.
+  Future<String> createNew({ChatDisplayStyle? chatDisplayStyle}) async {
     final list = <Conversation>[...(state.value ?? <Conversation>[])];
-    final c = _createConversation();
+    final c = _createConversation().copyWith(
+      chatDisplayStyle: chatDisplayStyle,
+    );
     list.insert(0, c);
     await Future.wait([setAll(list, persist: false), saveOne(c)]);
     return c.id;
@@ -330,6 +435,9 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     String? recipeId,
     bool clearRecipeId = false,
     RoleAgentMode? agentMode,
+    bool clearAgentMode = false,
+    String? sessionProvider,
+    bool clearSessionProvider = false,
   }) async {
     final currentList = state.value ?? const <Conversation>[];
     Conversation? current;
@@ -383,7 +491,10 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
           ? null
           : (enabledPlugins ?? current.enabledPlugins),
       recipeId: clearRecipeId ? null : (recipeId ?? current.recipeId),
-      agentMode: agentMode ?? current.agentMode,
+      agentMode: clearAgentMode ? null : (agentMode ?? current.agentMode),
+      sessionProvider: clearSessionProvider
+          ? null
+          : (sessionProvider ?? current.sessionProvider),
       updatedAt: nextUpdatedAt,
     );
 
@@ -417,7 +528,10 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
                   ? null
                   : (enabledPlugins ?? c.enabledPlugins),
               recipeId: clearRecipeId ? null : (recipeId ?? c.recipeId),
-              agentMode: agentMode ?? c.agentMode,
+              agentMode: clearAgentMode ? null : (agentMode ?? c.agentMode),
+              sessionProvider: clearSessionProvider
+                  ? null
+                  : (sessionProvider ?? c.sessionProvider),
               updatedAt: nextUpdatedAt,
             ));
 
@@ -470,6 +584,18 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
             ));
   }
 
+  /// 设置本会话使用的聊天模型；[modelRef] 为 null 表示跟随全局默认队列。
+  Future<void> setConversationModel(String id, String? modelRef) async {
+    final ref = modelRef?.trim();
+    await updateOne(
+      id,
+      (c) => c.copyWith(
+        sessionProvider: ref == null || ref.isEmpty ? null : ref,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
   /// 设置会话内某个模型的思考档位；[level] 为 null 表示清除该模型的覆盖。
   Future<void> setConversationThinkingLevel(
     String id, {
@@ -501,6 +627,41 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     );
   }
 
+  /// 设置会话的聊天界面显示偏好：图片预览大小、语音消息默认展开文字、隐藏
+  /// 用户头像与气泡分段。只改传入的项；clear* 清掉这里的设置，回到全局值。
+  Future<void> setConversationChatView(
+    String id, {
+    double? imagePreviewScale,
+    bool clearImagePreviewScale = false,
+    bool? expandAudioText,
+    bool clearExpandAudioText = false,
+    bool? hideUserAvatar,
+    bool clearHideUserAvatar = false,
+    bool? chunkEnabled,
+    bool clearChunkEnabled = false,
+  }) async {
+    await updateOne(
+      id,
+      (c) => c.copyWith(
+        imagePreviewScale: clearImagePreviewScale
+            ? null
+            : imagePreviewScale?.clamp(
+                    kMinImagePreviewScale,
+                    kMaxImagePreviewScale,
+                  ) ??
+                  c.imagePreviewScale,
+        expandAudioText: clearExpandAudioText
+            ? null
+            : expandAudioText ?? c.expandAudioText,
+        hideUserAvatar: clearHideUserAvatar
+            ? null
+            : hideUserAvatar ?? c.hideUserAvatar,
+        chunkEnabled: clearChunkEnabled ? null : chunkEnabled ?? c.chunkEnabled,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
   // (注释已丢失)
   Future<void> clearUnread(String id) async {
     final convRepo = ref.read(conversationRepositoryProvider);
@@ -514,6 +675,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
   // 清空消息
   Future<void> clearMessages(String id) async {
+    await ref.read(chatActionsProvider).interruptCurrentGeneration(convId: id);
     final msgRepo = ref.read(messageRepositoryProvider);
 
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -521,6 +683,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
     // (注释已丢失)
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
+    await ref.read(analyzerSchedulerProvider).onConversationCleared(id);
     // 摘要与自动整理的记忆都来自这些原文，随之清空；用户锁定的记忆保留。
     await ref.read(contextSummaryStoreProvider).clear(id);
     await ref.read(memoryStoreProvider).clearDerived(id);
@@ -540,6 +703,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
   // delete conversation (soft delete to trash)
   Future<void> deleteConversation(String id) async {
+    await ref.read(chatActionsProvider).interruptCurrentGeneration(convId: id);
     final convRepo = ref.read(conversationRepositoryProvider);
     final msgRepo = ref.read(messageRepositoryProvider);
 
@@ -549,6 +713,10 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     // (注释已丢失)
     await convRepo.softDelete(id, now, purgeAt);
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
+    await ref.read(analyzerSchedulerProvider).onConversationDeleted(id);
+    unawaited(ref.read(taskAgentServiceProvider.future)
+        .then((service) => service.abortForDeletedConversation(id))
+        .catchError((Object _) {}));
 
     // update in-memory state
     final current = state.value ?? <Conversation>[];
@@ -585,12 +753,12 @@ final conversationSnapshotByIdProvider = Provider.family<Conversation?, String>(
   },
 );
 
-/// 会话实际生效的显示策略（ADR0047）：全局默认样式叠加会话覆盖。
+/// 会话实际生效的显示策略（ADR0047）：全局默认样式与分段叠加会话覆盖。
 /// 按会话的覆盖值取（null 跟随全局），只监听全局设置；会话对象由调用方传入，
-/// 避免为读一个字段去监听整个会话列表。
-final chatDisplayPolicyProvider =
-    Provider.family<ChatDisplayPolicy, ChatDisplayStyle?>(
-        (ref, conversationStyle) {
+/// 避免为读几个字段去监听整个会话列表。
+final chatDisplayPolicyProvider = Provider.family<ChatDisplayPolicy,
+    (ChatDisplayStyle?, ChatChunkOverride)>((ref, key) {
+  final (conversationStyle, chunkOverride) = key;
   final global = ref.watch(
     appSettingsProvider.select(
       (settings) => (
@@ -604,6 +772,7 @@ final chatDisplayPolicyProvider =
     formatConfig: global.$1,
     globalStyle: global.$2,
     conversationStyle: conversationStyle,
+    chunkOverride: chunkOverride,
   );
 });
 

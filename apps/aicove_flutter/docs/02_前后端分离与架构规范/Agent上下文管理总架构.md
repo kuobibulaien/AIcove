@@ -37,7 +37,7 @@ AgentDefinition
 | Agent 类型 | 触发来源 | 典型职责 |
 |------|------|------|
 | 标准对话 Agent | 用户消息 | 多轮聊天、角色扮演、情绪陪伴、多模态回复 |
-| 后台 / 主动关怀 Agent | 定时器、未回复窗口、状态变化 | 判断是否需要主动关怀，预生成候选回复并审核触发时机 |
+| 后台 / 主动回复 Agent | 定时器、未回复窗口、状态变化 | 判断是否需要主动回复，预生成候选回复并审核触发时机 |
 | Analyzer Agent | 后台扫描、上下文状态变化 | 分析上下文、产出决策、调度工具链 |
 | Renderer / Tool 执行链 | 标准化输出事件 | 执行 TTS、绘图、表情包、触发器等副作用 |
 
@@ -65,7 +65,7 @@ standard_chat_recipe:<contactId>
 
 也就是说，前台聊天入口只是触发某个联系人自己的 `ChatAgent`。这个 `ChatAgent` 是最完整的上下文装配者：它可以读取并组合该联系人的角色卡、SillyTavern 预设、`prompt_order`、世界书 / lorebook、记忆、对话窗口、regex / extension prompt、工具策略、输出契约和 provider 渲染策略。不同联系人可以拥有不同的上下文配方、酒馆预设、世界书、插件边界和输出规则。
 
-后台分析、主动关怀、记忆总结、渲染执行等能力也应先归一化为一次 `AgentRunRequest`，再交给同一个运行壳调度：
+后台分析、主动回复、记忆总结、渲染执行等能力也应先归一化为一次 `AgentRunRequest`，再交给同一个运行壳调度：
 
 ```text
 Trigger / Event
@@ -92,7 +92,7 @@ Trace / State / Storage / UI
 | Agent | Trigger | ContextRecipe | 装配权限 | DeliveryChannel |
 |------|------|------|------|------|
 | ChatAgent | 用户消息 | `standard_chat_recipe:<contactId>` | `full_chat`：角色卡、ST 预设、prompt_order、世界书、记忆、对话窗口、regex、extension prompt、工具策略、输出契约、provider 渲染 | 前台聊天气泡、数据库、流式 UI |
-| ProactiveAgent | 定时器、沉默窗口、云触发器 | `proactive_preview_recipe` / `proactive_dispatch_recipe` | `proactive_specialized`：围绕某个联系人读取人设、预设、世界书、记忆和近期窗口，但输出受主动关怀审核与投递策略限制 | 主动回复候选、通知、聊天投递 |
+| ProactiveAgent | 定时器、沉默窗口、云触发器 | `proactive_preview_recipe` / `proactive_dispatch_recipe` | `proactive_specialized`：围绕某个联系人读取人设、预设、世界书、记忆和近期窗口，但输出受主动回复审核与投递策略限制 | 主动回复候选、通知、聊天投递 |
 | AnalyzerAgent | 后台扫描、状态变化 | `analyzer_recipe` | `analyzer_specialized`：读取记忆、窗口、运行时事实和工具边界，偏 JSON / 决策输出，不直接拥有完整角色扮演装配面 | 后台 trace、调度状态 |
 | MemoryAgent | 对话变更、摘要窗口 | `memory_recipe` | `memory_specialized`：读取窗口和运行时事实，产出可写入的记忆结构，不负责聊天风格渲染 | 本地 / 云端记忆库 |
 | RendererAgent | 标准输出事件 | `renderer_recipe` | `renderer_specialized`：消费标准输出事件和工具策略，不重新组装角色卡 / 世界书 | TTS、图片、表情包等插件队列 |
@@ -173,7 +173,7 @@ provider-specific messages
 ## 迁移原则
 
 1. **先接标准对话 Agent**：当前对话模型是最高频入口，应作为第一批接入 Agent Context Runtime 的标准 Agent。
-2. **业务迁移保持可运行**：现有聊天主链路保持可运行，逐步抽出 `AgentContextAssembler`，把当前散落在聊天、后台 Agent、主动关怀中的上下文装配逻辑收口。本条约束 Agent／数据链路迁移，不限制已确认的全端前端重写；页面与导航按[全端共用界面架构与布局规范](../界面布局说明.md)实施（2026-09-11）。
+2. **业务迁移保持可运行**：现有聊天主链路保持可运行，逐步抽出 `AgentContextAssembler`，把当前散落在聊天、后台 Agent、主动回复中的上下文装配逻辑收口。本条约束 Agent／数据链路迁移，不限制已确认的全端前端重写；页面与导航按[全端共用界面架构与布局规范](../界面布局说明.md)实施（2026-09-11）。
 3. **上下文优先，prompt 次之**：新增能力先定义上下文来源、优先级、token 策略和输出契约，再决定最终如何序列化为 system/user/tool messages。
 4. **输入、能力、输出三者分离**：`system-reminder` 是上下文输入；`tools` 是可执行能力；`<tts>` / `<image>` 是输出契约。
 5. **所有链路可追踪**：Agent 运行结果必须能追踪本次使用了哪些上下文层、哪些工具、哪些标签语义，以及最终传给模型的 messages。

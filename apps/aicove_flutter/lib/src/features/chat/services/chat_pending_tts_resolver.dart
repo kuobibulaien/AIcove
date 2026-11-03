@@ -4,7 +4,8 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../chat_providers.dart' show chatStatusProvider, ChatStatus;
+import '../chat_providers.dart'
+    show beginConversationVoiceTask, endConversationVoiceTask;
 import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../plugins/domain/plugin.dart';
@@ -94,13 +95,15 @@ class ChatPendingTtsResolver {
     required String convId,
     required List<Message> messages,
     TraceLogger? trace,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     if (messages.isEmpty) return;
     await Future.wait([
       for (final message in messages)
         () async {
           try {
-            await resolveSinglePendingMessage(convId: convId, message: message);
+            await resolveSinglePendingMessage(
+              convId: convId, message: message, shouldCommit: shouldCommit);
           } catch (e) {
             AppLogger.error(
               'ChatPendingTtsResolver',
@@ -127,6 +130,7 @@ class ChatPendingTtsResolver {
     void Function(String text)? onTextFallback,
     bool persistResult = true,
     bool Function()? shouldApplyResult,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     final diagnostics = _ref.read(frontendDiagnosticsProvider);
     final context = diagnostics.child(
@@ -163,6 +167,7 @@ class ChatPendingTtsResolver {
       onTextFallback: onTextFallback,
       persistResult: persistResult,
       shouldApplyResult: shouldApplyResult,
+      shouldCommit: shouldCommit,
     );
     _inFlightResolutions[message.id] = future;
     try {
@@ -181,6 +186,7 @@ class ChatPendingTtsResolver {
     void Function(String text)? onTextFallback,
     required bool persistResult,
     bool Function()? shouldApplyResult,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     final audioBlocks = message.blocks?.whereType<AudioBlock>().toList();
     final block = (audioBlocks != null && audioBlocks.isNotEmpty)
@@ -211,109 +217,115 @@ class ChatPendingTtsResolver {
       return;
     }
 
-    _ref.read(chatStatusProvider.notifier).state = ChatStatus.generatingVoice;
-    var shouldFallbackToText = false;
+    beginConversationVoiceTask(_ref, convId);
     try {
-      final audioUrl = await _convertTtsText(
-          ttsText, diagnostics, diagnosticContext, message.id, convId);
-      if (!(shouldApplyResult?.call() ?? true)) {
-        record(FrontendStage.ttsApplyDecision, DiagnosticReason.ownerRejected,
-            phase: DiagnosticPhase.skip);
-        return;
-      }
-      if (audioUrl != null && audioUrl.isNotEmpty) {
-        onAudioResolved?.call(audioUrl, block?.durationSeconds);
-        if (!persistResult) {
-          record(FrontendStage.ttsApplyDecision, DiagnosticReason.callbackOnly,
-              phase: DiagnosticPhase.end);
+      var shouldFallbackToText = false;
+      try {
+        final audioUrl = await _convertTtsText(
+            ttsText, diagnostics, diagnosticContext, message.id, convId);
+        if (!(shouldApplyResult?.call() ?? true)) {
+          record(FrontendStage.ttsApplyDecision, DiagnosticReason.ownerRejected,
+              phase: DiagnosticPhase.skip);
           return;
         }
-        final cached = await _ref
-            .read(conversationTimelineCacheProvider)
-            .findCachedMessageById(message.id, conversationId: convId);
-        final effectiveSourceMessageId =
-            (cached?.sourceMessageId?.trim().isNotEmpty ?? false)
-                ? cached!.sourceMessageId
-                : message.sourceMessageId;
-        final success = await _updatePendingMessage(
-          convId: convId,
-          message: Message.fromBlocks(
-            id: message.id,
-            role: message.role,
-            sourceMessageId: effectiveSourceMessageId,
-            blocks: [
-              AudioBlock(
-                messageId: message.id,
-                url: audioUrl,
-                text: ttsText,
-                durationSeconds: block?.durationSeconds,
-                unread: true,
-                status: BlockStatus.success,
-              ),
-            ],
-            createdAt: message.createdAt,
-            status: 'sent',
-          ),
-          phase: 'audio_success',
-          diagnostics: diagnostics,
-          diagnosticContext: diagnosticContext,
-        );
-        if (success) {
+        if (audioUrl != null && audioUrl.isNotEmpty) {
+          onAudioResolved?.call(audioUrl, block?.durationSeconds);
+          if (!persistResult) {
+            record(FrontendStage.ttsApplyDecision, DiagnosticReason.callbackOnly,
+                phase: DiagnosticPhase.end);
+            return;
+          }
+          final cached = await _ref
+              .read(conversationTimelineCacheProvider)
+              .findCachedMessageById(message.id, conversationId: convId);
+          final effectiveSourceMessageId =
+              (cached?.sourceMessageId?.trim().isNotEmpty ?? false)
+                  ? cached!.sourceMessageId
+                  : message.sourceMessageId;
+          final success = await _updatePendingMessage(
+            convId: convId,
+            message: Message.fromBlocks(
+              id: message.id,
+              role: message.role,
+              sourceMessageId: effectiveSourceMessageId,
+              blocks: [
+                AudioBlock(
+                  messageId: message.id,
+                  url: audioUrl,
+                  text: ttsText,
+                  durationSeconds: block?.durationSeconds,
+                  unread: true,
+                  status: BlockStatus.success,
+                ),
+              ],
+              createdAt: message.createdAt,
+              status: 'sent',
+            ),
+            shouldCommit: shouldCommit,
+            phase: 'audio_success',
+            diagnostics: diagnostics,
+            diagnosticContext: diagnosticContext,
+          );
+          if (success) {
+            return;
+          }
+          AppLogger.warning(
+            'ChatPendingTtsResolver',
+            '流式 TTS 原位更新失败，回退文本补位',
+            metadata: {'messageId': message.id, 'textLength': ttsText.length},
+          );
+          shouldFallbackToText = true;
+        } else {
+          AppLogger.warning(
+            'ChatPendingTtsResolver',
+            '流式 TTS 占位生成失败，回退文本补位',
+            metadata: {'messageId': message.id, 'textLength': ttsText.length},
+          );
+          _notifyFallback('empty_url');
+          shouldFallbackToText = true;
+        }
+      } catch (e, stack) {
+        record(FrontendStage.ttsFailed, DiagnosticReason.operationFailed,
+            phase: DiagnosticPhase.error, error: e, stack: stack);
+        if (!(shouldApplyResult?.call() ?? true)) {
+          record(FrontendStage.ttsApplyDecision, DiagnosticReason.ownerRejected,
+              phase: DiagnosticPhase.skip);
           return;
         }
-        AppLogger.warning(
+        AppLogger.error(
           'ChatPendingTtsResolver',
-          '流式 TTS 原位更新失败，回退文本补位',
-          metadata: {'messageId': message.id, 'textLength': ttsText.length},
+          '流式 TTS 占位异常，回退文本补位',
+          metadata: {'messageId': message.id, 'error': e.toString()},
         );
-        shouldFallbackToText = true;
-      } else {
-        AppLogger.warning(
-          'ChatPendingTtsResolver',
-          '流式 TTS 占位生成失败，回退文本补位',
-          metadata: {'messageId': message.id, 'textLength': ttsText.length},
-        );
-        _notifyFallback('empty_url');
+        _notifyFallback('convert_error');
         shouldFallbackToText = true;
       }
-    } catch (e, stack) {
-      record(FrontendStage.ttsFailed, DiagnosticReason.operationFailed,
-          phase: DiagnosticPhase.error, error: e, stack: stack);
-      if (!(shouldApplyResult?.call() ?? true)) {
-        record(FrontendStage.ttsApplyDecision, DiagnosticReason.ownerRejected,
-            phase: DiagnosticPhase.skip);
+      if (!shouldFallbackToText) {
         return;
       }
-      AppLogger.error(
-        'ChatPendingTtsResolver',
-        '流式 TTS 占位异常，回退文本补位',
-        metadata: {'messageId': message.id, 'error': e.toString()},
+      onTextFallback?.call(ttsText);
+      record(FrontendStage.ttsApplyDecision, DiagnosticReason.fallbackText,
+          phase: persistResult ? DiagnosticPhase.decision : DiagnosticPhase.end);
+      if (!persistResult) return;
+      await _updatePendingMessage(
+        convId: convId,
+        message: Message.text(
+          id: message.id,
+          role: message.role,
+          sourceMessageId: message.sourceMessageId,
+          content: ttsText,
+          createdAt: message.createdAt,
+          status: 'sent',
+        ),
+        shouldCommit: shouldCommit,
+        phase: 'text_fallback',
+        diagnostics: diagnostics,
+        diagnosticContext: diagnosticContext,
+        notifyFallback: false,
       );
-      _notifyFallback('convert_error');
-      shouldFallbackToText = true;
+    } finally {
+      endConversationVoiceTask(_ref, convId);
     }
-    if (!shouldFallbackToText) {
-      return;
-    }
-    onTextFallback?.call(ttsText);
-    record(FrontendStage.ttsApplyDecision, DiagnosticReason.fallbackText,
-        phase: persistResult ? DiagnosticPhase.decision : DiagnosticPhase.end);
-    if (!persistResult) return;
-    await _updatePendingMessage(
-      convId: convId,
-      message: Message.text(
-        id: message.id,
-        role: message.role,
-        sourceMessageId: message.sourceMessageId,
-        content: ttsText,
-        createdAt: message.createdAt,
-        status: 'sent',
-      ),
-      phase: 'text_fallback',
-      diagnostics: diagnostics,
-      diagnosticContext: diagnosticContext,
-      notifyFallback: false,
-    );
   }
 
   Future<String?> _convertTtsText(
@@ -388,12 +400,14 @@ class ChatPendingTtsResolver {
     required FrontendDiagnosticsPort diagnostics,
     required FrontendDiagnosticContext diagnosticContext,
     bool notifyFallback = true,
+    FutureOr<bool> Function()? shouldCommit,
   }) async {
     try {
       await _enqueueStoreMutation(() {
         return _ref.read(chatHistoryStoreProvider).updateMessage(
               conversationId: convId,
               message: message,
+              shouldCommit: shouldCommit,
             );
       });
       diagnostics.record(diagnosticContext, FrontendStage.ttsPersisted,

@@ -7,6 +7,7 @@ import '../../../core/app_logger.dart';
 import '../../content_tags/domain/content_tag_registry.dart';
 import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
+import '../prompts/plugin_prompts.dart';
 import 'web_search_agent_plugin.dart';
 import 'web_search_config.dart';
 import 'web_search_service.dart';
@@ -20,6 +21,13 @@ class WebSearchPlugin extends BasePlugin {
   static const String searchToolName = 'web_search';
   static const String fetchToolName = 'web_fetch';
   static const int maxFetchUrls = 5;
+  static const String defaultSearchToolDescription =
+      '联网搜索网页。需要最新信息、实时事件、你不确定的事实或用户要求查资料时调用。'
+      '返回若干条结果（标题、链接、发布时间、正文摘录）。'
+      'query 用一句完整的自然语言描述想找的内容，不要只堆关键词。';
+  static const String defaultFetchToolDescription =
+      '读取指定网页的正文。搜索结果摘录不够、或用户给了链接需要阅读时调用。'
+      '一次最多 $maxFetchUrls 个链接。';
 
   /// 插件拥有的工具（ADR0044）：关闭时历史里的调用与结果成对移出请求副本。
   static const contentTags = StaticContentTagProvider(
@@ -56,15 +64,14 @@ class WebSearchPlugin extends BasePlugin {
 
   WebSearchService get _service => WebSearchService(_config, client: _client);
 
-  List<AITool> getTools() {
+  List<AITool> getTools({PluginPrompts? prompts}) {
     if (!enabled) return const [];
     return [
       AITool(
         name: searchToolName,
         description:
-            '联网搜索网页。需要最新信息、实时事件、你不确定的事实或用户要求查资料时调用。'
-            '返回若干条结果（标题、链接、发布时间、正文摘录）。'
-            'query 用一句完整的自然语言描述想找的内容，不要只堆关键词。',
+            prompts?.of(PluginPromptSlot.webSearchTool) ??
+            defaultSearchToolDescription,
         parameters: {
           'query': const ToolParameter(
             type: 'string',
@@ -83,8 +90,8 @@ class WebSearchPlugin extends BasePlugin {
       AITool(
         name: fetchToolName,
         description:
-            '读取指定网页的正文。搜索结果摘录不够、或用户给了链接需要阅读时调用。'
-            '一次最多 $maxFetchUrls 个链接。',
+            prompts?.of(PluginPromptSlot.webFetchTool) ??
+            defaultFetchToolDescription,
         parameters: {
           'urls': const ToolParameter(
             type: 'array',
@@ -112,9 +119,11 @@ class WebSearchPlugin extends BasePlugin {
         'results': [for (final r in outcome.results) r.toJson()],
       });
     } catch (e) {
-      AppLogger.warning('WebSearchPlugin', '联网搜索失败', metadata: {
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'WebSearchPlugin',
+        '联网搜索失败',
+        metadata: {'error': e.toString()},
+      );
       return _error('搜索失败：$e');
     }
   }
@@ -138,9 +147,11 @@ class WebSearchPlugin extends BasePlugin {
         'results': [for (final r in outcome.results) r.toJson()],
       });
     } catch (e) {
-      AppLogger.warning('WebSearchPlugin', '读取网页失败', metadata: {
-        'error': e.toString(),
-      });
+      AppLogger.warning(
+        'WebSearchPlugin',
+        '读取网页失败',
+        metadata: {'error': e.toString()},
+      );
       return _error('读取网页失败：$e');
     }
   }

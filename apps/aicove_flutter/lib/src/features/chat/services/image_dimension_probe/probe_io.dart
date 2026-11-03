@@ -4,6 +4,8 @@
 /// 主 isolate 上不做任何解码工作。
 library;
 
+export 'probe_bytes.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';

@@ -1,12 +1,13 @@
 /// CharacterPluginsSection - 角色编辑页：插件
 ///
 /// 已开启插件是一个统一行高的列表（顺序：音色、生图、记忆、酒馆、表情包、
-/// 主动关怀、时间感知），每行只显示当前绑定的预设/入口，不放开关；列表末行
+/// 主动回复、时间感知），每行只显示当前绑定的预设/入口，不放开关；列表末行
 /// 「管理插件」弹出底部弹窗逐项开关，开启后对应行出现在列表里。
 /// 酒馆没有按角色开关位，始终在列表中显示绑定预设，也不出现在管理列表里。
 /// 没有单独绑定、跟随默认时行尾写「默认」；联网搜索没有可用服务时写「未配置」。
 /// 除没有设置页的插件外，每行都能点进对应设置；表情包点开选这个角色能用的
-/// 套组；「工作空间」常驻末尾，点开逐个授权这个角色的后台助手能访问和修改的空间。
+/// 套组；时间感知点开改这个角色的选项；「工作空间」常驻末尾，点开逐个授权这个
+/// 角色的后台助手能访问和修改的空间。
 library;
 
 import 'package:flutter/material.dart';
@@ -19,6 +20,7 @@ import '../../../../features/plugins/mcp/mcp_connector.dart';
 import '../../../../features/plugins/mcp/mcp_connector_providers.dart';
 import '../../../../features/plugins/packages/package_providers.dart';
 import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/time_awareness/time_awareness_role_options.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../features/stickers/sticker_library.dart';
@@ -50,6 +52,9 @@ class CharacterPluginsSection extends ConsumerStatefulWidget {
   final String drawingPersonaPrompt;
   final String? selectedRecipeId;
 
+  /// 当前编辑的会话 ID（用于打开联系人级别的插件设置，如主动回复）
+  final String? conversationId;
+
   /// 角色名，用于「为这个角色新建」预设的命名
   final String roleName;
 
@@ -72,6 +77,7 @@ class CharacterPluginsSection extends ConsumerStatefulWidget {
     required this.voicePresets,
     required this.drawingPersonaPrompt,
     required this.selectedRecipeId,
+    this.conversationId,
     this.roleName = '',
     required this.memoryDocAvailable,
     required this.onOpenMemoryDoc,
@@ -145,19 +151,29 @@ class _CharacterPluginsSectionState
         id: 'sticker',
         label: '表情包',
         binding: _BindingSpec(
-          value: _stickerPackNames(packs),
+          value: _stickerPackSummary(packs),
           onTap: () => _showStickerPackSheet(packs),
         ),
       ),
       _PluginSpec(
         id: 'trigger',
-        label: '主动关怀',
-        binding: _openPage(const AutoReplySettingsPage()),
+        label: '主动回复',
+        binding: _openPage(
+          AutoReplySettingsPage(
+            conversationId: widget.conversationId,
+            roleName: widget.roleName,
+          ),
+        ),
       ),
       _PluginSpec(
         id: 'time_awareness',
         label: '时间感知',
-        binding: _openPage(const TimeAwarenessPluginDetailPage()),
+        binding: _BindingSpec(
+          value: TimeAwarenessRoleOptions.currentTime(widget.selectedPluginIds)
+              ? ''
+              : '不告诉现在几点',
+          onTap: _showTimeAwarenessSheet,
+        ),
       ),
       _PluginSpec(
         id: 'web_search',
@@ -350,13 +366,10 @@ class _CharacterPluginsSectionState
     };
   }
 
-  String _stickerPackNames(List<StickerPack> packs) {
+  String _stickerPackSummary(List<StickerPack> packs) {
     final granted = _grantedPackIds(packs, widget.selectedPluginIds);
     if (granted.isEmpty) return '全部套组';
-    return [
-      for (final p in packs)
-        if (granted.contains(p.id)) p.name,
-    ].join('、');
+    return '已选 ${granted.length} 组';
   }
 
   /// 「全部套组」开着时跟随表情库（以后新加的也能用）；关掉后逐个勾选，
@@ -442,6 +455,66 @@ class _CharacterPluginsSectionState
                   showDivider: false,
                   onTap: () => Navigator.of(context).push(
                     ParallaxSlidePageRoute(page: const StickerSettingsPage()),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ==================== 时间感知 ====================
+
+  /// 只改这个角色；提示词所有角色共用，从这里进入全局页修改。
+  Future<void> _showTimeAwarenessSheet() {
+    var selected = Set<String>.from(widget.selectedPluginIds);
+    return showMoeBottomSheet<void>(
+      context: context,
+      title: '时间感知',
+      showCloseButton: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final colors = context.moeColors;
+          final value = TimeAwarenessRoleOptions.currentTime(selected);
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    '只对这个角色生效。',
+                    style: TextStyle(fontSize: 13, color: colors.muted),
+                  ),
+                ),
+                _switchRow(
+                  colors,
+                  const _PluginSpec(id: 'time-current', label: '让 AI 知道现在几点'),
+                  value: value,
+                  showDivider: true,
+                  onToggle: (next) {
+                    final ids = TimeAwarenessRoleOptions.withCurrentTime(
+                      selected,
+                      next,
+                    );
+                    setSheetState(() => selected = ids);
+                    widget.onPluginIdsChanged(ids);
+                  },
+                ),
+                MoeSettingsRow(
+                  key: const ValueKey('time-awareness-prompts'),
+                  label: '修改提示词',
+                  labelColor: colors.primary,
+                  trailingType: MoeSettingsRowTrailing.none,
+                  showDivider: false,
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(
+                      page: const TimeAwarenessPluginDetailPage(),
+                    ),
                   ),
                 ),
               ],

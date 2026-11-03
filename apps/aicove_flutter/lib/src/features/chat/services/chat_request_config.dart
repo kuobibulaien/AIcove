@@ -104,7 +104,10 @@ class ChatRequestConfigBuilder {
   static const String _multiKeyExhaust = 'exhaust';
   static final Map<String, int> _roundRobinIndexMap = <String, int>{};
 
-  _ProviderApiKeySelection _selectProviderApiKey(ProviderAuth providerAuth) {
+  _ProviderApiKeySelection _selectProviderApiKey(
+    ProviderAuth providerAuth, {
+    required bool consumeKeyRotation,
+  }) {
     final fallback = providerAuth.apiKeys.isNotEmpty
         ? providerAuth.apiKeys.first.trim()
         : null;
@@ -129,13 +132,15 @@ class ChatRequestConfigBuilder {
         final enabled = mapped['enabled'] != false;
         final status =
             mapped['status']?.toString().trim().toLowerCase() ?? 'normal';
-        items.add(_ProviderApiKeyCandidate(
-          key: key,
-          enabled: enabled,
-          isError: status == 'error',
-          id: id?.isEmpty == true ? null : id,
-          index: i,
-        ));
+        items.add(
+          _ProviderApiKeyCandidate(
+            key: key,
+            enabled: enabled,
+            isError: status == 'error',
+            id: id?.isEmpty == true ? null : id,
+            index: i,
+          ),
+        );
       }
     }
 
@@ -144,12 +149,14 @@ class ChatRequestConfigBuilder {
         final raw = providerAuth.apiKeys[i];
         final key = raw.trim();
         if (key.isEmpty) continue;
-        items.add(_ProviderApiKeyCandidate(
-          key: key,
-          enabled: true,
-          isError: false,
-          index: i,
-        ));
+        items.add(
+          _ProviderApiKeyCandidate(
+            key: key,
+            enabled: true,
+            isError: false,
+            index: i,
+          ),
+        );
       }
     }
     if (items.isEmpty) {
@@ -172,9 +179,9 @@ class ChatRequestConfigBuilder {
 
     final strategy =
         customConfig[_multiKeyStrategyField]?.toString().trim().toLowerCase() ??
-            _multiKeyRoundRobin;
+        _multiKeyRoundRobin;
     if (strategy == _multiKeyRandom && available.length > 1) {
-      final index = Random().nextInt(available.length);
+      final index = consumeKeyRotation ? Random().nextInt(available.length) : 0;
       final selected = available[index];
       return _ProviderApiKeySelection(
         key: selected.key,
@@ -200,7 +207,9 @@ class ChatRequestConfigBuilder {
     final providerId = providerAuth.id.trim();
     final current = _roundRobinIndexMap[providerId] ?? 0;
     final index = current % available.length;
-    _roundRobinIndexMap[providerId] = (index + 1) % available.length;
+    if (consumeKeyRotation) {
+      _roundRobinIndexMap[providerId] = (index + 1) % available.length;
+    }
     final selected = available[index];
     return _ProviderApiKeySelection(
       key: selected.key,
@@ -214,8 +223,9 @@ class ChatRequestConfigBuilder {
     List<_ProviderApiKeyCandidate> items,
     int currentIndex,
   ) {
-    final normalizedIndex =
-        items.isEmpty ? 0 : currentIndex.clamp(0, items.length - 1).toInt();
+    final normalizedIndex = items.isEmpty
+        ? 0
+        : currentIndex.clamp(0, items.length - 1).toInt();
     for (var offset = 0; offset < items.length; offset++) {
       final index = (normalizedIndex + offset) % items.length;
       final item = items[index];
@@ -233,9 +243,12 @@ class ChatRequestConfigBuilder {
     return items.first;
   }
 
+  /// Availability/context probes use false: observe the next round-robin key
+  /// without consuming it. Real request construction defaults to consuming.
   Future<ChatRequestConfig> buildRequestConfig(
     AppSettings settings, {
     String? modelRef,
+    bool consumeKeyRotation = true,
   }) async {
     final resolvedModelRef = (modelRef != null && modelRef.trim().isNotEmpty)
         ? modelRef.trim()
@@ -257,7 +270,10 @@ class ChatRequestConfigBuilder {
     var providerApiBase = providerAuth.apiBaseUrl.trim().isEmpty
         ? settings.apiBaseUrl
         : providerAuth.apiBaseUrl.trim();
-    final providerApiKeySelection = _selectProviderApiKey(providerAuth);
+    final providerApiKeySelection = _selectProviderApiKey(
+      providerAuth,
+      consumeKeyRotation: consumeKeyRotation,
+    );
     var providerApiKey = providerApiKeySelection.key;
 
     try {

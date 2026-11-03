@@ -45,7 +45,7 @@ void main() async {
     // 组件层在 features/chat/presentation/widgets/
     content = content.replaceAll(
       "import '../widgets/auto_reply_trigger_form.dart';",
-      "import '../../../../features/chat/presentation/widgets/auto_reply_trigger_form.dart';",
+      "import '../../../../features/auto_reply/presentation/widgets/auto_reply_trigger_form.dart';",
     );
     
     // settings 在 features/settings/

@@ -90,15 +90,24 @@ class _ModelTestContentState extends State<_ModelTestContent> {
     super.dispose();
   }
 
+  String _displayNameFor(String modelId) {
+    return resolveCustomModelDisplayName(
+          _displayNames,
+          modelId,
+          providerId: widget.provider.id,
+        ) ??
+        '';
+  }
+
   String _sortName(String modelId) {
-    final name = _displayNames[modelId] ?? '';
+    final name = _displayNameFor(modelId);
     return (name.isEmpty ? modelId : name).toLowerCase();
   }
 
   List<String> get _filteredModels {
     if (_searchQuery.isEmpty) return _models;
     return _models.where((m) {
-      final name = _displayNames[m] ?? '';
+      final name = _displayNameFor(m);
       return m.toLowerCase().contains(_searchQuery) ||
           name.toLowerCase().contains(_searchQuery);
     }).toList();
@@ -223,10 +232,9 @@ class _ModelTestContentState extends State<_ModelTestContent> {
               sliver: SliverList(
                 delegate: SliverChildBuilderDelegate((context, index) {
                   final modelId = filtered[index];
-                  final displayName = _displayNames[modelId] ?? '';
+                  final displayName = _displayNameFor(modelId);
                   return MoeSettingsRow(
                     label: displayName.isNotEmpty ? displayName : modelId,
-                    subtitle: displayName.isNotEmpty ? modelId : null,
                     trailingType: MoeSettingsRowTrailing.custom,
                     trailing: _buildStateIcon(_states[modelId], colors),
                     showDivider: index < filtered.length - 1,

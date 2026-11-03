@@ -72,6 +72,7 @@ export 'moe_adaptive_shell.dart';
 export 'moe_floating_surface.dart';
 export 'moe_surface_motion.dart' show MoeRarelyScrolledRegion;
 export 'moe_content_surface.dart';
+export 'moe_inset_surface.dart';
 export 'moe_liquid_glass.dart';
 export 'moe_chat_header.dart';
 export 'moe_chat_wallpaper.dart';

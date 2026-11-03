@@ -330,14 +330,18 @@ class ApiLogger {
     entries.value = <ApiLogEntry>[];
   }
 
+  static final _apiKeyPattern =
+      RegExp(r'("api_key"\s*:\s*")([^"\\]{4,})(")', multiLine: true);
+  static final _secretKeyPattern = RegExp(r'(sk-)[A-Za-z0-9]{8,}');
+
   static String safeSnippet(String s, {int max = 800}) {
     String out = s;
     // 屏蔽常见敏感字段
     out = out.replaceAllMapped(
-        RegExp(r'("api_key"\s*:\s*")([^"\\]{4,})(")', multiLine: true),
+        _apiKeyPattern,
         (m) => '${m.group(1)}***${m.group(3)}');
     out = out.replaceAllMapped(
-        RegExp(r'(sk-)[A-Za-z0-9]{8,}'), (m) => '${m.group(1)}****');
+        _secretKeyPattern, (m) => '${m.group(1)}****');
 
     // 尝试解析 JSON 并截断 system 角色的长提示词
     try {

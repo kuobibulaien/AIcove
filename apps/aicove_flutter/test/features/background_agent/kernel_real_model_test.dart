@@ -50,8 +50,8 @@ Future<(List<String>, List<String>, String)> _runAgent({
     requestConfigResolver:
         ({required AppSettings settings, required String? modelRef}) async =>
             BackgroundAgentRequestConfig(
-              modelFullId: 'openai:deepseek-flash',
-              providerApiBase: 'https://api.deepseek.com',
+              modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+              providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
               providerApiKey: _apiKey,
               customConfig: const <String, dynamic>{},
               modelTemperature: 0,
@@ -110,8 +110,8 @@ Future<(List<String>, int, String)> _runStreamingChat({
   final result = await createApiRunner().executeApiCall(
     config: ApiConfig(
       settings: mapUiModelsToAppSettings({}),
-      modelFullId: 'openai:deepseek-flash',
-      providerApiBase: 'https://api.deepseek.com',
+      modelFullId: 'openai:deepseek/deepseek-v4.1-flash-1017',
+      providerApiBase: 'https://api-gateway.merge.dev/v1/openai',
       providerApiKey: _apiKey,
       customConfig: const {},
       modelTemperature: 0,

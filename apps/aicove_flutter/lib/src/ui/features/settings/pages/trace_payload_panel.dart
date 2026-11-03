@@ -5,7 +5,6 @@ import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../features/observability/trace_models.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/theme/tokens.dart';
 import 'log_formatters.dart' show tryFormatJson, stageToZh;
 
@@ -144,23 +143,24 @@ class _TracePayloadPanelState extends State<TracePayloadPanel> {
           const SizedBox(height: 8),
         ],
         Expanded(
-          child: Container(
-            width: double.infinity,
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-            padding: const EdgeInsets.all(10),
-            decoration: MoeG2Decoration(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: MoeContentSurface(
               radius: 10,
-              color: colors.componentBackground,
-              border: Border.all(color: colors.borderLight, width: borderWidth),
-            ),
-            child: SingleChildScrollView(
-              child: SelectableText(
-                current.content,
-                style: TextStyle(
-                  color: colors.text,
-                  fontSize: 11,
-                  height: 1.4,
-                  fontFamily: 'monospace',
+              padding: const EdgeInsets.all(10),
+              border: BorderSide(color: colors.borderLight, width: borderWidth),
+              child: SizedBox(
+                width: double.infinity,
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    current.content,
+                    style: TextStyle(
+                      color: colors.text,
+                      fontSize: 11,
+                      height: 1.4,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
                 ),
               ),
             ),

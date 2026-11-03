@@ -1,11 +1,77 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_parser.dart';
 
 void main() {
   const parser = SillyTavernPresetParser();
+
+  test('legacy system prompt switches respect the unified switch', () {
+    SillyTavernPreset parse(Map<String, dynamic> switches) =>
+        parser.parseSource(
+          jsonEncode({
+            ...switches,
+            'prompts': [
+              {'identifier': 'main', 'content': 'x'},
+            ],
+            'prompt_order': [
+              {
+                'order': [
+                  {'identifier': 'main', 'enabled': true},
+                ],
+              },
+            ],
+          }),
+          sourceFileName: 'switches.json',
+        );
+
+    for (final field in ['use_makersuite_sysprompt', 'claude_use_sysprompt']) {
+      final legacy = parse({field: false});
+      expect(legacy.useSystemPrompt, isFalse);
+      expect(
+        legacy.parameterCompatibility
+            .singleWhere((item) => item.field == field)
+            .status,
+        SillyTavernParameterStatus.applied,
+      );
+
+      final overridden = parse({'use_sysprompt': true, field: false});
+      expect(overridden.useSystemPrompt, isTrue);
+      expect(
+        overridden.parameterCompatibility
+            .singleWhere((item) => item.field == field)
+            .status,
+        SillyTavernParameterStatus.notApplicable,
+      );
+    }
+
+    expect(
+      parse({
+        'use_sysprompt': 'invalid',
+        'claude_use_sysprompt': false,
+      }).useSystemPrompt,
+      isFalse,
+    );
+    expect(
+      parse({
+        'claude_use_sysprompt': true,
+        'use_makersuite_sysprompt': false,
+      }).useSystemPrompt,
+      isFalse,
+    );
+    expect(parse({'claude_use_sysprompt': 'false'}).useSystemPrompt, isTrue);
+    expect(
+      parse({
+        'use_sysprompt': false,
+        'claude_use_sysprompt': true,
+      }).useSystemPrompt,
+      isFalse,
+    );
+    expect(parse({}).useSystemPrompt, isTrue);
+  });
 
   test(
     'parses official Default-compatible shape and selects richest order',

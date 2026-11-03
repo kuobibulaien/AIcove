@@ -6,12 +6,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/memory/application/memory_keeper_service.dart';
+import '../../../../features/memory/data/background_memory_agent_adapter.dart';
 import '../../../../features/memory/domain/memory_item.dart';
 import '../../../../features/memory/providers/memory_providers.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
 
-/// 角色的长期记忆（ADR0038）：常驻与档案两栏，可编辑、锁定、删除、从聊天记录重建。
+/// 角色的长期记忆（ADR0038）：核心印象与往事日记两栏，全文展示，可编辑、锁定、删除、从聊天记录重建。
 /// 只操作显式传入的 owner，不从当前活动会话推断所属角色。
 class ContactMemoryPage extends ConsumerStatefulWidget {
   const ContactMemoryPage({
@@ -139,7 +140,7 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
       context: context,
       title: '从聊天记录重建记忆？',
       content: Text(
-        '将重新整理 ${estimate.messages} 条聊天记录。\n'
+        '将按 ${estimate.batches} 个聊天轮次重新整理 ${estimate.messages} 条消息，生成核心印象与往事日记。\n'
         '未锁定的记忆会被替换，已锁定的记忆保留。',
       ),
       confirmText: '开始重建',
@@ -162,7 +163,7 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
     await Clipboard.setData(
       ClipboardData(
         text:
-            '# ${widget.displayName}的记忆\n\n## 常驻\n${section(MemoryLayer.core)}\n\n## 档案\n${section(MemoryLayer.archive)}\n',
+            '# ${widget.displayName}的记忆\n\n## 核心印象\n${section(MemoryLayer.core)}\n\n## 往事日记\n${section(MemoryLayer.archive)}\n',
       ),
     );
     if (mounted) MoeToast.success(context, '已复制全部记忆');
@@ -171,13 +172,78 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
   String _status(MemoryKeeperService keeper) {
     final progress = _progress;
     if (!_allowed) return '该角色未在插件列表里启用「记忆库」，不会整理或使用长期记忆。';
-    if (keeper.isRunning(widget.ownerId)) return '正在整理，还剩 $_pending 条聊天。';
-    if (progress?.paused == true) return '已暂停，还剩 $_pending 条聊天待整理。';
+    if (keeper.isRunning(widget.ownerId)) return '正在按聊天轮次整理，还剩 $_pending 条消息。';
+    if (progress?.paused == true) return '已暂停，还剩 $_pending 条消息待整理。';
     if (progress?.lastError != null && _pending > 0) {
-      return '上次整理失败（${progress!.lastError}），下次压缩或点「继续」时重试。';
+      return '上次整理失败（${progress!.lastError}），点「继续整理」可重试。';
     }
-    if (_pending > 0) return '还有 $_pending 条已压缩的聊天待整理。';
-    return '已是最新。每次压缩后会在后台自动整理。';
+    if (_pending > 0) return '还有 $_pending 条超过 24 小时的聊天待整理为日记。';
+    return '已是最新。聊完满一天后，会在后台按轮次自动整理成日记。';
+  }
+
+  Widget _memoryCard(
+    BuildContext context,
+    MemoryItem item, {
+    required bool showDivider,
+  }) {
+    final colors = context.moeColors;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: () => _edit(item: item),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.title,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: MoeFontWeights.emphasis,
+                          color: colors.text,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    MoeIconButton(
+                      icon: item.locked ? Icons.lock : Icons.lock_open_outlined,
+                      semanticLabel: item.locked
+                          ? '解锁${item.title}'
+                          : '锁定${item.title}',
+                      onTap: () => _toggleLock(item),
+                    ),
+                    MoeIconButton(
+                      icon: Icons.delete_outline,
+                      semanticLabel: '删除${item.title}',
+                      onTap: () => _delete(item),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  item.content,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colors.textSecondary,
+                    height: 1.55,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (showDivider)
+          Divider(height: 0.5, thickness: 0.5, color: colors.divider),
+      ],
+    );
   }
 
   @override
@@ -190,31 +256,6 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
     final archive = _items
         .where((i) => i.layer == MemoryLayer.archive)
         .toList();
-
-    Widget tile(MemoryItem item) => MoeListTile(
-      title: Text(item.title),
-      subtitle: Text(
-        item.content,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      onTap: () => _edit(item: item),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          MoeIconButton(
-            icon: item.locked ? Icons.lock : Icons.lock_open_outlined,
-            semanticLabel: item.locked ? '解锁${item.title}' : '锁定${item.title}',
-            onTap: () => _toggleLock(item),
-          ),
-          MoeIconButton(
-            icon: Icons.delete_outline,
-            semanticLabel: '删除${item.title}',
-            onTap: () => _delete(item),
-          ),
-        ],
-      ),
-    );
 
     return MoePageScaffold(
       backgroundColor: colors.surface,
@@ -258,7 +299,7 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
                         MoeSettingsRow(
                           icon: Icons.history,
                           label: '从聊天记录重建',
-                          subtitle: '重新整理全部聊天记录',
+                          subtitle: '按聊天轮次重新整理全部聊天记录',
                           enabled: _allowed && !running,
                           onTap: _rebuild,
                         ),
@@ -282,38 +323,80 @@ class _ContactMemoryPageState extends ConsumerState<ContactMemoryPage> {
                     ),
                     const SizedBox(height: 20),
                     MoeSettingsGroup(
-                      title: '常驻记忆',
+                      title: '核心印象（${core.length}）',
                       margin: EdgeInsets.zero,
                       children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                          child: Text(
+                            '每次聊天都会带上，比如你的称呼、偏好与你们的相处方式。',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.muted,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                        Divider(
+                          height: 0.5,
+                          thickness: 0.5,
+                          color: colors.divider,
+                        ),
                         if (core.isEmpty)
                           const Padding(
                             padding: MoeSettingsLayout.contentPadding,
-                            child: Text('暂无常驻记忆'),
+                            child: Text('暂无核心印象'),
                           ),
-                        ...core.map(tile),
+                        for (var i = 0; i < core.length; i++)
+                          _memoryCard(
+                            context,
+                            core[i],
+                            showDivider: i < core.length - 1,
+                          ),
                       ],
                     ),
                     const SizedBox(height: 8),
                     MoeSecondaryButton(
-                      label: '添加常驻记忆',
+                      label: '添加核心印象',
                       onPressed: () => _edit(layer: MemoryLayer.core),
                     ),
                     const SizedBox(height: 20),
                     MoeSettingsGroup(
-                      title: '档案记忆',
+                      title: '往事日记（${archive.length}）',
                       margin: EdgeInsets.zero,
                       children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                          child: Text(
+                            '按每次聊天记录下的日常与回忆，聊到相关话题时会自动想起。',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.muted,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                        Divider(
+                          height: 0.5,
+                          thickness: 0.5,
+                          color: colors.divider,
+                        ),
                         if (archive.isEmpty)
                           const Padding(
                             padding: MoeSettingsLayout.contentPadding,
-                            child: Text('暂无档案记忆'),
+                            child: Text('暂无往事日记'),
                           ),
-                        ...archive.map(tile),
+                        for (var i = 0; i < archive.length; i++)
+                          _memoryCard(
+                            context,
+                            archive[i],
+                            showDivider: i < archive.length - 1,
+                          ),
                       ],
                     ),
                     const SizedBox(height: 8),
                     MoeSecondaryButton(
-                      label: '添加档案记忆',
+                      label: '添加往事日记',
                       onPressed: () => _edit(layer: MemoryLayer.archive),
                     ),
                     const SizedBox(height: 24),
@@ -374,55 +457,66 @@ class _MemoryEditorState extends ConsumerState<_MemoryEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => MoePageScaffold(
-    backgroundColor: context.moeColors.surface,
-    appBar: MoeAppBar(
-      title: widget.item == null ? '添加记忆' : '编辑记忆',
-      showBackButton: true,
-    ),
-    body: Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760),
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            MoeSettingsGroup(
-              margin: EdgeInsets.zero,
-              children: [
-                MoeSettingsRow(
-                  icon: Icons.push_pin_outlined,
-                  label: '常驻',
-                  subtitle: '每次聊天都会带上',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: _layer == MemoryLayer.core,
-                  onSwitchChanged: (value) => setState(
-                    () =>
-                        _layer = value ? MemoryLayer.core : MemoryLayer.archive,
+  Widget build(BuildContext context) {
+    final today = formatMemoryRoundDate(DateTime.now());
+    return MoePageScaffold(
+      backgroundColor: context.moeColors.surface,
+      appBar: MoeAppBar(
+        title: widget.item == null ? '添加记忆' : '编辑记忆',
+        showBackButton: true,
+      ),
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              MoeSettingsGroup(
+                margin: EdgeInsets.zero,
+                children: [
+                  MoeSettingsRow(
+                    icon: Icons.push_pin_outlined,
+                    label: '放进核心印象',
+                    subtitle: '每次聊天都会带上；关闭则存为往事日记，按话题自动想起',
+                    trailingType: MoeSettingsRowTrailing.switchControl,
+                    switchValue: _layer == MemoryLayer.core,
+                    onSwitchChanged: (value) => setState(
+                      () => _layer = value
+                          ? MemoryLayer.core
+                          : MemoryLayer.archive,
+                    ),
+                    showDivider: false,
                   ),
-                  showDivider: false,
-                ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              MoeTextField(
+                controller: _title,
+                label: '标题',
+                hint: _layer == MemoryLayer.archive
+                    ? '例如：$today 一起去看海'
+                    : '例如：称呼与日常喜好',
+                maxLength: 120,
+              ),
+              const SizedBox(height: 12),
+              MoeTextField(
+                controller: _content,
+                label: '内容',
+                minLines: 6,
+                maxLines: 14,
+                maxLength: 4000,
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: TextStyle(color: context.moeColors.text)),
               ],
-            ),
-            const SizedBox(height: 12),
-            MoeTextField(controller: _title, label: '标题', maxLength: 120),
-            const SizedBox(height: 12),
-            MoeTextField(
-              controller: _content,
-              label: '内容',
-              minLines: 6,
-              maxLines: 14,
-              maxLength: 4000,
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: context.moeColors.text)),
+              const SizedBox(height: 16),
+              MoePrimaryButton(label: '保存', onPressed: _saving ? null : _save),
             ],
-            const SizedBox(height: 16),
-            MoePrimaryButton(label: '保存', onPressed: _saving ? null : _save),
-          ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

@@ -1,3 +1,5 @@
+import '../domain/workspace_file_access.dart';
+import '../data/managed_workspace_files.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -27,11 +29,14 @@ class CodemodeScript {
     this.tools,
     this.isCancelled,
     this.callId = 'codemode',
+    this.resolveFile,
     PublicNetwork Function()? networkFactory,
   }) : _networkFactory = networkFactory ?? PublicNetwork.new;
   final WorkspaceStore store;
   final String? Function() workspace;
   final String runId, owner, callId;
+  final Future<WorkspaceFileTarget> Function(String path, {bool rejectFallback})?
+  resolveFile;
   final ScriptToolAccess? tools;
   final bool Function()? isCancelled;
   final PublicNetwork Function() _networkFactory;
@@ -215,49 +220,72 @@ return JSON.stringify(__state);
                 final offset = args[1] as int, length = args[2] as int;
                 if (offset < 0 || length < 0 || length > 4 * 1024 * 1024)
                   throw ArgumentError('Read chunk exceeds 4 MiB');
+                final target = resolveFile == null
+                    ? WorkspaceFileTarget(
+                        ManagedWorkspaceFiles(store, cwd(), runId),
+                        args[0] as String,
+                      )
+                    : await resolveFile!(args[0] as String);
                 return base64Encode(
-                  await store.readRange(
-                    cwd(),
-                    args[0] as String,
+                  await target.access.readRange(
+                    target.path,
                     offset: offset,
                     length: length,
                   ),
                 );
               case 'writeBytes':
-                final ws = cwd(),
-                    path = args[0] as String,
-                    bytes = base64Decode(args[1] as String),
+                final target = resolveFile == null
+                    ? WorkspaceFileTarget(
+                        ManagedWorkspaceFiles(store, cwd(), runId),
+                        args[0] as String,
+                      )
+                    : await resolveFile!(
+                        args[0] as String,
+                        rejectFallback: true,
+                      );
+                final access = target.access, path = target.path;
+                final bytes = base64Decode(args[1] as String),
                     offset = args[2] as int;
-                store.checkWritablePath(ws, path);
+                access.checkWritable(path);
                 if (bytes.length > 4 * 1024 * 1024)
                   throw ArgumentError('Write chunk exceeds 4 MiB');
-                final stat = await store.stat(ws, path);
+                final stat = await access.stat(path);
                 final (previous, revision) = stat == null
                     ? (Uint8List(0), null)
-                    : await store.read(ws, path);
+                    : await access.read(path);
                 if (offset < 0 ||
                     offset > previous.length ||
-                    offset + bytes.length > WorkspaceLimits.maxFileBytes)
+                    (!access.isLocal &&
+                        offset + bytes.length > WorkspaceLimits.maxFileBytes))
                   throw ArgumentError('Invalid write offset or size');
+                final end = offset + bytes.length;
                 final data = Uint8List(
                   args[3] == true
-                      ? offset + bytes.length
-                      : (offset + bytes.length).clamp(
-                          previous.length,
-                          WorkspaceLimits.maxFileBytes,
-                        ),
+                      ? end
+                      : (end > previous.length ? end : previous.length),
                 );
-                data.setAll(0, previous.take(data.length).toList());
+                data.setAll(
+                  0,
+                  Uint8List.sublistView(
+                    previous,
+                    0,
+                    data.length < previous.length
+                        ? data.length
+                        : previous.length,
+                  ),
+                );
                 data.setAll(offset, bytes);
                 check();
-                final saved = await store.write(
-                  ws,
+                final saved = await access.write(
                   path,
                   data,
                   expectedRevision: revision,
-                  runId: runId,
                 );
-                return {'revision': saved.revision, 'size': saved.size};
+                return {
+                  'revision': saved.revision,
+                  'size': saved.size,
+                  if (access.isLocal) 'undoable': false,
+                };
               case 'image':
                 final encoded = args[0] as String;
                 final image = await prepareWorkspaceImage(
@@ -276,8 +304,11 @@ return JSON.stringify(__state);
                 );
                 check();
                 images.add(image);
-                items.add('Image saved: $path');
-                return path;
+                final shownPath = resolveFile == null
+                    ? path
+                    : '${store.directoryOf(cwd()).path}/$path';
+                items.add('Image saved: $shownPath');
+                return shownPath;
               default:
                 throw StateError('Unknown host method: $method');
             }
@@ -331,6 +362,8 @@ return JSON.stringify(__state);
           runId: hostRunId,
           allowHost: true,
         );
+        if (resolveFile != null)
+          fullPath = '${store.directoryOf(cwd()).path}/$fullPath';
         final head = maxChars ~/ 2, tail = maxChars - head;
         shown =
             '${output.substring(0, head)}\n[Output truncated; full output: $fullPath]\n${output.substring(output.length - tail)}';

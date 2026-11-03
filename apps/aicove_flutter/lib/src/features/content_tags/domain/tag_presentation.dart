@@ -1,4 +1,3 @@
-import '../../../core/utils/markdown_fence.dart';
 import '../../../core/utils/message_formatter.dart';
 import 'content_tag_registry.dart';
 import 'content_tag_scanner.dart';
@@ -92,38 +91,6 @@ const Set<String> htmlStructureTagNames = {
   'h4', 'small', 'title', 'svg', 'path', 'blockquote', 'hr', 'sup', 'sub',
 };
 
-/// 代码块（围栏与行内反引号）里的 `<` 换成占位符，扫描时就不会把示例代码
-/// 当成语义标签（ADR0048）。等长替换，区间偏移不变。
-const String _codeMask = '\uE000';
-final RegExp _inlineCode = RegExp(r'`[^`\n]+`');
-
-String _maskCode(String text) {
-  if (!text.contains('<') || (!text.contains('`') && !text.contains('~~~'))) {
-    return text;
-  }
-  final chars = text.split('');
-  void mask(int start, int end) {
-    for (var i = start; i < end && i < chars.length; i++) {
-      if (chars[i] == '<') chars[i] = _codeMask;
-    }
-  }
-
-  final fences = scanFencedCodeBlocks(text);
-  for (final block in fences) {
-    mask(block.start, block.end);
-  }
-  for (final match in _inlineCode.allMatches(text)) {
-    if (fences.any((b) => match.start >= b.start && match.start < b.end)) {
-      continue;
-    }
-    mask(match.start, match.end);
-  }
-  return chars.join();
-}
-
-String _unmask(String text) =>
-    text.contains(_codeMask) ? text.replaceAll(_codeMask, '<') : text;
-
 ContentTagScanner _scannerFor(TagPresentationMap map) {
   final key = (map.keys.toList()..sort()).join('\u0000');
   return _scannerCache[key] ??= ContentTagScanner(
@@ -150,7 +117,7 @@ List<ProtectedTextRange> protectedTagRanges(
   if (map.isEmpty || !text.contains('<')) return const [];
   final ranges = <ProtectedTextRange>[];
   var sawElement = false;
-  for (final segment in _scannerFor(map).scan(_maskCode(text))) {
+  for (final segment in _scannerFor(map).scan(maskCode(text))) {
     switch (segment) {
       case ContentTagText():
         break;
@@ -183,7 +150,7 @@ List<ProtectedTextRange> protectedTagRanges(
 ///
 /// - 折叠标签 → 折叠片段；正文里的 HTML 标记剥成纯文本，`<summary>` 作标题。
 /// - 正文标签 → 去壳，内部继续投影（正文里可以再有折叠）。
-/// - 选项标签 → 丢弃（由对话选项气泡展示）。
+/// - 选项标签 → 丢弃（由对话选项气泡展示）；未闭合的原样显示。
 /// - 预填充场景：文本开头没有开标签、只出现折叠标签的闭标签时，
 ///   闭标签之前的内容作为折叠片段。
 List<TagDisplayPart> projectTagPresentation(
@@ -191,12 +158,12 @@ List<TagDisplayPart> projectTagPresentation(
   TagPresentationMap map,
 ) =>
     [
-      for (final part in _project(_maskCode(text), map))
+      for (final part in _project(maskCode(text), map))
         switch (part) {
-          TagBodyPart(:final text) => TagBodyPart(_unmask(text)),
+          TagBodyPart(:final text) => TagBodyPart(unmaskCode(text)),
           TagFoldPart() => TagFoldPart(
-              title: _unmask(part.title),
-              content: _unmask(part.content),
+              title: unmaskCode(part.title),
+              content: unmaskCode(part.content),
               closed: part.closed,
             ),
         },
@@ -233,7 +200,9 @@ List<TagDisplayPart> _project(String text, TagPresentationMap map) {
         final entry = map[segment.spec.name]!;
         switch (entry.presentation) {
           case TagPresentation.options:
-            break;
+            // 未闭合的残缺标签不是选项：生成中已由显示副本裁掉，这里只剩
+            // 生成结束仍没写完的，原样留给用户。
+            if (!segment.closed) body.write(segment.raw);
           case TagPresentation.body:
             flushBody();
             parts.addAll(_project(segment.inner, map));
@@ -290,7 +259,7 @@ List<({String name, int innerLength})> findUnknownTopLevelTags(
   TagPresentationMap map,
 ) {
   if (!text.contains('<')) return const [];
-  final masked = _maskCode(text);
+  final masked = maskCode(text);
   final lower = masked.toLowerCase();
   final found = <({String name, int innerLength})>[];
   var cursor = 0;
@@ -323,7 +292,7 @@ List<({String name, int innerLength})> findUnknownTopLevelTags(
 String? soleUnknownBodyWrapper(String text, TagPresentationMap map) {
   final unknown = findUnknownTopLevelTags(text, map);
   if (unknown.length != 1) return null;
-  final visible = _project(_maskCode(text), map)
+  final visible = _project(maskCode(text), map)
       .whereType<TagBodyPart>()
       .fold<int>(0, (sum, part) => sum + part.text.length);
   final wrapper = unknown.single;

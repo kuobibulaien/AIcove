@@ -26,7 +26,7 @@ class _ImageGenerator implements ChatMediaGenerationPort {
   final RegenerateChatImage generateImage;
   @override
   Future<GeneratedChatMedia> generate(String owner, String input,
-          {ImageGenerationSnapshot? imageSnapshot}) async =>
+          {ImageGenerationSnapshot? imageSnapshot, String? customPrompt}) async =>
       GeneratedChatMedia.image(await generateImage(owner, input));
 }
 
@@ -83,8 +83,7 @@ void main() {
                 createdAt: message.createdAt,
                 rawPayload:
                     ChatMessageProjectionCodec.copyWithProjectedMessages({
-                  'rawReplyText': '原始模型回答',
-                  'processedText': '原始模型回答'
+                  'rawReplyText': '原始模型回答'
                 }, [
                   message.copyWith(sourceMessageId: 'raw'),
                   Message(

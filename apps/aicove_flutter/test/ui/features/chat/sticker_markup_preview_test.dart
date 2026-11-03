@@ -36,7 +36,7 @@ void main() {
                 data: const {
                   'tag': '晚安',
                   'stickerId': 'hug_request',
-                  'assetPath': 'assets/stickers/nahida/hug_request.png',
+                  'assetPath': 'assets/stickers/builtin/xiaokumao/459a6ca140046c4119aea0c038a3f742.webp',
                 },
               ),
             ],
@@ -102,7 +102,7 @@ void main() {
         ),
       );
       await tester.runAsync(() => precacheImage(
-        const AssetImage('assets/stickers/nahida/hug_request.png'),
+        const AssetImage('assets/stickers/builtin/xiaokumao/459a6ca140046c4119aea0c038a3f742.webp'),
         tester.element(find.byType(Scaffold)),
       ));
       await tester.pumpAndSettle();

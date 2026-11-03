@@ -265,6 +265,25 @@ void main() {
     },
   );
 
+  for (final image in [false, true]) {
+    test('sync waits for background ${image ? 'image' : 'voice'} delivery', () async {
+      await applyMessage(1);
+      await window();
+      final counter = image ? conversationImageTaskCountProvider('room')
+          : conversationVoiceTaskCountProvider('room');
+      container.read(counter.notifier).state = 1;
+      await applyMessage(2);
+      controller.handleApplied({'messages'});
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      expect((await window()).messages.map((m) => m.id), ['m1']);
+      final refreshed = cache.watchWindow(conversationId: 'room', limit: 20)
+          .firstWhere((window) => window.messages.any((m) => m.id == 'm2'))
+          .timeout(const Duration(seconds: 3));
+      container.read(counter.notifier).state = 0;
+      expect((await refreshed).messages.map((m) => m.id), ['m1', 'm2']);
+    });
+  }
+
   test(
     'generation starting during a refresh read cannot overwrite transient bubbles',
     () async {

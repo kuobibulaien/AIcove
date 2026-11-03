@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatibility_port.dart';
+import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 
 import 'package:aicove_flutter/src/features/agent_plugins/plugin_response.dart';
 import 'package:aicove_flutter/src/features/agent_plugins/plugin_runtime.dart';
@@ -100,6 +103,13 @@ VoiceRequest _voice() => VoiceRequest(
       ),
     );
 
+class _NoPreset implements TavernCompatibilityPort {
+  @override
+  Future<SillyTavernPreset?> resolvePreset(String? explicitId) async => null;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
+
 void main() {
   late ProviderContainer container;
   late Ref ref;
@@ -172,6 +182,7 @@ void main() {
       ..register(_TagPlugin('sticker', seen))
       ..register(_TagPlugin('other', seen));
     final cached = ProviderContainer(overrides: [
+      tavernCompatibilityPortProvider.overrideWithValue(_NoPreset()),
       pluginManagerProvider.overrideWithValue(manager),
       voicePresetApplicationProvider.overrideWithValue(voice),
     ]);

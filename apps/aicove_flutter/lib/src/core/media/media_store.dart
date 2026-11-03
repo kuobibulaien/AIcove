@@ -94,7 +94,30 @@ class MediaStore {
   Future<LocalMedia?> load(String id) async {
     if (!validMediaId(id)) throw const FormatException('无效的图片 ID');
     final json = await (await _index).read('assets', id);
-    return json == null ? null : LocalMedia.fromJson(json);
+    return json == null ? null : _repairPaths(LocalMedia.fromJson(json));
+  }
+
+  Future<LocalMedia> _repairPaths(LocalMedia record) async {
+    Future<String?> repair(String? path) async {
+      if (path == null || await File(path).exists()) return path;
+      final local = File(
+        p.join(_record(record.asset.id).parent.path, p.basename(path)),
+      );
+      return await local.exists() ? local.path : path;
+    }
+
+    final original = await repair(record.originalPath);
+    final thumbnail = await repair(record.thumbnailPath);
+    if (original == record.originalPath && thumbnail == record.thumbnailPath) {
+      return record;
+    }
+    final repaired = LocalMedia(
+      record.asset,
+      originalPath: original,
+      thumbnailPath: thumbnail,
+    );
+    await save(repaired);
+    return repaired;
   }
 
   Future<void> save(LocalMedia record) async {
@@ -164,7 +187,7 @@ class MediaStore {
 
   Stream<LocalMedia> records() async* {
     await for (final json in (await _index).records()) {
-      yield LocalMedia.fromJson(json);
+      yield await _repairPaths(LocalMedia.fromJson(json));
     }
   }
 

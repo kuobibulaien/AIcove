@@ -119,6 +119,22 @@ class AgentTaskStore {
     [conversationId],
   );
 
+  /// Deleting a conversation stops work without producing another receipt.
+  Future<void> abortForDeletedConversation(String conversationId) =>
+      _db.transaction(() async {
+        await _db.customStatement(
+          "UPDATE agent_tasks SET status='cancelled', pending_receipt=NULL, "
+          'frozen=0, updated_at=? WHERE conversation_id=? '
+          "AND status IN ('queued','running','needs_input')",
+          [_nowMs, conversationId],
+        );
+        await _db.customStatement(
+          "UPDATE agent_task_deliveries SET state='done', updated_at=? "
+          "WHERE conversation_id=? AND state!='done'",
+          [_nowMs, conversationId],
+        );
+      });
+
   /// Newest first, for the task list.
   Future<List<AgentTask>> recent({int limit = 100}) => _many(
     'SELECT * FROM agent_tasks ORDER BY created_at DESC LIMIT ?',
@@ -134,9 +150,7 @@ class AgentTaskStore {
   /// `queued → running`; false when something else moved it first.
   Future<bool> markRunning(String id) => _db.transaction(() async {
     final task = await get(id);
-    if (task == null ||
-        task.frozen ||
-        task.status != AgentTaskStatus.queued) {
+    if (task == null || task.frozen || task.status != AgentTaskStatus.queued) {
       return false;
     }
     await _setStatus(id, AgentTaskStatus.running);
@@ -234,6 +248,29 @@ class AgentTaskStore {
   // Controls (ADR0088 §6)
   // ---------------------------------------------------------------------
 
+  /// Checks applicability before writing the reply's checkpoint. Consumption
+  /// repeats this check inside its transaction after the file is durable.
+  Future<bool> canConsumeReply({
+    required String controlId,
+    required String taskId,
+    required String? answersReceiptId,
+  }) async {
+    final task = await get(taskId);
+    if (task == null ||
+        task.frozen ||
+        task.status != AgentTaskStatus.needsInput ||
+        task.questionReceiptId != answersReceiptId) {
+      return false;
+    }
+    return (await _db
+            .customSelect(
+              'SELECT 1 FROM agent_task_controls WHERE control_id=?',
+              variables: [Variable(controlId)],
+            )
+            .get())
+        .isEmpty;
+  }
+
   /// Consumes a reply: only for a `needs_input` task whose open question is
   /// [answersReceiptId]. Marks the control consumed and requeues the task in
   /// one transaction; false when consumed before or not applicable (a reply
@@ -243,11 +280,11 @@ class AgentTaskStore {
     required String taskId,
     required String? answersReceiptId,
   }) => _db.transaction(() async {
-    final task = await get(taskId);
-    if (task == null ||
-        task.frozen ||
-        task.status != AgentTaskStatus.needsInput ||
-        task.questionReceiptId != answersReceiptId) {
+    if (!await canConsumeReply(
+      controlId: controlId,
+      taskId: taskId,
+      answersReceiptId: answersReceiptId,
+    )) {
       return false;
     }
     if (!await _claimControl(controlId, taskId)) return false;
@@ -285,12 +322,13 @@ class AgentTaskStore {
   // ---------------------------------------------------------------------
 
   Future<List<String>> pendingDeliveries() async => [
-    for (final row in await _db
-        .customSelect(
-          "SELECT receipt_id FROM agent_task_deliveries WHERE state='pending' "
-          'ORDER BY updated_at',
-        )
-        .get())
+    for (final row
+        in await _db
+            .customSelect(
+              "SELECT receipt_id FROM agent_task_deliveries WHERE state='pending' "
+              'ORDER BY updated_at',
+            )
+            .get())
       row.read<String>('receipt_id'),
   ];
 
@@ -333,8 +371,23 @@ class AgentTaskStore {
   Future<void> completeDelivery(String receiptId, {required bool delivered}) =>
       _db.customStatement(
         'UPDATE agent_task_deliveries SET state=?, updated_at=? '
-        'WHERE receipt_id=?',
+        "WHERE receipt_id=? AND state='claimed'",
         [delivered ? 'done' : 'pending', _nowMs, receiptId],
+      );
+
+  /// Settles an unrecoverable receipt, but waits for one not yet synced.
+  Future<void> finishMissingTaskDelivery(String receiptId) =>
+      _db.customStatement(
+        "UPDATE agent_task_deliveries SET state='done', updated_at=? "
+        "WHERE receipt_id=? AND state='pending' AND (NOT EXISTS "
+        '(SELECT 1 FROM agent_tasks WHERE id=agent_task_deliveries.task_id) '
+        'OR EXISTS (SELECT 1 FROM messages '
+        "WHERE id='task_receipt_' || agent_task_deliveries.receipt_id "
+        'AND deleted_at IS NOT NULL) '
+        'OR NOT EXISTS (SELECT 1 FROM conversations '
+        'WHERE id=agent_task_deliveries.conversation_id '
+        'AND deleted_at IS NULL))',
+        [_nowMs, receiptId],
       );
 
   /// Claims left behind by a crash go back to pending.
@@ -399,12 +452,13 @@ class AgentTaskStore {
     String sql, [
     List<Object?> args = const [],
   ]) async => [
-    for (final row in await _db
-        .customSelect(
-          sql,
-          variables: [for (final arg in args) Variable(arg)],
-        )
-        .get())
+    for (final row
+        in await _db
+            .customSelect(
+              sql,
+              variables: [for (final arg in args) Variable(arg)],
+            )
+            .get())
       _taskOf(row),
   ];
 

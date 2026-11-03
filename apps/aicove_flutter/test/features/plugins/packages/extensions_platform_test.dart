@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'extension_test_support.dart';
+import '../../agent_plugins/plugin_request_test_support.dart';
 import 'dart:io';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
@@ -353,6 +354,58 @@ void main() {
   );
 
   test(
+    'task request scope prepares packages but can deny executable tools',
+    () async {
+      final script = PackagePlugin(
+        AicovePackage.parse(scriptFiles(scriptSource)),
+      );
+      final skill = PackagePlugin(AicovePackage.parse(skillFiles()));
+      final readonly = await resolveTaskPluginCapabilities(
+        [script, skill],
+        {'pkg:demo', 'pkg:sample-skill'},
+        inputs: createPluginRequestInputs(packageExecutable: false),
+      );
+      expect(readonly.prompts['pkg:demo'], contains('script-prompt'));
+      expect(readonly.tools.map((t) => t.name), ['read_skill_sample-skill']);
+      expect(readonly.toolOwners, {
+        'read_skill_sample-skill': 'pkg:sample-skill',
+      });
+      expect(
+        readonly.tools.single.description,
+        isNot(contains('run_skill_js_')),
+      );
+      expect(
+        (await readonly.tools.single.invoke({
+          'name': skill.package.skills.single.name,
+          'path': 'references/value.txt',
+        })).text,
+        contains('resource-secret'),
+      );
+      final executable = await resolveTaskPluginCapabilities(
+        [script, skill],
+        {'pkg:demo', 'pkg:sample-skill'},
+        inputs: createPluginRequestInputs(),
+      );
+      expect(
+        executable.tools.map((t) => t.name),
+        containsAll([
+          'pkg_4_demo_answer',
+          'read_skill_sample-skill',
+          'run_skill_js_sample-skill',
+        ]),
+      );
+      expect(executable.toolOwners['pkg_4_demo_answer'], 'pkg:demo');
+      expect(
+        (await executable.tools
+                .firstWhere((t) => t.name == 'pkg_4_demo_answer')
+                .invoke({'value': 5}))
+            .text,
+        contains('15'),
+      );
+    },
+  );
+
+  test(
     'load failures and invalid registrations skip one plugin, not others; role selection revokes next run',
     () async {
       final good = PackagePlugin(
@@ -371,7 +424,11 @@ void main() {
         'pkg:sample-skill',
         'pkg:missing',
       };
-      final on = await resolveTaskPluginCapabilities(plugins, selected);
+      final on = await resolveTaskPluginCapabilities(
+        plugins,
+        selected,
+        inputs: createPluginRequestInputs(),
+      );
       expect(
         on.prompts['pkg:demo'],
         contains('package-prompt\n\nscript-prompt'),
@@ -385,11 +442,17 @@ void main() {
           'run_skill_js_sample-skill',
         ]),
       );
-      final off = await resolveTaskPluginCapabilities(plugins, {'pkg:bad'});
+      final off = await resolveTaskPluginCapabilities(plugins, {
+        'pkg:bad',
+      }, inputs: createPluginRequestInputs());
       expect(off.tools, isEmpty);
       expect(off.prompts.keys, isNot(contains('pkg:demo')));
       expect(
-        (await resolveTaskPluginCapabilities(plugins, null)).tools,
+        (await resolveTaskPluginCapabilities(
+          plugins,
+          null,
+          inputs: createPluginRequestInputs(),
+        )).tools,
         isEmpty,
       );
       expect(

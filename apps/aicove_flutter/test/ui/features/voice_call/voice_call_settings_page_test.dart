@@ -283,6 +283,15 @@ void main() {
         null,
         null,
       ),
+      (
+        'provider-detail-asr-format-picker',
+        const ProviderDetailPage(providerId: 'tencent_asr'),
+        null,
+        () async {
+          await tester.tap(find.text('识别格式'));
+          await tester.pumpAndSettle();
+        },
+      ),
     ]) {
       final key = GlobalKey();
       await mount(
@@ -295,9 +304,17 @@ void main() {
       );
       await prepare?.call();
       await tester.runAsync(() async {
-        final boundary =
-            key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-        final image = await boundary.toImage(pixelRatio: 2);
+        // 弹窗画在 Navigator 浮层里，不在页面边界内，截整屏。
+        final image = name.endsWith('picker')
+            ? await (tester.binding.renderViews.first.debugLayer!
+                      as OffsetLayer)
+                  .toImage(
+                    Offset.zero & tester.view.physicalSize,
+                    pixelRatio: 1,
+                  )
+            : await (key.currentContext!.findRenderObject()!
+                      as RenderRepaintBoundary)
+                  .toImage(pixelRatio: 2);
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         final dir = Directory('../../.codex-temp/voice-call/previews')
           ..createSync(recursive: true);

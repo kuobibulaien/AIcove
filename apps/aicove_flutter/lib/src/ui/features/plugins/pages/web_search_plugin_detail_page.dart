@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/prompts/plugin_prompts.dart';
 import '../../../../features/plugins/web_search/web_search_config.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
+import 'plugin_prompts_page.dart';
 import 'web_search_provider_detail_page.dart';
 
 /// 联网搜索插件设置：内置搜索接管开关、搜索供应商列表与返回内容。
@@ -19,6 +21,7 @@ class WebSearchPluginDetailPage extends ConsumerWidget {
     final colors = context.moeColors;
     final config = ref.watch(webSearchPluginConfigProvider);
     final notifier = ref.read(webSearchPluginConfigProvider.notifier);
+    final prompts = ref.watch(pluginPromptsProvider).valueOrNull;
 
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
@@ -91,6 +94,13 @@ class WebSearchPluginDetailPage extends ConsumerWidget {
                       ),
                     ),
                   ),
+                ],
+              ),
+              MoeSettingsGroup(
+                title: '提示词',
+                children: [
+                  for (final slot in PluginPromptSlot.forPlugin('web_search'))
+                    PluginPromptSlotRow(slot: slot, prompts: prompts),
                 ],
               ),
               const SizedBox(height: MoeSettingsLayout.sectionGap),

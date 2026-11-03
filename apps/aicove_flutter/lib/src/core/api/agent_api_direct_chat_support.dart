@@ -62,9 +62,8 @@ class _AgentApiDirectChatSupport {
     final endpointForLogs = preparedRequest.endpointForLogs;
     final chatMessages = preparedRequest.chatMessages;
     final payload = preparedRequest.payload;
-    final requestBodyJson = preparedRequest.requestBodyJson;
-    final logRequestBodyJson = ToolMedia.logJson(requestBodyJson);
-    final logContextJson = jsonEncode(ToolMedia.log(chatMessages));
+    final logRequestBodyJson = preparedRequest.logRequestBodyJson;
+    final logContextJson = preparedRequest.logContextJson;
     final headers = preparedRequest.headers;
     final requestDiagnostics = preparedRequest.requestDiagnostics;
 
@@ -75,7 +74,7 @@ class _AgentApiDirectChatSupport {
       'hasCustomConfig': customConfig != null,
     });
 
-    final promptPreview = _buildPromptPreview((ToolMedia.log(chatMessages) as List).map((m) => Map<String, dynamic>.from(m as Map)).toList());
+    final promptPreview = _buildPromptPreview(preparedRequest.logChatMessages);
     final totalChars = promptPreview.totalChars;
     final round = roundIndex ?? 0;
 
@@ -114,10 +113,10 @@ class _AgentApiDirectChatSupport {
       final sw = Stopwatch()..start();
       final request = RequestControl.request('POST', requestUri)
         ..headers.addAll(headers)
-        ..body = requestBodyJson;
-      final resp = await http.Response.fromStream(
+        ..bodyBytes = preparedRequest.requestBodyBytes;
+      final resp = await modelTransportRequest(() async => http.Response.fromStream(
         await _client.send(request).timeout(timeout),
-      ).timeout(timeout);
+      ).timeout(timeout));
       sw.stop();
 
       final responseBodyStr = utf8.decode(resp.bodyBytes);
@@ -169,7 +168,7 @@ class _AgentApiDirectChatSupport {
           url: endpoint,
           status: resp.statusCode,
           durationMs: sw.elapsedMilliseconds,
-          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
+          requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(responseBodyStr),
           ok: true,
           rawContext: logContextJson,
@@ -253,7 +252,7 @@ class _AgentApiDirectChatSupport {
         url: endpoint,
         status: resp.statusCode,
         durationMs: sw.elapsedMilliseconds,
-        requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
+        requestBody: preparedRequest.requestBodySnippet,
         responseBody: ApiLogger.safeSnippet(responseBodyStr),
         ok: false,
         rawContext: logContextJson,
@@ -276,8 +275,8 @@ class _AgentApiDirectChatSupport {
         'responseBody': ApiLogger.safeSnippet(responseBodyStr, max: 2000),
         ...requestDiagnostics,
       });
-      throw ModelHttpException(resp.statusCode, resp.body,
-        retryAfter: ModelHttpException.parseRetryAfter(resp.headers['retry-after']));
+      throw modelRequestFailure(ModelHttpException(resp.statusCode, resp.body,
+        retryAfter: ModelHttpException.parseRetryAfter(resp.headers['retry-after'])));
     } catch (e) {
       Map<String, dynamic>? catchPayloadRef;
       int? catchTraceEventSeq;
@@ -331,7 +330,7 @@ class _AgentApiDirectChatSupport {
           url: endpoint,
           status: null,
           durationMs: 0,
-          requestBody: ApiLogger.safeSnippet(logRequestBodyJson),
+          requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(e.toString()),
           ok: false,
           rawContext: logContextJson,
@@ -354,7 +353,8 @@ class _AgentApiDirectChatSupport {
         provider: provider,
         modelFullId: modelFullId,
         model: model,
-        requestBodyJson: requestBodyJson,
+        requestBodyBytes: preparedRequest.requestBodyBytes.length,
+        requestBodyPreview: requestDiagnostics['requestBodyPreview'] as String,
         payload: payload,
         chatMessages: chatMessages,
         customConfig: customConfig,

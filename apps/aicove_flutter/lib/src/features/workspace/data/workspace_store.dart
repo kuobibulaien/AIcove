@@ -103,6 +103,8 @@ class WorkspaceStore {
     );
   }
 
+  static void checkCommitAllowed() => _checkCommitGuard();
+
   static void _checkCommitGuard() {
     if (!((Zone.current[_commitGuardKey] as bool Function()?)?.call() ??
         true)) {
@@ -376,6 +378,21 @@ class WorkspaceStore {
   );
 
   /// Bounded host byte reads avoid loading the rest of an ordinary file.
+  /// The regular file on disk behind [path], or null when it only exists in a
+  /// read-only mount and has to be copied out first.
+  Future<File?> diskFile(String workspaceId, String path) async {
+    await _requireWorkspace(workspaceId);
+    final normalized = WorkspacePathRules.normalize(path);
+    if (_mount(workspaceId, normalized) != null) return null;
+    await _checkAncestors(workspaceId, normalized);
+    final file = _fileAt(workspaceId, normalized);
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type != FileSystemEntityType.file) {
+      throw WorkspaceException.notFound('文件不存在：$normalized');
+    }
+    return file;
+  }
+
   Future<Uint8List> readRange(
     String workspaceId,
     String path, {

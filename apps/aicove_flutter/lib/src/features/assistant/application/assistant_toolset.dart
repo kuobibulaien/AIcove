@@ -9,6 +9,9 @@ import '../../chat/domain/persona_prompt_codec.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../domain/aicove_docs.dart';
 import '../domain/assistant_onboarding.dart' show kAicoveAssistantId;
+import 'assistant_write_tools.dart'
+    show AssistantWriteTools, kAssistantRolePlugins;
+import '../../plugins/domain/handlers/tool_schema_validator.dart';
 
 /// Read-only tools of the AIcove assistant (ADR0073, batch T2): the docs
 /// library, roles, tavern presets and a role's assembled request context.
@@ -25,19 +28,38 @@ class AssistantToolset {
     required this.presets,
     required this.previewContext,
     required this.readDoc,
+    this.extensionPlugins,
   });
 
   final Future<List<Conversation>> Function() roles;
   final Future<List<SillyTavernPreset>> Function() presets;
   final Future<ChatContextPreview> Function(Conversation role) previewContext;
   final Future<String?> Function(String docId) readDoc;
+  final Future<List<Map<String, Object?>>> Function()? extensionPlugins;
 
   static const _promptContentLimit = 1500;
 
   List<AITool> tools() => [
     _tool(
+      'aicove_list_available_plugins',
+      '列出可为角色开启的内置插件、已安装技能包 pkg:<id> 与已配置 MCP 连接器 mcp:<id>。'
+          '扩展必须用 aicove_set_role_plugins 显式开启，下一次 run 生效。'
+          'MCP 的 usable=false 表示连接器未启用、地址无效或尚未取得工具清单；角色开启不会改变连接器配置。'
+          '不返回令牌、请求头或包文件正文。',
+      const {},
+      const [],
+      ToolEffect.readPrivate,
+      (_) async => {
+        'plugins': [
+          for (final entry in kAssistantRolePlugins.entries)
+            {'plugin_id': entry.key, 'name': entry.value, 'type': 'builtin'},
+          ...?await extensionPlugins?.call(),
+        ],
+      },
+    ),
+    _tool(
       'aicove_docs_read',
-      '读取 AIcove 内置资料库中的一篇文档（文档列表见系统提示词）。',
+      '读取 AIcove 内置资料库。doc 可选：${[for (final doc in kAicoveDocs) '${doc.id}（${doc.title}）'].join('、')}。',
       {
         'doc': {'type': 'string', 'description': '文档 id'},
       },
@@ -55,7 +77,8 @@ class AssistantToolset {
     ),
     _tool(
       'aicove_read_role',
-      '读取一个角色卡的完整设定：人设提示词、称呼、插件选择、预设（含绘图预设 id）、思考档位等。',
+      '读取一个角色卡的完整设定：人设提示词、称呼、插件选择、预设（含绘图预设 id）、思考档位等。'
+          '目标为 AIcove酱时，persona_prompt 仅为可编辑的附加提示词，system_prompt 为只读系统提示词。',
       {
         'role_id': {
           'type': 'string',
@@ -100,6 +123,69 @@ class AssistantToolset {
       _inspectContext,
     ),
   ];
+
+  /// A compact entry point; atomic tools remain available to panels and scripts.
+  AITool roleTool({AssistantWriteTools? writes}) {
+    final atomic = <String, AITool>{
+      for (final tool in [...tools(), ...?writes?.tools()])
+        if (const {
+          'aicove_list_roles',
+          'aicove_read_role',
+          AssistantWriteTools.createRole,
+          AssistantWriteTools.updateRole,
+        }.contains(tool.name))
+          tool.name: tool,
+    };
+    return AITool(
+      name: AssistantWriteTools.roleTool,
+      description:
+          '查看或管理用户的角色卡（不含隐私空间里的角色）。'
+          'action 传 list 列出所有可见角色；传 read 读取指定 role_id 的完整设定；'
+          '${writes == null ? '当前处于只读模式，仅支持 list 和 read。' : '传 create 新建角色（必填 name 和 persona_prompt）；传 update 修改指定 role_id 的字段（只传要改的项，局部改提示词优先用对应的 _replace={old_text,new_text} 精确替换唯一片段）。新建与修改均可撤销。'}',
+      parameters: const {},
+      inputSchema: {
+        'type': 'object',
+        'properties': {
+          for (final tool in atomic.values)
+            ...tool.parameterSchema['properties'] as Map<String, dynamic>,
+          'action': {
+            'type': 'string',
+            'enum': writes == null
+                ? ['list', 'read']
+                : ['list', 'read', 'create', 'update'],
+            'description': '操作类型：list 列出角色、read 读取设定、create 新建角色、update 修改角色',
+          },
+          'role_id': {
+            'type': 'string',
+            'description': '目标角色 id（可先用 action="list" 获取；read 和 update 必填）',
+          },
+        },
+        'required': ['action'],
+      },
+      effect: writes == null ? ToolEffect.readPrivate : ToolEffect.write,
+      handler: (args) async {
+        final name = AssistantWriteTools.roleToolName(args['action']);
+        final tool = atomic[name];
+        if (tool == null) {
+          return jsonEncode({
+            'error': 'invalid',
+            'message': writes == null
+                ? '当前只读，仅支持 list/read，不能新建或修改角色卡'
+                : '无效的角色卡 action',
+          });
+        }
+        final arguments = AssistantWriteTools.roleArguments(args);
+        final errors = validateToolArguments(
+          arguments,
+          tool.validationSchema ?? tool.parameterSchema,
+        );
+        if (errors.isNotEmpty) {
+          return jsonEncode({'error': 'invalid', 'details': errors});
+        }
+        return tool.handler(arguments);
+      },
+    );
+  }
 
   AITool _tool(
     String name,
@@ -198,7 +284,16 @@ class AssistantToolset {
     return {
       ..._roleSummary(role, presetNames),
       'description': role.description,
-      'persona_prompt': parts.userPrompt,
+      'persona_prompt': role.id == kAicoveAssistantId
+          ? parts.extraPrompt
+          : parts.userPrompt,
+      if (role.id == kAicoveAssistantId) 'system_prompt': parts.userPrompt,
+      if (role.id != kAicoveAssistantId && parts.extraPrompt.isNotEmpty)
+        'extra_prompt': parts.extraPrompt,
+      if (parts.customDrawingPrompt.isNotEmpty)
+        'custom_drawing_prompt': parts.customDrawingPrompt,
+      if (parts.drawingPromptPackId != null)
+        'drawing_prompt_pack_id': parts.drawingPromptPackId,
       if (parts.drawingPresetId != null)
         'drawing_preset_id': parts.drawingPresetId,
       // Not moved into the drawing preset yet (ADR0092); read only.
@@ -228,6 +323,10 @@ class AssistantToolset {
         'has_wallpaper': role.chatBackgroundImage?.trim().isNotEmpty == true,
         'wallpaper_mask': ?role.chatBackgroundMaskOpacity,
         'wallpaper_blur': ?role.chatBackgroundBlurSigma,
+        'image_preview_scale': ?role.imagePreviewScale,
+        'expand_audio_text': ?role.expandAudioText,
+        'hide_user_avatar': ?role.hideUserAvatar,
+        'chunk_enabled': ?role.chunkEnabled,
       },
     };
   }

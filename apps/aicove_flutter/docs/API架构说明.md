@@ -28,10 +28,10 @@
 | `services/chat_request_config.dart` | 请求配置构建器（直连模式回退、模型/Provider 解析） |
 | `services/chat_request_message_builder.dart` | 请求消息构建器：历史消息转请求消息（图片/文件/非视觉回退） |
 | `services/chat_plugin_context_builder.dart` | 插件上下文构建器：筛选插件、拼接插件 prompt、收集工具定义 |
-| `services/api_runner.dart` | `ApiRunner` 接口与内核开关（`AICOVE_AGENT_KERNEL_CHAT`／`_BG`，默认走内核） |
-| `services/chat_send_api_runner_kernel.dart` | 默认执行器：基于 `packages/aicove_agent_kernel` 的 `KernelApiRunner`（ADR0064） |
-| `services/chat_send_api_runner.dart` | 旧执行器（构建期回退路径）：模型请求 + 工具循环 + 流式回退 + 结果汇总 |
-| `services/chat_types.dart` | 公共数据类型（`SendRequest`/`ApiCallResult`/`ApiConfig`/TTS 相关类型） |
+| `services/api_runner.dart` | `ApiRunner` 接口，`createApiRunner()` 固定返回内核执行器（ADR0108 单一执行器） |
+| `services/chat_send_api_runner_kernel.dart` | 唯一执行器：基于 `packages/aicove_agent_kernel` 的 `KernelApiRunner`（ADR0064） |
+| `services/chat_send_api_runner.dart` | 执行器共用的结果汇总与工具支持外壳（已无独立循环，ADR0108） |
+| `services/chat_types.dart` | 公共数据类型（`ApiCallResult`/`ApiConfig`/TTS 相关类型） |
 | `services/chat_message_processor.dart` | 把文本/插件内容切成可展示的 `Message`（含图片/语音等 Block） |
 | `services/chat_message_builder.dart` | 消息构建工具 |
 | `services/chat_tts_handler.dart` | TTS 事件监听、占位语音消息、失败回退到文本 |
@@ -69,11 +69,10 @@
 6. `ChatSendUseCase` 通过 `ChatSendPort.executeApiCall(...)` 发起请求并处理模型故障切换：
    - 当前基础设施实现由 `ChatSendBackendService` 组织参数，底层执行委托给 `ApiRunner.executeApiCall(...)`：默认是内核版 `KernelApiRunner`，关掉开关时回退 `ChatSendApiRunner`
    - 根据 `call_flow_settings` 决定生图路径：
-     - `auto`：只有聊天模型同时具备 `vision + tools` 能力且未禁用工具调用时，才向模型暴露 `draw_image`，走“模型请求 -> 工具执行 -> 再请求模型”的稳定链路，并进入审图/返工闭环
-     - `fast`：不向模型暴露 `draw_image`，改为注入 `<image>英文提示词</image>` 规则，让模型直接用标签触发生图；若仍有其他非生图工具，则继续按常规工具循环处理
+     - `call`（旧值 `auto`、`stable` 读成它）：只有聊天模型同时具备 `vision + tools` 能力且未禁用工具调用时，才向模型暴露 `draw_image`，走“模型请求 -> 工具执行 -> 再请求模型”的稳定链路，并进入审图/返工闭环
+     - `fast`：不向模型暴露 `draw_image`，改为注入 `<image>提示词</image>` 规则，让模型直接用标签触发生图；若仍有其他非生图工具，则继续按常规工具循环处理
    - 模型请求超时与工具超时都来自 `call_flow_settings`
    - `AgentApiClient.sendMessageRich(...)` 发起请求（通过 `ProviderAdapterFactory` 适配不同 provider）
-   - 若模型不支持原生 tool call，`ChatToolFallbackParser` 从回复文本中提取工具调用
    - 插件的回复后处理（v2 `ResponseFunction`）产出 `pluginEvents/pluginContents`
 7. `ChatSendUseCase` 调用 `ChatSendPort.buildAssistantMessages(...)` 把回复转换成可展示消息列表（可能包含语音/表情等）
 8. `ChatActions` + `ChatTtsHandler` 根据流式/非流式场景完成占位提交、TTS 分段交付与最终写入时间线
@@ -104,7 +103,7 @@ Provider 多 Key 配置保存在 `ProviderAuth.customConfig`：
 
 ### 发送重放链路分层（2026-03-19）
 
-- `retry()` 与 `regenerate()/regenerateWithEnhancement()` 的公共发送编排已迁入 `application/chat_send_use_case.dart`
+- `retry()` 与重新生成的公共发送编排已迁入 `application/chat_send_use_case.dart`
 - `ChatActions` 仅保留各自特有的历史准备、状态回写和流式占位交付
 - 增强重生成仍保留 `EnhancedDialogueService` 的上下文拼接与结果提取，但通过 `ChatPreparedTurn.transformApiResult` 挂接到同一套发送骨架
 
@@ -184,7 +183,7 @@ final message = Message.fromBlocks(
 
 ## 插件系统
 
-内置插件在 `features/plugins/` 下按目录分（绘图、语音、主动关怀、时间感知、联网搜索、记忆、表情包、酒馆兼容、MCP 连接器），每个插件经 `*_agent_plugin.dart` 注册到内核 v2 插件宿主。发送时：
+内置插件在 `features/plugins/` 下按目录分（绘图、语音、主动回复、时间感知、联网搜索、记忆、表情包、酒馆兼容、MCP 连接器），每个插件经 `*_agent_plugin.dart` 注册到内核 v2 插件宿主。发送时：
 
 1. 按角色选择收集生效插件（ADR0035；MCP 连接器需角色显式开启，ADR0072）
 2. 插件贡献系统提示词片段、工具定义、请求前提醒

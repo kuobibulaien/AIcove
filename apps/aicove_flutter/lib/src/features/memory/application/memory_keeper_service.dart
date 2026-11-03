@@ -7,6 +7,12 @@ import '../data/background_memory_agent_adapter.dart';
 import '../domain/memory_item.dart';
 import '../domain/memory_ports.dart';
 
+const kMemoryRollingWindow = Duration(hours: 24);
+const kMemoryContinuityGap = Duration(minutes: 10);
+const kMemoryRoundSplitThreshold = 20;
+const kMemoryRoundGap = Duration(hours: 1);
+const kMemoryCheckThrottle = Duration(minutes: 10);
+
 /// 重建前给用户看的估算。
 class MemoryRebuildEstimate {
   const MemoryRebuildEstimate({
@@ -34,7 +40,8 @@ class MemoryKeeperService implements MemoryMaintenancePort {
   final Future<bool> Function(String ownerId) allowed;
 
   final _running = <String, Future<void>>{};
-  final _resumeChecked = <String>{};
+  final _needsRerun = <String>{};
+  final _lastCheckedAt = <String, DateTime>{};
   final _changes = StreamController<String>.broadcast();
 
   /// 某个角色的记忆或进度变化时发出其 id，供界面刷新。
@@ -43,17 +50,24 @@ class MemoryKeeperService implements MemoryMaintenancePort {
 
   @override
   void schedule(String ownerId) {
-    if (_running.containsKey(ownerId)) return;
+    if (_running.containsKey(ownerId)) {
+      _needsRerun.add(ownerId);
+      return;
+    }
     _running[ownerId] = _run(ownerId).whenComplete(() {
       _running.remove(ownerId);
       _changes.add(ownerId);
+      if (_needsRerun.remove(ownerId)) schedule(ownerId);
     });
   }
 
-  /// 续跑上次中途退出留下的整理。每个角色每次启动只检查一次，
-  /// 避免每轮发送都读取全部原文；平时的整理由压缩触发。
-  void resumeOnce(String ownerId) {
-    if (_resumeChecked.add(ownerId)) schedule(ownerId);
+  /// 按时间节流检查上次中途退出留下的整理。
+  void resumeOnce(String ownerId, {DateTime? now}) {
+    final current = now ?? DateTime.now();
+    final last = _lastCheckedAt[ownerId];
+    if (last != null && current.difference(last) < kMemoryCheckThrottle) return;
+    _lastCheckedAt[ownerId] = current;
+    schedule(ownerId);
   }
 
   /// 等待当前任务结束（测试与界面暂停时使用）。
@@ -80,7 +94,12 @@ class MemoryKeeperService implements MemoryMaintenancePort {
   }) async {
     final messages = eligible(await loadMessages(ownerId));
     final budget = batchTokenBudget ?? (await agentFactory()).batchTokenBudget;
-    final batches = _batches(messages, budget);
+    final batches = buildBatches(
+      messages,
+      startIndex: 0,
+      targetIndex: messages.length - 1,
+      budget: budget,
+    );
     return MemoryRebuildEstimate(
       messages: messages.length,
       inputTokens: messages.fold(
@@ -121,11 +140,24 @@ class MemoryKeeperService implements MemoryMaintenancePort {
     final state = progress ?? await store.progress(ownerId);
     final raw = await loadMessages(ownerId);
     final all = eligible(raw);
+    final start = state.pendingStart(all);
+    if (start >= all.length) return const [];
+    final target = await _targetIndex(ownerId, raw, all, state, start);
+    if (target < start) return const [];
+    return all.sublist(start, target + 1);
+  }
+
+  Future<int> _targetIndex(
+    String ownerId,
+    List<Message> raw,
+    List<Message> all,
+    MemoryProgress state,
+    int start,
+  ) async {
     final targets = {
       ...await compactedBoundaries(ownerId),
       if (state.rebuildUntilId != null) state.rebuildUntilId!,
     };
-    // 摘要边界可能是工具或失败消息，按完整原文定位后映射回可整理的消息。
     var targetTime = -1;
     for (final message in raw) {
       if (targets.contains(message.id)) {
@@ -133,13 +165,76 @@ class MemoryKeeperService implements MemoryMaintenancePort {
         if (time > targetTime) targetTime = time;
       }
     }
-    if (targetTime < 0) return const [];
-    final start = state.pendingStart(all);
-    final targetIndex = all.lastIndexWhere(
-      (m) => m.createdAt.millisecondsSinceEpoch <= targetTime,
-    );
-    if (targetIndex < start) return const [];
-    return all.sublist(start, targetIndex + 1);
+    final boundary = targetTime < 0
+        ? -1
+        : all.lastIndexWhere(
+            (m) => m.createdAt.millisecondsSinceEpoch <= targetTime,
+          );
+    final rolling = rollingTargetIndex(all, startIndex: start);
+    return boundary > rolling ? boundary : rolling;
+  }
+
+  static int rollingTargetIndex(List<Message> all, {int startIndex = 0}) {
+    if (all.isEmpty || startIndex >= all.length) return -1;
+    final cutoff = all.last.createdAt.subtract(kMemoryRollingWindow);
+    var index = all.lastIndexWhere((m) => m.createdAt.isBefore(cutoff));
+    if (index < startIndex) return -1;
+    while (index + 1 < all.length &&
+        all[index + 1].createdAt.difference(all[index].createdAt) <=
+            kMemoryContinuityGap) {
+      index++;
+    }
+    return index;
+  }
+
+  static List<List<Message>> splitRounds(List<Message> all) {
+    final days = <DateTime, List<Message>>{};
+    for (final message in all) {
+      final local = message.createdAt.toLocal();
+      (days[DateTime(local.year, local.month, local.day)] ??= []).add(message);
+    }
+    final rounds = <List<Message>>[];
+    for (final day in days.values) {
+      if (day.where((m) => m.role == 'user').length <=
+          kMemoryRoundSplitThreshold) {
+        rounds.add(day);
+        continue;
+      }
+      var round = <Message>[];
+      for (var i = 0; i < day.length; i++) {
+        if (i > 0 &&
+            day[i].createdAt.difference(day[i - 1].createdAt) >
+                kMemoryRoundGap) {
+          rounds.add(round);
+          round = [];
+        }
+        round.add(day[i]);
+      }
+      rounds.add(round);
+    }
+    return rounds;
+  }
+
+  static List<List<Message>> buildBatches(
+    List<Message> all, {
+    required int startIndex,
+    required int targetIndex,
+    required int budget,
+  }) {
+    if (all.isEmpty || targetIndex < startIndex) return const [];
+    final batches = <List<Message>>[];
+    var offset = 0;
+    for (final round in splitRounds(all)) {
+      final from = startIndex > offset ? startIndex - offset : 0;
+      final end = targetIndex + 1 < offset + round.length
+          ? targetIndex + 1 - offset
+          : round.length;
+      if (from < end && from < round.length && end > 0) {
+        batches.addAll(_batches(round.sublist(from, end), budget));
+      }
+      offset += round.length;
+    }
+    return batches;
   }
 
   Future<void> _run(String ownerId) async {
@@ -147,8 +242,13 @@ class MemoryKeeperService implements MemoryMaintenancePort {
     while (true) {
       final progress = await store.progress(ownerId);
       if (progress.paused || !await allowed(ownerId)) return;
-      final pending = await pendingMessages(ownerId, progress: progress);
-      if (pending.isEmpty) {
+      final raw = await loadMessages(ownerId);
+      final all = eligible(raw);
+      final start = progress.pendingStart(all);
+      final target = start >= all.length
+          ? -1
+          : await _targetIndex(ownerId, raw, all, progress, start);
+      if (target < start) {
         if (progress.rebuildUntilId != null) {
           await store.clearRebuildTarget(ownerId, progress.generation);
         }
@@ -156,7 +256,12 @@ class MemoryKeeperService implements MemoryMaintenancePort {
       }
       try {
         agent ??= await agentFactory();
-        final batch = _batches(pending, agent.batchTokenBudget).first;
+        final batch = buildBatches(
+          all,
+          startIndex: start,
+          targetIndex: target,
+          budget: agent.batchTokenBudget,
+        ).first;
         final core = await store.list(ownerId, layer: MemoryLayer.core);
         final related = await store.searchKeyword(
           ownerId,
@@ -166,7 +271,9 @@ class MemoryKeeperService implements MemoryMaintenancePort {
         final ops = await agent.propose(
           ownerId: ownerId,
           core: core,
-          related: related.where((i) => i.layer == MemoryLayer.archive).toList(),
+          related: related
+              .where((i) => i.layer == MemoryLayer.archive)
+              .toList(),
           messages: batch,
         );
         if (!await allowed(ownerId)) return;

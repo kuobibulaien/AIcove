@@ -15,7 +15,7 @@ from cryptography.fernet import Fernet
 class ProductionProcessTest(unittest.TestCase):
     def test_cli_generates_private_config_and_creates_account_without_printing_keys(self):
         with tempfile.TemporaryDirectory() as directory:
-            environment = dict(os.environ, PYTHONPATH=str(Path.cwd()))
+            environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
             for key in ('DATABASE_URL', 'SECRET_KEY', 'SYNC_V3_ENCRYPTION_KEY', 'SYNC_V3_BLOB_DIR'):
                 environment.pop(key, None)
             command = [sys.executable, '-m', 'sync_v3']

@@ -3,6 +3,8 @@
 > 状态：2026-10-21 第二版（并入 Codex 第一轮审查）。决策见 [ADR0098](../../../../docs/项目记忆/决策记录/0098-工作区按Pi对齐为完整harness工具层.md)。分支 `feat/workspace-harness`。
 > **2026-10-22**：H1～H3 已实现，10-22 合入 main（b825f3e0c），离线全量与 DeepSeek 真实读图通过，手机实机未验。
 
+> **2026-10-30**：`workspace_list`／`glob`／`grep` 合并为直出 `workspace_search`，原子工具收进 `codemode`。
+> **2026-10-28**：子进程环境改为按子进程传入，不再改宿主环境；本机目录中途失效时写操作报 `directory_unavailable`，只读工具带提示；`workspace_open` 本机目录返回祖先链规则和可用技能。
 > **2026-10-22 后续修订**：旧 workspace_run_js／workspace_shell 的名称、参数、期限和脚本审批限制由 [ADR0108](../../../../docs/项目记忆/决策记录/0108-Agent执行层与工具层按Pi收敛.md) 与《code-mode照抄Pi实施方案》取代。下文保留 H1～H3 实施时的历史描述；当前入口为 read／write／edit／bash／codemode，文件路径相对 cwd。
 
 缩写：`L/`＝`apps/aicove_flutter/lib/src/`，`K/`＝`apps/aicove_flutter/packages/aicove_agent_kernel/`，`Q/`＝`apps/aicove_flutter/packages/aicove_quickjs/`。

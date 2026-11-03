@@ -13,6 +13,73 @@ import 'package:aicove_flutter/src/ui/theme/moe_glass_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('visible default chat models', () {
+    Map<String, dynamic> provider(String id, List<String> models,
+        List<String> visible, {bool enabled = true, String? displayName}) => {
+          'id': id,
+          'displayName': displayName,
+          'enabled': enabled,
+          'models': models,
+          'visible_models': visible,
+          'hidden_models': models.where((model) => !visible.contains(model)).toList(),
+          'capabilities': <String>['chat'],
+        };
+
+    Future<dynamic> load(List<Map<String, dynamic>> providers,
+        List<String> defaults, {List<String> legacyVisible = const []}) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'aicove.ui_models.v1': jsonEncode({
+          'providers': providers,
+          'default_chat_models': defaults,
+          'visible_models': legacyVisible,
+        }),
+      });
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      return container.read(appSettingsProvider.future);
+    }
+
+    test('hidden models stay out of visible models and default queue', () async {
+      final partial = await load([
+        provider('a', ['gpt-4o', 'other'], ['other']),
+      ], ['a:gpt-4o', 'a:other']);
+      expect(partial.modelList, ['a:other']);
+      expect(partial.defaultChatModels, ['a:other']);
+      expect(partial.allKnownModels, ['a:gpt-4o', 'a:other']);
+
+      final hidden = await load([
+        provider('a', ['gpt-4o', 'other'], []),
+      ], ['a:gpt-4o', 'a:other'], legacyVisible: ['gpt-4o']);
+      expect(hidden.modelList, isEmpty);
+      expect(hidden.defaultChatModels, isEmpty);
+      expect(hidden.allKnownModels, ['a:gpt-4o', 'a:other']);
+      expect(hidden.defaultModelName, isNot(anyOf('a:gpt-4o', 'a:other')));
+    });
+
+    test('provider display name falls back to normalized provider ID', () async {
+      final settings = await load([
+        provider('a', ['other'], ['other'], displayName: '  Named  '),
+        provider('b', ['other'], ['other'], displayName: '  '),
+        provider('c', ['other'], ['other']),
+      ], ['a:other']);
+      expect(settings.getProviderDisplayName(' a '), 'Named');
+      expect(settings.getProviderDisplayName(' b '), 'b');
+      expect(settings.getProviderDisplayName('c'), 'c');
+      expect(settings.getProviderDisplayName(' unknown '), 'unknown');
+      expect(settings.getProviderDisplayName('  '), '');
+    });
+
+    test('disabled provider model is not remapped to another provider', () async {
+      final settings = await load([
+        provider('a', ['gpt-4o'], ['gpt-4o'], enabled: false),
+        provider('b', ['gpt-4o'], ['gpt-4o']),
+        provider('c', ['other'], ['other']),
+      ], ['a:gpt-4o', 'c:other']);
+      expect(settings.defaultChatModels, ['c:other']);
+      expect(settings.modelList, ['b:gpt-4o', 'c:other']);
+    });
+  });
+
   test('message format strategy changed should persist as pure UI config',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});

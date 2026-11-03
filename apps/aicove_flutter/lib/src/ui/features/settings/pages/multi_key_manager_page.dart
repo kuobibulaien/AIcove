@@ -369,8 +369,6 @@ class _MultiKeyManagerPageState extends ConsumerState<MultiKeyManagerPage> {
       context: context,
       title: '编辑 Key',
       showCloseButton: true,
-      isDismissible: false,
-      enableDrag: false,
       builder: (context) => MoeAutoSaveForm(
         disposeFields: true,
         fields: [key, alias],

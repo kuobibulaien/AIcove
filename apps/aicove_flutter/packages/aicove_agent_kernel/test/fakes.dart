@@ -12,6 +12,9 @@ class FakePreparer implements RoundPreparer {
   /// Runs inside a recovery prepare, before it returns.
   void Function()? onRecovery;
 
+  /// Runs inside every prepare, before it returns.
+  void Function()? onPrepare;
+
   @override
   Future<PreparedRound> prepare(
     List<KernelMessage> running,
@@ -19,6 +22,7 @@ class FakePreparer implements RoundPreparer {
     TurnContext ctx,
   ) async {
     modes.add(mode);
+    onPrepare?.call();
     if (mode == PrepareMode.recovery) onRecovery?.call();
     return PreparedRound(running: running, request: List.of(running));
   }

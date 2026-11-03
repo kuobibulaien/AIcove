@@ -54,6 +54,7 @@ class _DialogueOptionsBadgeState extends ConsumerState<DialogueOptionsBadge> {
     if (box is! RenderBox || !box.attached) return;
     _open = true;
     try {
+      FocusManager.instance.primaryFocus?.unfocus();
       await MoePopupMenu.show(
         context,
         targetBox: box,

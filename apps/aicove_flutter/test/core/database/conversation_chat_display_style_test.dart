@@ -67,4 +67,70 @@ void main() {
     expect(doc.copyWith(title: 'x').chatDisplayStyle, ChatDisplayStyle.document);
     expect(doc.copyWith(chatDisplayStyle: null).chatDisplayStyle, isNull);
   });
+
+  test('v25 database upgrades to v26 with empty per-chat view preferences',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    // SQLite cannot drop a column with a CHECK, so stand in a v25-shaped
+    // table without the three columns.
+    await db.customStatement('DROP TABLE conversations');
+    await db.customStatement(
+      'CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT)',
+    );
+    await db.customStatement(
+      "INSERT INTO conversations (id, title) VALUES ('c1', 't')",
+    );
+
+    await db.migration.onUpgrade(Migrator(db), 25, 26);
+
+    final row = await db
+        .customSelect(
+          'SELECT image_preview_scale, expand_audio_text, hide_user_avatar, '
+          'chunk_enabled, filter_punctuation, chunk_punctuation_set_id '
+          "FROM conversations WHERE id='c1'",
+        )
+        .getSingle();
+    expect(row.read<double?>('image_preview_scale'), isNull);
+    expect(row.read<int?>('expand_audio_text'), isNull);
+    expect(row.read<int?>('hide_user_avatar'), isNull);
+    expect(row.read<int?>('chunk_enabled'), isNull);
+    expect(row.read<int?>('filter_punctuation'), isNull);
+    expect(row.read<String?>('chunk_punctuation_set_id'), isNull);
+    await db.customStatement(
+      "UPDATE conversations SET hide_user_avatar = 0 WHERE id='c1'",
+    );
+    await db.close();
+  });
+
+  test('converter round-trips per-chat view preferences', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final now = DateTime.fromMillisecondsSinceEpoch(1000);
+    await db.into(db.conversations).insert(ConversationConverter.toCompanion(
+          domain.Conversation(
+            id: 'c1',
+            title: 't',
+            displayName: 'd',
+            createdAt: now,
+            updatedAt: now,
+            imagePreviewScale: 1.25,
+            expandAudioText: false,
+            hideUserAvatar: false,
+            chunkEnabled: false,
+            filterPunctuation: true,
+            chunkPunctuationSetId: 'set_a',
+          ),
+        ));
+    final stored = await (db.select(db.conversations)
+          ..where((t) => t.id.equals('c1')))
+        .getSingle();
+    final conv = ConversationConverter.fromDb(stored);
+    expect(conv.imagePreviewScale, 1.25);
+    expect(conv.expandAudioText, isFalse);
+    expect(conv.hideUserAvatar, isFalse);
+    expect(conv.chunkEnabled, isFalse);
+    expect(conv.filterPunctuation, isTrue);
+    expect(conv.chunkPunctuationSetId, 'set_a');
+    expect(conv.copyWith(hideUserAvatar: null).hideUserAvatar, isNull);
+    await db.close();
+  });
 }

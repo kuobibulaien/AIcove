@@ -37,7 +37,7 @@ abstract interface class MemoryStorePort {
   /// 重建目标已处理完时清除它。
   Future<void> clearRebuildTarget(String ownerId, int generation);
 
-  /// 清空聊天时调用：删除未锁定条目与进度，用户锁定的条目保留。
+  /// 清空聊天时调用：删除未锁定条目、重置提取进度并递增代次，用户锁定的条目保留。
   Future<void> clearDerived(String ownerId);
 
   /// 关键词检索档案层；[query] 为原始文本，分词在实现内完成。

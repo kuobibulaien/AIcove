@@ -8,7 +8,9 @@ import '../../agent_context/domain/agent_runtime_contracts.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../background_agent/domain/background_agent_definition.dart';
 import '../../chat/domain/message.dart';
+import '../../chat/services/chat_request_message_builder.dart';
 import '../domain/context_summary.dart';
+import '../domain/compaction_files.dart';
 import '../domain/context_window_policy.dart';
 
 const topicSummaryAgent = AgentDefinition(
@@ -22,7 +24,6 @@ const topicSummaryAgent = AgentDefinition(
       AgentContextLayer.conversationWindow,
       AgentContextLayer.outputContract,
     ],
-    assemblyPermissions: {AgentContextAssemblyPermission.conversationWindow},
   ),
   outputContract: AgentOutputContract(channels: {AgentOutputChannel.json}),
   deliveryChannel: AgentDeliveryChannelKind.backgroundTraceOnly,
@@ -75,6 +76,7 @@ class BackgroundContextSummarizer implements ContextSummarizerPort {
     this.requestTimeout = const Duration(seconds: 120),
     this.isCompanion = neverCompanion,
   });
+
   /// Callers that do not know the role mode keep the task template.
   static Future<bool> neverCompanion(String ownerId) async => false;
 
@@ -147,7 +149,9 @@ summary各字段都是字符串数组，依次是关系与情绪、当前场景�
     int budget,
   ) {
     if (budget < 256) {
-      throw const ContextCompactionException('模型可用上下文不足以整理历史，请检查模型上下文配置；原话题未改变。');
+      throw const ContextCompactionException(
+        '模型可用上下文不足以整理历史，请检查模型上下文配置；原话题未改变。',
+      );
     }
     final pending = ListQueue<Map<String, Object>>.of(fragments);
     final batches = <List<Map<String, Object>>>[];
@@ -231,18 +235,22 @@ summary各字段都是字符串数组，依次是关系与情绪、当前场景�
       }
       lines.addAll(facts.cast<String>().map((f) => '- ${f.trim()}'));
     } else {
-      final sections = value['summary'];
-      if (sections is! Map ||
-          sections.length != headings.length ||
-          !headings.keys.every(sections.containsKey)) {
+      final sections = value['summary'] is Map
+          ? value['summary'] as Map
+          : (value.keys.every(headings.containsKey) ? value : null);
+      if (sections == null ||
+          sections.isEmpty ||
+          !sections.keys.every(headings.containsKey)) {
         throw const ContextCompactionException('总结模型返回的摘要结构不正确。');
       }
       for (final entry in headings.entries) {
-        final items = sections[entry.key];
-        if (items is! List ||
-            items.any((i) => i is! String || i.trim().isEmpty)) {
+        final rawItems = sections[entry.key];
+        if (rawItems == null) continue;
+        if (rawItems is! List ||
+            rawItems.any((i) => i is! String || i.trim().isEmpty)) {
           throw const ContextCompactionException('摘要栏目须为文字列表。');
         }
+        final items = rawItems.cast<String>().map((i) => i.trim()).toList();
         if (items.isNotEmpty) {
           lines.add(
             '## ${entry.value}\n${items.map((i) => '- $i').join('\n')}',
@@ -348,15 +356,18 @@ summary各字段都是字符串数组，依次是关系与情绪、当前场景�
   }
 
   static String _sourceText(Message message, ContextSummaryKind kind) {
+    String clean(String text) => message.role == 'assistant'
+        ? ChatRequestMessageBuilder.stripAssistantDraftTags(text)
+        : text;
     if (kind == ContextSummaryKind.manual) {
-      return message.content.isEmpty ? '[非文本消息，内容未识别]' : message.content;
+      return message.content.isEmpty ? '[非文本消息，内容未识别]' : clean(message.content);
     }
     final blocks = message.blocks;
-    if (blocks == null || blocks.isEmpty) return message.content;
+    if (blocks == null || blocks.isEmpty) return clean(message.content);
     return blocks
         .where((b) => b is! ThinkingBlock)
         .map((block) {
-          if (block is TextBlock) return block.content;
+          if (block is TextBlock) return clean(block.content);
           if (block is ToolBlock) {
             return jsonEncode({
               'tool': block.toolName,
@@ -392,7 +403,15 @@ summary各字段都是字符串数组，依次是关系与情绪、当前场景�
         '整理模型的上下文至少需要 8192 tokens，请调整模型配置后重试。',
       );
     }
-    var summary = snapshot.previous?.summary ?? '';
+    final preserveFiles =
+        kind == ContextSummaryKind.auto && !_companion(definition);
+    final previousFiles = preserveFiles
+        ? CompactionFiles.strip(snapshot.previous?.summary ?? '')
+        : null;
+    final files = preserveFiles
+        ? collectMessageFiles(snapshot.messages, previous: previousFiles)
+        : null;
+    var summary = previousFiles?.text ?? snapshot.previous?.summary ?? '';
     var budget = _rawBudget(summary, definition);
     var chunks = _pack(
       snapshot.messages.map(
@@ -515,6 +534,7 @@ summary各字段都是字符串数组，依次是关系与情绪、当前场景�
       onProgress(i, chunks.length);
     }
     checkCancelled();
+    if (files != null) summary = files.appendTo(summary);
     validateContextSummary(summary);
     return summary;
   }

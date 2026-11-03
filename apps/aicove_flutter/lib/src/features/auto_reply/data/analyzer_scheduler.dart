@@ -11,12 +11,12 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/api/agent_api.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/database/database_provider.dart';
+import '../../../core/sync/cloud_local_write.dart';
 import '../../chat/conversation_providers.dart';
 import '../../chat/domain/conversation.dart';
 import '../../chat/services/chat_history_store.dart';
-import '../../settings/app_settings.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_controller.dart';
 import 'auto_reply_trigger_storage.dart';
@@ -24,6 +24,7 @@ import 'context_analyzer.dart';
 import 'conversation_proactive_state.dart';
 import 'conversation_proactive_state_storage.dart';
 import 'proactive_message_pregenerator.dart';
+import '../domain/proactive_action.dart' show ProactiveDraft;
 import 'proactive_owner_device.dart';
 
 class AnalyzerScheduler {
@@ -42,6 +43,7 @@ class AnalyzerScheduler {
   final Map<String, Timer> _analysisTimers = <String, Timer>{};
   final Map<String, Timer> _silentTimers = <String, Timer>{};
   final Set<String> _runningAnalysisConversationIds = <String>{};
+  final Map<String, int> _analysisGenerations = {};
   final AutoReplyTriggerStorage _historyStorage = AutoReplyTriggerStorage();
   Timer? _backgroundAnalysisTimer;
   DateTime? _lastBackgroundAnalysisAt;
@@ -91,7 +93,43 @@ class AnalyzerScheduler {
     _states
       ..clear()
       ..addAll(loaded);
-    _restoreTimers();
+    await _restoreTimers();
+  }
+
+  Future<void> onConversationCleared(String conversationId) async {
+    _analysisGenerations[conversationId] =
+        (_analysisGenerations[conversationId] ?? 0) + 1;
+    _cancelTimers(conversationId);
+    await _initFuture;
+    await cloudLocalWrite(() async {
+      _cancelTimers(conversationId);
+      await _setState(
+        ConversationProactiveState(conversationId: conversationId),
+      );
+      await _ref.read(autoReplyTriggersProvider.future);
+      await _ref
+          .read(autoReplyTriggersProvider.notifier)
+          .removeTriggersForConversation(
+            conversationId,
+            onlyAutoScheduled: true,
+          );
+    });
+  }
+
+  Future<void> onConversationDeleted(String conversationId) async {
+    _analysisGenerations[conversationId] =
+        (_analysisGenerations[conversationId] ?? 0) + 1;
+    _cancelTimers(conversationId);
+    await _initFuture;
+    await cloudLocalWrite(() async {
+      _cancelTimers(conversationId);
+      _states.remove(conversationId);
+      await _storage.saveStates(_states);
+      await _ref.read(autoReplyTriggersProvider.future);
+      await _ref
+          .read(autoReplyTriggersProvider.notifier)
+          .removeTriggersForConversation(conversationId);
+    });
   }
 
   Future<void> handleUserMessageActivity({
@@ -103,8 +141,9 @@ class AnalyzerScheduler {
     if (normalizedConversationId.isEmpty) return;
 
     await _initFuture;
-    final conversation =
-        _ref.read(resolvedConversationByIdProvider(normalizedConversationId));
+    final conversation = _ref.read(
+      resolvedConversationByIdProvider(normalizedConversationId),
+    );
     if (conversation != null &&
         !_isSupervisorEnabledForConversation(conversation)) {
       await _clearConversationAutoTriggers(
@@ -115,7 +154,7 @@ class AnalyzerScheduler {
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.wakeup,
         event: 'skip_by_trigger_plugin_disabled',
-        message: '跳过主动关怀观察：当前联系人已关闭主动关怀插件',
+        message: '跳过主动回复观察：当前联系人已关闭主动回复插件',
         conversationId: normalizedConversationId,
         level: AutoReplyTriggerLogLevel.warning,
       );
@@ -124,14 +163,13 @@ class AnalyzerScheduler {
     await ProactiveOwnership.claim(normalizedConversationId);
     await _clearConversationAutoTriggers(
       normalizedConversationId,
-      reason: 'cleared_by_new_user_message',
+      reason: 'user_new_message',
     );
     _cancelTimers(normalizedConversationId);
 
-    final current = _states[normalizedConversationId] ??
-        ConversationProactiveState(
-          conversationId: normalizedConversationId,
-        );
+    final current =
+        _states[normalizedConversationId] ??
+        ConversationProactiveState(conversationId: normalizedConversationId);
     final next = current.markUserMessage(
       messageId: messageId,
       occurredAt: occurredAt,
@@ -162,7 +200,8 @@ class AnalyzerScheduler {
     if (conversationId.isEmpty) return;
     _silentTimers.remove(conversationId)?.cancel();
 
-    final current = _states[conversationId] ??
+    final current =
+        _states[conversationId] ??
         ConversationProactiveState(conversationId: conversationId);
     final next = current.copyWith(
       mode: ConversationProactiveMode.active,
@@ -185,8 +224,9 @@ class AnalyzerScheduler {
     await _initFuture;
     final current = _states[normalizedConversationId];
     if (current == null) return;
-    final next =
-        current.clearPendingAutoTrigger(triggerId: normalizedTriggerId);
+    final next = current.clearPendingAutoTrigger(
+      triggerId: normalizedTriggerId,
+    );
     await _setState(next);
   }
 
@@ -202,9 +242,38 @@ class AnalyzerScheduler {
     final conversationId = trigger.conversationId.trim();
     if (conversationId.isEmpty) return;
 
+    final latestUser = await _ref
+        .read(chatHistoryStoreProvider)
+        .getLastUserMessage(conversationId);
+    final stateBeforeCompletion = _states[conversationId];
+    final userReplied =
+        latestUser != null &&
+        latestUser.id != trigger.contextLastUserMessageId &&
+        (trigger.contextLastUserMessageAt == null
+            ? latestUser.createdAt.isAfter(trigger.createdAt)
+            : !latestUser.createdAt.isBefore(
+                trigger.contextLastUserMessageAt!,
+              ));
+    final activityReplied =
+        stateBeforeCompletion?.lastUserAt != null &&
+        stateBeforeCompletion!.lastUserMessageId !=
+            trigger.contextLastUserMessageId &&
+        stateBeforeCompletion.lastUserAt!.isAfter(trigger.createdAt);
+    if (userReplied || activityReplied) {
+      // Keep a new observation timer and its active state; the old send no
+      // longer counts as an unanswered attempt after the user's response.
+      if (stateBeforeCompletion != null) {
+        await _setState(
+          stateBeforeCompletion.clearPendingAutoTrigger(triggerId: trigger.id),
+        );
+      }
+      return;
+    }
+
     if (!success) {
       if (retryable) {
-        final current = _states[conversationId] ??
+        final current =
+            _states[conversationId] ??
             ConversationProactiveState(conversationId: conversationId);
         await _setState(current.withPendingAutoTrigger(trigger.id));
         return;
@@ -217,8 +286,24 @@ class AnalyzerScheduler {
     }
 
     _cancelTimers(conversationId);
-    final current = _states[conversationId] ??
+    final current =
+        _states[conversationId] ??
         ConversationProactiveState(conversationId: conversationId);
+    final remaining = await _findActiveAiTriggerForConversation(
+      conversationId,
+      excludeTriggerId: trigger.id,
+    );
+    if (remaining != null) {
+      final next = current.copyWith(
+        mode: ConversationProactiveMode.active,
+        silenceUntil: null,
+        unrepliedCount: current.unrepliedCount + 1,
+        lastProactiveAt: occurredAt,
+        pendingAutoTriggerId: remaining.id,
+      );
+      await _setState(next);
+      return;
+    }
     final next = current
         .clearPendingAutoTrigger(triggerId: trigger.id)
         .afterSuccessfulAutoTriggerSend(occurredAt: occurredAt);
@@ -226,21 +311,46 @@ class AnalyzerScheduler {
     _scheduleForState(next);
   }
 
+  Future<void> syncConversationActivation(Conversation conversation) async {
+    await _initFuture;
+    if (!_isSupervisorEnabledForConversation(conversation)) {
+      _analysisGenerations[conversation.id] =
+          (_analysisGenerations[conversation.id] ?? 0) + 1;
+      _cancelTimers(conversation.id);
+      await _clearConversationAutoTriggers(
+        conversation.id,
+        reason: 'disabled_by_conversation_plugin',
+      );
+      final current = _states[conversation.id];
+      if (current != null) {
+        await _setState(current.withPendingAutoTrigger(null));
+      }
+      return;
+    }
+    final current = _states[conversation.id];
+    if (current != null) {
+      _scheduleForState(await _reconcilePendingTrigger(current));
+    }
+  }
+
   void scheduleAnalysis({
     String? conversationId,
     Duration delay = _defaultDelay,
     String reason = '5分钟无新消息',
   }) {
-    final resolvedConversationId = conversationId?.trim() ??
+    final resolvedConversationId =
+        conversationId?.trim() ??
         _ref.read(activeConversationIdProvider)?.trim();
     if (resolvedConversationId == null || resolvedConversationId.isEmpty) {
       return;
     }
-    unawaited(_scheduleAnalysisInternal(
-      conversationId: resolvedConversationId,
-      delay: delay,
-      reason: reason,
-    ));
+    unawaited(
+      _scheduleAnalysisInternal(
+        conversationId: resolvedConversationId,
+        delay: delay,
+        reason: reason,
+      ),
+    );
   }
 
   Future<void> _scheduleAnalysisInternal({
@@ -258,22 +368,20 @@ class AnalyzerScheduler {
 
   void onAppBackground() {
     final now = DateTime.now();
-    _log(
-      'analyzer:background_keep_schedule',
-      {
-        'analysisTimers': _analysisTimers.length,
-        'silentTimers': _silentTimers.length,
-      },
-      level: 'DEBUG',
-    );
+    _log('analyzer:background_keep_schedule', {
+      'analysisTimers': _analysisTimers.length,
+      'silentTimers': _silentTimers.length,
+    }, level: 'DEBUG');
 
     _scheduleBackgroundAnalysis(now);
-    unawaited(_syncHeartbeat(now));
   }
 
   Future<void> onAppResumed() async {
     _backgroundAnalysisTimer?.cancel();
     _backgroundAnalysisTimer = null;
+    await _initFuture;
+    await _ref.read(autoReplyTriggersProvider.future);
+    await _ref.read(autoReplyTriggersProvider.notifier).reloadFromStorage();
     await refreshFromStorage();
   }
 
@@ -293,10 +401,9 @@ class AnalyzerScheduler {
     _backgroundAnalysisTimer = Timer(_backgroundAnalysisDelay, () {
       _backgroundAnalysisTimer = null;
       _lastBackgroundAnalysisAt = DateTime.now();
-      unawaited(_runAnalysis(
-        conversationId: conversationId,
-        reason: 'app_background',
-      ));
+      unawaited(
+        _runAnalysis(conversationId: conversationId, reason: 'app_background'),
+      );
     });
 
     unawaited(
@@ -305,9 +412,7 @@ class AnalyzerScheduler {
         event: 'background_analysis_scheduled',
         message: '已安排后台主动回复分析',
         conversationId: conversationId,
-        metadata: {
-          'delayMs': _backgroundAnalysisDelay.inMilliseconds,
-        },
+        metadata: {'delayMs': _backgroundAnalysisDelay.inMilliseconds},
       ),
     );
   }
@@ -326,18 +431,12 @@ class AnalyzerScheduler {
         event: 'analysis_skipped_in_flight',
         message: '跳过分析：当前会话已有主动回复分析正在运行',
         conversationId: normalizedConversationId,
-        metadata: {
-          'reason': reason,
-        },
+        metadata: {'reason': reason},
       );
-      _log(
-        'analyzer:skip_in_flight',
-        {
-          'conversationId': normalizedConversationId,
-          'reason': reason,
-        },
-        level: 'DEBUG',
-      );
+      _log('analyzer:skip_in_flight', {
+        'conversationId': normalizedConversationId,
+        'reason': reason,
+      }, level: 'DEBUG');
       return;
     }
 
@@ -356,9 +455,12 @@ class AnalyzerScheduler {
     required String reason,
   }) async {
     await _initFuture;
+    final gen = _analysisGenerations[conversationId] ?? 0;
 
-    final state = _states[conversationId] ??
-        ConversationProactiveState(conversationId: conversationId);
+    final state = await _reconcilePendingTrigger(
+      _states[conversationId] ??
+          ConversationProactiveState(conversationId: conversationId),
+    );
     if (state.mode == ConversationProactiveMode.dormant) {
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.analyzer,
@@ -366,14 +468,15 @@ class AnalyzerScheduler {
         message: '跳过分析：当前会话处于 dormant',
         conversationId: conversationId,
       );
-      _log('analyzer:skip_dormant', {'conversationId': conversationId},
-          level: 'DEBUG');
+      _log('analyzer:skip_dormant', {
+        'conversationId': conversationId,
+      }, level: 'DEBUG');
       return;
     }
     if (!await _ownsConversation(conversationId)) return;
-    final conversation = _ref.read(resolvedConversationByIdProvider(
-      conversationId,
-    ));
+    final conversation = _ref.read(
+      resolvedConversationByIdProvider(conversationId),
+    );
     if (conversation == null) {
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.analyzer,
@@ -382,9 +485,9 @@ class AnalyzerScheduler {
         conversationId: conversationId,
         level: AutoReplyTriggerLogLevel.warning,
       );
-      _log('analyzer:skip_missing_conversation',
-          {'conversationId': conversationId},
-          level: 'WARN');
+      _log('analyzer:skip_missing_conversation', {
+        'conversationId': conversationId,
+      }, level: 'WARN');
       return;
     }
     if (!_isSupervisorEnabledForConversation(conversation)) {
@@ -396,15 +499,13 @@ class AnalyzerScheduler {
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.analyzer,
         event: 'analysis_skipped_trigger_plugin_disabled',
-        message: '跳过分析：当前联系人已关闭主动关怀插件',
+        message: '跳过分析：当前联系人已关闭主动回复插件',
         conversationId: conversationId,
         level: AutoReplyTriggerLogLevel.warning,
       );
-      _log(
-        'analyzer:skip_trigger_plugin_disabled',
-        {'conversationId': conversationId},
-        level: 'WARN',
-      );
+      _log('analyzer:skip_trigger_plugin_disabled', {
+        'conversationId': conversationId,
+      }, level: 'WARN');
       return;
     }
     if (state.hasPendingAutoTrigger) {
@@ -414,8 +515,9 @@ class AnalyzerScheduler {
         message: '跳过分析：当前已有待发送的自动触发器',
         conversationId: conversationId,
       );
-      _log('analyzer:skip_pending_trigger', {'conversationId': conversationId},
-          level: 'DEBUG');
+      _log('analyzer:skip_pending_trigger', {
+        'conversationId': conversationId,
+      }, level: 'DEBUG');
       return;
     }
     if (state.mode == ConversationProactiveMode.silent &&
@@ -430,12 +532,15 @@ class AnalyzerScheduler {
         event: 'analysis_skipped_silent',
         message: '跳过分析：当前仍处于 silent 沉默期',
         conversationId: conversationId,
-        metadata: {
-          'silenceUntil': state.silenceUntil!.toIso8601String(),
-        },
+        metadata: {'silenceUntil': state.silenceUntil!.toIso8601String()},
       );
       return;
     }
+
+    final lastUserMsg = await _ref
+        .read(chatHistoryStoreProvider)
+        .getLastUserMessage(conversationId);
+    if (!await _isAnalysisCurrent(conversationId, gen, lastUserMsg?.id)) return;
 
     var effectiveState = state;
     if (effectiveState.mode == ConversationProactiveMode.silent) {
@@ -458,30 +563,32 @@ class AnalyzerScheduler {
           'unrepliedCount': effectiveState.unrepliedCount,
         },
       );
-      final decision = await _ref.read(contextAnalyzerProvider).analyze(
-            conversation,
-            proactiveState: effectiveState,
-          );
+      final decision = await _ref
+          .read(contextAnalyzerProvider)
+          .analyze(conversation, proactiveState: effectiveState);
       if (decision == null) {
         await _appendHistoryLog(
           category: AutoReplyTriggerLogCategory.analyzer,
           event: 'analysis_no_decision',
           message: '分析完成：本轮没有生成新的触发决策',
           conversationId: conversationId,
-          metadata: {
-            'reason': reason,
-          },
+          metadata: {'reason': reason},
         );
-        _log('analyzer:no_decision',
-            {'conversationId': conversationId, 'reason': reason},
-            level: 'DEBUG');
+        _log('analyzer:no_decision', {
+          'conversationId': conversationId,
+          'reason': reason,
+        }, level: 'DEBUG');
         return;
       }
 
+      if (!await _isAnalysisCurrent(conversationId, gen, lastUserMsg?.id))
+        return;
       await _applyDecision(
         conversation: conversation,
         currentState: effectiveState,
         decision: decision,
+        generation: gen,
+        lastUserMessageId: lastUserMsg?.id,
       );
     } catch (e) {
       await _appendHistoryLog(
@@ -490,38 +597,73 @@ class AnalyzerScheduler {
         message: '主动回复分析失败',
         conversationId: conversationId,
         level: AutoReplyTriggerLogLevel.error,
-        metadata: {
-          'reason': reason,
-          'error': e.toString(),
-        },
+        metadata: {'reason': reason, 'error': e.toString()},
       );
-      _log(
-        'analyzer:error',
-        {
-          'conversationId': conversationId,
-          'reason': reason,
-          'error': e.toString(),
-        },
-        level: 'ERROR',
-      );
+      _log('analyzer:error', {
+        'conversationId': conversationId,
+        'reason': reason,
+        'error': e.toString(),
+      }, level: 'ERROR');
+      final latestState = _states[conversationId] ?? effectiveState;
+      if ((_analysisGenerations[conversationId] ?? 0) == gen &&
+          latestState.mode == ConversationProactiveMode.active &&
+          !_analysisTimers.containsKey(conversationId) &&
+          await _findActiveAiTriggerForConversation(conversationId) == null &&
+          await _ownsConversation(conversationId)) {
+        _scheduleAnalysisTimer(
+          conversationId: conversationId,
+          delay: _defaultDelay,
+          reason: 'analysis_retry',
+        );
+      }
     }
+  }
+
+  Future<bool> _isAnalysisCurrent(
+    String conversationId,
+    int generation,
+    String? lastUserMessageId,
+  ) async {
+    final conv = await _ref
+        .read(conversationRepositoryProvider)
+        .getById(conversationId);
+    if (conv == null || conv.deletedAt != null) return false;
+    final latest = await _ref
+        .read(chatHistoryStoreProvider)
+        .getLastUserMessage(conversationId);
+    return (_analysisGenerations[conversationId] ?? 0) == generation &&
+        latest?.id == lastUserMessageId;
   }
 
   Future<void> _applyDecision({
     required Conversation conversation,
     required ConversationProactiveState currentState,
     required ContextAnalysisDecision decision,
+    required int generation,
+    required String? lastUserMessageId,
   }) async {
     final conversationId = conversation.id;
     final controller = _ref.read(autoReplyTriggersProvider.notifier);
 
-    final triggerPlan = decision.triggerPlan;
-    if (triggerPlan == null) {
-      final nextState = _applySessionPatch(
-        currentState: currentState,
-        patch: decision.sessionPatch,
-      );
-      await _setState(nextState);
+    final triggerPlans = decision.triggerPlans;
+    if (triggerPlans.isEmpty) {
+      await cloudLocalWrite(() async {
+        if (!await _isAnalysisCurrent(
+          conversationId,
+          generation,
+          lastUserMessageId,
+        )) {
+          return;
+        }
+        final nextState = _applySessionPatch(
+          currentState: currentState,
+          patch: decision.sessionPatch,
+        );
+        await _setState(nextState);
+        if ((_analysisGenerations[conversationId] ?? 0) == generation) {
+          _scheduleForState(nextState);
+        }
+      });
       if (decision.sessionPatch != null) {
         await _appendHistoryLog(
           category: AutoReplyTriggerLogCategory.analyzer,
@@ -535,51 +677,67 @@ class AnalyzerScheduler {
           },
         );
       }
-      _scheduleForState(nextState);
       return;
     }
 
+    final firstPlan = triggerPlans.first;
     await _appendHistoryLog(
       category: AutoReplyTriggerLogCategory.analyzer,
       event: 'trigger_plan_selected',
-      message: '分析完成：已生成新的自动触发计划「${triggerPlan.title}」',
+      message: '分析完成：已生成新的自动触发计划「${firstPlan.title}」',
       conversationId: conversationId,
       metadata: {
-        'kind': triggerPlan.kind.label,
-        'fireAt': triggerPlan.fireAt.toIso8601String(),
-        'allowNight': triggerPlan.allowNight,
-        'priority': triggerPlan.priority.name,
+        'kind': firstPlan.kind.label,
+        'fireAt': firstPlan.fireAt.toIso8601String(),
+        'allowNight': firstPlan.allowNight,
+        'priority': firstPlan.priority.name,
+        'count': triggerPlans.length,
       },
     );
 
     // The user may have moved to another device while the model answered:
     // its plan must not be replaced by this one.
     if (!await _ownsConversation(conversationId)) return;
-    await _clearConversationAutoTriggers(
-      conversationId,
-      reason: 'replaced_by_analyzer',
-    );
-
     final lastUserMessage = await _ref
         .read(chatHistoryStoreProvider)
         .getLastUserMessage(conversationId);
     // Step ⑤: written for the fire time. An empty draft still schedules the
     // trigger; the reply is then written live at fire time.
-    final draft = await _ref
-        .read(proactiveMessagePregeneratorProvider)
-        .generate(
-          conversation: conversation,
-          systemReminder: triggerPlan.systemReminder,
-          fireAt: triggerPlan.fireAt,
-          allowCall: triggerPlan.allowCall,
+    final drafts = <ProactiveDraft?>[];
+    for (final plan in triggerPlans) {
+      ProactiveDraft? draft;
+      try {
+        draft = await _ref
+            .read(proactiveMessagePregeneratorProvider)
+            .generate(
+              conversation: conversation,
+              systemReminder: plan.systemReminder,
+              fireAt: plan.fireAt,
+              allowCall: plan.allowCall,
+            );
+      } catch (error) {
+        AppLogger.warning(
+          'AnalyzerScheduler',
+          '预生成失败，保留计划并在触发时实时生成',
+          metadata: {
+            'conversationId': conversationId,
+            'errorType': error.runtimeType.toString(),
+          },
         );
-    final cachedContent = draft?.text;
+      }
+      drafts.add(draft);
+    }
 
     // The user may have spoken while the reply was being written.
     final currentLastUserMessage = await _ref
         .read(chatHistoryStoreProvider)
         .getLastUserMessage(conversationId);
-    if (currentLastUserMessage?.id != lastUserMessage?.id) {
+    if (currentLastUserMessage?.id != lastUserMessage?.id ||
+        !await _isAnalysisCurrent(
+          conversationId,
+          generation,
+          lastUserMessageId,
+        )) {
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.analyzer,
         event: 'trigger_plan_skipped_stale_context',
@@ -592,65 +750,116 @@ class AnalyzerScheduler {
     // Or while the reply was being written.
     if (!await _ownsConversation(conversationId)) return;
 
-    final existingTrigger = _findActiveAiTriggerForConversation(conversationId);
-    if (existingTrigger != null) {
-      await _setState(currentState.withPendingAutoTrigger(existingTrigger.id));
-      await _appendHistoryLog(
-        category: AutoReplyTriggerLogCategory.analyzer,
-        event: 'trigger_plan_skipped_existing_pending',
-        message: '跳过创建主动回复触发器：当前会话已有待发送触发器',
-        conversationId: conversationId,
-        triggerId: existingTrigger.id,
-        title: existingTrigger.title,
-        source: existingTrigger.source,
+    await cloudLocalWrite(() async {
+      if (!await _isAnalysisCurrent(
+        conversationId,
+        generation,
+        lastUserMessageId,
+      )) {
+        return;
+      }
+      final existingTrigger = await _findActiveAiTriggerForConversation(
+        conversationId,
       );
-      return;
-    }
+      if (existingTrigger != null) {
+        await _setState(
+          currentState.withPendingAutoTrigger(existingTrigger.id),
+        );
+        await _appendHistoryLog(
+          category: AutoReplyTriggerLogCategory.analyzer,
+          event: 'trigger_plan_skipped_existing_pending',
+          message: '跳过创建主动回复触发器：当前会话已有待发送触发器',
+          conversationId: conversationId,
+          triggerId: existingTrigger.id,
+          title: existingTrigger.title,
+          source: existingTrigger.source,
+        );
+        return;
+      }
 
-    final createdTrigger = await controller.createTrigger(
-      title: triggerPlan.title,
-      type: AutoReplyTriggerType.delay,
-      nextFireAt: triggerPlan.fireAt,
-      allowNight: triggerPlan.allowNight,
-      requireExact: false,
-      delayMinutes: triggerPlan.fireAt
-          .difference(DateTime.now())
-          .inMinutes
-          .clamp(1, 100000)
-          .toInt(),
-      prompt: triggerPlan.systemReminder,
-      priority: triggerPlan.priority,
-      source: TriggerSource.aiScheduler,
-      conversationId: conversationId,
-      contextLastUserMessageId: lastUserMessage?.id,
-      contextLastUserMessageAt: lastUserMessage?.createdAt,
-      cachedContent: cachedContent,
-      // The reply is written for the fire time, so freshness is measured
-      // from there: a reply sent on time is fresh however early it was written.
-      preparedAt: cachedContent == null ? null : triggerPlan.fireAt,
-      action: draft?.action ?? ProactiveAction.sendMessage,
-    );
-    // 后台 WorkManager 任务由 createTrigger 内部统一注册，这里不再重复注册
+      await _clearConversationAutoTriggers(
+        conversationId,
+        reason: 'replaced_by_analyzer',
+      );
 
-    final nextState = currentState.copyWith(
-      mode: ConversationProactiveMode.active,
-      silenceUntil: null,
-      pendingAutoTriggerId: createdTrigger.id,
-    );
-    await _setState(nextState);
+      final createdTriggers = <AutoReplyTrigger>[];
+      for (var i = 0; i < triggerPlans.length; i++) {
+        final plan = triggerPlans[i];
+        final draft = drafts[i];
+        final cachedContent = draft?.text;
+        final created = await controller.createTrigger(
+          title: plan.title,
+          type: AutoReplyTriggerType.delay,
+          nextFireAt: plan.fireAt,
+          allowNight: plan.allowNight,
+          requireExact: false,
+          delayMinutes: plan.fireAt
+              .difference(DateTime.now())
+              .inMinutes
+              .clamp(1, 100000)
+              .toInt(),
+          prompt: plan.systemReminder,
+          priority: plan.priority,
+          source: TriggerSource.aiScheduler,
+          conversationId: conversationId,
+          contextLastUserMessageId: lastUserMessage?.id,
+          contextLastUserMessageAt: lastUserMessage?.createdAt,
+          cachedContent: cachedContent,
+          // The reply is written for the fire time, so freshness is measured
+          // from there: a reply sent on time is fresh however early it was written.
+          preparedAt: cachedContent == null ? null : plan.fireAt,
+          action: draft?.action ?? ProactiveAction.sendMessage,
+        );
+        createdTriggers.add(created);
+      }
+      // 后台 WorkManager 任务由 createTrigger 内部统一注册，这里不再重复注册
+
+      if (!await _isAnalysisCurrent(
+        conversationId,
+        generation,
+        lastUserMessageId,
+      )) {
+        return;
+      }
+      final nextState = currentState.copyWith(
+        mode: ConversationProactiveMode.active,
+        silenceUntil: null,
+        pendingAutoTriggerId: createdTriggers.first.id,
+      );
+      await _setState(nextState);
+    });
   }
 
-  AutoReplyTrigger? _findActiveAiTriggerForConversation(String conversationId) {
-    final currentTriggers =
-        _ref.read(autoReplyTriggersProvider).valueOrNull ?? const [];
+  Future<AutoReplyTrigger?> _findActiveAiTriggerForConversation(
+    String conversationId, {
+    String? excludeTriggerId,
+  }) async {
+    final currentTriggers = await _historyStorage.loadTriggers();
+    AutoReplyTrigger? earliest;
     for (final trigger in currentTriggers) {
       if (trigger.conversationId != conversationId) continue;
+      if (excludeTriggerId != null && trigger.id == excludeTriggerId) continue;
       if (trigger.source != TriggerSource.aiScheduler) continue;
       if (trigger.isActive || trigger.status == AutoReplyTriggerStatus.paused) {
-        return trigger;
+        if (earliest == null ||
+            trigger.nextFireAt.isBefore(earliest.nextFireAt)) {
+          earliest = trigger;
+        }
       }
     }
-    return null;
+    return earliest;
+  }
+
+  Future<ConversationProactiveState> _reconcilePendingTrigger(
+    ConversationProactiveState current,
+  ) async {
+    final live = await _findActiveAiTriggerForConversation(
+      current.conversationId,
+    );
+    if (current.pendingAutoTriggerId == live?.id) return current;
+    final next = current.withPendingAutoTrigger(live?.id);
+    await _setState(next);
+    return next;
   }
 
   ConversationProactiveState _applySessionPatch({
@@ -669,20 +878,20 @@ class AnalyzerScheduler {
     String conversationId, {
     String? reason,
   }) async {
-    final currentTriggers =
-        _ref.read(autoReplyTriggersProvider).valueOrNull ?? const [];
+    await _ref.read(autoReplyTriggersProvider.future);
+    final currentTriggers = await _historyStorage.loadTriggers();
     final controller = _ref.read(autoReplyTriggersProvider.notifier);
     for (final trigger in currentTriggers) {
       if (trigger.conversationId != conversationId) continue;
       if (trigger.source != TriggerSource.aiScheduler) continue;
+      if (reason == 'user_new_message' &&
+          trigger.priority == AutoReplyTriggerPriority.high)
+        continue;
       if (!trigger.isActive &&
           trigger.status != AutoReplyTriggerStatus.paused) {
         continue;
       }
-      await controller.deleteTrigger(
-        trigger.id,
-        reason: reason,
-      );
+      await controller.deleteTrigger(trigger.id, reason: reason);
     }
   }
 
@@ -697,12 +906,13 @@ class AnalyzerScheduler {
       message: '跳过分析：这个会话由用户最后发消息的另一台设备负责主动回复',
       conversationId: conversationId,
     );
-    _log('analyzer:skip_other_device', {'conversationId': conversationId},
-        level: 'DEBUG');
+    _log('analyzer:skip_other_device', {
+      'conversationId': conversationId,
+    }, level: 'DEBUG');
     return false;
   }
 
-  void _restoreTimers() {
+  Future<void> _restoreTimers() async {
     for (final timer in _analysisTimers.values) {
       timer.cancel();
     }
@@ -713,12 +923,18 @@ class AnalyzerScheduler {
     _silentTimers.clear();
 
     final now = DateTime.now();
-    for (final state in _states.values) {
+    for (final stored in _states.values.toList()) {
+      final state = await _reconcilePendingTrigger(stored);
       final conversation = _ref.read(
         resolvedConversationByIdProvider(state.conversationId),
       );
       if (conversation != null &&
           !_isSupervisorEnabledForConversation(conversation)) {
+        await _clearConversationAutoTriggers(
+          state.conversationId,
+          reason: 'disabled_by_conversation_plugin',
+        );
+        await _setState(state.withPendingAutoTrigger(null));
         continue;
       }
       if (state.mode == ConversationProactiveMode.dormant) {
@@ -738,10 +954,12 @@ class AnalyzerScheduler {
       if (state.mode == ConversationProactiveMode.active &&
           state.lastUserAt != null) {
         final elapsed = now.difference(state.lastUserAt!);
-        final delay =
-            elapsed < _defaultDelay ? _defaultDelay - elapsed : _immediateDelay;
-        final reason =
-            elapsed < _defaultDelay ? '5分钟无新消息(恢复)' : '5分钟无新消息(恢复补跑)';
+        final delay = elapsed < _defaultDelay
+            ? _defaultDelay - elapsed
+            : _immediateDelay;
+        final reason = elapsed < _defaultDelay
+            ? '5分钟无新消息(恢复)'
+            : '5分钟无新消息(恢复补跑)';
         _scheduleAnalysisTimer(
           conversationId: state.conversationId,
           delay: delay,
@@ -753,8 +971,9 @@ class AnalyzerScheduler {
 
   void _scheduleForState(ConversationProactiveState state) {
     final conversationId = state.conversationId;
-    final conversation =
-        _ref.read(resolvedConversationByIdProvider(conversationId));
+    final conversation = _ref.read(
+      resolvedConversationByIdProvider(conversationId),
+    );
     if (conversation != null &&
         !_isSupervisorEnabledForConversation(conversation)) {
       _cancelTimers(conversationId);
@@ -778,6 +997,17 @@ class AnalyzerScheduler {
       );
       return;
     }
+    if (state.mode == ConversationProactiveMode.active &&
+        state.lastUserAt != null &&
+        !_analysisTimers.containsKey(conversationId)) {
+      final due = state.lastUserAt!.add(_defaultDelay);
+      final now = DateTime.now();
+      _scheduleAnalysisTimer(
+        conversationId: conversationId,
+        delay: due.isAfter(now) ? due.difference(now) : _immediateDelay,
+        reason: 'active_observation',
+      );
+    }
   }
 
   void _scheduleAnalysisTimer({
@@ -788,31 +1018,21 @@ class AnalyzerScheduler {
     _analysisTimers.remove(conversationId)?.cancel();
     _analysisTimers[conversationId] = Timer(delay, () {
       _analysisTimers.remove(conversationId);
-      unawaited(_runAnalysis(
-        conversationId: conversationId,
-        reason: reason,
-      ));
+      unawaited(_runAnalysis(conversationId: conversationId, reason: reason));
     });
 
-    _log(
-      'analyzer:scheduled',
-      {
-        'conversationId': conversationId,
-        'delayMs': delay.inMilliseconds,
-        'reason': reason,
-      },
-      level: 'DEBUG',
-    );
+    _log('analyzer:scheduled', {
+      'conversationId': conversationId,
+      'delayMs': delay.inMilliseconds,
+      'reason': reason,
+    }, level: 'DEBUG');
     unawaited(
       _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.wakeup,
         event: 'analysis_scheduled',
         message: '已安排默认唤醒：$reason',
         conversationId: conversationId,
-        metadata: {
-          'delayMs': delay.inMilliseconds,
-          'reason': reason,
-        },
+        metadata: {'delayMs': delay.inMilliseconds, 'reason': reason},
       ),
     );
   }
@@ -823,24 +1043,20 @@ class AnalyzerScheduler {
   }) {
     _silentTimers.remove(conversationId)?.cancel();
     final now = DateTime.now();
-    final delay =
-        wakeAt.isAfter(now) ? wakeAt.difference(now) : _immediateDelay;
+    final delay = wakeAt.isAfter(now)
+        ? wakeAt.difference(now)
+        : _immediateDelay;
     _silentTimers[conversationId] = Timer(delay, () {
       _silentTimers.remove(conversationId);
-      unawaited(_runAnalysis(
-        conversationId: conversationId,
-        reason: 'silent_wakeup',
-      ));
+      unawaited(
+        _runAnalysis(conversationId: conversationId, reason: 'silent_wakeup'),
+      );
     });
 
-    _log(
-      'analyzer:silent_scheduled',
-      {
-        'conversationId': conversationId,
-        'delayMs': delay.inMilliseconds,
-      },
-      level: 'DEBUG',
-    );
+    _log('analyzer:silent_scheduled', {
+      'conversationId': conversationId,
+      'delayMs': delay.inMilliseconds,
+    }, level: 'DEBUG');
     unawaited(
       _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.wakeup,
@@ -867,26 +1083,6 @@ class AnalyzerScheduler {
   Future<void> _setState(ConversationProactiveState state) async {
     _states[state.conversationId] = state;
     await _storage.saveStates(_states);
-  }
-
-  Future<void> _syncHeartbeat(DateTime timestamp) async {
-    try {
-      final settings = await _ref.read(appSettingsProvider.future);
-      if (settings.backendApiKey.isEmpty) return;
-
-      final agent = AgentApiClient();
-      await agent.syncTriggerHeartbeat(
-        timestamp,
-        token: settings.backendApiKey,
-      );
-      _log(
-        'cloud:heartbeat_sent',
-        {'timestamp': timestamp.toIso8601String()},
-        level: 'DEBUG',
-      );
-    } catch (e) {
-      _log('cloud:heartbeat_failed', {'error': e.toString()}, level: 'WARN');
-    }
   }
 
   void cancel() {

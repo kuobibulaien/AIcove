@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../../core/media/media_asset.dart';
+import '../../../core/media/media_store.dart';
 import '../../../core/models/image_generation_snapshot.dart';
-import '../../../core/models/message_block.dart' show taskReceiptExportLine;
+import '../../../core/models/message_block.dart' show taskReceiptExportLine, EmojiBlock, MessageBlock;
 
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
@@ -13,11 +15,16 @@ import 'package:uuid/uuid.dart';
 import '../models/export_format.dart';
 import '../../../core/database/repositories/repositories.dart';
 import '../../../core/database/database.dart' show Message;
+import '../../stickers/sticker_library.dart';
 import '../../chat/id_gen.dart';
+import '../../chat/services/chat_message_processor.dart';
+import '../../chat/services/chat_message_projection_codec.dart';
+import '../../chat/services/chat_types.dart' show ReplyRound;
 import 'transfer_safety.dart';
 
 /// 会话导出服务
 class ConversationExporter {
+  final Future<MediaStore> Function() _mediaStoreResolver;
   final ConversationRepository _convRepo;
   final MessageRepository _msgRepo;
   final MessageBlockRepository _blockRepo;
@@ -28,6 +35,7 @@ class ConversationExporter {
   final Future<Directory> Function()? _outputDirectoryResolver;
 
   ConversationExporter({
+    Future<MediaStore> Function()? mediaStoreResolver,
     required ConversationRepository convRepo,
     required MessageRepository msgRepo,
     required MessageBlockRepository blockRepo,
@@ -36,7 +44,8 @@ class ConversationExporter {
     Future<Directory?> Function()? externalStorageDirectoryResolver,
     Future<String> Function()? appVersionResolver,
     Future<Directory> Function()? outputDirectoryResolver,
-  })  : _convRepo = convRepo,
+  })  : _mediaStoreResolver = mediaStoreResolver ?? (() => MediaStore.shared),
+        _convRepo = convRepo,
         _msgRepo = msgRepo,
         _blockRepo = blockRepo,
         _temporaryDirectoryResolver =
@@ -217,6 +226,7 @@ class ConversationExporter {
                 filePath,
                 filesDir,
                 block['id'] as String,
+                stickerId: blockType == 'emoji' ? data['emojiId'] as String? : null,
               );
               if (newPath != null) {
                 fileMapping[filePath] = newPath;
@@ -362,8 +372,9 @@ class ConversationExporter {
   Future<String?> _copyFileIfExists(
     String sourcePath,
     Directory targetDir,
-    String baseName,
-  ) async {
+    String baseName, {
+    String? stickerId,
+  }) async {
     // 跳过网络 URL
     if (sourcePath.startsWith('http://') || sourcePath.startsWith('https://')) {
       return null;
@@ -377,14 +388,27 @@ class ConversationExporter {
       return null;
     }
 
-    final sourceFile = File(sourcePath);
+    final mediaId = mediaIdFromReference(sourcePath);
+    File sourceFile;
+    if (mediaId != null) {
+      try {
+        sourceFile = await (await _mediaStoreResolver()).original(mediaId);
+      } on OriginalMediaUnavailable {
+        throw const FormatException(
+          '无法完整导出：选中的本地附件已缺失。请恢复文件或取消对应导出项后重试；原有备份未被修改。',
+        );
+      }
+    } else {
+      sourceFile = File(stickerId == null ? sourcePath :
+          StickerLibrary.resolveLocalPath(sourcePath, stickerId: stickerId));
+    }
     if (!await sourceFile.exists()) {
       throw const FormatException(
         '无法完整导出：选中的本地附件已缺失。请恢复文件或取消对应导出项后重试；原有备份未被修改。',
       );
     }
 
-    final ext = p.extension(sourcePath);
+    final ext = p.extension(sourceFile.path);
     final targetPath = 'files/${genId('file')}$ext';
     final targetFile = File(p.join(targetDir.parent.path, targetPath));
 
@@ -481,7 +505,11 @@ class ConversationExporter {
     }
 
     // 与真实聊天还原器的优先级保持一致，避免把已被覆盖的旧附件复活。
-    final cached = _mediaObjects(payload['projectedMessages']);
+    final semantic = message.role == 'assistant' &&
+        ChatMessageProjectionCodec.hasProjectionSemantics(payload);
+    final cached = semantic
+        ? <Map<String, dynamic>>[]
+        : _mediaObjects(payload['projectedMessages']);
     var authoritative = cached.isNotEmpty;
     if (cached.isNotEmpty) {
       for (final message in cached) {
@@ -491,20 +519,50 @@ class ConversationExporter {
       }
     } else if (message.role == 'assistant') {
       final supplements = _mediaObjects(payload['supplementInsertOps']);
-      authoritative = supplements.isNotEmpty;
+      authoritative = semantic || supplements.isNotEmpty;
       if (supplements.isNotEmpty) {
         for (final item in supplements) {
           collect(item['kind'], item, audioKey: 'audioUrl');
         }
       } else {
-        final contents = _mediaObjects(payload['pluginContents']);
+        final rounds = _mediaObjects(payload['replyRounds']);
+        final contents = rounds.isEmpty
+            ? _mediaObjects(payload['pluginContents'])
+            : [for (final round in rounds) ..._mediaObjects(round['pluginContents'])];
         final audioResults = _mediaObjects(payload['toolAudioResults']);
-        authoritative = contents.isNotEmpty || audioResults.isNotEmpty;
+        authoritative = semantic || contents.isNotEmpty || audioResults.isNotEmpty;
         for (final item in contents) {
           collect(item['type'], item, audioKey: 'localPath');
         }
         for (final item in audioResults) {
           collect('audio', item, audioKey: 'audioUrl');
+        }
+      }
+      // Replay only the saved, pure projection algorithm. Events are not plugin
+      // execution: matching text/rounds decide which sticker occurrences exist.
+      final rounds = ChatMessageProjectionCodec.replyRounds(payload);
+      final rebuilt = const ChatMessageProcessor().buildAssistantMessages(
+        rawMessageId: message.id,
+        rawCreatedAt: DateTime.fromMillisecondsSinceEpoch(message.createdAt),
+        replyText: ChatMessageProjectionCodec.rawReplyText(payload) ?? message.content,
+        processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
+        displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
+        pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
+        contents: supplements.isEmpty
+            ? ChatMessageProjectionCodec.pluginContents(payload) : const [],
+        replyRounds: supplements.isEmpty ? rounds : [
+          for (final round in rounds)
+            ReplyRound(replyText: round.replyText, rawText: round.rawText,
+              processedText: round.processedText, pluginEvents: round.pluginEvents,
+              reasoning: round.reasoning, toolCallIds: round.toolCallIds),
+        ],
+      );
+      for (final projected in rebuilt.messages) {
+        for (final block in projected.blocks ?? const <MessageBlock>[]) {
+          if (block is EmojiBlock) {
+            collect('emoji', block.toJson(), nativeBlock: true);
+            authoritative = true;
+          }
         }
       }
     }

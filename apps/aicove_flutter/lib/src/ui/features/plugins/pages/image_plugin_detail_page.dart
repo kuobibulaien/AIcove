@@ -84,8 +84,8 @@ class ImagePluginDetailPage extends ConsumerWidget {
                     children: [
                       MoeSettingsRow(
                         icon: Icons.layers_outlined,
-                        label: PromptPackListPage.title,
-                        subtitle: '按模型写好的生图说明，可编辑、可自建',
+                        label: '生图偏好',
+                        subtitle: '单张插画、分镜漫画等生图规则模板，可编辑、可自建',
                         showDivider: false,
                         onTap: () => Navigator.of(context).push(
                           ParallaxSlidePageRoute(

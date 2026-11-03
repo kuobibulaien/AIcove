@@ -24,6 +24,7 @@ import 'package:aicove_flutter/src/features/workspace/application/workspace_shel
 import 'package:aicove_flutter/src/features/workspace/data/workspace_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'extension_test_support.dart';
+import '../../agent_plugins/plugin_request_test_support.dart';
 import 'package:aicove_flutter/src/features/background_agent/background_agent_service.dart';
 
 class _Client extends AgentApiClient {
@@ -252,6 +253,7 @@ void main() {
       final capabilities = await resolveTaskPluginCapabilities(
         [script, skill],
         {'pkg:demo', 'pkg:sample-skill'},
+        inputs: createPluginRequestInputs(),
       );
       for (final allowed in [
         null,

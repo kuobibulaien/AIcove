@@ -12,6 +12,7 @@ import 'package:aicove_flutter/src/features/agent_context/providers/preset_recip
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show GateDecision, GateOutcome, KernelToolCall, ToolCallScope, ToolEffect;
 import 'package:aicove_flutter/src/features/assistant/application/assistant_review.dart';
+import 'package:aicove_flutter/src/features/assistant/application/assistant_plugin.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_approvals.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_write_tools.dart';
 import 'package:aicove_flutter/src/features/assistant/assistant_providers.dart';
@@ -23,8 +24,11 @@ import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_backend_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
-import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
+import 'package:aicove_flutter/src/features/plugins/packages/package_providers.dart';
+import 'package:aicove_flutter/src/features/plugins/mcp/mcp_connector.dart';
+import 'package:aicove_flutter/src/features/plugins/mcp/mcp_connector_providers.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 import 'package:aicove_flutter/src/features/memory/application/memory_keeper_service.dart';
 import 'package:aicove_flutter/src/features/memory/providers/memory_providers.dart';
 import 'package:aicove_flutter/src/features/observability/trace_store.dart';
@@ -33,6 +37,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+// ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -59,7 +64,7 @@ class _CountingKeeper extends MemoryKeeperService {
   final resumed = <String>[];
 
   @override
-  void resumeOnce(String ownerId) => resumed.add(ownerId);
+  void resumeOnce(String ownerId, {DateTime? now}) => resumed.add(ownerId);
 }
 
 class _Settings extends AppSettingsNotifier {
@@ -77,7 +82,7 @@ AppSettings _settings() =>
       defaultModelName: _model,
       defaultChatModels: const [_model],
       modelConfigs: {
-        _model: ModelConfig(chatCapabilities: const ['tools']),
+        _model: const ModelConfig(chatCapabilities: ['tools']),
       },
       modelTypes: const {_model: 'chat'},
       providers: const [
@@ -200,15 +205,10 @@ void main() {
       own.boundTools!
           .where((t) => t.exposure == ToolExposure.codemode)
           .map((t) => t.name),
-      containsAll([
-        'aicove_docs_read',
-        'aicove_list_roles',
-        'aicove_read_role',
-        'aicove_inspect_context',
-      ]),
+      containsAll(['aicove_docs_read', 'aicove_inspect_context']),
     );
     expect(toolsOf(own), contains('codemode'));
-    expect(toolsOf(own).where((t) => t.startsWith('aicove_')), isEmpty);
+    expect(toolsOf(own), containsAll(['aicove_role', 'aicove_role_context']));
     expect(jsonEncode(own.tools), contains('aicove_inspect_context'));
     expect(
       other.boundTools?.where((t) => t.name.startsWith('aicove_')) ?? [],
@@ -217,6 +217,124 @@ void main() {
     expect(toolsOf(other).where((t) => t.startsWith('aicove_')), isEmpty);
     expect(jsonEncode(other.messages), isNot(contains('住在 AIcove 里的小管家')));
   });
+
+  test(
+    'aggregate role card preserves read-only access and atomic contracts',
+    () async {
+      final readOnly = container.read(assistantToolsetProvider).roleTool();
+      expect(readOnly.effect, ToolEffect.readPrivate);
+      expect(
+        (readOnly.parameterSchema['properties'] as Map)['action']['enum'],
+        ['list', 'read'],
+      );
+      expect(
+        jsonDecode((await readOnly.handler({'action': 'create'}))!)['message'],
+        contains('只读'),
+      );
+      expect(
+        jsonDecode((await readOnly.handler({'action': 'read'}))!)['error'],
+        'invalid',
+      );
+      final config = await prepare(assistant());
+      expect(
+        await call(config, 'aicove_role', {'action': 'list'}),
+        await call(config, 'aicove_list_roles'),
+      );
+      expect(
+        await call(config, 'aicove_role', {
+          'action': 'read',
+          'role_id': 'role_li',
+        }),
+        await call(config, 'aicove_read_role', {'role_id': 'role_li'}),
+      );
+      expect(
+        (await call(config, 'aicove_role', {
+          'action': 'create',
+          'name': 'incomplete',
+        }))['error'],
+        'invalid',
+      );
+    },
+  );
+
+  test(
+    'aggregate role card uses original risk, confirmation and journal',
+    () async {
+      final config = await prepare(assistant());
+      final writes = container.read(assistantWriteToolsProvider);
+      final risk = AssistantRequestScope.riskOf(
+        container.read(assistantToolsetProvider),
+        writes,
+      );
+      for (final action in ['list', 'read', 'create', 'update']) {
+        final args = <String, dynamic>{
+          'action': action,
+          'role_id': 'role_li',
+          'name': '聚合角色',
+          'persona_prompt': '原始设定',
+        };
+        expect(
+          risk('aicove_role', args),
+          action == 'list' || action == 'read'
+              ? AssistantRisk.readOnly
+              : AssistantRisk.review,
+        );
+        expect(writes.riskOf('aicove_role', args), risk('aicove_role', args));
+        final prompt = writes.describe('aicove_role', args);
+        final original = writes.describe(
+          AssistantWriteTools.roleToolName(action)!,
+          AssistantWriteTools.roleArguments(args),
+        );
+        expect(prompt.title, original.title);
+        expect(prompt.detail, original.detail);
+      }
+      await container.read(assistantAlwaysAskProvider.notifier).set(true);
+      for (final action in ['read', 'update']) {
+        final verdict = config.toolPolicy!.gate.check(
+          KernelToolCall(
+            id: action,
+            name: 'aicove_role',
+            arguments: {'action': action, 'role_id': 'role_li'},
+          ),
+          ToolEffect.write,
+        );
+        expect(
+          verdict.decision,
+          action == 'read' ? GateDecision.allow : GateDecision.ask,
+        );
+      }
+      final created = await call(config, 'aicove_role', {
+        'action': 'create',
+        'name': '聚合角色',
+        'persona_prompt': '原始设定',
+      });
+      expect(created['ok'], true);
+      final id = created['role_id'];
+      expect(id, isA<String>());
+      final changed = await call(config, 'aicove_role', {
+        'action': 'update',
+        'role_id': id,
+        'persona_prompt_replace': {'old_text': '原始', 'new_text': '更新'},
+      });
+      expect(changed['ok'], true);
+      final read = await call(config, 'aicove_role', {
+        'action': 'read',
+        'role_id': id,
+      });
+      expect(read['persona_prompt'], '更新设定');
+      final entry = (await container.read(
+        assistantRecentChangesProvider.future,
+      )).first;
+      await container.read(assistantChangeJournalProvider).undo(entry.id);
+      expect(
+        (await call(config, 'aicove_role', {
+          'action': 'read',
+          'role_id': id,
+        }))['persona_prompt'],
+        '原始设定',
+      );
+    },
+  );
 
   test('roles in the privacy space stay invisible', () async {
     final config = await prepare(assistant());
@@ -321,6 +439,435 @@ void main() {
     Future<void> undo(String id) =>
         container.read(assistantChangeJournalProvider).undo(id);
 
+    Future<void> installExtensions() async {
+      await container.read(aicovePackagesProvider.notifier).importFiles({
+        'SKILL.md': utf8.encode(
+          '---\nname: local-skill\ndescription: A local skill\n---\nUse locally.',
+        ),
+      });
+      await container
+          .read(mcpConnectorsConfigProvider.notifier)
+          .saveConnector(
+            const McpConnector(
+              id: 'local',
+              name: '本地连接器',
+              url: 'https://example.com/mcp',
+              bearerToken: 'secret-token',
+              headers: {'X-Secret': 'secret-header'},
+              enabled: false,
+            ),
+          );
+    }
+
+    Future<Map<String, dynamic>> allowedPluginCall(
+      ApiConfig config,
+      Map<String, dynamic> args,
+    ) => ToolCallScope().run(() async {
+      final verdict = config.toolPolicy!.gate.check(
+        KernelToolCall(
+          id: 'plugins',
+          name: AssistantWriteTools.setRolePlugins,
+          arguments: {'role_id': 'role_li', ...args},
+        ),
+        ToolEffect.write,
+      );
+      expect(verdict.decision, GateDecision.allow);
+      ToolCallScope.current!.outcome = GateOutcome.allowed;
+      return call(config, AssistantWriteTools.setRolePlugins, {
+        'role_id': 'role_li',
+        ...args,
+      });
+    });
+
+    test(
+      'installed packages and configured MCP can be discovered, enabled and undone',
+      () async {
+        final config = await prepare(assistant());
+        // The toolset must not freeze the catalog at request assembly.
+        await installExtensions();
+        final listed = await call(config, 'aicove_list_available_plugins');
+        final entries = (listed['plugins'] as List).cast<Map>();
+        expect(
+          entries.map((e) => e['plugin_id']),
+          containsAll([
+            ...kAssistantRolePlugins.keys,
+            'pkg:local-skill',
+            'mcp:local',
+          ]),
+        );
+        final mcp = entries.singleWhere((e) => e['plugin_id'] == 'mcp:local');
+        expect(mcp['name'], '本地连接器');
+        expect(mcp['usable'], isFalse);
+        expect(jsonEncode(listed), isNot(contains('secret-token')));
+        expect(jsonEncode(listed), isNot(contains('secret-header')));
+        expect(
+          config.toolPolicy!.gate
+              .check(
+                const KernelToolCall(
+                  id: 'list',
+                  name: 'aicove_list_available_plugins',
+                ),
+                ToolEffect.readPrivate,
+              )
+              .decision,
+          GateDecision.allow,
+        );
+        final before = (await roleNow('role_li'))!.enabledPlugins;
+        final result = await allowedPluginCall(config, {
+          'plugins': ['memory', 'pkg:local-skill', 'mcp:local'],
+        });
+        expect(result['ok'], isTrue);
+        expect((await roleNow('role_li'))!.enabledPlugins, [
+          'memory',
+          'pkg:local-skill',
+          'mcp:local',
+        ]);
+        // Enabling changes the next request, not the already assembled run.
+        expect(
+          config.boundTools!.map((t) => t.name),
+          isNot(contains('read_skill_local-skill')),
+        );
+        final next = await prepare((await roleNow('role_li'))!);
+        expect(
+          next.boundTools!.map((t) => t.name),
+          contains('read_skill_local-skill'),
+        );
+        await undo(await latestChange());
+        expect((await roleNow('role_li'))!.enabledPlugins, before);
+        final disabled = await prepare((await roleNow('role_li'))!);
+        expect(
+          disabled.boundTools!.map((t) => t.name),
+          isNot(contains('read_skill_local-skill')),
+        );
+      },
+    );
+
+    test(
+      'plugin replacement preserves grants and legacy calls; extensions can be cleared',
+      () async {
+        await installExtensions();
+        await container
+            .read(conversationsProvider.notifier)
+            .applyContactEdit(
+              'role_li',
+              enabledPlugins: [
+                'memory',
+                'pkg:local-skill',
+                'mcp:local',
+                'ws:local',
+              ],
+            );
+        final config = await prepare(assistant());
+        await allowedPluginCall(config, {
+          'plugins': ['image'],
+        });
+        expect((await roleNow('role_li'))!.enabledPlugins, [
+          'image',
+          'pkg:local-skill',
+          'mcp:local',
+          'ws:local',
+        ]);
+        await allowedPluginCall(config, {'all': true});
+        expect(
+          (await roleNow('role_li'))!.enabledPlugins,
+          containsAll([
+            ...kAssistantRolePlugins.keys,
+            'pkg:local-skill',
+            'mcp:local',
+            'ws:local',
+          ]),
+        );
+        await allowedPluginCall(config, {
+          'all': true,
+          'plugins': ['pkg:local-skill'],
+        });
+        expect((await roleNow('role_li'))!.enabledPlugins, [
+          ...kAssistantRolePlugins.keys,
+          'pkg:local-skill',
+          'ws:local',
+        ]);
+        await allowedPluginCall(config, {
+          'plugins': ['memory'],
+          'extensions': [],
+        });
+        expect((await roleNow('role_li'))!.enabledPlugins, [
+          'memory',
+          'ws:local',
+        ]);
+        await allowedPluginCall(config, {
+          'plugins': ['memory'],
+          'extensions': ['mcp:local'],
+        });
+        expect((await roleNow('role_li'))!.enabledPlugins, [
+          'memory',
+          'mcp:local',
+          'ws:local',
+        ]);
+        await allowedPluginCall(config, {'extensions': []});
+        expect((await roleNow('role_li'))!.enabledPlugins, [
+          'memory',
+          'ws:local',
+        ]);
+      },
+    );
+
+    test(
+      'extension validation also applies to all=true and explicit extension lists',
+      () async {
+        final config = await prepare(assistant());
+        for (final args in [
+          {
+            'all': true,
+            'plugins': ['mcp:evil'],
+          },
+          {'all': true, 'plugins': 'memory'},
+          {
+            'plugins': ['pkg:missing'],
+          },
+          {
+            'extensions': ['mcp:evil'],
+          },
+          {
+            'extensions': ['ws:new'],
+          },
+          {
+            'extensions': ['memory'],
+          },
+          {'extensions': 'mcp:local'},
+          {
+            'plugins': ['memory'],
+            'extensions': [null],
+          },
+          {
+            'plugins': ['ws:new'],
+          },
+        ]) {
+          expect(
+            (await allowedPluginCall(config, args))['error'],
+            'invalid',
+            reason: '$args',
+          );
+        }
+      },
+    );
+
+    test(
+      'new explicit extensions are major even when standard plugins were all enabled',
+      () async {
+        await installExtensions();
+        final config = await prepare(assistant());
+        await allowedPluginCall(config, {'all': true});
+        await pumpEventQueue();
+        final writes = container.read(assistantWriteToolsProvider);
+        for (final id in ['pkg:local-skill', 'mcp:local']) {
+          final args = {
+            'role_id': 'role_li',
+            'extensions': [id],
+          };
+          expect(
+            writes.riskOf(AssistantWriteTools.setRolePlugins, args),
+            AssistantRisk.major,
+          );
+          await container.read(assistantAlwaysAskProvider.notifier).set(true);
+          expect(
+            config.toolPolicy!.gate
+                .check(
+                  KernelToolCall(
+                    id: id,
+                    name: AssistantWriteTools.setRolePlugins,
+                    arguments: args,
+                  ),
+                  ToolEffect.write,
+                )
+                .decision,
+            GateDecision.ask,
+          );
+          expect(
+            writes.describe(AssistantWriteTools.setRolePlugins, args).detail,
+            contains(id == 'mcp:local' ? '本地连接器' : 'local-skill'),
+          );
+        }
+        await container.read(assistantAlwaysAskProvider.notifier).set(false);
+        await allowedPluginCall(config, {
+          'extensions': ['pkg:local-skill', 'mcp:local'],
+        });
+        await pumpEventQueue();
+        expect(
+          writes.riskOf(AssistantWriteTools.setRolePlugins, {
+            'role_id': 'role_li',
+            'extensions': ['mcp:local'],
+          }),
+          AssistantRisk.reversible,
+        );
+      },
+    );
+
+    test(
+      'extension approval is call-scoped and removed catalog entries are rejected',
+      () async {
+        await installExtensions();
+        final config = await prepare(assistant());
+        final writes = container.read(assistantWriteToolsProvider);
+        final args = {
+          'role_id': 'role_li',
+          'extensions': ['pkg:local-skill'],
+        };
+        final scope = ToolCallScope();
+        scope.run(
+          () => writes.riskOf(AssistantWriteTools.setRolePlugins, args),
+        );
+        scope.outcome = GateOutcome.allowed;
+        expect(
+          (await scope.run(
+            () => call(config, AssistantWriteTools.setRolePlugins, args),
+          ))['error'],
+          'invalid',
+        );
+        scope.outcome = GateOutcome.approved;
+        expect(
+          (await scope.run(
+            () => call(config, AssistantWriteTools.setRolePlugins, args),
+          ))['ok'],
+          isTrue,
+        );
+        await undo(await latestChange());
+        await container
+            .read(aicovePackagesProvider.notifier)
+            .delete('local-skill');
+        await container
+            .read(mcpConnectorsConfigProvider.notifier)
+            .removeConnector('local');
+        for (final id in ['pkg:local-skill', 'mcp:local']) {
+          expect(
+            (await allowedPluginCall(config, {
+              'extensions': [id],
+            }))['error'],
+            'invalid',
+          );
+        }
+        await container.read(assistantAlwaysAskProvider.notifier).set(true);
+        expect(
+          config.toolPolicy!.gate
+              .check(
+                const KernelToolCall(
+                  id: 'list',
+                  name: 'aicove_list_available_plugins',
+                ),
+                ToolEffect.readPrivate,
+              )
+              .decision,
+          GateDecision.allow,
+        );
+      },
+    );
+
+    test(
+      'role mode and model are persisted, independently clearable and undoable',
+      () async {
+        final config = await prepare(assistant());
+        expect((await roleNow('role_li'))!.agentMode, isNull);
+        expect(
+          (await call(config, AssistantWriteTools.updateRole, {
+            'role_id': 'role_li',
+            'agent_mode': 'tool',
+            'model_override': 'openai:gpt-4o',
+          }))['ok'],
+          isTrue,
+        );
+        var role = (await roleNow('role_li'))!;
+        expect(role.agentMode, RoleAgentMode.tool);
+        expect(role.sessionProvider, 'openai:gpt-4o');
+        expect(role.chatDisplayStyle, isNull);
+        final first = await latestChange();
+        await undo(first);
+        role = (await roleNow('role_li'))!;
+        expect(
+          role.agentMode,
+          isNull,
+          reason: 'undo restores the raw nullable field',
+        );
+        expect(role.sessionProvider, isNull);
+        await call(config, AssistantWriteTools.updateRole, {
+          'role_id': 'role_li',
+          'model_override': 'openai:custom:model',
+        });
+        await call(config, AssistantWriteTools.updateRole, {
+          'role_id': 'role_li',
+          'model_override': '',
+        });
+        expect((await roleNow('role_li'))!.sessionProvider, isNull);
+        await undo(await latestChange());
+        expect(
+          (await roleNow('role_li'))!.sessionProvider,
+          'openai:custom:model',
+        );
+      },
+    );
+
+    test(
+      'new tool roles use documents and invalid mode/model never creates a role',
+      () async {
+        final config = await prepare(assistant());
+        final created = await call(config, AssistantWriteTools.createRole, {
+          'name': '工具角色',
+          'persona_prompt': '帮忙工作',
+          'agent_mode': 'tool',
+          'model_override': 'openai:gpt-4o',
+        });
+        expect(created['ok'], isTrue);
+        final role = (await roleNow(created['role_id'] as String))!;
+        expect(role.agentMode, RoleAgentMode.tool);
+        expect(role.chatDisplayStyle, ChatDisplayStyle.document);
+        expect(role.sessionProvider, 'openai:gpt-4o');
+        await undo(await latestChange());
+        expect(await roleNow(role.id), isNull);
+        final count =
+            (await container.read(assistantRoleStoreProvider).load()).length;
+        for (final bad in [
+          {'agent_mode': 'invalid'},
+          {'agent_mode': ''},
+          {'agent_mode': null},
+          {'model_override': 123},
+          {'model_override': 'no-colon'},
+          {'model_override': ':model'},
+          {'model_override': 'openai:'},
+        ]) {
+          expect(
+            (await call(config, AssistantWriteTools.createRole, {
+              'name': '不能创建',
+              'persona_prompt': 'x',
+              ...bad,
+            }))['error'],
+            'invalid',
+            reason: '$bad',
+          );
+          expect(
+            (await call(config, AssistantWriteTools.updateRole, {
+              'role_id': 'role_li',
+              ...bad,
+            }))['error'],
+            'invalid',
+            reason: '$bad',
+          );
+        }
+        expect(
+          (await container.read(assistantRoleStoreProvider).load()).length,
+          count,
+        );
+        expect(
+          (await call(config, AssistantWriteTools.updateRole, {
+            'role_id': kAicoveAssistantId,
+            'agent_mode': 'chat',
+          }))['error'],
+          'invalid',
+        );
+        expect(
+          (await roleNow(kAicoveAssistantId))!.effectiveAgentMode,
+          RoleAgentMode.tool,
+        );
+      },
+    );
+
     test('the assistant run defaults to no approval; previews and other '
         'roles carry none', () async {
       final own = await prepare(assistant());
@@ -342,6 +889,7 @@ void main() {
             .exposure,
         ToolExposure.codemode,
       );
+      expect(toolsOf(own), contains(AssistantWriteTools.roleTool));
       expect(toolsOf(own), isNot(contains(AssistantWriteTools.updateRole)));
       expect(own.toolPolicy!.gate, isA<AssistantToolGate>());
       expect(decide('aicove_read_role'), GateDecision.allow);
@@ -500,6 +1048,7 @@ void main() {
         'persona_prompt': '你是小新。',
       });
       final id = created['role_id'] as String;
+      expect((await roleNow(id))!.chatDisplayStyle, ChatDisplayStyle.bubble);
       // Not in the list state yet: turning on web search must ask the user.
       expect(
         writes.riskOf(AssistantWriteTools.setRolePlugins, {

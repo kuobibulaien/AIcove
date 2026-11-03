@@ -87,9 +87,14 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
         isBlurEnabled &&
         MoeLiquidGlassService.isAvailable;
 
-    final content = padding == null
+    final paddedContent = padding == null
         ? child
         : Padding(padding: padding, child: child);
+    final content = isBlurEnabled
+        ? MoeSolidBackdropScope.none(
+            child: MoeSharedBackdrop.isolate(child: paddedContent),
+          )
+        : paddedContent;
     if (isLiquid) {
       return MoeLiquidGlass(
         radius: radius,
@@ -192,25 +197,37 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
 /// surface cuts its share from that result, which samples slightly differently
 /// than a per-surface blur (measured up to 5/255 per channel).
 class MoeSharedBackdrop extends StatelessWidget {
-  const MoeSharedBackdrop({super.key, required this.child});
+  const MoeSharedBackdrop({super.key, required this.child}) : _enabled = true;
+
+  /// Prevents descendants inside an already-blurred surface from sharing the
+  /// ancestor's [BackdropKey], since overlapping filters must not share a key.
+  const MoeSharedBackdrop.isolate({super.key, required this.child})
+    : _enabled = false;
 
   final Widget child;
+  final bool _enabled;
 
-  static BackdropKey? keyOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_SharedBackdropScope>() == null
-      ? null
-      : BackdropGroup.of(context)?.backdropKey;
+  static BackdropKey? keyOf(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_SharedBackdropScope>();
+    if (scope == null || !scope.enabled) return null;
+    return BackdropGroup.of(context)?.backdropKey;
+  }
 
   @override
-  Widget build(BuildContext context) =>
-      BackdropGroup(child: _SharedBackdropScope(child: child));
+  Widget build(BuildContext context) => _enabled
+      ? BackdropGroup(child: _SharedBackdropScope(enabled: true, child: child))
+      : _SharedBackdropScope(enabled: false, child: child);
 }
 
 class _SharedBackdropScope extends InheritedWidget {
-  const _SharedBackdropScope({required super.child});
+  const _SharedBackdropScope({required this.enabled, required super.child});
+
+  final bool enabled;
 
   @override
-  bool updateShouldNotify(_SharedBackdropScope oldWidget) => false;
+  bool updateShouldNotify(_SharedBackdropScope oldWidget) =>
+      oldWidget.enabled != enabled;
 }
 
 /// Marks controls that share one surrounding material instead of stacking filters.

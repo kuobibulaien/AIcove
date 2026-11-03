@@ -19,22 +19,7 @@ class _AgentImageApiSupport {
     'n_samples',
     'steps',
     'scale',
-    'sampler',
-    'seed',
     'negative_prompt',
-    'qualityToggle',
-    'ucPreset',
-    'legacy',
-    'legacy_v3_extend',
-    'noise_schedule',
-    'sm',
-    'sm_dyn',
-    'dynamic_thresholding',
-    'add_original_image',
-    'cfg_rescale',
-    'prefer_brownian',
-    'deliberate_euler_ancestral_bug',
-    'autoSmea',
     'use_coords',
     'characterPrompts',
     'v4_prompt',
@@ -47,17 +32,11 @@ class _AgentImageApiSupport {
     'n_samples',
     'steps',
     'scale',
-    'sampler',
-    'seed',
     'negative_prompt',
-    'qualityToggle',
-    'ucPreset',
-    'legacy',
-    'legacy_v3_extend',
-    'noise_schedule',
-    'sm',
-    'sm_dyn',
-    'dynamic_thresholding',
+    'use_coords',
+    'characterPrompts',
+    'v4_prompt',
+    'v4_negative_prompt',
   };
 
   final AgentApiClient _owner;
@@ -110,24 +89,28 @@ class _AgentImageApiSupport {
         customConfig: customConfig,
       );
       // 显式选择的模型失败即返回，不做跨模型静默降级。
-      return _generateImageWithNovelAI(
-        provider: normalizedProvider,
-        model: normalizedNovelAiModel,
-        prompt: prompt,
-        negativePrompt: negativePrompt,
-        width: width,
-        height: height,
-        count: count,
-        steps: steps,
-        guidanceScale: guidanceScale,
-        seed: seed,
-        sampler: sampler,
-        baseUrl: base,
-        apiKey: trimmedKey,
-        customConfig: customConfig,
-        requestId: normalizedRequestId,
-        requestSource: normalizedRequestSource,
-        flowMode: normalizedFlowMode,
+      return ImageRequestGate.shared.run(
+        _imageChannelKey(normalizedProvider, base, trimmedKey),
+        1,
+        () => _generateImageWithNovelAI(
+          provider: normalizedProvider,
+          model: normalizedNovelAiModel,
+          prompt: prompt,
+          negativePrompt: negativePrompt,
+          width: width,
+          height: height,
+          count: count,
+          steps: steps,
+          guidanceScale: guidanceScale,
+          seed: seed,
+          sampler: sampler,
+          baseUrl: base,
+          apiKey: trimmedKey,
+          customConfig: customConfig,
+          requestId: normalizedRequestId,
+          requestSource: normalizedRequestSource,
+          flowMode: normalizedFlowMode,
+        ),
       );
     }
 
@@ -169,56 +152,86 @@ class _AgentImageApiSupport {
       'count': count,
       'hasNegativePrompt': negativePrompt?.trim().isNotEmpty == true,
     };
-    final startedAt = DateTime.now();
-    AppLogger.info(
-      'AgentApiClient',
-      '图片请求开始',
-      metadata: {
-        ...logMetadata,
-        'requestFormat': 'adapter',
-        'adapter': adapter.name,
+    final target = normalizedProvider == 'comfyui'
+        ? ComfyUIImageAdapter.endpoint(baseUrl, '').toString().replaceFirst(
+            RegExp(r'/+$'), '',
+          )
+        : OpenAICompatibleImageAdapter.resolveEndpoint(
+            baseUrl: baseUrl,
+            customConfig: customConfig,
+          );
+    return ImageRequestGate.shared.run(
+      _imageChannelKey(normalizedProvider, target, trimmedKey),
+      normalizedProvider == 'comfyui' ? 1 : 2,
+      () async {
+        final startedAt = DateTime.now();
+        AppLogger.info(
+          'AgentApiClient',
+          '图片请求开始',
+          metadata: {
+            ...logMetadata,
+            'requestFormat': 'adapter',
+            'adapter': adapter.name,
+          },
+        );
+        try {
+          final result = await adapter.generate(
+            client: _client,
+            timeout: timeout,
+            request: request,
+          );
+          RequestControl.cancellation?.throwIfCancelled();
+          final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+          AppLogger.info(
+            'AgentApiClient',
+            '图片请求完成',
+            metadata: {
+              ...logMetadata,
+              'requestFormat': 'adapter',
+              'adapter': adapter.name,
+              'durationMs': durationMs,
+              'imageCount': result.images.length,
+            },
+          );
+          return ImageGenerationResult(
+            images: result.images,
+            provider: normalizedProvider,
+            model: model,
+            rawResponse: result.rawResponse,
+          );
+        } catch (e) {
+          final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
+          AppLogger.warning(
+            'AgentApiClient',
+            '图片请求失败',
+            metadata: {
+              ...logMetadata,
+              'requestFormat': 'adapter',
+              'adapter': adapter.name,
+              'durationMs': durationMs,
+              'phase': 'adapter_generate',
+              'error': e.toString(),
+            },
+          );
+          rethrow;
+        }
       },
     );
-    try {
-      final result = await adapter.generate(
-        client: _client,
-        timeout: timeout,
-        request: request,
-      );
-      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
-      AppLogger.info(
-        'AgentApiClient',
-        '图片请求完成',
-        metadata: {
-          ...logMetadata,
-          'requestFormat': 'adapter',
-          'adapter': adapter.name,
-          'durationMs': durationMs,
-          'imageCount': result.images.length,
-        },
-      );
-      return ImageGenerationResult(
-        images: result.images,
-        provider: normalizedProvider,
-        model: model,
-        rawResponse: result.rawResponse,
-      );
-    } catch (e) {
-      final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
-      AppLogger.warning(
-        'AgentApiClient',
-        '图片请求失败',
-        metadata: {
-          ...logMetadata,
-          'requestFormat': 'adapter',
-          'adapter': adapter.name,
-          'durationMs': durationMs,
-          'phase': 'adapter_generate',
-          'error': e.toString(),
-        },
-      );
-      rethrow;
-    }
+  }
+
+  String _imageChannelKey(String provider, String target, String apiKey) {
+    final digest = sha256.convert(utf8.encode(apiKey)).toString().substring(0, 12);
+    // Uri canonicalizes scheme/host case and omits HTTP(S) default ports.
+    // Trim only the path: query values and meaningful path case remain intact.
+    final uri = Uri.parse(target);
+    final normalizedTarget = uri
+        .replace(
+          scheme: uri.scheme.toLowerCase(),
+          host: uri.host.toLowerCase(),
+          path: uri.path.replaceFirst(RegExp(r'/+$'), ''),
+        )
+        .toString();
+    return '$provider|$normalizedTarget|$digest';
   }
 
   String _normalizeNovelAiModel(
@@ -286,12 +299,39 @@ class _AgentImageApiSupport {
     final samplerValue = sampler?.trim();
     final negativePromptValue = negativePrompt?.trim();
     final family = _novelAiModelFamily(model);
+    final compiledPrompt = family == _NovelAiModelFamily.v3 && !MangaPromptSanitizer.hasSections(prompt)
+        ? _NovelAiCompiledPrompt.plain(prompt)
+        : _compileNovelAiStructuredPrompt(prompt);
+    final combinedNegative = [if (negativePromptValue != null) negativePromptValue, compiledPrompt.pageNegative]
+        .where((value) => value.isNotEmpty).join(', ');
+    var effectivePrompt = compiledPrompt.baseCaption;
+    if (family == _NovelAiModelFamily.v3 && compiledPrompt.charCaptions.isNotEmpty) {
+      final captions = compiledPrompt.charCaptions
+          .map((caption) => (caption['char_caption'] as String).trim())
+          .where((caption) => caption.isNotEmpty).toList();
+      if (captions.isNotEmpty) {
+        final dialogueStart = effectivePrompt.indexOf('\nText:');
+        final visual = dialogueStart < 0 ? effectivePrompt : effectivePrompt.substring(0, dialogueStart);
+        final dialogue = dialogueStart < 0 ? '' : effectivePrompt.substring(dialogueStart);
+        effectivePrompt = [visual, ...captions].where((value) => value.isNotEmpty).join(', ') + dialogue;
+      }
+    }
+    var effectiveWidth = width;
+    var effectiveHeight = height;
+    if (normalizedRequestSource != 'regenerate_image' &&
+        compiledPrompt.isDoublePageSpread && effectiveWidth < effectiveHeight) {
+      final swapped = effectiveWidth;
+      effectiveWidth = effectiveHeight;
+      effectiveHeight = swapped;
+    }
     final params = _buildNovelAiParameters(
       model: model,
-      prompt: prompt,
-      negativePrompt: negativePromptValue,
-      width: width,
-      height: height,
+      prompt: compiledPrompt.baseCaption,
+      compiledPrompt: compiledPrompt,
+      negativePrompt: compiledPrompt.isSectionProtocol
+          ? MangaPromptSanitizer.negative(combinedNegative) : negativePromptValue,
+      width: effectiveWidth,
+      height: effectiveHeight,
       count: count,
       steps: steps,
       guidanceScale: guidanceScale,
@@ -305,8 +345,12 @@ class _AgentImageApiSupport {
           ? _novelAiV3ReservedParameterKeys
           : _novelAiStructuredReservedParameterKeys,
     );
+    if (compiledPrompt.isSectionProtocol) {
+      params['qualityToggle'] ??= false;
+      params['ucPreset'] ??= 3;
+    }
     final payload = <String, dynamic>{
-      'input': prompt,
+      'input': effectivePrompt,
       'model': model,
       'action': 'generate',
       'parameters': params,
@@ -324,8 +368,8 @@ class _AgentImageApiSupport {
       'model': model,
       'endpoint': endpoint,
       'timeoutMs': timeout.inMilliseconds,
-      'width': width,
-      'height': height,
+      'width': effectiveWidth,
+      'height': effectiveHeight,
       'count': count,
       'hasNegativePrompt': negativePromptValue?.isNotEmpty == true,
     };
@@ -344,36 +388,41 @@ class _AgentImageApiSupport {
     );
 
     try {
-      final request = http.Request('POST', Uri.parse(endpoint))
-        ..headers.addAll(<String, String>{
-          'Authorization': 'Bearer $apiKey',
-          'Content-Type': 'application/json',
-          'Accept': 'application/zip',
-        })
-        ..body = requestBodyJson;
       phase = 'wait_headers';
-      final response = await _client.send(request).timeout(timeout);
-      final headersElapsed = DateTime.now().difference(startedAt);
-      AppLogger.info(
-        'AgentApiClient',
-        '图片请求收到响应头',
-        metadata: {
-          ...baseMetadata,
-          'phase': phase,
-          'statusCode': response.statusCode,
-          'durationMs': headersElapsed.inMilliseconds,
-          'contentType': response.headers['content-type'],
-          'contentLength': response.headers['content-length'],
+      final response = await sendMediaRequestWithRetry(
+        send: () {
+          phase = 'wait_headers';
+          final request = RequestControl.request('POST', Uri.parse(endpoint))
+            ..headers.addAll(<String, String>{
+              'Authorization': 'Bearer $apiKey',
+              'Content-Type': 'application/json',
+              'Accept': 'application/zip',
+            })
+            ..body = requestBodyJson;
+          return _client.send(request).then((response) {
+            RequestControl.cancellation?.throwIfCancelled();
+            final headersElapsed = DateTime.now().difference(startedAt);
+            AppLogger.info(
+              'AgentApiClient',
+              '图片请求收到响应头',
+              metadata: {
+                ...baseMetadata,
+                'phase': phase,
+                'statusCode': response.statusCode,
+                'durationMs': headersElapsed.inMilliseconds,
+                'contentType': response.headers['content-type'],
+                'contentLength': response.headers['content-length'],
+              },
+            );
+            phase = 'read_body';
+            return response;
+          });
         },
+        policy: MediaRetryPolicy.submission,
+        remaining: () => _remainingImageTimeout(startedAt),
+        phase: 'novelai_submit',
       );
-
-      final remaining = _remainingImageTimeout(startedAt);
-      if (remaining == Duration.zero) {
-        throw TimeoutException('Image response body timed out', timeout);
-      }
-
-      phase = 'read_body';
-      final bytes = await response.stream.toBytes().timeout(remaining);
+      final bytes = response.bodyBytes;
       final durationMs = DateTime.now().difference(startedAt).inMilliseconds;
       final contentType = response.headers['content-type']?.trim();
 
@@ -428,7 +477,7 @@ class _AgentImageApiSupport {
       }
 
       phase = 'decode_body';
-      final images = _extractImageBytesFromNovelAIResponse(
+      final images = await _extractImageBytesFromNovelAIResponse(
         bytes,
         response.headers,
       );
@@ -609,6 +658,7 @@ class _AgentImageApiSupport {
   Map<String, dynamic> _buildNovelAiParameters({
     required String model,
     required String prompt,
+    _NovelAiCompiledPrompt? compiledPrompt,
     required int width,
     required int height,
     required int count,
@@ -625,7 +675,8 @@ class _AgentImageApiSupport {
       'height': height.clamp(256, 2048),
       'n_samples': count.clamp(1, 4),
       'steps': (steps ?? 23).clamp(1, 50),
-      'scale': guidanceScale ?? (family == _NovelAiModelFamily.v5 ? 7.0 : 5.0),
+      'scale': (guidanceScale ?? (family == _NovelAiModelFamily.v5 ? 7.0 : 5.0))
+          .clamp(0.0, 10.0),
       'sampler': (sampler != null && sampler.isNotEmpty)
           ? sampler
           : 'k_euler_ancestral',
@@ -635,24 +686,29 @@ class _AgentImageApiSupport {
     };
     // V5 与 V4 / V4.5 共用结构化提示词请求体，不携带 V3 legacy 字段。
     if (family != _NovelAiModelFamily.v3) {
+      final compiled =
+          compiledPrompt ?? _compileNovelAiStructuredPrompt(prompt);
       final v4Negative = (negativePrompt == null || negativePrompt.isEmpty)
           ? 'lowres'
           : negativePrompt;
       params.addAll(<String, dynamic>{
-        'use_coords': false,
+        if (compiled.isSectionProtocol) 'qualityToggle': false,
+        if (compiled.isSectionProtocol) 'ucPreset': 3,
+        'use_coords': compiled.useCoords,
         'characterPrompts': const <dynamic>[],
         'v4_prompt': <String, dynamic>{
           'caption': <String, dynamic>{
-            'base_caption': prompt,
-            'char_captions': const <dynamic>[],
+            'base_caption': compiled.baseCaption,
+            'char_captions': compiled.charCaptions,
           },
-          'use_coords': false,
+          'use_coords': compiled.useCoords,
           'use_order': true,
         },
         'v4_negative_prompt': <String, dynamic>{
+          'legacy_uc': false,
           'caption': <String, dynamic>{
             'base_caption': v4Negative,
-            'char_captions': const <dynamic>[],
+            'char_captions': compiled.negativeCharCaptions,
           },
         },
       });
@@ -686,11 +742,292 @@ class _AgentImageApiSupport {
     }
   }
 
-  List<Uint8List> _extractImageBytesFromNovelAIResponse(
-    Uint8List bytes,
-    Map<String, String> headers,
-  ) {
+  Future<List<Uint8List>> _extractImageBytesFromNovelAIResponse(
+    Uint8List bytes, Map<String, String> headers,
+  ) async {
+    RequestControl.cancellation?.throwIfCancelled();
     final contentType = headers['content-type']?.toLowerCase() ?? '';
+    final images = await _decodeNovelAiImageBytesInWorker(bytes, contentType);
+    RequestControl.cancellation?.throwIfCancelled();
+    return images;
+  }
+
+  _NovelAiCompiledPrompt _compileNovelAiStructuredPrompt(String prompt) {
+    final sectionCompiled = _tryCompileNovelAiSectionProtocol(prompt);
+    if (sectionCompiled != null) {
+      return sectionCompiled;
+    }
+    final pipeSegments = _splitUnescapedPipeSegments(prompt);
+    if (pipeSegments.length > 1) {
+      final base = pipeSegments.first;
+      final chars = pipeSegments.skip(1).toList(growable: false);
+      return _NovelAiCompiledPrompt(
+        baseCaption: base,
+        charCaptions: <Map<String, dynamic>>[
+          for (final c in chars)
+            <String, dynamic>{
+              'char_caption': c,
+              'centers': const <Map<String, double>>[
+                <String, double>{'x': 0.5, 'y': 0.5},
+              ],
+            },
+        ],
+        negativeCharCaptions: <Map<String, dynamic>>[
+          for (var i = 0; i < chars.length; i++)
+            <String, dynamic>{
+              'char_caption': '',
+              'centers': const <Map<String, double>>[
+                <String, double>{'x': 0.5, 'y': 0.5},
+              ],
+            },
+        ],
+        useCoords: false,
+      );
+    }
+    return _NovelAiCompiledPrompt.plain(prompt);
+  }
+
+  _NovelAiCompiledPrompt? _tryCompileNovelAiSectionProtocol(String raw) {
+    final startMatch = RegExp(
+      r'(?:^|(?:,\s*|\n))[ \t]*(@(?:page|panel|character|position)\b)',
+      multiLine: true,
+      caseSensitive: false,
+    ).firstMatch(raw);
+    if (startMatch == null) return null;
+    final markerStart = raw.indexOf('@', startMatch.start);
+    final variableRegex = RegExp(r'@c\d+(?:_[a-z0-9_]+)?\b\s*[,，]?\s*', caseSensitive: false);
+    final unknownDirectiveRegex = RegExp(r'^\s*@[a-z_][a-z0-9_]*(?:[ \t]+[^,，\n]*)?$', caseSensitive: false);
+    final leadingPrefix = raw.substring(0, markerStart).split('\n')
+        .map((line) => line.replaceAll(variableRegex, ''))
+        .where((line) => !unknownDirectiveRegex.hasMatch(line))
+        .join('\n').trim().replaceFirst(RegExp(r'[,，]\s*$'), '').trim();
+    final body = raw.substring(markerStart);
+    final lines = body.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
+    final markerRegex = RegExp(
+      r'^\s*@(page|panel|character|negative|non_character|position|center)\b(?:[ \t]+(.*?))?[ \t]*$',
+      caseSensitive: false,
+    );
+
+    var useCoords = false;
+    var pageBase = '';
+    var pageNegative = '';
+    var pageNonCharacter = '';
+    final panels = <_NovelAiPanelDraft>[];
+    _NovelAiPanelDraft? currentPanel;
+    _NovelAiCharDraft? currentChar;
+    var targetKind = 'page_base';
+    final buffer = <String>[];
+
+    void flush() {
+      if (targetKind.isEmpty) {
+        buffer.clear();
+        return;
+      }
+      final content = buffer.join('\n').trim();
+      buffer.clear();
+      switch (targetKind) {
+        case 'page_base':
+          pageBase = [pageBase, content].where((s) => s.isNotEmpty).join('\n');
+        case 'page_neg':
+          pageNegative = [pageNegative, content].where((s) => s.isNotEmpty).join(', ');
+        case 'page_non_char':
+          pageNonCharacter = [pageNonCharacter, content].where((s) => s.isNotEmpty).join('\n');
+        case 'panel_desc':
+          if (currentPanel != null) currentPanel.description = [currentPanel.description, content].where((s) => s.isNotEmpty).join('\n');
+        case 'panel_non_char':
+          if (currentPanel != null) currentPanel.nonCharacter = [currentPanel.nonCharacter, content].where((s) => s.isNotEmpty).join('\n');
+        case 'char_pos':
+          if (currentChar != null) currentChar.positive = [currentChar.positive, content].where((s) => s.isNotEmpty).join('\n');
+        case 'char_neg':
+          if (currentChar != null) currentChar.negative = [currentChar.negative, content].where((s) => s.isNotEmpty).join('\n');
+      }
+    }
+
+    for (final line in lines) {
+      final match = markerRegex.firstMatch(line);
+      if (match == null) {
+        final cleanedLine = line.replaceAll(variableRegex, '');
+        if (unknownDirectiveRegex.hasMatch(cleanedLine)) continue;
+        if (targetKind.isNotEmpty) {
+          buffer.add(cleanedLine);
+        }
+        continue;
+      }
+      flush();
+      final kind = match.group(1)!.toLowerCase();
+      final value = (match.group(2) ?? '').trim();
+      switch (kind) {
+        case 'position':
+          useCoords = value.toLowerCase() == 'manual';
+        case 'page':
+          targetKind = 'page_base';
+        case 'panel':
+          currentPanel = _NovelAiPanelDraft();
+          panels.add(currentPanel);
+          currentChar = null;
+          targetKind = 'panel_desc';
+        case 'character':
+          if (currentPanel == null) {
+              currentPanel = _NovelAiPanelDraft();
+            panels.add(currentPanel);
+          }
+          currentChar = _NovelAiCharDraft();
+          currentPanel.characters.add(currentChar);
+          targetKind = 'char_pos';
+        case 'negative':
+          targetKind = currentChar == null ? 'page_neg' : 'char_neg';
+        case 'non_character':
+          currentChar = null;
+          targetKind = currentPanel != null ? 'panel_non_char' : 'page_non_char';
+        case 'center':
+          if (currentChar != null) {
+            final parts = value.split(RegExp(r'[,，]'));
+            if (parts.length == 2) {
+              final x = double.tryParse(parts[0].trim());
+              final y = double.tryParse(parts[1].trim());
+              if (x != null && y != null) {
+                currentChar.centerX = x.clamp(0.0, 1.0);
+                currentChar.centerY = y.clamp(0.0, 1.0);
+              }
+            }
+          }
+      }
+    }
+    flush();
+
+    (String, List<String>) splitCaption(String raw) {
+      final visuals = <String>[];
+      final texts = <String>[];
+      for (final line in raw.split('\n')) {
+        final marker = RegExp(r'\bText[ \t]*[:：]', caseSensitive: false).firstMatch(line);
+        if (marker == null) {
+          visuals.add(line);
+          continue;
+        }
+        final visual = line.substring(0, marker.start).trim().replaceFirst(RegExp(r'[,，]\s*$'), '');
+        if (visual.isNotEmpty) visuals.add(visual);
+        var dialogue = line.substring(marker.end).trim();
+        if (dialogue.length >= 2 && ((dialogue.startsWith('"') && dialogue.endsWith('"')) || (dialogue.startsWith('“') && dialogue.endsWith('”')))) {
+          dialogue = dialogue.substring(1, dialogue.length - 1).trim();
+        }
+        if (dialogue.isNotEmpty) texts.add(dialogue);
+      }
+      return (visuals.join('\n').trim(), texts);
+    }
+
+    final visuals = <String>[if (leadingPrefix.isNotEmpty) MangaPromptSanitizer.positive(leadingPrefix, raw)];
+    final texts = <String>[];
+    void addBase(String raw) {
+      final (visual, dialogue) = splitCaption(raw);
+      if (visual.isNotEmpty) visuals.add(visual.replaceFirst(RegExp(r'[,，]\s*$'), '').trim());
+      texts.addAll(dialogue);
+    }
+    final (pageVisual, pageTexts) = splitCaption(pageBase);
+    addBase(MangaPromptSanitizer.positive(pageVisual, raw));
+    texts.addAll(pageTexts);
+    addBase(pageNonCharacter);
+    final charCaptions = <Map<String, dynamic>>[];
+    final negativeCharCaptions = <Map<String, dynamic>>[];
+    for (final panel in panels) {
+      addBase(panel.description);
+      addBase(panel.nonCharacter);
+      for (final c in panel.characters) {
+        final (rawPos, dialogue) = splitCaption(c.positive);
+        final pos = MangaPromptSanitizer.positive(rawPos, raw);
+        texts.addAll(dialogue);
+        if (pos.isEmpty) continue;
+        final center = <String, double>{'x': c.centerX, 'y': c.centerY};
+        charCaptions.add(<String, dynamic>{'char_caption': pos, 'centers': <Map<String, double>>[center]});
+        negativeCharCaptions.add(<String, dynamic>{'char_caption': c.negative.trim(), 'centers': <Map<String, double>>[center]});
+      }
+    }
+    if (texts.isNotEmpty && !RegExp(r'(?:^|[,\n])\s*text\s*(?:[,\n]|$)', caseSensitive: false).hasMatch(visuals.join(', '))) visuals.add('text');
+    final baseCaption = visuals.join(', ') + (texts.isNotEmpty ? '\nText: ${texts.join('\n\n')}' : '');
+    return _NovelAiCompiledPrompt(
+      baseCaption: baseCaption,
+      isSectionProtocol: true,
+      pageNegative: pageNegative,
+      charCaptions: charCaptions,
+      negativeCharCaptions: negativeCharCaptions,
+      useCoords: useCoords,
+    );
+  }
+
+  List<String> _splitUnescapedPipeSegments(String text) {
+    if (!text.contains('|')) return <String>[text];
+    final segments = <String>[];
+    final buffer = StringBuffer();
+    var escaped = false;
+    for (var i = 0; i < text.length; i++) {
+      final ch = text[i];
+      if (escaped) {
+        buffer.write(ch);
+        escaped = false;
+        continue;
+      }
+      if (ch == '\\') {
+        buffer.write(ch);
+        escaped = true;
+        continue;
+      }
+      if (ch == '|') {
+        final seg = buffer.toString().trim();
+        if (seg.isNotEmpty) segments.add(seg);
+        buffer.clear();
+        continue;
+      }
+      buffer.write(ch);
+    }
+    final tail = buffer.toString().trim();
+    if (tail.isNotEmpty) segments.add(tail);
+    return segments;
+  }
+}
+
+class _NovelAiCompiledPrompt {
+  const _NovelAiCompiledPrompt({
+    required this.baseCaption,
+    required this.charCaptions,
+    required this.negativeCharCaptions,
+    required this.useCoords,
+    this.isSectionProtocol = false,
+    this.pageNegative = '',
+  });
+
+  factory _NovelAiCompiledPrompt.plain(String prompt) => _NovelAiCompiledPrompt(
+        baseCaption: prompt,
+        charCaptions: const <dynamic>[],
+        negativeCharCaptions: const <dynamic>[],
+        useCoords: false,
+      );
+
+  final String baseCaption;
+  final String pageNegative;
+  final List<dynamic> charCaptions;
+  final List<dynamic> negativeCharCaptions;
+  final bool useCoords;
+  final bool isSectionProtocol;
+
+  bool get isDoublePageSpread => RegExp(
+        r'(?:見開きページ|2ページ見開き|見開き)|(?:double-page spread|2-page spread|wide spread)',
+        caseSensitive: false,
+      ).hasMatch(baseCaption);
+}
+
+class _NovelAiPanelDraft {
+  String description = '';
+  String nonCharacter = '';
+  final List<_NovelAiCharDraft> characters = <_NovelAiCharDraft>[];
+}
+
+class _NovelAiCharDraft {
+  String positive = '';
+  String negative = '';
+  double centerX = 0.5;
+  double centerY = 0.5;
+}
+
+List<Uint8List> _decodeNovelAiImageBytes(Uint8List bytes, String contentType) {
     final isZip =
         contentType.contains('zip') ||
         (bytes.length > 3 && bytes[0] == 0x50 && bytes[1] == 0x4B);
@@ -727,5 +1064,7 @@ class _AgentImageApiSupport {
       }
     } catch (_) {}
     return const <Uint8List>[];
-  }
 }
+
+Future<List<Uint8List>> _decodeNovelAiImageBytesInWorker(Uint8List bytes, String contentType) =>
+    Isolate.run(() => _decodeNovelAiImageBytes(bytes, contentType));

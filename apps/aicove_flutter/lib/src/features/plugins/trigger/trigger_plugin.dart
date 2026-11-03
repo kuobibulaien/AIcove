@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../agent_plugins/aicove_plugin.dart';
 import '../domain/index.dart';
+import '../prompts/plugin_prompts.dart';
 import '../domain/handlers/ai_tool.dart';
 import '../domain/handlers/tool_parameter.dart';
 import 'trigger_agent_plugin.dart';
@@ -13,9 +14,36 @@ import '../../auto_reply/data/auto_reply_trigger.dart';
 import '../../auto_reply/data/auto_reply_trigger_controller.dart';
 import '../../chat/conversation_providers.dart';
 import '../../chat/services/chat_history_store.dart';
+import '../../settings/app_settings.dart';
 
 /// (注释已丢失)
 class TriggerPlugin extends BasePlugin {
+  static const String defaultCreateReminderDescription = '''
+创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。
+使用场景：
+- "明天早上8点叫我起床"
+- "2小时后提醒我喝水"
+- "下午3点提醒我开会"
+
+不要在用户没有明确要求时调用此工具。''';
+  static const String defaultDeleteReminderDescription = '''
+删除一个已存在的提醒。当用户要求取消、删除某个提醒时调用。
+使用场景：
+- "取消明天的闹钟"
+- "不用提醒我了"
+- "把那个提醒删掉"
+
+参数规则：
+- 优先传 id（最准确）
+- 如果没有 id，请传 query（例如 "明天早上叫我起床" / "起床闹钟"），工具内部会 search
+''';
+  static const String defaultListRemindersDescription = '''
+列出提醒列表（触发器列表）。当用户问“我有哪些提醒/闹钟/待办”时调用。
+返回 JSON 数组，包含每条提醒的 id/title/next_fire_at/status/priority 等。''';
+  static const String defaultSearchRemindersDescription = '''
+搜索提醒列表。适用于：用户说“把那个起床提醒删掉”“取消明天的闹钟”，但没有 id。
+返回 JSON 数组，包含候选提醒的 id/title/next_fire_at 等。''';
+
   // (注释已丢失)
   static final _metadata = PluginMetadata(
     id: 'trigger',
@@ -43,6 +71,18 @@ class TriggerPlugin extends BasePlugin {
   // ========== 重写 enabled getter ==========
   @override
   bool get enabled => _triggerConfig.enabled;
+
+  bool enabledForConversation(String? conversationId) {
+    final id = conversationId?.trim() ?? '';
+    if (id.isNotEmpty) {
+      final settings = _ref.read(appSettingsProvider).valueOrNull;
+      if (settings != null &&
+          settings.autoReplySettings.hasContactOverride(id)) {
+        return settings.autoReplySettings.forContact(id).allowAiSetReminders;
+      }
+    }
+    return enabled;
+  }
 
   @override
   AicovePlugin get agentPlugin => triggerAgentPlugin(this);
@@ -73,27 +113,27 @@ class TriggerPlugin extends BasePlugin {
 
   // (注释已丢失)
 
-  List<AITool> getTools() {
-    if (!enabled) return [];
+  /// A non-null ID binds tools to one request; an empty ID denies access.
+  /// Omitting it preserves the legacy active-conversation behavior.
+  List<AITool> getTools({String? conversationId, PluginPrompts? prompts}) {
+    if (!enabledForConversation(conversationId)) return [];
 
+    final boundId = conversationId?.trim();
     return [
-      _createReminderTool,
-      _deleteReminderTool,
-      _listRemindersTool,
-      _searchRemindersTool,
+      _createReminderTool(boundId, prompts),
+      _deleteReminderTool(boundId, prompts),
+      _listRemindersTool(boundId, prompts),
+      _searchRemindersTool(boundId, prompts),
     ];
   }
 
-  AITool get _createReminderTool => AITool(
+  AITool _createReminderTool(
+    String? conversationId,
+    PluginPrompts? prompts,
+  ) => AITool(
         name: 'create_reminder',
-        description: '''
-创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。
-使用场景：
-- "明天早上8点叫我起床"
-- "2小时后提醒我喝水"
-- "下午3点提醒我开会"
-
-不要在用户没有明确要求时调用此工具。''',
+        description: prompts?.of(PluginPromptSlot.createReminderTool) ??
+            defaultCreateReminderDescription,
         parameters: {
           'title': ToolParameter(
             type: 'string',
@@ -112,22 +152,16 @@ class TriggerPlugin extends BasePlugin {
             required: false,
           ),
         },
-        handler: _handleCreateReminder,
+        handler: (args) => _handleCreateReminder(args, conversationId),
       );
 
-  AITool get _deleteReminderTool => AITool(
+  AITool _deleteReminderTool(
+    String? conversationId,
+    PluginPrompts? prompts,
+  ) => AITool(
         name: 'delete_reminder',
-        description: '''
-删除一个已存在的提醒。当用户要求取消、删除某个提醒时调用。
-使用场景：
-- "取消明天的闹钟"
-- "不用提醒我了"
-- "把那个提醒删掉"
-
-参数规则：
-- 优先传 id（最准确）
-- 如果没有 id，请传 query（例如 "明天早上叫我起床" / "起床闹钟"），工具内部会 search
-''',
+        description: prompts?.of(PluginPromptSlot.deleteReminderTool) ??
+            defaultDeleteReminderDescription,
         parameters: {
           'id': ToolParameter(
             type: 'string',
@@ -140,14 +174,16 @@ class TriggerPlugin extends BasePlugin {
             required: false,
           ),
         },
-        handler: _handleDeleteReminder,
+        handler: (args) => _handleDeleteReminder(args, conversationId),
       );
 
-  AITool get _listRemindersTool => AITool(
+  AITool _listRemindersTool(
+    String? conversationId,
+    PluginPrompts? prompts,
+  ) => AITool(
         name: 'list_reminders',
-        description: '''
-列出提醒列表（触发器列表）。当用户问“我有哪些提醒/闹钟/待办”时调用。
-返回 JSON 数组，包含每条提醒的 id/title/next_fire_at/status/priority 等。''',
+        description: prompts?.of(PluginPromptSlot.listRemindersTool) ??
+            defaultListRemindersDescription,
         parameters: {
           'include_completed': ToolParameter(
             type: 'boolean',
@@ -160,14 +196,16 @@ class TriggerPlugin extends BasePlugin {
             required: false,
           ),
         },
-        handler: _handleListReminders,
+        handler: (args) => _handleListReminders(args, conversationId),
       );
 
-  AITool get _searchRemindersTool => AITool(
+  AITool _searchRemindersTool(
+    String? conversationId,
+    PluginPrompts? prompts,
+  ) => AITool(
         name: 'search_reminders',
-        description: '''
-搜索提醒列表。适用于：用户说“把那个起床提醒删掉”“取消明天的闹钟”，但没有 id。
-返回 JSON 数组，包含候选提醒的 id/title/next_fire_at 等。''',
+        description: prompts?.of(PluginPromptSlot.searchRemindersTool) ??
+            defaultSearchRemindersDescription,
         parameters: {
           'query': ToolParameter(
             type: 'string',
@@ -185,15 +223,21 @@ class TriggerPlugin extends BasePlugin {
             required: false,
           ),
         },
-        handler: _handleSearchReminders,
+        handler: (args) => _handleSearchReminders(args, conversationId),
       );
 
   // ========== 工具处理函数 ==========
 
-  Future<String?> _handleCreateReminder(Map<String, dynamic> args) async {
+  Future<String?> _handleCreateReminder(
+    Map<String, dynamic> args,
+    String? conversationId,
+  ) async {
     final title = args['title'] as String? ?? '';
     final timeStr = args['time'] as String? ?? '';
-    final prompt = args['prompt'] as String?;
+    final suppliedPrompt = args['prompt'] as String?;
+    final prompt = suppliedPrompt == null || suppliedPrompt.trim().isEmpty
+        ? title
+        : suppliedPrompt;
 
     if (title.isEmpty || timeStr.isEmpty) {
       return jsonEncode({'ok': false, 'error': '缺少必要参数 title 或 time'});
@@ -206,7 +250,7 @@ class TriggerPlugin extends BasePlugin {
     }
 
     // 获取当前会话信息
-    final convId = _ref.read(activeConversationIdProvider);
+    final convId = conversationId ?? _ref.read(activeConversationIdProvider);
     if (convId == null || convId.isEmpty) {
       return jsonEncode({'ok': false, 'error': '当前没有活跃的会话'});
     }
@@ -249,11 +293,18 @@ class TriggerPlugin extends BasePlugin {
     });
   }
 
-  Future<String?> _handleDeleteReminder(Map<String, dynamic> args) async {
+  Future<String?> _handleDeleteReminder(
+    Map<String, dynamic> args,
+    String? conversationId,
+  ) async {
+    if (conversationId != null && conversationId.isEmpty) {
+      return jsonEncode({'ok': false, 'error': '当前没有活跃的会话'});
+    }
+
     final id = (args['id'] as String?)?.trim();
     final query = (args['query'] as String?)?.trim();
 
-    final convId = _ref.read(activeConversationIdProvider);
+    final convId = conversationId ?? _ref.read(activeConversationIdProvider);
 
     // (注释已丢失)
     if (id != null && id.isNotEmpty) {
@@ -324,11 +375,18 @@ class TriggerPlugin extends BasePlugin {
     });
   }
 
-  Future<String?> _handleListReminders(Map<String, dynamic> args) async {
+  Future<String?> _handleListReminders(
+    Map<String, dynamic> args,
+    String? conversationId,
+  ) async {
+    if (conversationId != null && conversationId.isEmpty) {
+      return jsonEncode({'ok': false, 'error': '当前没有活跃的会话'});
+    }
+
     final includeCompleted = args['include_completed'] as bool? ?? false;
     final limit = (args['limit'] as num?)?.toInt() ?? 20;
 
-    final convId = _ref.read(activeConversationIdProvider);
+    final convId = conversationId ?? _ref.read(activeConversationIdProvider);
     final triggers = _ref.read(autoReplyTriggersProvider).valueOrNull ?? [];
 
     final filtered = triggers
@@ -353,7 +411,14 @@ class TriggerPlugin extends BasePlugin {
     });
   }
 
-  Future<String?> _handleSearchReminders(Map<String, dynamic> args) async {
+  Future<String?> _handleSearchReminders(
+    Map<String, dynamic> args,
+    String? conversationId,
+  ) async {
+    if (conversationId != null && conversationId.isEmpty) {
+      return jsonEncode({'ok': false, 'error': '当前没有活跃的会话'});
+    }
+
     final query = args['query'] as String? ?? '';
     final includeCompleted = args['include_completed'] as bool? ?? false;
     final limit = (args['limit'] as num?)?.toInt() ?? 5;
@@ -362,7 +427,7 @@ class TriggerPlugin extends BasePlugin {
       return jsonEncode({'ok': false, 'error': '请提供搜索关键词'});
     }
 
-    final convId = _ref.read(activeConversationIdProvider);
+    final convId = conversationId ?? _ref.read(activeConversationIdProvider);
     final candidates =
         _ref.read(autoReplyTriggersProvider.notifier).searchTriggers(
               query: query,

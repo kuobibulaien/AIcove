@@ -14,26 +14,27 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_content.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_metadata.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
-import 'api_runner_variants.dart';
+import 'api_runner_variants.dart';
 import 'test_plugin_support.dart';
 
 const _tinyPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+cN5kAAAAASUVORK5CYII=';
 
 class _SequencedVisionDrawImagePlugin extends TestPlugin {
-  _SequencedVisionDrawImagePlugin(this.imagePaths)
-      : super(
-          metadata: const PluginMetadata(
-            id: 'image',
-            name: 'Image',
-            description: 'stable vision draw image test',
-            version: '1.0.0',
-            author: 'test',
-            icon: Icons.image,
-          ),
-        );
+  _SequencedVisionDrawImagePlugin(this.imagePaths, {this.imagesPerCall = 1})
+    : super(
+        metadata: const PluginMetadata(
+          id: 'image',
+          name: 'Image',
+          description: 'stable vision draw image test',
+          version: '1.0.0',
+          author: 'test',
+          icon: Icons.image,
+        ),
+      );
 
   final List<String> imagePaths;
+  final int imagesPerCall;
   int _callCount = 0;
 
   @override
@@ -67,19 +68,29 @@ class _SequencedVisionDrawImagePlugin extends TestPlugin {
           final index = _callCount < imagePaths.length
               ? _callCount
               : imagePaths.length - 1;
-          _callCount += 1;
+          _callCount += imagesPerCall;
           final prompt = args['prompt']?.toString() ?? '';
           return jsonEncode(<String, dynamic>{
             'success': true,
             'prompt': prompt,
             'images': <Map<String, dynamic>>[
-              <String, dynamic>{
-                'localPath': imagePaths[index],
-                'caption': prompt,
-                'generationSnapshot': {'version':1,'providerId':'original','modelId':'model',
-                  'requestProvider':'openai','prompt':prompt,'negativePrompt':'old',
-                  'width':1024,'height':768,'steps':31,'guidanceScale':6.5},
-              },
+              for (final path in imagePaths.skip(index).take(imagesPerCall))
+                <String, dynamic>{
+                  'localPath': path,
+                  'caption': prompt,
+                  'generationSnapshot': {
+                    'version': 1,
+                    'providerId': 'original',
+                    'modelId': 'model',
+                    'requestProvider': 'openai',
+                    'prompt': prompt,
+                    'negativePrompt': 'old',
+                    'width': 1024,
+                    'height': 768,
+                    'steps': 31,
+                    'guidanceScale': 6.5,
+                  },
+                },
             ],
             'message': 'ok',
           });
@@ -100,9 +111,7 @@ AppSettings _buildVisionSettings() {
     modelDisplayNames: <String, String>{},
     modelTypes: <String, String>{},
     modelConfigs: <String, ModelConfig>{
-      modelRef: ModelConfig(
-        chatCapabilities: <String>['tools', 'vision'],
-      ),
+      modelRef: ModelConfig(chatCapabilities: <String>['tools', 'vision']),
     },
     apiKey: '',
     apiBaseUrl: 'https://api.openai.com/v1',
@@ -199,6 +208,13 @@ bool _containsStringFragment(dynamic node, String fragment) {
 }
 
 class _StableVisionSendClient extends http.BaseClient {
+  _StableVisionSendClient({
+    this.drawCallCount = 1,
+    this.replyText = '我看过了，这张可以发给你：<image></image>',
+  });
+
+  final int drawCallCount;
+  final String replyText;
   final List<Map<String, dynamic>> payloads = <Map<String, dynamic>>[];
   int callCount = 0;
 
@@ -212,51 +228,43 @@ class _StableVisionSendClient extends http.BaseClient {
     payloads.add(jsonDecode(request.body) as Map<String, dynamic>);
 
     if (callCount == 1) {
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content': '我先给你出一版图。',
-                'tool_calls': <Map<String, dynamic>>[
+      return _json(200, <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'role': 'assistant',
+              'content': '我先给你出一版图。',
+              'tool_calls': <Map<String, dynamic>>[
+                for (var i = 0; i < drawCallCount; i++)
                   <String, dynamic>{
-                    'id': 'call_draw_1',
+                    'id': 'call_draw_$i',
                     'type': 'function',
                     'function': <String, dynamic>{
                       'name': 'draw_image',
                       'arguments': '{"prompt":"cat"}',
                     },
                   },
-                ],
-              },
+              ],
             },
-          ],
-        },
-      );
+          },
+        ],
+      });
     }
 
     if (callCount == 2) {
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content': '我看过了，这张可以发给你：<image></image>',
-              },
+      return _json(200, <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'role': 'assistant',
+              'content': replyText,
             },
-          ],
-        },
-      );
+          },
+        ],
+      });
     }
 
-    return _json(
-      500,
-      <String, dynamic>{'error': 'unexpected extra round'},
-    );
+    return _json(500, <String, dynamic>{'error': 'unexpected extra round'});
   }
 
   Future<http.StreamedResponse> _json(int statusCode, Object body) async {
@@ -264,9 +272,7 @@ class _StableVisionSendClient extends http.BaseClient {
     return http.StreamedResponse(
       Stream<List<int>>.value(bytes),
       statusCode,
-      headers: const <String, String>{
-        'content-type': 'application/json',
-      },
+      headers: const <String, String>{'content-type': 'application/json'},
     );
   }
 }
@@ -285,77 +291,65 @@ class _StableVisionRedrawClient extends http.BaseClient {
     payloads.add(jsonDecode(request.body) as Map<String, dynamic>);
 
     if (callCount == 1) {
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content': '我先出第一版。',
-                'tool_calls': <Map<String, dynamic>>[
-                  <String, dynamic>{
-                    'id': 'call_draw_1',
-                    'type': 'function',
-                    'function': <String, dynamic>{
-                      'name': 'draw_image',
-                      'arguments': '{"prompt":"cat"}',
-                    },
+      return _json(200, <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'role': 'assistant',
+              'content': '我先出第一版。',
+              'tool_calls': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'call_draw_1',
+                  'type': 'function',
+                  'function': <String, dynamic>{
+                    'name': 'draw_image',
+                    'arguments': '{"prompt":"cat"}',
                   },
-                ],
-              },
+                },
+              ],
             },
-          ],
-        },
-      );
+          },
+        ],
+      });
     }
 
     if (callCount == 2) {
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content': '这张手有问题，我调整提示词后重画。',
-                'tool_calls': <Map<String, dynamic>>[
-                  <String, dynamic>{
-                    'id': 'call_draw_2',
-                    'type': 'function',
-                    'function': <String, dynamic>{
-                      'name': 'draw_image',
-                      'arguments': '{"prompt":"cat, better hands"}',
-                    },
+      return _json(200, <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'role': 'assistant',
+              'content': '这张手有问题，我调整提示词后重画。',
+              'tool_calls': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'call_draw_2',
+                  'type': 'function',
+                  'function': <String, dynamic>{
+                    'name': 'draw_image',
+                    'arguments': '{"prompt":"cat, better hands"}',
                   },
-                ],
-              },
+                },
+              ],
             },
-          ],
-        },
-      );
+          },
+        ],
+      });
     }
 
     if (callCount == 3) {
-      return _json(
-        200,
-        <String, dynamic>{
-          'choices': <Map<String, dynamic>>[
-            <String, dynamic>{
-              'message': <String, dynamic>{
-                'role': 'assistant',
-                'content': '这版可以发给你了<image></image>',
-              },
+      return _json(200, <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'role': 'assistant',
+              'content': '这版可以发给你了<image></image>',
             },
-          ],
-        },
-      );
+          },
+        ],
+      });
     }
 
-    return _json(
-      500,
-      <String, dynamic>{'error': 'unexpected extra round'},
-    );
+    return _json(500, <String, dynamic>{'error': 'unexpected extra round'});
   }
 
   Future<http.StreamedResponse> _json(int statusCode, Object body) async {
@@ -363,9 +357,7 @@ class _StableVisionRedrawClient extends http.BaseClient {
     return http.StreamedResponse(
       Stream<List<int>>.value(bytes),
       statusCode,
-      headers: const <String, String>{
-        'content-type': 'application/json',
-      },
+      headers: const <String, String>{'content-type': 'application/json'},
     );
   }
 }
@@ -379,151 +371,276 @@ Future<String> _writeTinyPng(Directory dir, String name) async {
 void _runAll(RunnerFactory createRunner) {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('stable vision draw_image should review image before deciding to send',
-      () async {
-    final tempDir = await Directory.systemTemp.createTemp('aicove_stable_send');
-    final firstImage = await _writeTinyPng(tempDir, 'stable_send.png');
-    addTearDown(() async {
-      if (await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
-    });
+  test(
+    'stable vision draw_image should review image before deciding to send',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'aicove_stable_send',
+      );
+      final firstImage = await _writeTinyPng(tempDir, 'stable_send.png');
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
 
-    final fakeHttpClient = _StableVisionSendClient();
-    final settings = _buildVisionSettings();
-    final config = ApiConfig(
-      settings: settings,
-      modelFullId: 'openai:gpt-4o-mini',
-      providerApiBase: 'https://api.openai.com/v1',
-      providerApiKey: 'test-key',
-      customConfig: const <String, dynamic>{},
-      messages: const <Map<String, dynamic>>[
-        <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
-      ],
-      tools: const <Map<String, dynamic>>[
-        <String, dynamic>{
-          'type': 'function',
-          'function': <String, dynamic>{
-            'name': 'draw_image',
-            'description': 'draw image',
-            'parameters': <String, dynamic>{'type': 'object'},
+      final fakeHttpClient = _StableVisionSendClient();
+      final settings = _buildVisionSettings();
+      final config = ApiConfig(
+        settings: settings,
+        modelFullId: 'openai:gpt-4o-mini',
+        providerApiBase: 'https://api.openai.com/v1',
+        providerApiKey: 'test-key',
+        customConfig: const <String, dynamic>{},
+        messages: const <Map<String, dynamic>>[
+          <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
+        ],
+        tools: const <Map<String, dynamic>>[
+          <String, dynamic>{
+            'type': 'function',
+            'function': <String, dynamic>{
+              'name': 'draw_image',
+              'description': 'draw image',
+              'parameters': <String, dynamic>{'type': 'object'},
+            },
           },
-        },
-      ],
-    );
+        ],
+      );
 
-    final runner = createRunner(
-      agentClientFactory: (timeout) => AgentApiClient(
-        client: fakeHttpClient,
-        timeout: timeout,
-      ),
-    );
-    final result = await runner.executeApiCall(
-      config: config,
-      sessionId: 'conv_stable_vision_send',
-      userText: '帮我画一只猫',
-      responseProcessors: testProcessors(<TestPlugin>[
-        _SequencedVisionDrawImagePlugin(<String>[firstImage]),
-      ]),
-      availableTools: testTools(<TestPlugin>[
-        _SequencedVisionDrawImagePlugin(<String>[firstImage]),
-      ]),
-    );
+      final runner = createRunner(
+        agentClientFactory: (timeout) =>
+            AgentApiClient(client: fakeHttpClient, timeout: timeout),
+      );
+      final result = await runner.executeApiCall(
+        config: config,
+        sessionId: 'conv_stable_vision_send',
+        userText: '帮我画一只猫',
+        responseProcessors: testProcessors(<TestPlugin>[
+          _SequencedVisionDrawImagePlugin(<String>[firstImage]),
+        ]),
+        availableTools: testTools(<TestPlugin>[
+          _SequencedVisionDrawImagePlugin(<String>[firstImage]),
+        ]),
+      );
 
-    expect(fakeHttpClient.callCount, 2);
-    expect(_containsImageInput(fakeHttpClient.payloads[1]['messages']), isTrue);
-    expect(
-      _containsStringFragment(
-        fakeHttpClient.payloads[1]['messages'],
-        '"image_review_pending":true',
-      ),
-      isTrue,
+      expect(fakeHttpClient.callCount, 2);
+      expect(
+        _containsImageInput(fakeHttpClient.payloads[1]['messages']),
+        isTrue,
+      );
+      expect(
+        _containsStringFragment(
+          fakeHttpClient.payloads[1]['messages'],
+          '"image_review_pending":true',
+        ),
+        isTrue,
+      );
+      expect(
+        _containsStringFragment(
+          fakeHttpClient.payloads[1]['messages'],
+          '"delivered_to_chat":true',
+        ),
+        isFalse,
+      );
+      expect(result.processedText, contains('我先给你出一版图。'));
+      expect(result.processedText, contains('这张可以发给你'));
+      final image = result.pluginContents
+          .whereType<PluginImageContent>()
+          .single;
+      expect(image.localPath, firstImage);
+      expect(image.generationSnapshot!.steps, 31);
+    },
+  );
+
+  for (final (callCount, imagesPerCall) in [
+    (1, 2),
+    (2, 2),
+    (1, 8),
+    (2, 4),
+    (3, 2),
+    (1, 10),
+    (3, 4),
+  ]) {
+    test(
+      'stable review caps at four but delivers all pages for $callCount calls of $imagesPerCall',
+      () async {
+        final outputDir = await Directory(
+          'build/stable_review_test',
+        ).create(recursive: true);
+        final tempDir = await outputDir.createTemp('pages_');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final paths = [
+          for (var i = 0; i < callCount * imagesPerCall; i++)
+            await _writeTinyPng(tempDir, 'page_$i.png'),
+        ];
+        final fakeHttpClient = _StableVisionSendClient(
+          drawCallCount: callCount,
+          replyText:
+              '我看过了，这张可以发给你：<image> {"id":"2","status":"ready"} </image>',
+        );
+        final settings = _buildVisionSettings();
+        final config = ApiConfig(
+          settings: settings,
+          modelFullId: 'openai:gpt-4o-mini',
+          providerApiBase: 'https://api.openai.com/v1',
+          providerApiKey: 'test-key',
+          customConfig: const <String, dynamic>{},
+          messages: const <Map<String, dynamic>>[
+            <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
+          ],
+          tools: const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'type': 'function',
+              'function': <String, dynamic>{
+                'name': 'draw_image',
+                'description': 'draw image',
+                'parameters': <String, dynamic>{'type': 'object'},
+              },
+            },
+          ],
+        );
+
+        final runner = createRunner(
+          agentClientFactory: (timeout) =>
+              AgentApiClient(client: fakeHttpClient, timeout: timeout),
+        );
+        final result = await runner.executeApiCall(
+          config: config,
+          sessionId: 'conv_stable_vision_send',
+          userText: '帮我画一只猫',
+          responseProcessors: testProcessors(<TestPlugin>[
+            _SequencedVisionDrawImagePlugin(
+              paths,
+              imagesPerCall: imagesPerCall,
+            ),
+          ]),
+          availableTools: testTools(<TestPlugin>[
+            _SequencedVisionDrawImagePlugin(
+              paths,
+              imagesPerCall: imagesPerCall,
+            ),
+          ]),
+        );
+
+        expect(fakeHttpClient.callCount, 2);
+        expect(
+          _containsImageInput(fakeHttpClient.payloads[1]['messages']),
+          isTrue,
+        );
+        expect(
+          _containsStringFragment(
+            fakeHttpClient.payloads[1]['messages'],
+            '"image_review_pending":true',
+          ),
+          isTrue,
+        );
+        expect(
+          _containsStringFragment(
+            fakeHttpClient.payloads[1]['messages'],
+            '"delivered_to_chat":true',
+          ),
+          isFalse,
+        );
+        expect(result.processedText, contains('我先给你出一版图。'));
+        expect(result.processedText, contains('这张可以发给你'));
+        final delivered = result.pluginContents
+            .whereType<PluginImageContent>()
+            .toList();
+        expect(delivered.map((image) => image.localPath), paths.take(8));
+        expect(
+          delivered.map((image) => image.generationSnapshot!.steps),
+          everyElement(31),
+        );
+        final reviewMessages = fakeHttpClient.payloads[1]['messages'] as List;
+        final imageParts = [
+          for (final message in reviewMessages)
+            if (message['content'] is List)
+              for (final part in message['content'] as List)
+                if (part['type'] == 'image_url') part,
+        ];
+        expect(imageParts, hasLength(paths.length > 4 ? 4 : paths.length));
+      },
     );
-    expect(
-      _containsStringFragment(
-        fakeHttpClient.payloads[1]['messages'],
-        '"delivered_to_chat":true',
-      ),
-      isFalse,
-    );
-    expect(result.processedText, contains('我先给你出一版图。'));
-    expect(result.processedText, contains('这张可以发给你'));
-    final image = result.pluginContents.whereType<PluginImageContent>().single;
-    expect(image.localPath, firstImage);
-    expect(image.generationSnapshot!.steps, 31);
-  });
+  }
 
   test(
-      'stable vision draw_image should allow regenerate and only deliver latest image',
-      () async {
-    final tempDir =
-        await Directory.systemTemp.createTemp('aicove_stable_redraw');
-    final firstImage = await _writeTinyPng(tempDir, 'stable_redraw_1.png');
-    final secondImage = await _writeTinyPng(tempDir, 'stable_redraw_2.png');
-    addTearDown(() async {
-      if (await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
-    });
+    'stable vision draw_image should allow regenerate and only deliver latest image',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'aicove_stable_redraw',
+      );
+      final firstImage = await _writeTinyPng(tempDir, 'stable_redraw_1.png');
+      final secondImage = await _writeTinyPng(tempDir, 'stable_redraw_2.png');
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
 
-    final fakeHttpClient = _StableVisionRedrawClient();
-    final settings = _buildVisionSettings();
-    final config = ApiConfig(
-      settings: settings,
-      modelFullId: 'openai:gpt-4o-mini',
-      providerApiBase: 'https://api.openai.com/v1',
-      providerApiKey: 'test-key',
-      customConfig: const <String, dynamic>{},
-      messages: const <Map<String, dynamic>>[
-        <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
-      ],
-      tools: const <Map<String, dynamic>>[
-        <String, dynamic>{
-          'type': 'function',
-          'function': <String, dynamic>{
-            'name': 'draw_image',
-            'description': 'draw image',
-            'parameters': <String, dynamic>{'type': 'object'},
+      final fakeHttpClient = _StableVisionRedrawClient();
+      final settings = _buildVisionSettings();
+      final config = ApiConfig(
+        settings: settings,
+        modelFullId: 'openai:gpt-4o-mini',
+        providerApiBase: 'https://api.openai.com/v1',
+        providerApiKey: 'test-key',
+        customConfig: const <String, dynamic>{},
+        messages: const <Map<String, dynamic>>[
+          <String, dynamic>{'role': 'user', 'content': '帮我画一只猫'},
+        ],
+        tools: const <Map<String, dynamic>>[
+          <String, dynamic>{
+            'type': 'function',
+            'function': <String, dynamic>{
+              'name': 'draw_image',
+              'description': 'draw image',
+              'parameters': <String, dynamic>{'type': 'object'},
+            },
           },
-        },
-      ],
-    );
+        ],
+      );
 
-    final runner = createRunner(
-      agentClientFactory: (timeout) => AgentApiClient(
-        client: fakeHttpClient,
-        timeout: timeout,
-      ),
-    );
-    final result = await runner.executeApiCall(
-      config: config,
-      sessionId: 'conv_stable_vision_redraw',
-      userText: '帮我画一只猫',
-      responseProcessors: testProcessors(<TestPlugin>[
-        _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
-      ]),
-      availableTools: testTools(<TestPlugin>[
-        _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
-      ]),
-    );
+      final runner = createRunner(
+        agentClientFactory: (timeout) =>
+            AgentApiClient(client: fakeHttpClient, timeout: timeout),
+      );
+      final result = await runner.executeApiCall(
+        config: config,
+        sessionId: 'conv_stable_vision_redraw',
+        userText: '帮我画一只猫',
+        responseProcessors: testProcessors(<TestPlugin>[
+          _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
+        ]),
+        availableTools: testTools(<TestPlugin>[
+          _SequencedVisionDrawImagePlugin(<String>[firstImage, secondImage]),
+        ]),
+      );
 
-    expect(fakeHttpClient.callCount, 3);
-    expect(_containsImageInput(fakeHttpClient.payloads[1]['messages']), isTrue);
-    expect(_containsImageInput(fakeHttpClient.payloads[2]['messages']), isTrue);
-    expect(
-      _containsStringFragment(
-        fakeHttpClient.payloads[2]['messages'],
-        '"prompt":"cat, better hands"',
-      ),
-      isTrue,
-    );
-    final delivered =
-        result.pluginContents.whereType<PluginImageContent>().single;
-    expect(delivered.localPath, secondImage);
-    expect(delivered.localPath, isNot(firstImage));
-    expect(result.processedText, contains('这张手有问题'));
-    expect(result.processedText, contains('这版可以发给你了'));
-  });
+      expect(fakeHttpClient.callCount, 3);
+      expect(
+        _containsImageInput(fakeHttpClient.payloads[1]['messages']),
+        isTrue,
+      );
+      expect(
+        _containsImageInput(fakeHttpClient.payloads[2]['messages']),
+        isTrue,
+      );
+      expect(
+        _containsStringFragment(
+          fakeHttpClient.payloads[2]['messages'],
+          '"prompt":"cat, better hands"',
+        ),
+        isTrue,
+      );
+      final delivered = result.pluginContents
+          .whereType<PluginImageContent>()
+          .single;
+      expect(delivered.localPath, secondImage);
+      expect(delivered.localPath, isNot(firstImage));
+      expect(result.processedText, contains('这张手有问题'));
+      expect(result.processedText, contains('这版可以发给你了'));
+    },
+  );
 }
 
 void main() {

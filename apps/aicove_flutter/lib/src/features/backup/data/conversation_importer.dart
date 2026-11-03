@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'transfer_safety.dart';
 import '../models/export_format.dart';
-import '../../../core/database/database.dart' hide SyncScope;
+import '../../../core/database/database.dart';
 import '../../../core/database/repositories/repositories.dart';
 import '../../../core/models/message_block.dart' as domain;
 import '../../chat/id_gen.dart';
@@ -317,11 +317,6 @@ class ConversationImporter {
                 newConvId = originalId;
                 if (includeHistory &&
                     resolution == ImportConflictResolution.replace) {
-                  final existingMsgs = await _msgRepo
-                      .getAllByConversationOrderedStable(originalId);
-                  await _blockRepo.deleteByMessages(
-                    existingMsgs.map((m) => m.id).toList(growable: false),
-                  );
                   await _msgRepo.deleteByConversation(originalId);
                 }
                 break;

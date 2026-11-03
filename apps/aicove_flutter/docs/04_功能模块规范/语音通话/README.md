@@ -36,7 +36,7 @@
 ### 通话记录存储
 
 - 聊天里的气泡是一条 `role = user` 的普通消息，块为 `CallRecordBlock`（`TextBlock` 子类，JSON 里带 `callRecord: {callId, durationMs, summary?, turns?}`）。逐句记录 `turns`（`role`、`text`、`interrupted`）是气泡的附属数据，随聊天走云同步和局域网同步；块的文字内容只有标签和摘要，模型看不到逐句原话（2026-10-12 用户修订，之前只存本机）。
-- 角色主动来电没接（2026-10-14，主动关怀方案 12 §13）：以角色名义写一条 `role = assistant` 的气泡，块为 `CallRecordBlock.missed`（`callRecord.missed = true`，时长 0，无逐句记录），显示「未接来电」、不可点，模型看到 `[未接的语音通话]`。接听时 `ScriptedOpeningReplyGenerator` 让角色第一句直接说预生成的开场白，之后照常由模型生成。
+- 角色主动来电没接（2026-10-14，主动回复方案 12 §13）：以角色名义写一条 `role = assistant` 的气泡，块为 `CallRecordBlock.missed`（`callRecord.missed = true`，时长 0，无逐句记录），显示「未接来电」、不可点，模型看到 `[未接的语音通话]`。接听时 `ScriptedOpeningReplyGenerator` 让角色第一句直接说预生成的开场白，之后照常由模型生成。
 - 2026-10-12 之前的通话：记录在本机 `call_sessions`／`call_turns`（数据库 v22，随角色删除级联删除），记录页回退只读这两张表；新通话不再写入。别的设备点开这类旧气泡会提示记录只在通话那台设备上。
 - 挂断后，后台会整理通话摘要并更新气泡（`attachCallSummary`：气泡仍有效且仍是这通电话才写，不改会话预览和时间）。之后模型看到的文字内容是 `[语音通话 03:21]` 加一行「通话摘要：……」；摘要写好之前只有标签。摘要失败只记日志，不影响气泡。
 

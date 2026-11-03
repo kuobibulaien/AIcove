@@ -496,7 +496,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.display_style',
     label: '新会话默认样式',
-    page: '设置 · 通用 · 聊天样式与分段',
+    page: '设置 · 通用 · 新会话默认',
     type: 'enum',
     options: const {'bubble': '气泡', 'document': '文档'},
     read: (s) => s.chatDisplayStyle.name,
@@ -518,6 +518,14 @@ final List<AssistantSetting> kAssistantSettings = [
     type: 'bool',
     read: (s) => s.autoScrollOnAiReply,
     write: (n, v, _) => n.setAutoScrollOnAiReply(v! as bool),
+  ),
+  AssistantSetting(
+    key: 'chat.allow_multi_message_send',
+    label: '允许单次发送多条消息',
+    page: '聊天页「更多 · 聊天界面 · 行为」',
+    type: 'bool',
+    read: (s) => s.allowMultiMessageSend,
+    write: (n, v, _) => n.setAllowMultiMessageSend(v! as bool),
   ),
   AssistantSetting(
     key: 'chat.bubble_show_thinking',
@@ -545,8 +553,8 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'chat.message_chunking',
-    label: '启用消息分段',
-    page: '设置 · 通用 · 聊天样式与分段',
+    label: '新会话默认消息分段',
+    page: '设置 · 通用 · 新会话默认',
     type: 'bool',
     // The chat reads the format config; `message_chunking_enabled` is a
     // legacy field nothing splits by any more.
@@ -557,16 +565,16 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'chat.hide_user_avatar',
-    label: '隐藏用户头像',
-    page: '设置 · 通用 · 聊天',
+    label: '新会话默认隐藏用户头像',
+    page: '设置 · 通用 · 新会话默认',
     type: 'bool',
     read: (s) => s.hideUserAvatar,
     write: (n, v, _) => n.setHideUserAvatar(v! as bool),
   ),
   AssistantSetting(
     key: 'chat.expand_audio_text',
-    label: '语音消息默认展开文字',
-    page: '设置 · 通用 · 聊天',
+    label: '新会话默认展开语音文字',
+    page: '设置 · 通用 · 新会话默认',
     type: 'bool',
     read: (s) => s.expandAudioText,
     write: (n, v, _) => n.setExpandAudioText(v! as bool),
@@ -747,19 +755,9 @@ final List<AssistantSetting> kAssistantSettings = [
     restore: _restoreSkin,
   ),
   AssistantSetting(
-    key: 'chat.image_preview_scale',
-    label: '图片预览大小',
-    page: '设置 · 通用 · 聊天',
-    type: 'number',
-    min: kMinImagePreviewScale,
-    max: kMaxImagePreviewScale,
-    read: (s) => s.imagePreviewScale,
-    write: (n, v, _) => n.setImagePreviewScale(v! as double),
-  ),
-  AssistantSetting(
     key: 'chat.filter_punctuation',
-    label: '过滤句末标点',
-    page: '设置 · 通用 · 聊天样式与分段',
+    label: '省略句末标点（全局，分段后去掉每段末尾的标点）',
+    page: '设置「通用设置 · 消息分段」',
     type: 'bool',
     read: (s) => s.messageFormatConfig.filterPunctuation,
     write: (n, v, s) => n.updateMessageFormatConfig(
@@ -768,8 +766,8 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'chat.filter_punctuations',
-    label: '要过滤的句末标点（空格分隔；「过滤句末标点」开着才生效）',
-    page: '设置 · 通用 · 聊天样式与分段',
+    label: '要省略的句末标点（空格分隔；「省略句末标点」开着才生效）',
+    page: '设置「通用设置 · 消息分段」',
     type: 'string',
     read: (s) => s.messageFormatConfig.filterPunctuations.join(' '),
     nextState: (_, v) =>
@@ -782,8 +780,8 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'chat.chunk_punctuation_set',
-    label: '分段用哪套标点',
-    page: '设置 · 通用 · 聊天样式与分段 · 分段标点',
+    label: '分段标点方案（全局）',
+    page: '设置「通用设置 · 消息分段 · 分段标点」',
     type: 'string',
     choicesOf: (s) => {
       for (final set in s.messageFormatConfig.chunkPunctuationSets)
@@ -808,8 +806,8 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'chat.chunk_punctuations',
-    label: '当前这套分段标点里的标点（空格分隔；空字符串表示这套不按标点切）',
-    page: '设置 · 通用 · 聊天样式与分段 · 分段标点',
+    label: '当前分段标点方案里的标点（空格分隔；空字符串表示这套不按标点切）',
+    page: '设置「通用设置 · 消息分段 · 分段标点」',
     type: 'string',
     read: (s) =>
         s.messageFormatConfig.activeChunkPunctuationSet?.punctuations.join(' '),
@@ -843,7 +841,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.min_segment_length',
     label: '分段最短字数（更短的段会并到相邻段）',
-    page: '设置 · 通用 · 聊天样式与分段',
+    page: '界面里没有入口',
     type: 'integer',
     min: 0,
     max: 100,
@@ -855,7 +853,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.protect_quotes',
     label: '分段时不切开引号里的话',
-    page: '设置 · 通用 · 聊天样式与分段',
+    page: '界面里没有入口',
     type: 'bool',
     read: (s) => s.messageFormatConfig.protectQuotes,
     write: (n, v, s) => n.updateMessageFormatConfig(
@@ -930,15 +928,17 @@ AssistantSetting _autoReply({
   required Object? Function(AutoReplySettings settings) read,
   required AutoReplySettings Function(AutoReplySettings settings, Object? v)
   apply,
+  Map<String, String>? options,
   num? min,
   num? max,
   String? Function(AppSettings settings, Object? value)? validate,
-  String page = '设置 · 聊天插件 · 主动关怀',
+  String page = '设置 · 聊天插件 · 主动回复',
 }) => AssistantSetting(
   key: 'auto_reply.$key',
-  label: '主动关怀：$label',
+  label: '主动回复：$label',
   page: page,
   type: type,
+  options: options,
   min: min,
   max: max,
   validate: validate,
@@ -954,22 +954,16 @@ String? _validClock(AppSettings _, Object? value) =>
 
 final List<AssistantSetting> _autoReplySettings = [
   _autoReply(
-    key: 'daily_limit',
-    label: '每天最多几条',
-    type: 'integer',
-    min: 1,
-    max: 6,
-    read: (a) => a.dailyLimit,
-    apply: (a, v) => a.copyWith(dailyLimit: v! as int),
-  ),
-  _autoReply(
-    key: 'min_interval_minutes',
-    label: '两条之间至少隔几分钟',
-    type: 'integer',
-    min: 30,
-    max: 360,
-    read: (a) => a.minIntervalMinutes,
-    apply: (a, v) => a.copyWith(minIntervalMinutes: v! as int),
+    key: 'frequency',
+    label: '回复频率',
+    type: 'enum',
+    options: {
+      for (final f in AutoReplyFrequency.values) f.value: f.label,
+    },
+    read: (a) => a.frequency.value,
+    apply: (a, v) => a.copyWith(
+      frequency: AutoReplyFrequency.fromValue(v as String?),
+    ),
   ),
   _autoReply(
     key: 'quiet_hours',
@@ -1012,7 +1006,7 @@ final List<AssistantSetting> _autoReplySettings = [
     key: 'exact_alarm',
     label: '更准时（Android 还要在系统里允许精确闹钟）',
     type: 'bool',
-    page: '设置 · 聊天插件 · 主动关怀 · 更多设置',
+    page: '设置 · 聊天插件 · 主动回复 · 更多设置',
     read: (a) => a.allowExactAlarm,
     apply: (a, v) => a.copyWith(allowExactAlarm: v! as bool),
   ),

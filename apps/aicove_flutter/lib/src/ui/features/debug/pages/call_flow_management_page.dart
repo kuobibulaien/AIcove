@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 
 /// 调试工具：调用超时管理
@@ -79,13 +78,10 @@ class _CallFlowManagementPageState extends ConsumerState<CallFlowManagementPage>
               builder: (context) => ListView(
                 padding: moeUnderBarPadding(context, EdgeInsets.all(16)),
                 children: [
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.all(12),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Text(
                       '这里只调试模型请求和工具执行超时。\n'
                       '生图路径切换已经移动到「绘图设置」，自动档会在满足视觉 + 工具调用时走 draw_image 审图链路，否则改走 <image> 标签直连链路。',
@@ -96,16 +92,13 @@ class _CallFlowManagementPageState extends ConsumerState<CallFlowManagementPage>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -145,16 +138,13 @@ class _CallFlowManagementPageState extends ConsumerState<CallFlowManagementPage>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  Container(
+                  MoeContentSurface(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
-                    decoration: MoeG2Decoration(
-                      radius: 12,
-                      color: colors.surface,
-                      border: Border.all(color: colors.borderLight),
-                    ),
+                    radius: 12,
+                    border: BorderSide(color: colors.borderLight),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

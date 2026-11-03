@@ -110,6 +110,7 @@ class ActiveVoiceCallNotifier extends Notifier<ActiveVoiceCall?> {
           .create(conversation, openingLine: openingLine),
       archiver: ref.read(voiceCallArchiverProvider),
       describeError: (e) => e is VoiceCallUnavailable ? e.message : '通话接通失败：$e',
+      outgoing: openingLine == null,
       log: (message) => AppLogger.info('VoiceCall', message),
       onFinished: () {
         if (identical(state, call)) state = null;

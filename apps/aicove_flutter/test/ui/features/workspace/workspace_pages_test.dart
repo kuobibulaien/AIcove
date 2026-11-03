@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:aicove_flutter/src/features/workspace/application/workspace_file_opener.dart';
 import 'package:aicove_flutter/src/features/workspace/data/workspace_store.dart';
 import 'package:aicove_flutter/src/features/workspace/workspace_providers.dart';
 import 'package:aicove_flutter/src/ui/features/workspace/pages/workspace_file_page.dart';
@@ -13,18 +14,33 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 /// Source-rendered previews: `--dart-define=WRITE_WORKSPACE_PREVIEW=true`.
 const _capture = bool.fromEnvironment('WRITE_WORKSPACE_PREVIEW');
+
+class _RecordingOpener extends WorkspaceFileOpener {
+  _RecordingOpener(super.store);
+
+  final opened = <String>[];
+
+  @override
+  Future<bool> open(String workspaceId, String path, {Rect? origin}) async {
+    opened.add(path);
+    return true;
+  }
+}
 
 void main() {
   late Directory root;
   late WorkspaceStore store;
   late String ws;
+  late _RecordingOpener opener;
 
   setUp(() async {
     root = await Directory.systemTemp.createTemp('workspace_pages_test');
     store = await WorkspaceStore.open(root);
+    opener = _RecordingOpener(store);
     await store.ensureDefault();
     ws = (await store.create(name: '读书笔记', description: '整理读过的书和摘抄')).id;
     await store.write(
@@ -89,7 +105,10 @@ void main() {
     addTearDown(observer.dispose);
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [workspaceStoreProvider.overrideWith((ref) async => store)],
+        overrides: [
+          workspaceStoreProvider.overrideWith((ref) async => store),
+          workspaceFileOpenerProvider.overrideWith((ref) async => opener),
+        ],
         child: MaterialApp(
           theme: ThemeData(
             fontFamily: _capture ? 'Preview' : null,
@@ -158,10 +177,7 @@ void main() {
           ),
         );
         await settleUntil(tester, find.text('部分文件没有撤销'));
-        expect(
-          find.text('命令造成的改动不能撤销：\nshell-result.txt'),
-          findsOneWidget,
-        );
+        expect(find.text('命令造成的改动不能撤销：\nshell-result.txt'), findsOneWidget);
         expect(find.textContaining('这些文件在这一轮之后又被改过'), findsNothing);
         expect(
           await File(
@@ -181,43 +197,111 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     });
-    testWidgets('html files offer run and web saves get their own label at $width', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        await store.write(
-          ws,
-          'game.html',
-          utf8.encode('<!doctype html><p>小游戏</p>'),
-          runId: 'run-2',
-        );
-        await store.write(
-          ws,
-          'game.save.json',
-          utf8.encode('{"format":"aicove.webapp.save.v1","localStorage":{}}'),
-          runId: 'webapp-preview',
-        );
-        final key = await mount(tester, width);
-        await tester.tap(find.text('读书笔记'));
-        await settle(tester);
-        expect(find.textContaining('网页存档'), findsOneWidget);
-        await capture(tester, key, 'webapp-detail-${width.toInt()}');
-        await tester.tap(
-          find.byKey(const ValueKey('workspace-entry-game.html')),
-        );
-        await settle(tester);
-        expect(find.byKey(const ValueKey('workspace-file-run')), findsOneWidget);
-        await capture(tester, key, 'webapp-file-${width.toInt()}');
-        await tester.pageBack();
-        await settle(tester);
-        await tester.tap(
-          find.byKey(const ValueKey('workspace-entry-AGENTS.md')),
-        );
-        await settle(tester);
-        expect(find.byKey(const ValueKey('workspace-file-run')), findsNothing);
-        expect(tester.takeException(), isNull);
-      });
-    });
+    testWidgets(
+      'html files offer run and web saves get their own label at $width',
+      (tester) async {
+        await tester.runAsync(() async {
+          await store.write(
+            ws,
+            'game.html',
+            utf8.encode('<!doctype html><p>小游戏</p>'),
+            runId: 'run-2',
+          );
+          await store.write(
+            ws,
+            'game.save.json',
+            utf8.encode('{"format":"aicove.webapp.save.v1","localStorage":{}}'),
+            runId: 'webapp-preview',
+          );
+          final key = await mount(tester, width);
+          await tester.tap(find.text('读书笔记'));
+          await settle(tester);
+          expect(find.textContaining('网页存档'), findsOneWidget);
+          await capture(tester, key, 'webapp-detail-${width.toInt()}');
+          await tester.tap(
+            find.byKey(const ValueKey('workspace-entry-game.html')),
+          );
+          await settle(tester);
+          expect(
+            find.byKey(const ValueKey('workspace-file-run')),
+            findsOneWidget,
+          );
+          await capture(tester, key, 'webapp-file-${width.toInt()}');
+          await tester.pageBack();
+          await settle(tester);
+          await tester.tap(
+            find.byKey(const ValueKey('workspace-entry-AGENTS.md')),
+          );
+          await settle(tester);
+          expect(
+            find.byKey(const ValueKey('workspace-file-run')),
+            findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+        });
+      },
+    );
+    testWidgets(
+      'images show in place and other files open externally at $width',
+      (tester) async {
+        await tester.runAsync(() async {
+          await store.write(
+            ws,
+            '第2页.png',
+            img.encodePng(
+              img.fill(
+                img.Image(width: 480, height: 320),
+                color: img.ColorRgb8(230, 150, 120),
+              ),
+            ),
+            runId: 'run-2',
+          );
+          await store.write(ws, '报告.pdf', [
+            0x25,
+            0x50,
+            0x44,
+            0x46,
+            0xff,
+            0xfe,
+          ], runId: 'run-2');
+          final key = await mount(tester, width);
+          await tester.tap(find.text('读书笔记'));
+          await settle(tester);
+          await tester.tap(
+            find.byKey(const ValueKey('workspace-entry-第2页.png')),
+          );
+          await settleUntil(
+            tester,
+            find.byKey(const ValueKey('workspace-file-image')),
+          );
+          expect(
+            find.byKey(const ValueKey('workspace-file-image')),
+            findsOneWidget,
+          );
+          expect(find.text('这里不能直接显示'), findsNothing);
+          final image = tester.widget<Image>(
+            find.byKey(const ValueKey('workspace-file-image')),
+          );
+          await precacheImage(
+            image.image,
+            tester.element(find.byWidget(image)),
+          );
+          await tester.pumpAndSettle();
+          await capture(tester, key, 'image-file-${width.toInt()}');
+          await tester.pageBack();
+          await settle(tester);
+          await tester.tap(
+            find.byKey(const ValueKey('workspace-entry-报告.pdf')),
+          );
+          await settleUntil(tester, find.text('这里不能直接显示'));
+          await capture(tester, key, 'other-file-${width.toInt()}');
+          await tester.tap(find.byKey(const ValueKey('workspace-file-open')));
+          await settle(tester);
+          expect(opener.opened, ['报告.pdf']);
+          expect(tester.takeException(), isNull);
+        });
+      },
+    );
     testWidgets('list, browse, read and undo a run at $width', (tester) async {
       await tester.runAsync(() async {
         final key = await mount(tester, width);

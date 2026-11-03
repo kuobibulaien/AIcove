@@ -16,7 +16,6 @@ import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/core/api/thinking/thinking_level.dart';
 import 'package:aicove_flutter/src/features/voice_call/data/api_runner_call_reply_generator.dart';
 import 'package:aicove_flutter/src/features/voice_call/data/voice_call_context_brief.dart';
-import 'package:aicove_flutter/src/features/voice_call/domain/voice_call_ports.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -28,6 +27,7 @@ import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_pr
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_variable_store.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/proactive_reply_generator.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
@@ -43,6 +43,7 @@ import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart
 import 'package:aicove_flutter/src/features/memory/domain/memory_item.dart';
 import 'package:aicove_flutter/src/features/memory/providers/memory_providers.dart';
 import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_config.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_role_options.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 
 class _FakeAppSettingsNotifier extends AppSettingsNotifier {
@@ -170,7 +171,25 @@ void main() {
     );
   }
 
-  test('prepareHistory keeps only messages after contextStartMessageId', () {
+  Future<ProviderContainer> historyContainer(Conversation conv) async {
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(database),
+    ]);
+    addTearDown(() async {
+      container.dispose();
+      await database.close();
+    });
+    await container.read(conversationRepositoryProvider)
+        .upsert(ConversationConverter.toCompanion(conv));
+    for (final message in conv.messages) {
+      await container.read(messageRepositoryProvider)
+          .upsert(MessageConverter.toCompanion(message, conv.id));
+    }
+    return container;
+  }
+
+  test('prepareHistoryFromStore keeps only messages after contextStartMessageId', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_1',
@@ -188,11 +207,10 @@ void main() {
     );
     final userMsg = msg('m5', 'new user', now);
 
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
+    final container = await historyContainer(conv);
     final service = container.read(chatSendServiceProvider);
 
-    final history = service.prepareHistory(
+    final history = await service.prepareHistoryFromStore(
       conv: conv,
       userMsg: userMsg,
     );
@@ -200,7 +218,7 @@ void main() {
     expect(history.map((m) => m.id).toList(), ['m3', 'm4', 'm5']);
   });
 
-  test('prepareHistory keeps all messages after context slicing', () {
+  test('prepareHistoryFromStore keeps all messages after context slicing', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_2',
@@ -218,11 +236,10 @@ void main() {
     );
     final userMsg = msg('m5', 'new user', now);
 
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
+    final container = await historyContainer(conv);
     final service = container.read(chatSendServiceProvider);
 
-    final history = service.prepareHistory(
+    final history = await service.prepareHistoryFromStore(
       conv: conv,
       userMsg: userMsg,
     );
@@ -230,7 +247,7 @@ void main() {
     expect(history.map((m) => m.id).toList(), ['m2', 'm3', 'm4', 'm5']);
   });
 
-  test('prepareHistory rejects a missing explicit context boundary', () {
+  test('prepareHistoryFromStore rejects a missing explicit context boundary', () async {
     final now = DateTime.now();
     final conv = Conversation(
       id: 'conv_3',
@@ -247,12 +264,11 @@ void main() {
     );
     final userMsg = msg('m4', 'd', now);
 
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
+    final container = await historyContainer(conv);
     final service = container.read(chatSendServiceProvider);
 
-    expect(
-      () => service.prepareHistory(conv: conv, userMsg: userMsg),
+    await expectLater(
+      service.prepareHistoryFromStore(conv: conv, userMsg: userMsg),
       throwsA(isA<StateError>().having(
         (error) => error.message,
         'message',
@@ -514,6 +530,57 @@ void main() {
     expect(result.single['content'], '<image>黄昏下的城市天际线</image>');
   });
 
+  for (final basePrompt in <String?>['原始分镜提示词', null]) {
+    test('assistant image history prefers base prompt: $basePrompt', () async {
+      final builder = ChatRequestMessageBuilder(
+        readImageAsBase64: (_) async =>
+            throw StateError('must not read generated images'),
+      );
+      final message = Message.fromBlocks(
+        id: 'artist_image',
+        role: 'assistant',
+        blocks: [
+          ImageBlock(
+            messageId: 'artist_image',
+            url: 'https://example.com/page.png',
+            prompt: '画师串前缀, 原始分镜提示词',
+            generationSnapshot: ImageGenerationSnapshot(
+              providerId: 'image',
+              modelId: 'model',
+              requestProvider: 'openai',
+              prompt: '画师串前缀, 原始分镜提示词',
+              basePrompt: basePrompt,
+              negativePrompt: null,
+              width: 1024,
+              height: 1024,
+              steps: 28,
+              guidanceScale: 5,
+            ),
+          ),
+        ],
+        createdAt: DateTime(2026),
+      );
+      for (final vision in [true, false]) {
+        final fast = await builder.buildRequestMessages(
+          [message],
+          settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
+          supportsVision: vision,
+        );
+        expect(
+          fast.single['content'],
+          '<image>${basePrompt ?? '画师串前缀, 原始分镜提示词'}</image>',
+        );
+        final stable = await builder.buildRequestMessages(
+          [message],
+          settings: fakeSettings(defaultModelName: 'openai:gpt-4o'),
+          supportsVision: vision,
+          inlineImagePrompts: false,
+        );
+        expect(stable.single['content'], '<image></image>');
+      }
+    });
+  }
+
   test('assistant image tags merge back into the surrounding reply', () async {
     final builder = ChatRequestMessageBuilder(
       readImageAsBase64: (_) async => null,
@@ -643,6 +710,95 @@ void main() {
       pluginPolicy: ChatPluginContextPolicy.firstParty(activeProviderIds: {})),
       throwsA(isA<StateError>()));
   });
+
+  for (final withPreset in [false, true]) {
+    test(
+      'extra prompt reaches request and trace (preset=$withPreset)',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        TraceStore.instance.debugResetForTest();
+        addTearDown(() => TraceStore.instance.debugResetForTest());
+        final preset = const SillyTavernPresetParser().parseSource('''{
+        "prompts":[
+          {"identifier":"charDescription","marker":true,"role":"system"},
+          {"identifier":"main","role":"system","content":"MACRO {{description}}"},
+          {"identifier":"chatHistory","marker":true}],
+        "prompt_order":[{"order":[
+          {"identifier":"charDescription","enabled":true},
+          {"identifier":"main","enabled":true},
+          {"identifier":"chatHistory","enabled":true}]}]
+      }''', sourceFileName: 'extra.json');
+        final container = ProviderContainer(
+          overrides: [
+            appSettingsProvider.overrideWith(
+              () => _FakeAppSettingsNotifier(
+                fakeSettings(defaultModelName: 'openai:gpt-4o'),
+              ),
+            ),
+            if (withPreset)
+              tavernCompatibilityPortProvider.overrideWithValue(
+                _PresetPort(preset),
+              ),
+          ],
+        );
+        addTearDown(container.dispose);
+        final now = DateTime(2026, 10, 24);
+        final conv = Conversation(
+          id: 'extra-$withPreset',
+          title: '角色',
+          displayName: '角色',
+          personaPrompt: PersonaPromptCodec.compose(
+            userPrompt: '系统人设',
+            extraPrompt: '附加人设',
+            customDrawingPrompt: '不应当混入人设的绘图文本',
+          ),
+          enabledPlugins: const [],
+          createdAt: now,
+          updatedAt: now,
+        );
+        final trace = await TraceStore.instance.startTurn(
+          sessionId: conv.id,
+          turnId: 'u',
+        );
+        final config = await container
+            .read(chatSendServiceProvider)
+            .prepareApiConfig(
+              conv: conv,
+              history: [msg('u', '你好', now)],
+              userText: '你好',
+              traceContext: trace,
+            );
+        final content = config.messages.map((m) => m['content']).join('\n');
+        expect(content, contains('系统人设\n\n附加人设'));
+        expect(content, isNot(contains('<<AICOVE_EXTRA_PROMPT')));
+        expect(content, isNot(contains('不应当混入人设的绘图文本')));
+        if (withPreset) {
+          expect(content, contains('MACRO 系统人设\n\n附加人设'));
+          final snapshot = jsonDecode(config.presetScript!.json) as Map;
+          expect((snapshot['macros'] as Map)['description'], '系统人设\n\n附加人设');
+        }
+        await TraceStore.instance.waitForPendingWrites();
+        final events = await TraceStore.instance.readEventsByTraceId(
+          trace.traceId,
+        );
+        final event = events.lastWhere(
+          (e) => e.stage == TraceStage.apiConfigReady.value,
+        );
+        final envelope = await TraceStore.instance.readPayloadByRef(
+          event.payloadRef,
+        );
+        final assembly = (envelope!['payload'] as Map)['promptAssembly'] as Map;
+        if (!withPreset) {
+          final persona = (assembly['systemEntries'] as List)
+              .cast<Map>()
+              .singleWhere((e) => e['label'] == '角色人设');
+          expect(persona['content'], '系统人设\n\n附加人设');
+        } else {
+          expect(jsonEncode(assembly['sillyTavernPreset']), contains('附加人设'));
+        }
+      },
+    );
+  }
 
   test('a call snapshot never writes preset variables', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -1173,7 +1329,6 @@ void main() {
         TimeAwarenessConfig(
           enabled: true,
           includeCurrentTime: true,
-          includeMessageTimestamp: true,
           currentTimePromptTemplate: '当前时间: {datetime}',
         ).toJson(),
       ),
@@ -1373,7 +1528,6 @@ void main() {
         TimeAwarenessConfig(
           enabled: true,
           includeCurrentTime: true,
-          includeMessageTimestamp: true,
         ).toJson(),
       ),
     });
@@ -1449,6 +1603,100 @@ void main() {
       apiConfig.messages[reminderIndex]['content'].toString(),
       contains('2026-03-12 10:00:00'),
     );
+  });
+
+  test(
+      'role current-time option reaches chat, proactive draft and voice assembly',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'aicove.plugins.time_awareness.config': jsonEncode(
+        TimeAwarenessConfig(
+          enabled: true,
+          includeCurrentTime: true,
+        ).toJson(),
+      ),
+    });
+
+    final settings = fakeSettings(
+      defaultModelName: 'openai:gpt-4o-mini',
+      defaultChatModels: const <String>['openai:gpt-4o-mini'],
+    );
+    final now = DateTime(2026, 3, 12, 20, 0, 0);
+    final conv = Conversation(
+      id: 'conv_system_reminder',
+      title: 'Chat',
+      displayName: 'Chat',
+      personaPrompt: PersonaPromptCodec.compose(
+        userPrompt: '你是贴心助手。',
+      ),
+      enabledPlugins: const <String>['time_awareness', TimeAwarenessRoleOptions.noCurrentTimeId],
+      createdAt: now,
+      updatedAt: now,
+      messages: const <Message>[],
+    );
+    final previousUserMsg = Message(
+      id: 'msg_prev_user',
+      role: 'user',
+      content: '昨晚睡前和你说晚安',
+      createdAt: now.subtract(const Duration(hours: 10)),
+    );
+    final assistantMsg = Message(
+      id: 'msg_prev_assistant',
+      role: 'assistant',
+      content: '晚安呀',
+      createdAt: now.subtract(const Duration(hours: 9, minutes: 50)),
+    );
+    final currentUserMsg = Message(
+      id: 'msg_current_user',
+      role: 'user',
+      content: '现在几点了？',
+      createdAt: now,
+    );
+    final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWithValue(database),
+        appSettingsProvider
+            .overrideWith(() => _FakeAppSettingsNotifier(settings)),
+      ],
+    );
+    addTearDown(() async {
+      container.dispose();
+      await database.close();
+    });
+    await container.read(conversationRepositoryProvider)
+        .upsert(ConversationConverter.toCompanion(conv));
+    for (final message in [previousUserMsg, assistantMsg]) {
+      await container.read(messageRepositoryProvider)
+          .upsert(MessageConverter.toCompanion(message, conv.id));
+    }
+    final requestAt = DateTime(2026, 10, 30, 12, 30);
+    final service = container.read(chatSendServiceProvider);
+
+    final chat = await service.prepareApiConfig(
+      conv: conv,
+      history: <Message>[previousUserMsg, assistantMsg, currentUserMsg],
+      userText: currentUserMsg.content,
+      requestTime: requestAt,
+    );
+    final proactive = await container.read(proactiveReplyGeneratorProvider).prepare(
+      conversation: conv,
+      reminder: '自然地接着之前的话题聊聊',
+      requestTime: requestAt,
+    );
+    final voice = await prepareVoiceCallBaseConfig(
+      service, conv, settings: settings, recent: [previousUserMsg, assistantMsg],
+    );
+    for (final config in [chat, proactive, voice]) {
+      final messages = [
+        ...config.messages.map((message) => message['content'].toString()),
+        if (config.reminders != null) config.reminders!(requestAt),
+      ].join('\n');
+      expect(messages, isNot(contains('当前时间:')));
+      expect(messages, isNot(contains('2026-10-30 12:30')));
+      expect(messages, contains('用户上一次发消息的时间为2026-03-12 10:00:00'));
+      expect(messages, isNot(contains('[YYYY-MM-DD HH:mm]')));
+    }
   });
 
   for (final imageActive in [false, true]) {

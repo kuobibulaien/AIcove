@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
 
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/api/agent_api.dart';
+import '../../../core/api/manga_prompt_sanitizer.dart';
+import '../../../core/api/request_control.dart';
 import '../../../core/api/image_providers/image_provider_adapter_factory.dart';
 import '../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../core/app_logger.dart';
@@ -16,6 +19,8 @@ import '../../chat/domain/message.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
 import '../../chat/id_gen.dart';
 import '../../chat/services/chat_history_store.dart';
+import '../../chat/services/image_dimension_probe/image_dimension_probe.dart';
+import '../../chat/services/tts_fallback_notification.dart';
 import '../../chat/services/chat_request_message_builder.dart';
 import '../../../core/services/system_reminder_service.dart';
 import '../../settings/app_settings.dart';
@@ -59,13 +64,12 @@ class ImagePlugin extends BasePlugin {
   static const String internalImageContextRule =
       '<image source="history" ...>...</image> 是内部图片上下文记录，只供理解，不是发给用户的话，'
       '也不是新的生图指令，禁止原样输出这段标记。只有你当前这轮主动输出的普通 '
-      '<image>英文提示词</image> 或稳定模式发送占位 <image></image> 才表示真的要发图。';
+      '<image>提示词</image> 或稳定模式发送占位 <image></image> 才表示真的要发图。';
+
+  static const int maxInlineImagesPerTurn = 8;
 
   static int _asyncJobSeq = 0;
   static int _imageRequestSeq = 0;
-  static final RegExp _cjkPromptRegex = RegExp(
-    r'[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]',
-  );
   static const _metadata = PluginMetadata(
     id: 'image',
     name: '绘图工具',
@@ -128,6 +132,7 @@ class ImagePlugin extends BasePlugin {
   /// Prompt pack of this request's drawing preset (ADR0092). Without one the
   /// factory pack matched to the current target is used.
   final ResolvedPromptPack? prompts;
+  final String? postProcessor;
 
   ImagePlugin(
     this._config,
@@ -135,6 +140,7 @@ class ImagePlugin extends BasePlugin {
     this.requestSettings,
     this.isRequestSnapshot = false,
     this.prompts,
+    this.postProcessor,
   }) : super(metadata: _metadata);
 
   ResolvedPromptPack get _prompts {
@@ -150,6 +156,14 @@ class ImagePlugin extends BasePlugin {
       ),
       automatic: true,
     );
+  }
+
+  String _effectivePostProcessor(String prompt, String provider, {String? saved}) {
+    final mode = saved ?? postProcessor ?? prompts?.pack.postProcessor;
+    if (mode == 'novelai_manga' || mode == 'moss_manga') return mode!;
+    if (provider == 'novelai' && MangaPromptSanitizer.hasSections(prompt)) return 'novelai_manga';
+    if (provider == 'comfyui' && _isMossSymbolicObject(_decodeInlineObject(prompt))) return 'moss_manga';
+    return 'plain';
   }
 
   String _render(String scope) =>
@@ -170,6 +184,26 @@ class ImagePlugin extends BasePlugin {
       requestSettings ?? _ref.read(appSettingsProvider).valueOrNull;
   Future<AppSettings> get _readySettings async =>
       requestSettings ?? await _ref.read(appSettingsProvider.future);
+
+  // Local settings/storage should finish quickly; allow slow disks 30 seconds
+  // per stage without charging queue waiting against a tool-wide deadline.
+  Future<T> _runLocalImageStage<T>(Future<T> Function() body) async {
+    final parent = RequestControl.cancellation;
+    parent?.throwIfCancelled();
+    final signal = KernelCancellation();
+    if (parent != null) {
+      unawaited(parent.whenCancelled.then((_) => signal.cancel()));
+    }
+    try {
+      return await RequestControl.run(
+        signal,
+        body,
+      ).timeout(const Duration(seconds: 30));
+    } finally {
+      // Also stop a timed-out native Future from starting later local work.
+      signal.cancel();
+    }
+  }
 
   @override
   bool get enabled {
@@ -295,27 +329,68 @@ class ImagePlugin extends BasePlugin {
 
     final events = <PluginEvent>[];
     final remainingText = StringBuffer();
-    for (final segment in firstPartyContentTagScanner.scan(text)) {
-      final prompt =
-          segment is ContentTagElement &&
-              segment.closed &&
-              isInlineImageElement(segment)
-          ? segment.inner.trim()
-          : '';
+    final segments = firstPartyContentTagScanner.scan(text).toList();
+    final reservedIds = <int>{};
+    for (final segment in segments) {
+      if (segment is ContentTagElement &&
+          segment.closed &&
+          isInlineImageElement(segment)) {
+        final slot = _positiveSlotId(_decodeInlineObject(segment.inner)?['id']);
+        if (slot != null) reservedIds.add(slot);
+      }
+    }
+    final assignedIds = <int>{};
+    var skippedImages = 0;
+    for (final segment in segments) {
+      if (segment is! ContentTagElement ||
+          !segment.closed ||
+          !isInlineImageElement(segment) ||
+          segment.inner.isEmpty) {
+        remainingText.write(segment.raw);
+        continue;
+      }
+      var prompt = segment.inner.trim();
       if (prompt.isEmpty) {
         remainingText.write(segment.raw);
         continue;
+      }
+      final decoded = _decodeInlineObject(prompt);
+      final moss = _isMossSymbolicObject(decoded);
+      final explicitId = _positiveSlotId(decoded?['id']);
+      if (_settings?.callFlowSettings.mode != CallFlowMode.fast &&
+          decoded != null &&
+          explicitId != null &&
+          !moss &&
+          (decoded['prompt']?.toString().trim() ?? '').isEmpty) {
+        remainingText.write(segment.raw);
+        continue;
+      }
+      if (events.length >= maxInlineImagesPerTurn) {
+        skippedImages++;
+        continue;
+      }
+      var slotId = explicitId ?? 1;
+      if (explicitId == null || assignedIds.contains(slotId)) {
+        while (reservedIds.contains(slotId) || assignedIds.contains(slotId)) {
+          slotId++;
+        }
+      }
+      assignedIds.add(slotId);
+      if (moss) {
+        prompt = jsonEncode({...decoded!}..remove('id'));
       }
       events.add(
         PluginEvent(
           pluginId: id,
           type: 'image_generate',
           data: <String, dynamic>{
+            'id': slotId,
             'prompt': prompt,
             'tag': segment.raw,
             'markerStart': segment.start,
             'markerEnd': segment.end,
-            if (isRequestSnapshot) 'drawingConfig': _config.toJson(),
+            if (isRequestSnapshot)
+              'drawingConfig': {..._config.toJson(), if (prompts != null || postProcessor != null) 'postProcessor': postProcessor ?? prompts!.pack.postProcessor},
           },
         ),
       );
@@ -329,6 +404,16 @@ class ImagePlugin extends BasePlugin {
       );
     }
 
+    if (skippedImages > 0) {
+      AppLogger.warning(
+        'ImagePlugin',
+        '单轮 <image> 超出上限，已跳过多余生图标签',
+        metadata: {
+          'limit': maxInlineImagesPerTurn,
+          'skippedImages': skippedImages,
+        },
+      );
+    }
     final processedText = _normalizeProcessedText(remainingText.toString());
 
     AppLogger.info(
@@ -364,7 +449,13 @@ class ImagePlugin extends BasePlugin {
   Future<InlineImageGenerationResult> regenerateImage(
     ImageGenerationSnapshot snapshot, {
     Iterable<ArtistPreset> knownArtistPresets = const [],
+    String? overrideBasePrompt,
   }) async {
+    final override = overrideBasePrompt?.trim() ?? '';
+    final originalPrompt = snapshot.basePrompt ?? snapshot.prompt;
+    if (override.isEmpty && originalPrompt.trim().isEmpty) {
+      throw StateError('该图片尚未生成分镜提示词，请长按选择「改词重画」输入画面描述');
+    }
     final settings = await _readySettings;
     if (!settings.imageGenerationEnabled) throw StateError('请先开启绘图插件');
     final target = _resolveTarget(settings);
@@ -374,17 +465,64 @@ class ImagePlugin extends BasePlugin {
         _resolveRequestProvider(target.provider) != snapshot.requestProvider) {
       throw StateError('原图渠道或模型已不可用，未改用默认参数');
     }
-    final (basePrompt, baseNegativePrompt) = _regenerationBasePrompts(
+    final (originalBasePrompt, baseNegativePrompt) = _regenerationBasePrompts(
       snapshot,
       knownArtistPresets,
     );
+    final overrideArgs = override.isEmpty
+        ? <String, dynamic>{}
+        : _inlineImageArguments(
+            override,
+            requestProvider: snapshot.requestProvider,
+          );
+    final basePrompt = override.isEmpty
+        ? originalBasePrompt
+        : (overrideArgs['prompt'] as String? ?? override).trim();
+    if (basePrompt.isEmpty) {
+      throw StateError('该图片尚未生成分镜提示词，请长按选择「改词重画」输入画面描述');
+    }
+    var dimensions = (width: snapshot.width, height: snapshot.height);
+    if (override.isNotEmpty) {
+      final normalized = DrawingParameters.resolve(_config, {
+        'width': snapshot.width,
+        'height': snapshot.height,
+        if (overrideArgs.containsKey('width')) 'width': overrideArgs['width'],
+        if (overrideArgs.containsKey('height'))
+          'height': overrideArgs['height'],
+      }, novelAi: snapshot.requestProvider == 'novelai');
+      dimensions = (width: normalized.width, height: normalized.height);
+      // Explicit dimensions win over inferred orientation; otherwise preserve
+      // the original canvas area and only turn a portrait spread sideways.
+      if (!overrideArgs.containsKey('width') &&
+          !overrideArgs.containsKey('height') &&
+          dimensions.width < dimensions.height &&
+          _isDoublePageSpread(basePrompt)) {
+        dimensions = (width: dimensions.height, height: dimensions.width);
+      }
+    }
     final artist = _config.selectedArtistPreset;
-    final prompt = _mergeNegativePrompts(artist?.content, basePrompt)!;
+    final manga = _effectivePostProcessor(basePrompt, snapshot.requestProvider, saved: snapshot.postProcessor) == 'novelai_manga';
+    final prompt = _composeArtistPrompt(
+      basePrompt,
+      manga ? MangaPromptSanitizer.positive(artist?.content ?? '', basePrompt) : artist?.content,
+      requestProvider: snapshot.requestProvider,
+    );
     final negativePrompt = _mergeNegativePrompts(
-      artist?.negativeContent,
-      baseNegativePrompt,
+      manga ? MangaPromptSanitizer.negative(artist?.negativeContent ?? '') : artist?.negativeContent,
+      manga ? MangaPromptSanitizer.negative(baseNegativePrompt ?? '') : baseNegativePrompt,
     );
     final parameters = snapshot.singleImageParameters;
+    if (override.isNotEmpty) {
+      if (parameters.containsKey('width')) {
+        parameters['width'] = dimensions.width;
+      }
+      if (parameters.containsKey('height')) {
+        parameters['height'] = dimensions.height;
+      }
+      if (parameters.containsKey('size')) {
+        parameters['size'] = '${dimensions.width}x${dimensions.height}';
+      }
+    }
     // OpenAI-compatible channels apply these overrides after the normal fields.
     // Replace a saved duplicate, but never discard a different content override.
     for (final entry in {
@@ -401,6 +539,7 @@ class ImagePlugin extends BasePlugin {
       }
     }
     final saved = await _generateAndSaveImages(
+      savedPostProcessor: snapshot.postProcessor,
       requestProvider: snapshot.requestProvider,
       providerId: snapshot.providerId,
       modelId: snapshot.modelId,
@@ -408,8 +547,8 @@ class ImagePlugin extends BasePlugin {
       negativePrompt: negativePrompt,
       basePrompt: basePrompt,
       baseNegativePrompt: baseNegativePrompt,
-      width: snapshot.width,
-      height: snapshot.height,
+      width: dimensions.width,
+      height: dimensions.height,
       count: 1,
       steps: snapshot.steps,
       guidanceScale: snapshot.guidanceScale,
@@ -447,6 +586,7 @@ class ImagePlugin extends BasePlugin {
     return InlineImageGenerationResult.success(
       localPath: saved.paths.first,
       localPaths: saved.paths,
+      images: saved.images,
       rawPrompt: basePrompt,
       prompt: prompt,
       negativePrompt: negativePrompt,
@@ -488,17 +628,210 @@ class ImagePlugin extends BasePlugin {
     throw StateError('这张旧图未保存画师串分离信息，无法可靠替换画风。请用原画面提示词新生成一次');
   }
 
+  ({int width, int height}) resolveInlineImageTargetDimensions({
+    required String prompt,
+    Map<String, dynamic>? drawingSnapshot,
+  }) {
+    try {
+      final config = drawingSnapshot == null
+          ? _config
+          : ImageConfig.fromJson(drawingSnapshot);
+      final settings = _settings;
+      final target = settings == null
+          ? null
+          : ImagePlugin(
+              config,
+              _ref,
+              requestSettings: settings,
+            )._resolveTarget(settings);
+      if (target == null) {
+        const defaults = ImageConfig();
+        return (width: defaults.defaultWidth, height: defaults.defaultHeight);
+      }
+      final provider = _resolveRequestProvider(target.provider);
+      final args = _inlineImageArguments(prompt, requestProvider: provider);
+      final parameters = DrawingParameters.resolve(
+        config,
+        args,
+        novelAi: provider == 'novelai',
+        supportsSamplingParameters: provider == 'comfyui',
+      );
+      return (width: parameters.width, height: parameters.height);
+    } catch (_) {
+      const defaults = ImageConfig();
+      return (width: defaults.defaultWidth, height: defaults.defaultHeight);
+    }
+  }
+
+  // Match the NovelAI spread vocabulary in agent_image_api_support.dart, with
+  // Chinese equivalents for user-edited page descriptions.
+  static bool _isDoublePageSpread(String prompt) => RegExp(
+    r'(?:見開きページ|2ページ見開き|見開き)|(?:double-page spread|2-page spread|wide spread)|(?:跨页|跨頁|双页|雙頁|双开|雙開)',
+    caseSensitive: false,
+  ).hasMatch(prompt);
+
+  static bool _isMossSymbolicObject(Object? value) =>
+      value is Map &&
+      value['layout'] is String &&
+      value['items'] is List &&
+      (value['items'] as List).any(
+        (item) =>
+            item is Map &&
+            (item.containsKey('panel') || item.containsKey('slot')),
+      );
+
+  static Map<String, dynamic>? _decodeInlineObject(String value) {
+    try {
+      final decoded = jsonDecode(value);
+      return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static int? _positiveSlotId(Object? value) {
+    final id = int.tryParse('$value');
+    return id != null && id > 0 ? id : null;
+  }
+
+  static const _inlineParameterKeys = {
+    'width',
+    'height',
+    'negative_prompt',
+    'steps',
+    'guidance_scale',
+  };
+
+  static Map<String, dynamic> _inlineImageArguments(
+    String prompt, {
+    String? requestProvider,
+  }) {
+    if (!RegExp(r'^\{\s*"').hasMatch(prompt.trim())) return {};
+    final decoded = Map<String, dynamic>.from(jsonDecode(prompt) as Map);
+    if (_isMossSymbolicObject(decoded)) {
+      final parameters = <String, dynamic>{};
+      decoded.remove('id');
+      decoded.remove('status');
+      for (final key in {..._inlineParameterKeys, 'count'}) {
+        if (decoded.containsKey(key)) parameters[key] = decoded.remove(key);
+      }
+      return {...parameters, 'prompt': jsonEncode(decoded)};
+    }
+    return decoded;
+  }
+
+  String _composeArtistPrompt(
+    String rawPrompt,
+    String? artistPrompt, {
+    required String requestProvider,
+  }) {
+    final prefix = artistPrompt?.trim() ?? '';
+    if (prefix.isEmpty) return rawPrompt;
+    if (requestProvider == 'comfyui') {
+      Object? decoded;
+      try {
+        decoded = jsonDecode(rawPrompt);
+      } on FormatException {
+        // Plain-text ComfyUI prompts retain the normal prefix composition.
+      }
+      if (_isMossSymbolicObject(decoded)) {
+        final object = Map<String, dynamic>.from(decoded as Map);
+        final summary = object['summary'] is Map
+            ? Map<String, dynamic>.from(object['summary'] as Map)
+            : <String, dynamic>{};
+        final caption = summary['caption'] is String
+            ? summary['caption'] as String
+            : '';
+        return jsonEncode({
+          ...object,
+          'summary': {
+            ...summary,
+            'caption': _mergeNegativePrompts(prefix, caption),
+          },
+        });
+      }
+    }
+    return '$prefix, $rawPrompt';
+  }
+
+  /// Captures replayable inputs before networking; never stores endpoint/key data.
+  ImageGenerationSnapshot? buildPendingSnapshot({
+    required String prompt,
+    String? roleArtistPresetName,
+    bool allowEmptyPrompt = false,
+  }) {
+    try {
+      final settings = _settings;
+      if (settings == null || !settings.imageGenerationEnabled) return null;
+      final target = _resolveTarget(settings);
+      if (target == null) return null;
+      final requestProvider = _resolveRequestProvider(target.provider);
+      if (requestProvider != 'comfyui' &&
+          _isMossSymbolicObject(_decodeInlineObject(prompt))) {
+        return null;
+      }
+
+      final args = _inlineImageArguments(
+        prompt,
+        requestProvider: requestProvider,
+      );
+      final rawPrompt = RegExp(r'^\{\s*"').hasMatch(prompt.trim())
+          ? (args['prompt'] as String? ?? '').trim()
+          : prompt.trim();
+      if (rawPrompt.isEmpty && !allowEmptyPrompt) return null;
+      final bundle = _buildPromptBundle(
+        rawPrompt: rawPrompt,
+        requestProvider: requestProvider,
+        runtimeNegativePrompt: args['negative_prompt'] as String?,
+        roleArtistPresetName: roleArtistPresetName,
+      );
+      final parameters = DrawingParameters.resolve(
+        _config,
+        args,
+        novelAi: requestProvider == 'novelai',
+        supportsSamplingParameters: requestProvider == 'comfyui',
+      );
+      final effectiveConfig = _effectiveCustomConfig(
+        requestProvider,
+        target.provider.customConfig,
+        overrideCustomConfig: false,
+        modelId: target.modelId,
+      );
+      return _buildGenerationSnapshot(
+        requestProvider: requestProvider,
+        providerId: target.provider.id,
+        modelId: target.modelId,
+        prompt: rawPrompt.isEmpty ? '' : bundle.prompt,
+        negativePrompt: bundle.negativePrompt,
+        basePrompt: bundle.rawPrompt,
+        baseNegativePrompt: bundle.baseNegativePrompt,
+        width: parameters.width,
+        height: parameters.height,
+        steps: parameters.steps,
+        guidanceScale: parameters.guidanceScale,
+        effectiveConfig: effectiveConfig,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<InlineImageGenerationResult> generateInlineImage({
     required String prompt,
     String? roleArtistPresetName,
   }) async {
     var rawPrompt = prompt.trim();
     var inlineArgs = <String, dynamic>{};
-    // NovelAI 的 {{{pov}}} 等权重语法不是 JSON 对象。
+    var isMoss = false;
+    // NovelAI weight syntax is not JSON. Preserve the ordinary argument
+    // envelope's validation; symbolic MOSS objects are gated by the channel below.
     if (RegExp(r'^\{\s*"').hasMatch(rawPrompt)) {
       try {
-        inlineArgs = Map<String, dynamic>.from(jsonDecode(rawPrompt) as Map);
+        isMoss = _isMossSymbolicObject(_decodeInlineObject(rawPrompt));
+        inlineArgs = _inlineImageArguments(rawPrompt);
         rawPrompt = (inlineArgs['prompt'] as String? ?? '').trim();
+        isMoss =
+            isMoss || _isMossSymbolicObject(_decodeInlineObject(rawPrompt));
       } catch (_) {
         return const InlineImageGenerationResult.failure('图片参数 JSON 格式不正确');
       }
@@ -506,15 +839,10 @@ class ImagePlugin extends BasePlugin {
     if (rawPrompt.isEmpty) {
       return const InlineImageGenerationResult.failure('prompt is empty');
     }
-    if (_settings != null &&
-        _isNovelAi(_settings!) &&
-        _containsDisallowedPromptChars(rawPrompt)) {
-      return const InlineImageGenerationResult.failure(
-        'inline image prompt must be English for NovelAI',
-      );
-    }
 
     _ImageTarget? resolvedTarget;
+    ImageGenerationSnapshot? pendingSnapshot;
+    DrawingParameters? pendingParameters;
     try {
       final settings = await _readySettings;
       if (!settings.imageGenerationEnabled) {
@@ -530,17 +858,28 @@ class ImagePlugin extends BasePlugin {
         );
       }
 
+      final requestProvider = _resolveRequestProvider(resolvedTarget.provider);
+      if (isMoss && requestProvider != 'comfyui') {
+        return const InlineImageGenerationResult.failure(
+          'MOSS 多格漫画排版仅支持 ComfyUI 渠道',
+        );
+      }
       final promptBundle = _buildPromptBundle(
         rawPrompt: rawPrompt,
+        requestProvider: requestProvider,
         runtimeNegativePrompt: inlineArgs['negative_prompt'] as String?,
         roleArtistPresetName: roleArtistPresetName,
       );
-      final requestProvider = _resolveRequestProvider(resolvedTarget.provider);
       final parameters = DrawingParameters.resolve(
         _config,
         inlineArgs,
         novelAi: requestProvider == 'novelai',
         supportsSamplingParameters: requestProvider == 'comfyui',
+      );
+      pendingParameters = parameters;
+      pendingSnapshot = buildPendingSnapshot(
+        prompt: prompt,
+        roleArtistPresetName: roleArtistPresetName,
       );
       final saved = await _generateAndSaveImages(
         requestProvider: requestProvider,
@@ -580,6 +919,7 @@ class ImagePlugin extends BasePlugin {
       return InlineImageGenerationResult.success(
         localPath: saved.paths.first,
         localPaths: saved.paths,
+        images: saved.images,
         generationSnapshot: saved.snapshot,
         rawPrompt: rawPrompt,
         prompt: promptBundle.prompt,
@@ -599,7 +939,15 @@ class ImagePlugin extends BasePlugin {
           'resolvedModelId': resolvedTarget?.modelId,
         },
       );
-      return InlineImageGenerationResult.failure(e.toString());
+      return InlineImageGenerationResult.failure(
+        e.toString(),
+        rawPrompt: rawPrompt,
+        prompt: pendingSnapshot?.prompt,
+        negativePrompt: pendingSnapshot?.negativePrompt,
+        generationSnapshot: pendingSnapshot,
+        width: pendingParameters?.width,
+        height: pendingParameters?.height,
+      );
     }
   }
 
@@ -622,11 +970,17 @@ class ImagePlugin extends BasePlugin {
   /// only points back to it.
   AITool get _drawImageTool => AITool(
     name: 'draw_image',
+    managesDeadline: true,
     description: [
       _render(PromptScopes.imageToolDescription),
       _render(PromptScopes.imageToolParams),
     ].where((text) => text.isNotEmpty).join('\n\n'),
     parameters: {
+      'id': const ToolParameter(
+        type: 'number',
+        description: '图片槽位的正整数编号，用于与正文中的编号锚点对齐。',
+        required: false,
+      ),
       'prompt': ToolParameter(
         type: 'string',
         description: _render(PromptScopes.imageToolPrompt),
@@ -638,22 +992,22 @@ class ImagePlugin extends BasePlugin {
         required: false,
       ),
       'width': const ToolParameter(
-        type: 'integer',
+        type: 'number',
         description: '图片宽度（像素），取值见工具说明的参数部分。',
         required: false,
       ),
       'height': const ToolParameter(
-        type: 'integer',
+        type: 'number',
         description: '图片高度（像素），取值见工具说明的参数部分。',
         required: false,
       ),
       'count': const ToolParameter(
-        type: 'integer',
+        type: 'number',
         description: '生成张数，取值见工具说明的参数部分。',
       ),
       if (_settings != null && _supportsSamplingParameters(_settings!)) ...{
         'steps': const ToolParameter(
-          type: 'integer',
+          type: 'number',
           description: '采样步数，取值见工具说明的参数部分。',
         ),
         'guidance_scale': const ToolParameter(
@@ -668,6 +1022,7 @@ class ImagePlugin extends BasePlugin {
   Future<String?> _handleDrawImage(Map<String, dynamic> rawArgs) async {
     final args = Map<String, dynamic>.from(rawArgs);
     final asyncRequested = _readInternalBool(args.remove('_aicove_async'));
+    final inheritedJobId = args.remove('_aicove_job_id')?.toString();
     final flowMode = (args.remove('_aicove_flow_mode') ?? '').toString().trim();
     final sessionId = (args.remove('_aicove_session_id') ?? '')
         .toString()
@@ -681,13 +1036,17 @@ class ImagePlugin extends BasePlugin {
             .trim();
 
     final rawPrompt = (args['prompt'] as String?)?.trim() ?? '';
+    final parsedSlotId = int.tryParse('${args['id'] ?? ''}');
+    final slotId = parsedSlotId != null && parsedSlotId > 0
+        ? parsedSlotId
+        : null;
     if (rawPrompt.isEmpty) {
       return jsonEncode({'success': false, 'error': 'prompt is empty'});
     }
 
     _ImageTarget? resolvedTarget;
     try {
-      final settings = await _readySettings;
+      final settings = await _runLocalImageStage(() => _readySettings);
       if (!settings.imageGenerationEnabled) {
         return jsonEncode({
           'success': false,
@@ -705,6 +1064,7 @@ class ImagePlugin extends BasePlugin {
 
       final promptBundle = _buildPromptBundle(
         rawPrompt: rawPrompt,
+        requestProvider: _resolveRequestProvider(resolvedTarget.provider),
         runtimeNegativePrompt: (args['negative_prompt'] as String?)?.trim(),
         roleArtistPresetName: roleArtistPresetName,
       );
@@ -727,7 +1087,7 @@ class ImagePlugin extends BasePlugin {
       final requestProvider = _resolveRequestProvider(resolvedTarget.provider);
       final canRunAsync = asyncRequested && sessionId.isNotEmpty;
       if (canRunAsync) {
-        final jobId = _nextAsyncJobId();
+        final jobId = inheritedJobId ?? _nextAsyncJobId();
         AppLogger.info(
           'ImagePlugin',
           'Accepted async draw_image job',
@@ -770,6 +1130,7 @@ class ImagePlugin extends BasePlugin {
           'accepted': true,
           'status': 'pending',
           'job_id': jobId,
+          if (slotId != null) 'id': slotId,
           'provider': resolvedTarget.provider.id,
           'model': resolvedTarget.modelId,
           'raw_prompt': rawPrompt,
@@ -822,6 +1183,7 @@ class ImagePlugin extends BasePlugin {
         'success': true,
         'provider': resolvedTarget.provider.id,
         'model': resolvedTarget.modelId,
+        if (slotId != null) 'id': slotId,
         'raw_prompt': rawPrompt,
         'prompt': prompt,
         'negative_prompt': negativePrompt,
@@ -832,9 +1194,12 @@ class ImagePlugin extends BasePlugin {
         if (promptBundle.artistNegativePrompt.isNotEmpty)
           'artist_negative_prompt': promptBundle.artistNegativePrompt,
         'images': [
-          for (final localPath in saved.paths)
+          for (final image in saved.images)
             {
-              'localPath': localPath,
+              if (slotId != null) 'id': slotId,
+              'localPath': image.localPath,
+              'width': image.width,
+              'height': image.height,
               'caption': prompt,
               if (saved.snapshot != null)
                 'generationSnapshot': saved.snapshot!.toJson(),
@@ -881,6 +1246,52 @@ class ImagePlugin extends BasePlugin {
     );
   }
 
+  ImageGenerationSnapshot? _buildGenerationSnapshot({
+    required String requestProvider,
+    required String providerId,
+    required String modelId,
+    required String prompt,
+    required String? negativePrompt,
+    required String basePrompt,
+    required String? baseNegativePrompt,
+    required int width,
+    required int height,
+    required int steps,
+    required double guidanceScale,
+    required Map<String, dynamic> effectiveConfig,
+    String? savedPostProcessor,
+  }) {
+    return ImageGenerationSnapshot.tryRead({
+      'version': 1,
+      'providerId': providerId,
+      'modelId': modelId,
+      'requestProvider': requestProvider,
+      'prompt': prompt,
+      'negativePrompt': negativePrompt,
+      'width': width,
+      'height': height,
+      'steps': steps,
+      'guidanceScale': guidanceScale,
+      'basePrompt': basePrompt,
+      'baseNegativePrompt': baseNegativePrompt,
+      'postProcessor': _effectivePostProcessor(basePrompt, requestProvider, saved: savedPostProcessor),
+      'customParameters': requestProvider == 'comfyui'
+          ? {
+              for (final key in [
+                'comfyWorkflow',
+                'comfyBindings',
+                'comfyOutputNode',
+                'comfyLoraName',
+                'comfyLoraStrength',
+                ComfyUIWorkflow.samplerKey,
+                ComfyUIWorkflow.schedulerKey,
+              ])
+                if (effectiveConfig[key] != null) key: effectiveConfig[key],
+            }
+          : effectiveConfig['image_parameters'] ?? <String, dynamic>{},
+    });
+  }
+
   Future<_SavedImages> _generateAndSaveImages({
     required String requestProvider,
     required String providerId,
@@ -900,6 +1311,7 @@ class ImagePlugin extends BasePlugin {
     required String requestSource,
     bool overrideCustomConfig = false,
     String? flowMode,
+    String? savedPostProcessor,
   }) async {
     final effectiveConfig = _effectiveCustomConfig(
       requestProvider,
@@ -925,34 +1337,21 @@ class ImagePlugin extends BasePlugin {
       'guidanceScale': guidanceScale,
       'timeoutSeconds': _config.timeoutSeconds,
     };
-    final snapshot = ImageGenerationSnapshot.tryRead({
-      'version': 1,
-      'providerId': providerId,
-      'modelId': modelId,
-      'requestProvider': requestProvider,
-      'prompt': prompt,
-      'negativePrompt': negativePrompt,
-      'width': width,
-      'height': height,
-      'steps': steps,
-      'guidanceScale': guidanceScale,
-      'basePrompt': basePrompt,
-      'baseNegativePrompt': baseNegativePrompt,
-      'customParameters': requestProvider == 'comfyui'
-          ? {
-              for (final key in [
-                'comfyWorkflow',
-                'comfyBindings',
-                'comfyOutputNode',
-                'comfyLoraName',
-                'comfyLoraStrength',
-                ComfyUIWorkflow.samplerKey,
-                ComfyUIWorkflow.schedulerKey,
-              ])
-                if (effectiveConfig[key] != null) key: effectiveConfig[key],
-            }
-          : effectiveConfig['image_parameters'] ?? <String, dynamic>{},
-    });
+    final snapshot = _buildGenerationSnapshot(
+      requestProvider: requestProvider,
+      providerId: providerId,
+      modelId: modelId,
+      prompt: prompt,
+      negativePrompt: negativePrompt,
+      basePrompt: basePrompt,
+      baseNegativePrompt: baseNegativePrompt,
+      width: width,
+      height: height,
+      steps: steps,
+      guidanceScale: guidanceScale,
+      effectiveConfig: effectiveConfig,
+      savedPostProcessor: savedPostProcessor,
+    );
     AppLogger.info('ImagePlugin', '图片生成请求开始', metadata: metadata);
     final client = AgentApiClient(
       timeout: Duration(seconds: _config.timeoutSeconds),
@@ -997,10 +1396,12 @@ class ImagePlugin extends BasePlugin {
     );
 
     return _SavedImages(
-      await _saveImages(
-        bytesList: result.images,
-        providerId: providerId,
-        modelId: modelId,
+      await _runLocalImageStage(
+        () => _saveImages(
+          bytesList: result.images,
+          providerId: providerId,
+          modelId: modelId,
+        ),
       ),
       snapshot,
     );
@@ -1052,6 +1453,7 @@ class ImagePlugin extends BasePlugin {
         sessionId: sessionId,
         prompt: prompt,
         localPaths: saved.paths,
+        images: saved.images,
         generationSnapshot: saved.snapshot,
       );
       AppLogger.info(
@@ -1079,6 +1481,12 @@ class ImagePlugin extends BasePlugin {
           'error': e.toString(),
         },
       );
+      _ref
+          .read(ttsFallbackNotificationServiceProvider)
+          .notifyImageFailure(
+            conversationId: sessionId,
+            turnId: turnId.isEmpty ? jobId : turnId,
+          );
     }
   }
 
@@ -1086,12 +1494,13 @@ class ImagePlugin extends BasePlugin {
     required String sessionId,
     required String prompt,
     required List<String> localPaths,
+    required List<GeneratedImageFile> images,
     ImageGenerationSnapshot? generationSnapshot,
   }) async {
     if (localPaths.isEmpty || sessionId.isEmpty) return;
     final now = DateTime.now();
     final appended = <Message>[
-      for (final localPath in localPaths)
+      for (final image in images)
         () {
           final messageId = genId('img');
           return Message.fromBlocks(
@@ -1100,7 +1509,9 @@ class ImagePlugin extends BasePlugin {
             blocks: [
               ImageBlock(
                 messageId: messageId,
-                localPath: localPath,
+                localPath: image.localPath,
+                width: image.width,
+                height: image.height,
                 prompt: prompt,
                 generationSnapshot: generationSnapshot,
               ),
@@ -1234,27 +1645,41 @@ class ImagePlugin extends BasePlugin {
     );
   }
 
-  Future<List<String>> _saveImages({
+  Future<List<GeneratedImageFile>> _saveImages({
     required List<Uint8List> bytesList,
     required String providerId,
     required String modelId,
   }) async {
+    final cancellation = RequestControl.cancellation;
+    cancellation?.throwIfCancelled();
     final appDir = await appDataDirectory();
+    cancellation?.throwIfCancelled();
     final outputDir = Directory(
       p.join(appDir.path, 'generated_images', providerId, modelId),
     );
-    if (!await outputDir.exists()) {
+    final exists = await outputDir.exists();
+    cancellation?.throwIfCancelled();
+    if (!exists) {
       await outputDir.create(recursive: true);
+      cancellation?.throwIfCancelled();
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final paths = <String>[];
+    final saveId = genId('image');
+    final paths = <GeneratedImageFile>[];
     for (var i = 0; i < bytesList.length; i++) {
       final ext = _guessImageExtension(bytesList[i]);
-      final filePath = p.join(outputDir.path, '${now}_${i + 1}.$ext');
+      final filePath = p.join(outputDir.path, '${saveId}_${i + 1}.$ext');
       final file = File(filePath);
       await file.writeAsBytes(bytesList[i], flush: true);
-      paths.add(file.path);
+      cancellation?.throwIfCancelled();
+      final dimensions = probeImageDimensionsFromBytes(bytesList[i]);
+      paths.add(
+        GeneratedImageFile(
+          file.path,
+          width: dimensions?.width,
+          height: dimensions?.height,
+        ),
+      );
     }
     return paths;
   }
@@ -1293,12 +1718,6 @@ class ImagePlugin extends BasePlugin {
         ].contains(_resolveRequestProvider(target.provider));
   }
 
-  bool _isNovelAi(AppSettings settings) {
-    final target = _resolveTarget(settings);
-    return target != null &&
-        _resolveRequestProvider(target.provider) == 'novelai';
-  }
-
   bool _readInternalBool(dynamic value) {
     if (value is bool) return value;
     final text = value?.toString().trim().toLowerCase();
@@ -1317,6 +1736,7 @@ class ImagePlugin extends BasePlugin {
 
   _ImagePromptBundle _buildPromptBundle({
     required String rawPrompt,
+    required String requestProvider,
     String? runtimeNegativePrompt,
     String? roleArtistPresetName,
   }) {
@@ -1339,15 +1759,21 @@ class ImagePlugin extends BasePlugin {
       artistPresetSource = 'global_selected';
     }
 
-    final artistPromptPrefix = artistPreset?.content.trim() ?? '';
-    final prompt = artistPromptPrefix.isNotEmpty
-        ? '$artistPromptPrefix, $rawPrompt'
-        : rawPrompt;
-    final artistNegativePrompt = artistPreset?.negativeContent.trim() ?? '';
-    final baseNegativePrompt = _mergeNegativePrompts(
+    final manga = _effectivePostProcessor(rawPrompt, requestProvider) == 'novelai_manga';
+    final rawArtistPrefix = artistPreset?.content.trim() ?? '';
+    final artistPromptPrefix = manga ? MangaPromptSanitizer.positive(rawArtistPrefix, rawPrompt) : rawArtistPrefix;
+    final prompt = _composeArtistPrompt(
+      rawPrompt,
+      artistPromptPrefix,
+      requestProvider: requestProvider,
+    );
+    final rawArtistNegative = artistPreset?.negativeContent.trim() ?? '';
+    final artistNegativePrompt = manga ? MangaPromptSanitizer.negative(rawArtistNegative) : rawArtistNegative;
+    var baseNegativePrompt = _mergeNegativePrompts(
       _config.defaultNegativePrompt,
       runtimeNegativePrompt,
     );
+    if (manga && baseNegativePrompt != null) baseNegativePrompt = MangaPromptSanitizer.negative(baseNegativePrompt);
     final negativePrompt = _mergeNegativePrompts(
       artistNegativePrompt,
       baseNegativePrompt,
@@ -1381,9 +1807,6 @@ class ImagePlugin extends BasePlugin {
 
   @override
   Map<String, dynamic> getConfig() => _config.toJson();
-
-  bool _containsDisallowedPromptChars(String text) =>
-      _cjkPromptRegex.hasMatch(text);
 
   String _normalizeProcessedText(String text) {
     var normalized = text;
@@ -1427,10 +1850,22 @@ class _ImagePromptBundle {
   });
 }
 
+class GeneratedImageFile {
+  const GeneratedImageFile(this.localPath, {this.width, this.height});
+  final String localPath;
+  final int? width, height;
+}
+
 class InlineImageGenerationResult {
   final bool success;
   final String? localPath;
   final List<String> localPaths;
+  final List<GeneratedImageFile> images;
+  final int? _width, _height;
+  int? get width =>
+      success ? (images.isEmpty ? null : images.first.width) : _width;
+  int? get height =>
+      success ? (images.isEmpty ? null : images.first.height) : _height;
   final String? rawPrompt;
   final String? prompt;
   final String? negativePrompt;
@@ -1442,6 +1877,7 @@ class InlineImageGenerationResult {
   const InlineImageGenerationResult.success({
     required this.localPath,
     this.localPaths = const [],
+    this.images = const [],
     required this.rawPrompt,
     required this.prompt,
     required this.negativePrompt,
@@ -1449,22 +1885,34 @@ class InlineImageGenerationResult {
     required this.artistPresetSource,
     this.generationSnapshot,
   }) : success = true,
+       _width = null,
+       _height = null,
        error = null;
 
-  const InlineImageGenerationResult.failure(this.error)
-    : success = false,
-      localPath = null,
-      localPaths = const [],
-      rawPrompt = null,
-      prompt = null,
-      negativePrompt = null,
-      artistPresetName = null,
-      artistPresetSource = null,
-      generationSnapshot = null;
+  const InlineImageGenerationResult.failure(
+    this.error, {
+    this.rawPrompt,
+    this.prompt,
+    this.negativePrompt,
+    this.generationSnapshot,
+    int? width,
+    int? height,
+  }) : success = false,
+       localPath = null,
+       localPaths = const [],
+       images = const [],
+       // Preserve public named parameters while storing failure-only dimensions.
+       // ignore: prefer_initializing_formals
+       _width = width,
+       // ignore: prefer_initializing_formals
+       _height = height,
+       artistPresetName = null,
+       artistPresetSource = null;
 }
 
 class _SavedImages {
-  const _SavedImages(this.paths, this.snapshot);
-  final List<String> paths;
+  const _SavedImages(this.images, this.snapshot);
+  final List<GeneratedImageFile> images;
+  List<String> get paths => [for (final image in images) image.localPath];
   final ImageGenerationSnapshot? snapshot;
 }

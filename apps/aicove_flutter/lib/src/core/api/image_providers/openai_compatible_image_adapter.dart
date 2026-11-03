@@ -1,11 +1,14 @@
 library;
 
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import '../media_request_retry.dart';
 import '../providers/openai_adapter.dart';
+import '../request_control.dart';
 import 'image_provider_adapter.dart';
 
 class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
@@ -23,37 +26,43 @@ class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     required Duration timeout,
     required ImageProviderRequest request,
   }) async {
-    final endpoint = _resolveEndpoint(
+    final endpoint = resolveEndpoint(
       baseUrl: request.baseUrl,
       customConfig: request.customConfig,
+      adapter: _adapter,
     );
     final payload = _buildPayload(request);
 
-    final response = await client
-        .post(
-          Uri.parse(endpoint),
-          headers: _adapter.buildHeaders(request.apiKey),
-          body: jsonEncode(payload),
-        )
-        .timeout(timeout);
-
-    final bodyString = utf8.decode(response.bodyBytes);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('HTTP ${response.statusCode}: $bodyString');
-    }
-
-    final data = jsonDecode(bodyString) as Map<String, dynamic>;
-    final images = await _extractImages(
-      client: client,
-      timeout: timeout,
-      data: data,
+    final watch = Stopwatch()..start();
+    final response = await sendMediaRequestWithRetry(
+      send: () => client.send(
+        RequestControl.request('POST', Uri.parse(endpoint))
+          ..headers.addAll(_adapter.buildHeaders(request.apiKey))
+          ..body = jsonEncode(payload),
+      ),
+      policy: MediaRetryPolicy.submission,
+      remaining: () => timeout - watch.elapsed,
+      phase: 'OpenAI image submission',
     );
-    return ImageProviderResponse(images: images, rawResponse: data);
+
+    RequestControl.cancellation?.throwIfCancelled();
+    final bodyBytes = response.bodyBytes;
+    final statusCode = response.statusCode;
+    final decoded = await _decodeOpenAiImageResponseInWorker(bodyBytes, statusCode);
+    RequestControl.cancellation?.throwIfCancelled();
+    final images = <Uint8List>[];
+    for (final slot in decoded.slots) {
+      RequestControl.cancellation?.throwIfCancelled();
+      images.add(slot.bytes ?? await _downloadImage(client: client, timeout: timeout, url: slot.url!));
+    }
+    RequestControl.cancellation?.throwIfCancelled();
+    return ImageProviderResponse(images: images, rawResponse: decoded.rawResponse);
   }
 
-  String _resolveEndpoint({
+  static String resolveEndpoint({
     required String baseUrl,
     Map<String, dynamic>? customConfig,
+    OpenAIAdapter? adapter,
   }) {
     final customEndpoint =
         customConfig?['imageEndpoint']?.toString().trim() ?? '';
@@ -67,7 +76,7 @@ class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
           customEndpoint.startsWith('/') ? customEndpoint : '/$customEndpoint';
       return '$normalizedBase$path';
     }
-    return _adapter.buildEndpoint(baseUrl, modelType: 'image');
+    return (adapter ?? OpenAIAdapter()).buildEndpoint(baseUrl, modelType: 'image');
   }
 
   Map<String, dynamic> _buildPayload(ImageProviderRequest request) {
@@ -98,44 +107,47 @@ class OpenAICompatibleImageAdapter implements ImageProviderAdapter {
     return 'b64_json';
   }
 
-  Future<List<Uint8List>> _extractImages({
-    required http.Client client,
-    required Duration timeout,
-    required Map<String, dynamic> data,
-  }) async {
-    final results = <Uint8List>[];
-    final items = (data['data'] as List?) ?? const <dynamic>[];
-
-    for (final item in items) {
-      if (item is! Map) continue;
-      final image = Map<String, dynamic>.from(item);
-      final b64 = image['b64_json']?.toString().trim() ?? '';
-      if (b64.isNotEmpty) {
-        results.add(base64Decode(b64));
-        continue;
-      }
-
-      final url = image['url']?.toString().trim() ?? '';
-      if (url.isEmpty) continue;
-      results.add(await _downloadImage(
-        client: client,
-        timeout: timeout,
-        url: url,
-      ));
-    }
-
-    return results;
-  }
-
   Future<Uint8List> _downloadImage({
     required http.Client client,
     required Duration timeout,
     required String url,
   }) async {
-    final response = await client.get(Uri.parse(url)).timeout(timeout);
+    final watch = Stopwatch()..start();
+    final response = await sendMediaRequestWithRetry(
+      send: () => client.send(RequestControl.request('GET', Uri.parse(url))),
+      policy: MediaRetryPolicy.readOnly,
+      remaining: () => timeout - watch.elapsed,
+      phase: 'OpenAI image download',
+    );
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('HTTP ${response.statusCode}: failed to download $url');
     }
     return response.bodyBytes;
   }
 }
+
+({Map<String, dynamic> rawResponse, List<({Uint8List? bytes, String? url})> slots})
+_decodeOpenAiImageResponse(Uint8List bodyBytes, int statusCode) {
+  final bodyString = utf8.decode(bodyBytes);
+  if (statusCode < 200 || statusCode >= 300) {
+    throw Exception('HTTP $statusCode: $bodyString');
+  }
+  final data = jsonDecode(bodyString) as Map<String, dynamic>;
+  final slots = <({Uint8List? bytes, String? url})>[];
+  for (final item in (data['data'] as List?) ?? const <dynamic>[]) {
+    if (item is! Map) continue;
+    final image = Map<String, dynamic>.from(item);
+    final b64 = image['b64_json']?.toString().trim() ?? '';
+    if (b64.isNotEmpty) {
+      slots.add((bytes: base64Decode(b64), url: null));
+    } else {
+      final url = image['url']?.toString().trim() ?? '';
+      if (url.isNotEmpty) slots.add((bytes: null, url: url));
+    }
+  }
+  return (rawResponse: data, slots: slots);
+}
+
+Future<({Map<String, dynamic> rawResponse, List<({Uint8List? bytes, String? url})> slots})>
+_decodeOpenAiImageResponseInWorker(Uint8List bytes, int statusCode) =>
+    Isolate.run(() => _decodeOpenAiImageResponse(bytes, statusCode));

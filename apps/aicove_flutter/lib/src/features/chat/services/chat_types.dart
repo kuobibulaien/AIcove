@@ -14,7 +14,6 @@ import 'dart:async';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show KernelCancellation;
 import '../../plugins/data/tool_result_store.dart';
-import '../domain/conversation.dart';
 import '../domain/message.dart';
 import '../../agent_plugins/plugin_response.dart';
 import '../../agent_plugins/tool_policy.dart';
@@ -53,24 +52,6 @@ bool isProviderRefreshTimingError(Object error) {
     return true;
   }
   return normalized.contains(_kProviderRefreshDidChangeDependencyToken);
-}
-
-/// 发送请求参数数据类
-class SendRequest {
-  final Conversation conversation;
-  final String? text;
-  final String? imagePath;
-  final Message userMessage;
-
-  const SendRequest({
-    required this.conversation,
-    this.text,
-    this.imagePath,
-    required this.userMessage,
-  });
-
-  String get convId => conversation.id;
-  String get displayText => text ?? (imagePath != null ? '[图片]' : '');
 }
 
 /// 工具音频结果
@@ -134,6 +115,7 @@ class ApiCallResult {
 class ReplyRound {
   const ReplyRound({
     required this.replyText,
+    this.rawText,
     required this.processedText,
     this.pluginEvents = const [],
     this.pluginContents = const [],
@@ -142,6 +124,9 @@ class ReplyRound {
   });
 
   final String replyText;
+
+  /// Clean model text before third-party display transformations.
+  final String? rawText;
   final String processedText;
   final List<PluginEvent> pluginEvents;
   final List<PluginContent> pluginContents;
@@ -162,9 +147,31 @@ class ApiConfig {
   final String? toolResultOwner;
   final String? Function()? currentWorkspaceId;
   final void Function(bool Function(String) steer)? onRunReady;
+
+  /// Receives the run's yield handle: calling it ends the run once the
+  /// current tool batch settles, before the next model request.
+  final void Function(bool Function({bool enabled}) yieldAtBoundary)?
+      onYieldReady;
   final Future<void> Function(ToolCall call, ToolResult result)? onToolStep;
   final Future<void> Function(List<Map<String,dynamic>> messages)? onTranscript;
   final void Function(String toolName, String progress)? onToolProgress;
+
+  /// Reports a scheduled model retry and the limit for its failure type.
+  final void Function(int attempt, int maxRetries, Duration delay)? onModelRetry;
+
+  /// Reports a tool start (including nested script calls) and returns the
+  /// matching completion callback. Each execution is tracked independently
+  /// even when protocol call ids are empty or duplicated.
+  final void Function() Function(ToolCall call)? onToolActivity;
+
+  /// Reports each settled top-level call with its result. Unlike
+  /// [onToolStep] it does not serialize the batch.
+  final Future<void> Function(ToolCall call, ToolResult result)?
+      onToolCompleted;
+
+  /// Product-stage round snapshot, persisted before any tool side effect.
+  final Future<void> Function(List<ReplyRound> rounds, List<ToolCall> calls)?
+      onToolRounds;
   final PresetScriptSnapshot? presetScript;
 
   /// The preset runtime service from the tavern compatibility plugin; null
@@ -184,6 +191,10 @@ class ApiConfig {
   final Map<String, dynamic> customConfig;
   final List<Map<String, dynamic>> messages;
   final List<Map<String, dynamic>>? tools;
+
+  /// Updates the existing runtime budget's schema list before each model step.
+  /// This callback is run-local and is never persisted with messages.
+  final void Function(List<Map<String, dynamic>> schemas)? onToolSchemasChanged;
 
   /// 与发给模型的 schema 同时生成，闭包固定本次请求的联系人。
   final List<AITool>? boundTools;
@@ -219,9 +230,14 @@ class ApiConfig {
     this.toolResultOwner,
     this.currentWorkspaceId,
     this.onRunReady,
+    this.onYieldReady,
     this.onToolStep,
     this.onTranscript,
     this.onToolProgress,
+    this.onModelRetry,
+    this.onToolActivity,
+    this.onToolCompleted,
+    this.onToolRounds,
     this.presetScript,
     this.openPresetRuntime,
     this.requestInputTokenLimit,
@@ -237,6 +253,7 @@ class ApiConfig {
     required this.customConfig,
     required this.messages,
     this.tools,
+    this.onToolSchemasChanged,
     this.boundTools,
     this.enabledPluginIds,
     this.modelTemperature,
@@ -265,19 +282,33 @@ class ApiConfig {
     bool clearTools = false,
     List<Map<String, dynamic>>? tools,
     List<AITool>? boundTools,
+    List<PluginResponseProcessor>? responseProcessors,
+    double? modelTemperature,
     ProviderChatRequestOptions? providerRequestOptions,
     bool? presetStreamResponse,
     AgentToolPolicy? toolPolicy,
     TraceContext? traceContext,
+    void Function(int attempt, int maxRetries, Duration delay)? onModelRetry,
+    void Function() Function(ToolCall call)? onToolActivity,
+    Future<void> Function(ToolCall call, ToolResult result)? onToolCompleted,
+    Future<void> Function(List<ReplyRound> rounds, List<ToolCall> calls)?
+        onToolRounds,
+    void Function(bool Function({bool enabled}) yieldAtBoundary)?
+        onYieldReady,
   }) => ApiConfig(
     cancellation: cancellation ?? this.cancellation,
     toolResultStore: toolResultStore,
     toolResultOwner: toolResultOwner,
     currentWorkspaceId: currentWorkspaceId,
     onRunReady: onRunReady,
+    onYieldReady: onYieldReady ?? this.onYieldReady,
     onToolStep: onToolStep,
     onTranscript: onTranscript,
     onToolProgress: onToolProgress,
+    onModelRetry: onModelRetry ?? this.onModelRetry,
+    onToolActivity: onToolActivity ?? this.onToolActivity,
+    onToolCompleted: onToolCompleted ?? this.onToolCompleted,
+    onToolRounds: onToolRounds ?? this.onToolRounds,
     presetScript: presetScript,
     openPresetRuntime: openPresetRuntime,
     requestInputTokenLimit: requestInputTokenLimit,
@@ -293,9 +324,10 @@ class ApiConfig {
     customConfig: customConfig,
     messages: messages ?? this.messages,
     tools: clearTools ? null : (tools ?? this.tools),
+    onToolSchemasChanged: clearTools ? null : onToolSchemasChanged,
     boundTools: clearTools ? null : (boundTools ?? this.boundTools),
     enabledPluginIds: enabledPluginIds,
-    modelTemperature: modelTemperature,
+    modelTemperature: modelTemperature ?? this.modelTemperature,
     modelTopP: modelTopP,
     modelContextMessageLimit: modelContextMessageLimit,
     providerRequestOptions:
@@ -311,7 +343,7 @@ class ApiConfig {
     // A copy must never lose the run's tool gate.
     toolPolicy: toolPolicy ?? this.toolPolicy,
     reminders: reminders,
-    responseProcessors: responseProcessors,
+    responseProcessors: responseProcessors ?? this.responseProcessors,
   );
 }
 
@@ -339,19 +371,6 @@ class TtsAudioResult {
   const TtsAudioResult.success(this.message) : success = true, error = null;
 
   const TtsAudioResult.failure([this.error]) : success = false, message = null;
-}
-
-/// 助手消息交付结果
-class AssistantDeliveryResult {
-  final List<Message> messages;
-  final String lastMessagePreview;
-  final String? placeholderId;
-
-  const AssistantDeliveryResult({
-    required this.messages,
-    required this.lastMessagePreview,
-    this.placeholderId,
-  });
 }
 
 /// 助手消息构建结果

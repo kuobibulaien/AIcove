@@ -194,13 +194,48 @@ void main() {
     final service = fixture.service(fixture.runner(client), [
       stepTool((_) async => 'STEP_${++executions}'),
     ]);
-    await service.start(conversationId: 'c', instruction: 'do thirty-two steps');
+    await service.start(
+      conversationId: 'c',
+      instruction: 'do thirty-two steps',
+    );
     await service.idle();
     expect((await fixture.store.get('t'))!.status, AgentTaskStatus.done);
     expect(executions, 32);
     expect(client.requests, hasLength(33));
     expect(fixture.receipts.last.block.summary, '完成');
   });
+
+  test(
+    'self-bounded output survives task guards, requests and process log',
+    () async {
+      final fixture = await Fixture.create();
+      final text = 'start\n${'bounded output\n' * 1000}next_offset: 1001';
+      final client = ScriptClient((n, _) async => n == 1 ? callStep() : done);
+      final output = await fixture
+          .runner(client)
+          .run(
+            taskId: 'bounded-task',
+            runId: 'bounded-run',
+            transcript: 'read a page',
+            capabilities: TaskAgentCapabilities(
+              tools: [
+                AITool(
+                  name: 'step',
+                  description: 'bounded page',
+                  parameters: const {},
+                  managesOutput: true,
+                  handler: (_) async => text,
+                ),
+              ],
+            ),
+            preset: const TaskAgentPreset(),
+            cancellation: KernelCancellation(),
+          );
+      expect(client.requests.last.last['content'], text);
+      expect(output.processLog, contains(text));
+      expect(output.processLog, isNot(contains('reference=')));
+    },
+  );
 
   test(
     'resuming a long checkpoint compresses old steps rather than a single protected transcript',
@@ -225,8 +260,8 @@ void main() {
       await service.idle();
       final checkpoint = (await fixture.records.checkpoint('t'))!;
       final task = (await fixture.store.get('t'))!;
-      expect(checkpoint.messages!.last['role'],'tool');
-      expect(checkpoint.messages!.last['tool_call_id'],'ask');
+      expect(checkpoint.messages!.last['role'], 'tool');
+      expect(checkpoint.messages!.last['tool_call_id'], 'ask');
       expect(jsonEncode(checkpoint.messages), contains('reference='));
       await service.reply(
         taskId: 't',
@@ -542,6 +577,34 @@ void main() {
       expect(result.status, ApiRunStatus.completed);
       expect(client.requests, hasLength(3));
       expect(executions, 1);
+    },
+  );
+
+  test(
+    'kernel forwards retry attempts and config copies preserve observers',
+    () async {
+      final retries = <(int, int, Duration)>[];
+      final client = ScriptClient((n, _) async {
+        if (n == 1) throw TimeoutException('request timed out');
+        return done;
+      });
+      final config = probe.config().copyWith(
+        onModelRetry: (attempt, limit, delay) =>
+            retries.add((attempt, limit, delay)),
+      );
+      final copied = config.copyWith(messages: config.messages);
+      expect(copied.onModelRetry, same(config.onModelRetry));
+      final result = await KernelApiRunner.withAgentClientFactory(
+        agentClientFactory: (_) => client,
+      ).executeApiCall(
+        config: copied,
+        sessionId: 'retry-observer',
+        userText: null,
+        responseProcessors: const [],
+      );
+      expect(result.status, ApiRunStatus.completed);
+      expect(client.requests, hasLength(2));
+      expect(retries, [(1, 1, const Duration(milliseconds: 500))]);
     },
   );
 

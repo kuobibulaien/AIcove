@@ -19,6 +19,7 @@ import '../../settings/app_settings.dart';
 import '../../plugins/plugin_content_tags.dart';
 import '../../content_tags/domain/content_tag_scanner.dart';
 import '../../chat/services/chat_history_store.dart';
+import '../../chat/services/conversation_short_window_store.dart';
 
 final backgroundReprocessDeviceIdProvider = FutureProvider<String>(
   (_) => MediaStore.localDeviceId,
@@ -37,7 +38,6 @@ final backgroundMessageReprocessorProvider =
 /// 准备插件结果后原子更新原消息快照，让多模态内容补齐。
 ///
 /// 安全约束：
-/// - 只处理最近 48 小时内的后台消息；
 /// - 仅来源设备处理；旧数据只在 Android/iOS 上处理；
 /// - 保留原始 ID 和时间；本机最多尝试三次，最后一次失败降为文字；
 /// - 快照与 `bg_reprocessed` 同时提交；并发编辑时放弃旧结果。
@@ -75,19 +75,67 @@ class BackgroundMessageReprocessor {
 
   Future<void> _reprocessInternal() async {
     final db = _ref.read(databaseProvider);
-    final cutoff = DateTime.now()
-        .subtract(const Duration(hours: 48))
-        .millisecondsSinceEpoch;
+    // Background isolates use another connection, so foreground drift streams
+    // need an explicit invalidation before reading their committed rows.
+    db.markTablesUpdated({
+      db.conversations,
+      db.messages,
+      db.messageBlocks,
+      db.messageProjectionMappings,
+    });
     final rows =
         await (db.select(db.messages)..where(
               (t) =>
                   t.id.like('bg_%') &
                   t.deletedAt.isNull() &
-                  t.replacedBy.isNull() &
-                  t.createdAt.isBiggerOrEqualValue(cutoff),
+                  t.replacedBy.isNull(),
             ))
             .get();
     if (rows.isEmpty) return;
+
+    // Repair every warm timeline before media/ownership/processed gates: plain
+    // text and already-enriched messages can also arrive while the app sleeps.
+    final cache = _ref.read(conversationTimelineCacheProvider);
+    for (final conversationId
+        in rows.map((row) => row.conversationId).toSet()) {
+      if (cache.peekWindow(conversationId: conversationId, limit: 1) == null) {
+        continue;
+      }
+      final cached = await cache.loadCachedMessages(conversationId);
+      final cachedRawIds = {
+        for (final message in cached) message.sourceMessageIdOrSelf,
+      };
+      if (rows.any(
+        (row) =>
+            row.conversationId == conversationId &&
+            row.id.startsWith('bg_') &&
+            !cachedRawIds.contains(row.id),
+      )) {
+        // A warm window may also contain a foreground stream draft with no
+        // persisted raw yet. Reload committed rows without losing that draft.
+        final stored =
+            await (db.selectOnly(db.messages)
+                  ..addColumns([db.messages.id])
+                  ..where(db.messages.id.isIn(cachedRawIds)))
+                .get();
+        final storedRawIds = {
+          for (final row in stored) row.read(db.messages.id)!,
+        };
+        final transient = cached
+            .where(
+              (message) =>
+                  !storedRawIds.contains(message.sourceMessageIdOrSelf),
+            )
+            .toList(growable: false);
+        await cache.reloadConversationFromRawStore(conversationId);
+        if (transient.isNotEmpty) {
+          await cache.replaceMessagesTransient(
+            conversationId: conversationId,
+            messages: transient,
+          );
+        }
+      }
+    }
 
     final deviceId = await _ref.read(
       backgroundReprocessDeviceIdProvider.future,

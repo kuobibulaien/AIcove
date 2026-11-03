@@ -87,6 +87,49 @@ class StickerLibrary {
 
   final Directory root;
   static Future<StickerLibrary>? _shared;
+  static StickerLibrary? _loaded;
+
+  /// 只修复已失效的本地引用，不初始化库或改写消息。
+  static String resolveLocalPath(String path, {String? stickerId}) {
+    final uri = Uri.tryParse(path);
+    var localPath = path;
+    if (uri != null && uri.scheme == 'file') {
+      try {
+        localPath = uri.toFilePath();
+      } on UnsupportedError {
+        return path;
+      }
+    }
+    final normalized = localPath.replaceAll('\\', '/');
+    if (path.isEmpty ||
+        normalized.startsWith('assets/') ||
+        normalized.startsWith('packages/') ||
+        (uri?.hasScheme ?? false) &&
+            uri?.scheme != 'file' &&
+            !RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path)) {
+      return path;
+    }
+    if (File(localPath).existsSync()) return localPath;
+    final library = _loaded;
+    if (library == null) return path;
+    final match = RegExp(
+      r'(?:^|/)stickers/files/([0-9a-f]{32}\.(?:png|jpg|jpeg|gif|webp))$',
+    ).firstMatch(normalized);
+    if (match != null) {
+      final candidate = library._absolute(match.group(1)!);
+      if (File(candidate).existsSync()) return candidate;
+    }
+    if (stickerId != null) {
+      for (final pack in library._packs) {
+        for (final sticker in pack.stickers) {
+          if (sticker.id == stickerId && File(sticker.path).existsSync()) {
+            return sticker.path;
+          }
+        }
+      }
+    }
+    return path;
+  }
 
   static Future<StickerLibrary> get shared => _shared ??= () async {
     final support = await getApplicationSupportDirectory();
@@ -135,6 +178,9 @@ class StickerLibrary {
   /// 发出过的用户表情 id：删除表情时保留其文件，历史消息仍能显示。
   Set<String> _usedIds = {};
 
+  /// 内容文件独立于套组与 UUID 存活，删除重复条目后仍保护历史引用。
+  Set<String> _usedFiles = {};
+
   /// 内置套组已导入过：之后用户删改都不再重新放回。
   bool _builtinSeeded = false;
 
@@ -152,11 +198,13 @@ class StickerLibrary {
         // 清单损坏时不覆盖原文件，保留现场；界面显示空库，也不自动导入内置套组。
         _packs = const [];
         _builtinSeeded = true;
+        _loaded = this;
         _publish();
         return;
       }
     }
     _usedIds = {...?(json['usedIds'] as List?)?.cast<String>()};
+    _usedFiles = {...?(json['usedFiles'] as List?)?.cast<String>()};
     _builtinSeeded = json['builtinSeeded'] as bool? ?? false;
     final packs = <StickerPack>[];
     for (final raw in (json['packs'] as List? ?? const [])) {
@@ -184,6 +232,8 @@ class StickerLibrary {
       );
     }
     _packs = packs;
+    _retainUsedFiles();
+    _loaded = this;
     _publish();
   }
 
@@ -195,10 +245,20 @@ class StickerLibrary {
     ]);
   }
 
+  void _retainUsedFiles() {
+    _usedFiles.addAll({
+      for (final pack in _packs)
+        for (final sticker in pack.stickers)
+          if (_usedIds.contains(sticker.id)) p.basename(sticker.path),
+    });
+  }
+
   Future<void> _save() async {
+    _retainUsedFiles();
     final json = {
       'version': 1,
       'usedIds': _usedIds.toList(),
+      'usedFiles': _usedFiles.toList(),
       'builtinSeeded': _builtinSeeded,
       'packs': [
         for (final pack in _packs)
@@ -277,6 +337,7 @@ class StickerLibrary {
   Future<void> deleteStickers(String packId, Set<String> stickerIds) async {
     final pack = packById(packId);
     if (pack == null) return;
+    _retainUsedFiles();
     final removed = pack.stickers.where((s) => stickerIds.contains(s.id));
     await _replacePack(
       pack.copyWith(
@@ -292,6 +353,7 @@ class StickerLibrary {
   Future<void> deletePack(String packId) async {
     final pack = packById(packId);
     if (pack == null) return;
+    _retainUsedFiles();
     _packs = [for (final old in _packs) if (old.id != packId) old];
     await _save();
     await _deleteOrphanFiles(pack.stickers);
@@ -304,7 +366,8 @@ class StickerLibrary {
         for (final s in pack.stickers) s.path,
     };
     for (final sticker in removed) {
-      if (_usedIds.contains(sticker.id) || inUse.contains(sticker.path)) {
+      if (_usedFiles.contains(p.basename(sticker.path)) ||
+          _usedIds.contains(sticker.id) || inUse.contains(sticker.path)) {
         continue;
       }
       final file = File(sticker.path);

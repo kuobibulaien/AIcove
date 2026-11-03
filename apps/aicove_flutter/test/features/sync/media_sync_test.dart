@@ -43,6 +43,96 @@ void main() {
   }
 
   test(
+    'missing absolute paths heal from files in the asset directory',
+    () async {
+      final id = 'a' * 64;
+      final original = File('${phone.root.path}/assets/$id/original.png');
+      final thumbnail = File('${original.parent.path}/thumbnail.jpg');
+      await original.parent.create(recursive: true);
+      await original.writeAsBytes([1, 2, 3]);
+      await thumbnail.writeAsBytes([4, 5]);
+      await phone.save(
+        LocalMedia(
+          MediaAsset(
+            id: id,
+            mimeType: 'image/png',
+            byteLength: 3,
+            createdAtMs: 1,
+          ),
+          originalPath: '${temp.path}/old-container/assets/$id/original.png',
+          thumbnailPath: '${temp.path}/old-container/assets/$id/thumbnail.jpg',
+        ),
+      );
+      phone.downloadBlob = (_, _) async => fail('must use the local original');
+
+      expect((await phone.original(id)).path, original.path);
+      final healed = (await phone.load(id))!;
+      expect(healed.originalPath, original.path);
+      expect(healed.thumbnailPath, thumbnail.path);
+      await phone.close();
+      phone = MediaStore(phone.root, 'phone');
+      expect((await phone.load(id))!.originalPath, original.path);
+      expect((await phone.load(id))!.thumbnailPath, thumbnail.path);
+    },
+  );
+
+  test('missing historical images become text without downloading', () async {
+    final id = 'b' * 64;
+    await phone.save(
+      LocalMedia(
+        MediaAsset(
+          id: id,
+          mimeType: 'image/png',
+          byteLength: 0,
+          createdAtMs: 1,
+          originalBlob: 'c' * 64,
+        ),
+      ),
+    );
+    var downloads = 0;
+    phone.downloadBlob = (_, _) async {
+      downloads++;
+      throw const CloudSyncFailure('云同步请求未完成（404），本地数据已保留');
+    };
+    final input = <Map<String, dynamic>>[
+      {
+        'role': 'user',
+        'content': [
+          {'type': 'text', 'text': 'before'},
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'aicove-media://$id'},
+          },
+          {'type': 'text', 'text': 'after'},
+        ],
+      },
+      {'role': 'assistant', 'content': 'reply'},
+      {'role': 'user', 'content': 'continue'},
+      {'role': 'tool', 'content': 'aicove-media://$id'},
+    ];
+    final resolved = await resolveModelMedia(input, store: phone);
+    expect(resolved.first['content'], [
+      {'type': 'text', 'text': 'before'},
+      {'type': 'text', 'text': '[图片：原图不在本机]'},
+      {'type': 'text', 'text': 'after'},
+    ]);
+    expect(resolved.last, input.last);
+    expect((input.first['content'] as List)[1]['type'], 'image_url');
+    expect(downloads, 0);
+
+    // A proactive turn without a reminder ends after a reply: the last user
+    // image is history, not the message being sent.
+    final proactive = await resolveModelMedia(
+      input.take(2).map((m) => Map<String, dynamic>.from(m)).toList(),
+      store: phone,
+    );
+    expect((proactive.first['content'] as List)[1], {
+      'type': 'text',
+      'text': '[图片：原图不在本机]',
+    });
+  });
+
+  test(
     'the actual history builder retains local-only image identity until original resolution',
     () async {
       final id = 'e' * 64;
@@ -79,6 +169,14 @@ void main() {
           resolveModelMedia(request, store: phone),
           throwsA(isA<OriginalMediaUnavailable>()),
         );
+        final historical = await resolveModelMedia([
+          ...request,
+          {'role': 'user', 'content': 'continue'},
+        ], store: phone);
+        expect((historical.first['content'] as List).single, {
+          'type': 'text',
+          'text': '[图片：原图不在本机]',
+        });
         final textOnly = await builder.buildRequestMessages(
           history,
           settings: ImageOnlySettings(),
@@ -241,6 +339,58 @@ void main() {
   );
 
   test(
+    'the current user image fails locally with an actionable media error',
+    () async {
+      final original = await picture('remote');
+      final record = await phone.register(original.path, createdAtMs: 1);
+      final thumbnail = await File(record.thumbnailPath!).readAsBytes();
+      final asset = MediaAsset.fromJson({
+        ...record.asset.toJson(),
+        'thumbnail_blob': sha256.convert(thumbnail).toString(),
+        'original_blob': sha256
+            .convert(await original.readAsBytes())
+            .toString(),
+      });
+      final desktop = MediaStore(Directory('${temp.path}/desktop'), 'mac');
+      desktop.downloadBlob = (digest, file) async {
+        if (digest != asset.thumbnailBlob) {
+          throw const CloudSyncFailure('云同步请求未完成（404），本地数据已保留');
+        }
+        await file.writeAsBytes(thumbnail);
+      };
+      await desktop.receive(asset, now: now);
+      var downloads = 0;
+      desktop.downloadBlob = (_, _) async {
+        downloads++;
+        throw const CloudSyncFailure('云同步请求未完成（404），本地数据已保留');
+      };
+      final input = [
+        {
+          'role': 'user',
+          'content': [
+            {
+              'type': 'image_url',
+              'image_url': {'url': asset.reference},
+            },
+          ],
+        },
+      ];
+      await expectLater(
+        resolveModelMedia(input, store: desktop),
+        throwsA(
+          isA<OriginalMediaUnavailable>().having(
+            (error) => error.toString(),
+            'message',
+            '这条消息里的图片取不到原图，本轮没有发出。请重新选择图片后再发。',
+          ),
+        ),
+      );
+      expect(downloads, 0);
+      await desktop.close();
+    },
+  );
+
+  test(
     'another device displays thumbnail but cannot use it as an original',
     () async {
       final original = await picture('old');
@@ -318,7 +468,12 @@ void main() {
       };
       final codec = CloudMediaCodec(phone);
       final document = CloudLocalDocument('messages', 'm', {
-        'row': {'id': 'm', 'created_at': 1, 'raw_payload': jsonEncode(raw)},
+        'row': {
+          'id': 'm',
+          'role': 'assistant',
+          'created_at': 1,
+          'raw_payload': jsonEncode(raw),
+        },
       });
       final wire = await codec.encode(document);
       final result = jsonDecode(

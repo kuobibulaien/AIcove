@@ -44,6 +44,27 @@ void main() {
     generator = FakeGenerator();
   });
 
+  test('hang up while replacement waits for abort never starts another reply', () async {
+    final cancelled = Completer<void>();
+    final release = Completer<void>();
+    final delayed = _DelayedCancelGenerator(cancelled, release);
+    final session = VoiceCallSession(
+      recognizer: recognizer, tts: tts, input: input, output: output,
+      generator: delayed, greetOnConnect: false, userTurnGap: Duration.zero,
+    );
+    await session.start();
+    session.sendText('第一句');
+    await settle();
+    session.sendText('第二句');
+    await cancelled.future;
+    await session.hangUp();
+    release.complete();
+    await settle();
+    expect(delayed.requests, 1);
+    expect(session.phase, VoiceCallPhase.ended);
+    expect(session.transcript.where((t) => t.role == 'user').map((t) => t.text), ['第一句']);
+  });
+
   test('the character greets first right after connecting', () async {
     final session = VoiceCallSession(
       recognizer: recognizer,
@@ -501,4 +522,19 @@ void main() {
       },
     );
   });
+}
+
+class _DelayedCancelGenerator implements CallReplyGeneratorPort {
+  _DelayedCancelGenerator(this.cancelled, this.release);
+  final Completer<void> cancelled;
+  final Completer<void> release;
+  int requests = 0;
+  @override
+  Stream<String> streamReply(List<CallTurn> turns) {
+    requests++;
+    return StreamController<String>(onCancel: () {
+      if (!cancelled.isCompleted) cancelled.complete();
+      return release.future;
+    }).stream;
+  }
 }

@@ -141,6 +141,36 @@ class PromptPackNotifier extends AsyncNotifier<PromptPackState> {
     return id;
   }
 
+  /// Decodes and imports in the write queue so concurrent imports and sync
+  /// updates share the latest IDs and names.
+  Future<PromptPack> importCustomFromJson(
+    String rawJson, {
+    String? expectedPluginId,
+    String? fallbackName,
+  }) async {
+    late PromptPack imported;
+    await transact((current) {
+      final Object? decoded;
+      try {
+        decoded = jsonDecode(rawJson);
+      } on FormatException {
+        throw const FormatException('这个文件打不开，可能已经损坏');
+      }
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('这个文件打不开，可能已经损坏');
+      }
+      final result = current.library.importCustomJson(
+        decoded,
+        newId: newPromptPackId(),
+        expectedPluginId: expectedPluginId,
+        fallbackName: fallbackName,
+      );
+      imported = result.pack;
+      return current.copyWith(library: result.library);
+    });
+    return imported;
+  }
+
   Future<void> saveCustom(PromptPack pack) => change((l) => l.saveCustom(pack));
 
   /// Changes a custom pack's name and rules on the pack as stored, so its
@@ -148,10 +178,11 @@ class PromptPackNotifier extends AsyncNotifier<PromptPackState> {
   Future<void> editCustomMeta(
     String id, {
     String? name,
-    required List<PromptMatchRule> match,
+    List<PromptMatchRule>? match,
+    String? postProcessor,
   }) => change((l) {
     final pack = l.require(id);
-    return l.saveCustom(pack.copyWith(name: name ?? pack.name, match: match));
+    return l.saveCustom(pack.copyWith(name: name ?? pack.name, match: match, postProcessor: postProcessor));
   });
 
   Future<void> deleteCustom(String id) => change((l) => l.deleteCustom(id));

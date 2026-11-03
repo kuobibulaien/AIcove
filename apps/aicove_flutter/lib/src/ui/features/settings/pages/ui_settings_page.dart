@@ -13,6 +13,7 @@ import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import 'custom_skin_page.dart';
 import 'global_wallpaper_edit_page.dart';
+import '../widgets/chunk_punctuation_sheet.dart';
 
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
@@ -46,19 +47,6 @@ class UiSettingsPage extends ConsumerWidget {
   ) {
     final colors = context.moeColors;
     final chunkConfig = settings.messageFormatConfig;
-    final activeSet =
-        chunkConfig.activeChunkPunctuationSet ??
-        (chunkConfig.chunkPunctuationSets.isNotEmpty
-            ? chunkConfig.chunkPunctuationSets.first
-            : null);
-    final activeSetName = activeSet == null
-        ? null
-        : _displaySetName(
-            activeSet,
-            chunkConfig.chunkPunctuationSets.indexWhere(
-              (item) => item.id == activeSet.id,
-            ),
-          );
 
     return MoeSettingsContent(
       child: Builder(
@@ -184,70 +172,13 @@ class UiSettingsPage extends ConsumerWidget {
               ],
             ),
 
-            // ========== 聊天：图片预览 / 气泡 ==========
+            // ========== 新会话默认：单个聊天可在「聊天界面」里另设 ==========
             MoeSettingsGroup(
-              title: '聊天',
-              children: [
-                _buildScaleSlider(
-                  colors: colors,
-                  label: '图片预览大小',
-                  value: settings.imagePreviewScale.clamp(
-                    kMinImagePreviewScale,
-                    kMaxImagePreviewScale,
-                  ),
-                  min: kMinImagePreviewScale,
-                  max: kMaxImagePreviewScale,
-                  divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
-                  onChanged: (value) => ref
-                      .read(appSettingsProvider.notifier)
-                      .setImagePreviewScale(value),
-                  onValueTap: () => _showScaleInputDialog(
-                    context,
-                    title: '输入图片预览缩放值',
-                    hint: '范围 $kMinImagePreviewScale ~ $kMaxImagePreviewScale',
-                    min: kMinImagePreviewScale,
-                    max: kMaxImagePreviewScale,
-                    current: settings.imagePreviewScale.clamp(
-                      kMinImagePreviewScale,
-                      kMaxImagePreviewScale,
-                    ),
-                    onSave: (value) => ref
-                        .read(appSettingsProvider.notifier)
-                        .setImagePreviewScale(value),
-                  ),
-                ),
-                _divider(colors),
-                MoeSettingsRow(
-                  label: '语音消息气泡',
-                  subtitle: settings.expandAudioText ? '默认展开文字' : '收回文字',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: settings.expandAudioText,
-                  onSwitchChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setExpandAudioText(value);
-                  },
-                ),
-                MoeSettingsRow(
-                  label: '隐藏用户头像',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: settings.hideUserAvatar,
-                  onSwitchChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setHideUserAvatar(value);
-                  },
-                ),
-              ],
-            ),
-
-            // ========== 聊天样式与消息分段 ==========
-            MoeSettingsGroup(
-              title: '聊天样式与分段',
+              title: '新会话默认',
               children: [
                 MoeSettingsRow(
-                  label: '新会话默认样式',
-                  subtitle: '可在单个聊天的菜单里单独切换',
+                  label: '样式',
+                  subtitle: '单个聊天可在「聊天界面」里另外设置',
                   trailingType: MoeSettingsRowTrailing.custom,
                   trailing: MoeSegmentedControl<ChatDisplayStyle>(
                     key: const ValueKey('chat_display_style_toggle'),
@@ -269,37 +200,61 @@ class UiSettingsPage extends ConsumerWidget {
                   ),
                 ),
                 MoeSettingsRow(
-                  label: '启用消息分段',
-                  subtitle: '长回复拆成多条气泡发送',
+                  key: const ValueKey('default_chunking_switch'),
+                  label: '消息分段',
+                  subtitle: '气泡样式下长回复拆成多条气泡',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: chunkConfig.enableChunking,
-                  onSwitchChanged: (value) async {
-                    await ref
-                        .read(appSettingsProvider.notifier)
-                        .updateMessageFormatConfig(
-                          chunkConfig.copyWith(enableChunking: value),
-                        );
-                  },
+                  onSwitchChanged: (value) => ref
+                      .read(appSettingsProvider.notifier)
+                      .updateMessageFormatConfig(
+                        chunkConfig.copyWith(enableChunking: value),
+                      ),
                 ),
                 MoeSettingsRow(
-                  label: '过滤句末标点',
+                  key: const ValueKey('default_hide_user_avatar_switch'),
+                  label: '隐藏用户头像',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: settings.hideUserAvatar,
+                  onSwitchChanged: ref
+                      .read(appSettingsProvider.notifier)
+                      .setHideUserAvatar,
+                ),
+                MoeSettingsRow(
+                  key: const ValueKey('default_expand_audio_switch'),
+                  label: '语音消息默认展开文字',
+                  trailingType: MoeSettingsRowTrailing.switchControl,
+                  switchValue: settings.expandAudioText,
+                  onSwitchChanged: ref
+                      .read(appSettingsProvider.notifier)
+                      .setExpandAudioText,
+                ),
+              ],
+            ),
+
+            // ========== 消息分段：所有聊天共用 ==========
+            MoeSettingsGroup(
+              title: '消息分段',
+              children: [
+                MoeSettingsRow(
+                  key: const ValueKey('chunk_punctuation_set_row'),
+                  label: '分段标点',
+                  trailingType: MoeSettingsRowTrailing.text,
+                  detailText: _activeSetName(chunkConfig),
+                  onTap: () => showChunkPunctuationSheet(context),
+                ),
+                MoeSettingsRow(
+                  key: const ValueKey('filter_punctuation_switch'),
+                  label: '省略句末标点',
+                  subtitle: '分段后去掉每段末尾的句号、逗号等',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: chunkConfig.filterPunctuation,
-                  onSwitchChanged: (value) async {
-                    await ref
-                        .read(appSettingsProvider.notifier)
-                        .updateMessageFormatConfig(
-                          chunkConfig.copyWith(filterPunctuation: value),
-                        );
-                  },
+                  onSwitchChanged: (value) => ref
+                      .read(appSettingsProvider.notifier)
+                      .updateMessageFormatConfig(
+                        chunkConfig.copyWith(filterPunctuation: value),
+                      ),
                 ),
-                if (chunkConfig.enableChunking)
-                  MoeSettingsRow(
-                    label: '分段标点',
-                    trailingType: MoeSettingsRowTrailing.text,
-                    detailText: activeSetName ?? '',
-                    onTap: () => _showPunctuationSheet(context),
-                  ),
               ],
             ),
 
@@ -325,6 +280,12 @@ class UiSettingsPage extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String _activeSetName(MessageFormatConfig config) {
+    final set = config.activeChunkPunctuationSet;
+    if (set == null) return '';
+    return chunkPunctuationSetName(set, config.chunkPunctuationSets.indexOf(set));
   }
 
   Future<void> _confirmResetInterface(
@@ -615,8 +576,7 @@ class UiSettingsPage extends ConsumerWidget {
                   fit: StackFit.expand,
                   children: [
                     if (preview == null)
-                      ColoredBox(
-                        color: colors.surface,
+                      MoeInsetSurface(
                         child: Icon(
                           placeholderIcon,
                           size: 18,
@@ -629,7 +589,7 @@ class UiSettingsPage extends ConsumerWidget {
                         fit: BoxFit.cover,
                         alignment: alignment,
                         errorBuilder: (_, __, ___) =>
-                            ColoredBox(color: colors.surface),
+                            const MoeInsetSurface(),
                       ),
                     // 选中且可编辑时角上提示「再点一下进入调节」。
                     if (isSelected && editable)
@@ -940,477 +900,6 @@ class UiSettingsPage extends ConsumerWidget {
           ),
         ],
       ),
-    );
-  }
-
-  /// 分段标点管理弹层
-  void _showPunctuationSheet(BuildContext context) {
-    showMoeBottomSheet<void>(
-      context: context,
-      title: '分段标点',
-      showCloseButton: true,
-      builder: (context) => Consumer(
-        builder: (context, ref, _) {
-          final settings = ref.watch(appSettingsProvider).valueOrNull;
-          final colors = context.moeColors;
-          if (settings == null) {
-            return const SizedBox(
-              height: 200,
-              child: Center(child: MoeLoadingIndicator()),
-            );
-          }
-          return _buildPunctuationSheetBody(context, ref, settings, colors);
-        },
-      ),
-    );
-  }
-
-  Widget _buildPunctuationSheetBody(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MoeColors colors,
-  ) {
-    final config = settings.messageFormatConfig;
-    final sets = config.chunkPunctuationSets;
-    final activeSet =
-        config.activeChunkPunctuationSet ??
-        (sets.isNotEmpty
-            ? sets.first
-            : const MessageChunkPunctuationSet(
-                id: 'conservative',
-                name: '保守',
-                punctuations: <String>[],
-              ));
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '标点集合',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: MoeFontWeights.emphasis,
-              color: colors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          for (var i = 0; i < sets.length; i++)
-            _buildPunctuationSetRow(
-              context,
-              ref,
-              settings,
-              colors,
-              sets,
-              sets[i],
-              i,
-            ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: IntrinsicWidth(
-              child: MoeSecondaryButton(
-                label: '另存为集合',
-                icon: Icons.save_outlined,
-                size: MoeSecondaryButtonSize.sm,
-                onPressed: () =>
-                    _showSaveAsSetDialog(context, ref, settings, activeSet),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '当前标点',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: MoeFontWeights.emphasis,
-              color: colors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var i = 0; i < activeSet.punctuations.length; i++)
-                InputChip(
-                  label: Text(activeSet.punctuations[i]),
-                  onPressed: () => _editPunctuationToken(
-                    context,
-                    ref,
-                    settings,
-                    activeSet,
-                    i,
-                  ),
-                  onDeleted: () => _deletePunctuationToken(
-                    context,
-                    ref,
-                    settings,
-                    activeSet,
-                    i,
-                  ),
-                  deleteIconColor: colors.muted,
-                ),
-              ActionChip(
-                avatar: const Icon(Icons.add, size: 16),
-                label: const Text('新增标点'),
-                onPressed: () =>
-                    _addPunctuationToken(context, ref, settings, activeSet),
-              ),
-            ],
-          ),
-          if (activeSet.punctuations.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                '当前集合为空：只在换行或超过3个连续空格时分段',
-                style: TextStyle(fontSize: 13, color: colors.muted),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPunctuationSetRow(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MoeColors colors,
-    List<MessageChunkPunctuationSet> sets,
-    MessageChunkPunctuationSet set,
-    int index,
-  ) {
-    final selected =
-        settings.messageFormatConfig.activeChunkPunctuationSetId == set.id;
-    final label = _displaySetName(set, index);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: GestureDetector(
-        onTap: () =>
-            _updateChunkPunctuationSets(context, ref, settings, sets, set.id),
-        child: Container(
-          decoration: MoeG2Decoration(
-            radius: 12,
-            color: selected
-                ? colors.accentColor.withValues(alpha: 0.10)
-                : colors.surfaceAlt,
-            border: Border.all(
-              color: selected ? colors.accentColor : colors.borderLight,
-            ),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 0, 10),
-                  child: Row(
-                    children: [
-                      if (selected) ...[
-                        Icon(
-                          Icons.check_rounded,
-                          size: 16,
-                          color: colors.accentColor,
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      Flexible(
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: selected
-                                ? MoeFontWeights.emphasis
-                                : MoeFontWeights.normal,
-                            color: colors.text,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              MoeIconButton(
-                icon: Icons.edit_outlined,
-                size: 18,
-                padding: const EdgeInsets.all(6),
-                minTouchTarget: 32,
-                color: colors.muted,
-                tooltip: '重命名',
-                onTap: () =>
-                    _showRenameSetDialog(context, ref, settings, set, index),
-              ),
-              MoeIconButton(
-                icon: Icons.delete_outline,
-                size: 18,
-                padding: const EdgeInsets.all(6),
-                minTouchTarget: 32,
-                color: colors.muted,
-                tooltip: '删除集合',
-                enabled: sets.length > 1,
-                onTap: sets.length <= 1
-                    ? null
-                    : () => _deleteSet(context, ref, settings, set.id),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _displaySetName(MessageChunkPunctuationSet set, int index) {
-    final name = set.name?.trim() ?? '';
-    if (name.isNotEmpty) return name;
-    final safeIndex = index < 0 ? 0 : index;
-    return '未命名集合${safeIndex + 1}';
-  }
-
-  String _createSetId() => 'set_${DateTime.now().microsecondsSinceEpoch}';
-
-  Future<void> _updateChunkPunctuationSets(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    List<MessageChunkPunctuationSet> sets,
-    String activeSetId, {
-    String? successText,
-  }) async {
-    if (sets.isEmpty) return;
-    final activeSet = sets.firstWhere(
-      (item) => item.id == activeSetId,
-      orElse: () => sets.first,
-    );
-    final newConfig = settings.messageFormatConfig.copyWith(
-      chunkPunctuationSets: sets,
-      activeChunkPunctuationSetId: activeSet.id,
-      chunkPunctuations: activeSet.punctuations,
-    );
-    await ref
-        .read(appSettingsProvider.notifier)
-        .updateMessageFormatConfig(newConfig);
-    if (successText != null && context.mounted) {
-      MoeToast.success(context, successText);
-    }
-  }
-
-  Future<void> _showSaveAsSetDialog(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MessageChunkPunctuationSet source,
-  ) async {
-    final controller = TextEditingController();
-    final confirmed = await showMeoTalkDialog(
-      context: context,
-      title: '保存为新集合',
-      cancelText: '取消',
-      confirmText: '添加',
-      content: MoeTextField(
-        controller: controller,
-        hint: '可选名称，留空则未命名',
-      ),
-    );
-    final name = controller.text.trim();
-    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
-    if (confirmed != true || !context.mounted) return;
-    final newSet = MessageChunkPunctuationSet(
-      id: _createSetId(),
-      name: name.isEmpty ? null : name,
-      punctuations: List<String>.from(source.punctuations),
-    );
-    final nextSets = <MessageChunkPunctuationSet>[
-      ...settings.messageFormatConfig.chunkPunctuationSets,
-      newSet,
-    ];
-    await _updateChunkPunctuationSets(
-      context,
-      ref,
-      settings,
-      nextSets,
-      newSet.id,
-      successText: '已保存新集合',
-    );
-  }
-
-  Future<void> _showRenameSetDialog(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MessageChunkPunctuationSet target,
-    int index,
-  ) async {
-    await showMoeAutoSaveTextEditor(
-      context: context,
-      title: '重命名集合',
-      initialValue: target.name ?? '',
-      onSave: (text) async {
-        final current = ref.read(appSettingsProvider).requireValue;
-        final sets = [...current.messageFormatConfig.chunkPunctuationSets];
-        final i = sets.indexWhere((set) => set.id == target.id);
-        if (i < 0) throw const FormatException('此集合已不存在');
-        sets[i] = sets[i].copyWith(
-          name: text.trim().isEmpty ? null : text.trim(),
-        );
-        await ref
-            .read(appSettingsProvider.notifier)
-            .updateMessageFormatConfig(
-              current.messageFormatConfig.copyWith(chunkPunctuationSets: sets),
-            );
-      },
-    );
-  }
-
-  Future<String?> _showPunctuationInputDialog(
-    BuildContext context, {
-    required String title,
-    String initialValue = '',
-  }) async {
-    final controller = TextEditingController(text: initialValue);
-    final confirmed = await showMeoTalkDialog(
-      context: context,
-      title: title,
-      cancelText: '取消',
-      confirmText: '添加',
-      content: MoeTextField(
-        controller: controller,
-        hint: '输入一个标点或组合',
-        autofocus: true,
-      ),
-    );
-    final value = controller.text.trim();
-    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
-    if (confirmed != true || value.isEmpty) return null;
-    return value;
-  }
-
-  Future<void> _addPunctuationToken(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MessageChunkPunctuationSet activeSet,
-  ) async {
-    final token = await _showPunctuationInputDialog(context, title: '新增标点');
-    if (!context.mounted) return;
-    if (token == null) return;
-    if (activeSet.punctuations.contains(token)) {
-      if (context.mounted) {
-        MoeToast.warning(context, '该标点已存在');
-      }
-      return;
-    }
-
-    final sets = List<MessageChunkPunctuationSet>.from(
-      settings.messageFormatConfig.chunkPunctuationSets,
-    );
-    final index = sets.indexWhere((item) => item.id == activeSet.id);
-    if (index < 0) return;
-
-    final nextPunctuations = <String>[...sets[index].punctuations, token];
-    sets[index] = sets[index].copyWith(punctuations: nextPunctuations);
-    await _updateChunkPunctuationSets(
-      context,
-      ref,
-      settings,
-      sets,
-      activeSet.id,
-      successText: '标点已添加',
-    );
-  }
-
-  Future<void> _editPunctuationToken(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MessageChunkPunctuationSet activeSet,
-    int tokenIndex,
-  ) async {
-    await showMoeAutoSaveTextEditor(
-      context: context,
-      title: '编辑标点',
-      initialValue: activeSet.punctuations[tokenIndex],
-      onSave: (text) async {
-        final token = text.trim();
-        if (token.isEmpty) throw const FormatException('标点不能为空');
-        final current = ref.read(appSettingsProvider).requireValue;
-        final sets = [...current.messageFormatConfig.chunkPunctuationSets];
-        final i = sets.indexWhere((set) => set.id == activeSet.id);
-        if (i < 0 || tokenIndex >= sets[i].punctuations.length) {
-          throw const FormatException('此标点已不存在');
-        }
-        final tokens = [...sets[i].punctuations];
-        if (tokens.asMap().entries.any(
-          (entry) => entry.key != tokenIndex && entry.value == token,
-        )) {
-          throw const FormatException('该标点已存在');
-        }
-        tokens[tokenIndex] = token;
-        sets[i] = sets[i].copyWith(punctuations: tokens);
-        await ref
-            .read(appSettingsProvider.notifier)
-            .updateMessageFormatConfig(
-              current.messageFormatConfig.copyWith(chunkPunctuationSets: sets),
-            );
-      },
-    );
-  }
-
-  Future<void> _deletePunctuationToken(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    MessageChunkPunctuationSet activeSet,
-    int tokenIndex,
-  ) async {
-    final sets = List<MessageChunkPunctuationSet>.from(
-      settings.messageFormatConfig.chunkPunctuationSets,
-    );
-    final index = sets.indexWhere((item) => item.id == activeSet.id);
-    if (index < 0) return;
-    final nextPunctuations = List<String>.from(sets[index].punctuations)
-      ..removeAt(tokenIndex);
-    sets[index] = sets[index].copyWith(punctuations: nextPunctuations);
-    await _updateChunkPunctuationSets(
-      context,
-      ref,
-      settings,
-      sets,
-      activeSet.id,
-      successText: '标点已删除',
-    );
-  }
-
-  Future<void> _deleteSet(
-    BuildContext context,
-    WidgetRef ref,
-    AppSettings settings,
-    String setId,
-  ) async {
-    final currentSets = settings.messageFormatConfig.chunkPunctuationSets;
-    if (currentSets.length <= 1) {
-      if (context.mounted) {
-        MoeToast.warning(context, '至少保留一个集合');
-      }
-      return;
-    }
-
-    final nextSets = currentSets.where((item) => item.id != setId).toList();
-    final currentActiveId =
-        settings.messageFormatConfig.activeChunkPunctuationSetId;
-    final nextActiveId = currentActiveId == setId
-        ? nextSets.first.id
-        : currentActiveId;
-    await _updateChunkPunctuationSets(
-      context,
-      ref,
-      settings,
-      nextSets,
-      nextActiveId,
-      successText: '集合已删除',
     );
   }
 }

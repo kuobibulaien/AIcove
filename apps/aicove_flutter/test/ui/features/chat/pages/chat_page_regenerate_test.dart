@@ -72,31 +72,31 @@ AppSettings _buildTestSettings() {
     ttsEnabled: true,
     defaultModelName: defaultModelRef,
     defaultPersonaPrompt: '',
-    modelList: const <String>[defaultModelRef],
-    allKnownModels: const <String>[defaultModelRef],
-    modelDisplayNames: const <String, String>{},
-    modelTypes: const <String, String>{},
-    modelConfigs: const <String, ModelConfig>{},
+    modelList: <String>[defaultModelRef],
+    allKnownModels: <String>[defaultModelRef],
+    modelDisplayNames: <String, String>{},
+    modelTypes: <String, String>{},
+    modelConfigs: <String, ModelConfig>{},
     apiKey: '',
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
     contextWindowTokens: 272000,
-    customModels: const <CustomModel>[],
-    providers: const <ProviderAuth>[
+    customModels: <CustomModel>[],
+    providers: <ProviderAuth>[
       ProviderAuth(
         id: 'openai',
         apiKeys: <String>['test-key'],
         apiBaseUrl: 'https://api.openai.com/v1',
       ),
     ],
-    modelProviderMap: const <String, String>{
+    modelProviderMap: <String, String>{
       defaultModelRef: 'openai',
       'gpt-4o-mini': 'openai',
     },
     backendApiKey: '',
     messageChunkingEnabled: true,
-    messageFormatConfig: const MessageFormatConfig(
+    messageFormatConfig: MessageFormatConfig(
       enableChunking: true,
       chunkPunctuations: <String>['。'],
       minSegmentLength: 1,
@@ -104,14 +104,14 @@ AppSettings _buildTestSettings() {
     textScaleFactor: 1.0,
     uiScaleFactor: 1.0,
     imagePreviewScale: 1.0,
-    autoReplySettings: const AutoReplySettings(),
+    autoReplySettings: AutoReplySettings(),
     globalBackgroundColor: GlobalBackgroundColor.white,
     chatBackgroundColor: ChatBackgroundColor.defaultColor,
     isDarkMode: false,
     useSystemTheme: true,
     accentColor: 'FC96AA',
     hideUserAvatar: true,
-    defaultChatModels: const <String>[defaultModelRef],
+    defaultChatModels: <String>[defaultModelRef],
     streamSegmentDelaySeconds: 0,
   );
 }
@@ -134,6 +134,14 @@ Widget _buildHost({
       ),
     ),
   );
+}
+
+/// 只推进帧不推进时间：回底在帧后完成；推进时间会触发页面的延时查库，
+/// 在模拟时钟里等不到结果，关库时一直挂起。
+Future<void> _pumpFrames(WidgetTester tester) async {
+  for (var frame = 0; frame < 4; frame++) {
+    await tester.pump();
+  }
 }
 
 void main() {
@@ -215,6 +223,102 @@ void main() {
     expect(actions.prepareTextRegenerateCalls, 0);
     expect(actions.sentTexts, isEmpty);
   });
+
+  for (final enhanced in <bool>[false, true]) {
+    final entry = enhanced ? '增强重新生成' : '重新生成';
+    testWidgets('上滑脱离底部后点$entry，应回到底部并恢复跟随', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(360, 640);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final now = DateTime(2026, 3, 27, 21, 0);
+      final messages = List<Message>.generate(20, (index) {
+        return Message(
+          id: 'msg_regen_follow_$index',
+          role: index.isEven ? 'user' : 'assistant',
+          content: '第$index条消息，内容稍微长一点，用来把聊天列表撑到可以滚动。',
+          createdAt: now.add(Duration(seconds: index)),
+          status: 'sent',
+        );
+      });
+      final assistantMessage = messages.last;
+      final conversation = Conversation(
+        id: 'conv_page_regen_follow',
+        title: 'PageRegenFollow',
+        displayName: 'PageRegenFollow',
+        createdAt: now,
+        updatedAt: now,
+        messages: messages,
+        lastMessage: assistantMessage.displayText,
+        lastMessageTime: assistantMessage.createdAt,
+      );
+      final database = db.AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(database.close);
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(database),
+          appSettingsProvider.overrideWith(
+            () => _FakeAppSettingsNotifier(_buildTestSettings()),
+          ),
+          chatPageSendSupportProvider.overrideWith(
+            (ref) => _AlwaysAllowChatPageSendSupport(ref),
+          ),
+          activeConversationProvider.overrideWith((ref) => conversation),
+          resolvedConversationByIdProvider(conversation.id)
+              .overrideWith((ref) => conversation),
+          conversationMessagesProvider(conversation.id).overrideWith(
+            (ref) => AsyncValue.data(messages),
+          ),
+          conversationHasMoreProvider(conversation.id)
+              .overrideWith((ref) => false),
+          // 页面入口按未发送放行，真实生成在首个 await 前因本会话已占用而
+          // 直接返回：只验证入口的回底，不跑数据库与请求链。
+          sendingProvider.overrideWithValue(false),
+          conversationSendingProvider(conversation.id)
+              .overrideWith((ref) => true),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        _buildHost(container: container, conversation: conversation),
+      );
+      await tester.pump();
+      await _pumpFrames(tester);
+
+      final listFinder = find.descendant(
+        of: find.byType(ChatMessageList),
+        matching: find.byType(CustomScrollView),
+      );
+      final position =
+          tester.widget<CustomScrollView>(listFinder).controller!.position;
+      double distanceToBottom() => position.pixels - position.minScrollExtent;
+      final viewportController = tester
+          .widget<ChatMessageList>(find.byType(ChatMessageList))
+          .viewportController;
+
+      await tester.drag(listFinder, const Offset(0, 240));
+      await _pumpFrames(tester);
+      expect(viewportController.isDetached, isTrue, reason: '前置：上滑后应脱离跟随');
+      expect(distanceToBottom(), greaterThan(40), reason: '前置：视口已离开底部');
+
+      final list = tester.widget<ChatMessageList>(find.byType(ChatMessageList));
+      if (enhanced) {
+        list.onEnhanceRegenerateMessage!(assistantMessage);
+      } else {
+        list.onRegenerateMessage!(assistantMessage, null);
+      }
+      await tester.pump();
+      await _pumpFrames(tester);
+
+      expect(viewportController.shouldFollowLatest, isTrue,
+          reason: '$entry应恢复跟随最新消息');
+      expect(viewportController.shouldPinLatestTail, isTrue,
+          reason: '$entry应钉住最新尾部，新回复长高时继续贴底');
+      expect(distanceToBottom(), lessThanOrEqualTo(0.5),
+          reason: '$entry后应回到底部');
+    });
+  }
 
   testWidgets('同会话消息 provider 短暂回到 loading 时，聊天页仍应保留用户消息并移除发送中的 assistant 占位',
       (tester) async {

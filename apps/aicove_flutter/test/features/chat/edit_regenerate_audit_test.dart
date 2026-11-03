@@ -96,11 +96,12 @@ class AuditHistory implements ChatHistoryPort {
   }
 
   @override
-  Future<void> truncateAfterMessage(
+  Future<Future<void> Function()> prepareTruncateAfterMessage(
       {required String conversationId, required String anchorMessageId}) async {
     truncations++;
     if (!truncated.isCompleted) truncated.complete();
     if (failTruncate) throw StateError('audit truncate failure');
+    return () async {};
   }
 
   @override
@@ -169,6 +170,20 @@ void main() {
     await database.close();
   });
 
+  test('切走后失败仍记在原会话', () async {
+    final read = Completer<List<Message>>();
+    final history = AuditHistory([user, ai])..pendingRead = read;
+    container.dispose();
+    container = makeContainer(history: history);
+    final pending = container.read(chatActionsProvider).regenerate(ai.id);
+    await Future<void>.delayed(Duration.zero);
+    container.read(_owner.notifier).state = conv.copyWith(id: 'other');
+    read.completeError(StateError('background failure'));
+    await pending;
+    expect(container.read(conversationErrorProvider(conv.id)), contains('background failure'));
+    expect(container.read(conversationErrorProvider('other')), isNull);
+  });
+
   test('R01 慢历史读取开始时应立即锁定重新生成按钮', () async {
     final history = AuditHistory([user, ai])
       ..pendingRead = Completer<List<Message>>();
@@ -188,7 +203,7 @@ void main() {
     container = makeContainer(history: history);
     await expectLater(
         container.read(chatActionsProvider).regenerate(ai.id), completes);
-    expect(container.read(errorProvider), contains('audit truncate failure'));
+    expect(container.read(conversationErrorProvider(conv.id)), contains('audit truncate failure'));
     expect(history.reads, 1, reason: '定位原消息应复用同一次raw读取');
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
   });
@@ -275,7 +290,7 @@ void main() {
     container = makeContainer(history: history);
     await expectLater(
         container.read(chatActionsProvider).regenerate(ai.id), completes);
-    expect(container.read(errorProvider), contains('audit read failure'));
+    expect(container.read(conversationErrorProvider(conv.id)), contains('audit read failure'));
     expect(container.read(conversationSendingProvider(conv.id)), isFalse);
   });
 
@@ -328,7 +343,7 @@ void main() {
           : actions.regenerate(ai.id);
       await history.truncated.future;
       container.read(_owner.notifier).state = conv.copyWith(id: 'other');
-      container.read(errorProvider.notifier).state = 'other error';
+      container.read(conversationErrorProvider('other').notifier).state = 'other error';
       container.read(chatStatusProvider.notifier).state =
           ChatStatus.generatingImage;
       settings.complete(auditSettings.copyWith(
@@ -338,7 +353,7 @@ void main() {
       expect(send.historyOwner, conv.id);
       expect(container.read(conversationSendingProvider(conv.id)), isFalse);
       expect(container.read(conversationSendingProvider('other')), isFalse);
-      expect(container.read(errorProvider), 'other error');
+      expect(container.read(conversationErrorProvider('other')), 'other error');
       expect(container.read(chatStatusProvider), ChatStatus.generatingImage);
       await Future<void>.delayed(Duration.zero);
       final preparation = diagnosticEntries

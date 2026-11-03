@@ -56,12 +56,18 @@ external void asyncDeliver(
 @Native<Void Function(Pointer<Void>)>(symbol: 'aqjs_async_destroy')
 external void asyncDestroy(Pointer<Void> runtime);
 
-@Native<Pointer<Void> Function(Pointer<Char>, Pointer<Char>, Pointer<Int32>)>(
-  symbol: 'ap_start',
-)
+@Native<
+  Pointer<Void> Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Pointer<Char>>,
+    Pointer<Int32>,
+  )
+>(symbol: 'ap_start')
 external Pointer<Void> processStart(
   Pointer<Char> cwd,
   Pointer<Char> command,
+  Pointer<Pointer<Char>> environment,
   Pointer<Int32> error,
 );
 @Native<Int32 Function(Pointer<Void>)>(symbol: 'ap_pid')

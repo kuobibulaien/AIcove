@@ -127,6 +127,27 @@ class AutoReplyClaimStore {
     return affected > 0;
   }
 
+  /// Processing starts only after claiming delivery; its eventual raw anchor
+  /// is known afterwards. Attach it before publishing, without reopening the
+  /// claim or replacing another owner's record.
+  Future<void> attachDeliveryMessage(
+    String triggerId,
+    String token,
+    String messageId,
+  ) async {
+    await _db.customUpdate(
+      'UPDATE auto_reply_trigger_claims SET message_id = ? '
+      'WHERE trigger_id = ? AND claimed_by = ? AND completed_at IS NOT NULL '
+      'AND message_id IS NULL',
+      variables: [
+        Variable.withString(messageId),
+        Variable.withString(triggerId.trim()),
+        Variable.withString(token),
+      ],
+      updateKind: UpdateKind.update,
+    );
+  }
+
   /// 开始送达后写入失败、且确知什么都没写进去（事务已回滚）时调用：撤销
   /// [token] 的认领，让下一次重试可以重新认领。
   Future<void> abortDelivery(String triggerId, String token) async {

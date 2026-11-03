@@ -46,7 +46,8 @@ class _Settings extends AppSettingsNotifier {
 }
 
 final _now = DateTime.utc(2026, 10, 12, 10, 5, 30);
-const _model = 'openai:deepseek-flash';
+const _modelId = 'deepseek/deepseek-v4.1-flash-1017';
+const _model = 'openai:$_modelId';
 const _conv = 'conv_headless';
 
 AppSettings _settings() =>
@@ -61,10 +62,10 @@ AppSettings _settings() =>
         ProviderAuth(
           id: 'openai',
           apiKeys: [_key ?? ''],
-          apiBaseUrl: 'https://api.deepseek.com',
+          apiBaseUrl: 'https://api-gateway.merge.dev/v1/openai',
         ),
       ],
-      modelProviderMap: const {_model: 'openai', 'deepseek-flash': 'openai'},
+      modelProviderMap: const {_model: 'openai', _modelId: 'openai'},
     );
 
 void main() {

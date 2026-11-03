@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../features/chat/conversation_providers.dart';
+import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/plugins/plugin_providers.dart';
+import '../../../../features/plugins/prompts/plugin_prompt_resolution.dart';
 import '../../../../features/plugins/prompts/prompt_pack.dart';
 import '../../../../features/plugins/prompts/prompt_pack_store.dart';
+import '../../../../features/plugins/tts/tts_provider_context.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/widgets/index.dart';
@@ -12,8 +16,8 @@ import '../../../theme/tokens.dart';
 import '../pages/prompt_preview_page.dart';
 import '../pages/prompt_section_editor_page.dart';
 
-/// Names of the presets explicitly bound to [packId] (voice and drawing).
-/// Presets on 「自动」 that match the pack are not counted.
+/// Names of the presets or roles explicitly bound to [packId].
+/// Items on 「自动」 that match the pack are not counted.
 List<String> promptPackBoundPresets(WidgetRef ref, String packId) => [
   for (final p in ref.watch(ttsPluginConfigProvider).voicePresets)
     if (p.synthesis?.prompts.packId == packId) p.name,
@@ -21,7 +25,84 @@ List<String> promptPackBoundPresets(WidgetRef ref, String packId) => [
       in ref.watch(drawingPresetCatalogProvider).valueOrNull?.presets ??
           const [])
     if (p.prompts.packId == packId) p.name,
+  for (final r in ref.watch(conversationsProvider).valueOrNull ?? const [])
+    if (!r.isHidden &&
+        PersonaPromptCodec.parse(r.personaPrompt).drawingPromptPackId == packId)
+      r.displayName.trim().isEmpty ? r.title : r.displayName,
 ];
+
+/// Names of presets or roles currently using [pack], including both explicit
+/// bindings and presets set to 「自动匹配」 that resolve to [pack].
+List<String> promptPackActivePresets(
+  WidgetRef ref,
+  PromptPackLibrary library,
+  PromptPack pack,
+) {
+  final settings = ref.watch(appSettingsProvider).valueOrNull;
+  final names = <String>[];
+  if (pack.pluginId == 'tts') {
+    final ttsConfig = ref.watch(ttsPluginConfigProvider);
+    for (final preset in ttsConfig.voicePresets) {
+      final synthesis = preset.synthesis;
+      if (synthesis == null) continue;
+      final explicitId = synthesis.prompts.packId?.trim();
+      if (explicitId != null && explicitId.isNotEmpty) {
+        if (explicitId == pack.id) names.add(preset.name);
+        continue;
+      }
+      final providerCtx = TtsProviderContext.resolveForSelection(
+        config: ttsConfig,
+        settings: settings,
+        providerId: synthesis.providerId,
+        modelId: synthesis.modelId,
+      );
+      final format = ttsPromptFormat(providerCtx.requestFormat);
+      if (library.autoMatch('tts', format, synthesis.modelId).id == pack.id) {
+        names.add(preset.name);
+      }
+    }
+  } else if (pack.pluginId == 'image') {
+    final catalog = ref.watch(drawingPresetCatalogProvider).valueOrNull;
+    for (final preset in catalog?.presets ?? const []) {
+      final explicitId = preset.prompts.packId?.trim();
+      if (explicitId != null && explicitId.isNotEmpty) {
+        if (explicitId == pack.id) names.add(preset.name);
+        continue;
+      }
+      final provider = settings?.providers
+          .where((p) => p.id == preset.config.selectedProviderId)
+          .firstOrNull;
+      final format = provider == null
+          ? 'openai'
+          : imagePromptFormat(provider.id, provider.customConfig);
+      final model =
+          preset.config.selectedModelId == null || settings == null
+          ? ''
+          : settings.getRawModelId(preset.config.selectedModelId!);
+      if (library.autoMatch('image', format, model).id == pack.id) {
+        names.add(preset.name);
+      }
+    }
+    for (final r in ref.watch(conversationsProvider).valueOrNull ?? const []) {
+      if (!r.isHidden &&
+          PersonaPromptCodec.parse(r.personaPrompt).drawingPromptPackId ==
+              pack.id) {
+        names.add(r.displayName.trim().isEmpty ? r.title : r.displayName);
+      }
+    }
+  }
+  return names;
+}
+
+/// Whether [pack] has any modified or user-added sections compared to factory defaults.
+bool isPromptPackModified(PromptPackLibrary library, PromptPack pack) {
+  if (!pack.builtIn) return false;
+  return pack.sections.any(
+    (s) =>
+        library.isModified(pack.id, s.id) ||
+        library.isUserSection(pack.id, s.id),
+  );
+}
 
 /// The 「提示词」 part of a voice or drawing preset editor (ADR0092): which
 /// pack it uses, every section that reaches the model, the preset's own
@@ -169,9 +250,7 @@ class _PresetPromptGroupState extends ConsumerState<PresetPromptGroup> {
                 MoeSettingsRow(
                   icon: Icons.layers_outlined,
                   label: '提示词包',
-                  subtitle: resolved.automatic
-                      ? '自动匹配 · ${pack.name}'
-                      : pack.name,
+                  subtitle: pack.name,
                   onTap: () => _pickPack(context, library),
                 ),
                 if (!resolved.automatic && autoPack.id != pack.id)

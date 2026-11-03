@@ -1,4 +1,5 @@
-/// 酒馆预设的提示词条目列表：按发送顺序排列，每条一个开关。
+/// 酒馆预设的提示词条目列表：按发送顺序排列，每条一个开关；
+/// 普通条目点开可编辑，末尾可添加新条目。
 ///
 /// 预设详情页与聊天菜单「酒馆预设」共用，修改写回预设本身。
 library;
@@ -8,7 +9,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/agent_context/domain/silly_tavern_preset.dart';
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
+import '../../../shared/animations/parallax_slide_page_route.dart';
 import '../../../shared/widgets/index.dart';
+import '../../../theme/tokens.dart';
+import '../pages/tavern_prompt_editor_page.dart';
 import 'tavern_common.dart';
 
 class TavernPromptList extends ConsumerWidget {
@@ -31,6 +35,17 @@ class TavernPromptList extends ConsumerWidget {
           ),
         for (final entry in order)
           _promptRow(context, ref, entry, prompts[entry.identifier]),
+        MoeSettingsRow(
+          key: const ValueKey('add-tavern-prompt'),
+          label: '添加提示词',
+          subtitle: '自己写一段发给模型的内容',
+          labelColor: context.moeColors.primary,
+          trailingType: MoeSettingsRowTrailing.none,
+          onTap: () => _openEditor(
+            context,
+            TavernPromptEditorPage.create(presetId: preset.id),
+          ),
+        ),
       ],
     );
   }
@@ -68,15 +83,22 @@ class TavernPromptList extends ConsumerWidget {
       ),
       onTap: prompt == null
           ? null
-          : () => showTavernText(
+          : prompt.marker
+          ? () => showTavernText(
               context,
               title: name,
-              text: prompt.marker
-                  ? '这是占位条目，发送时自动填入${_markerLabel(prompt.identifier)}。关掉后这部分内容不会发给模型。'
-                  : prompt.content,
+              text:
+                  '这是占位条目，发送时自动填入${_markerLabel(prompt.identifier)}。关掉后这部分内容不会发给模型。',
+            )
+          : () => _openEditor(
+              context,
+              TavernPromptEditorPage(presetId: preset.id, prompt: prompt),
             ),
     );
   }
+
+  void _openEditor(BuildContext context, Widget page) =>
+      Navigator.of(context).push(ParallaxSlidePageRoute(page: page));
 }
 
 String _markerLabel(String identifier) => switch (identifier) {

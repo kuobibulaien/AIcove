@@ -26,7 +26,6 @@ class MoeChatWallpaper extends StatelessWidget {
   Widget build(BuildContext context) {
     return MoeGlobalWallpaper(
       slot: slot,
-      color: Theme.of(context).scaffoldBackgroundColor,
       style: style,
       layout: layout,
       child: SizedBox.expand(child: child),
@@ -39,13 +38,15 @@ class MoeGlobalWallpaper extends StatelessWidget {
   const MoeGlobalWallpaper({
     super.key,
     required this.slot,
-    required this.color,
+    this.color,
     this.style,
     this.layout,
     this.child,
   });
   final GlobalWallpaperSlot slot;
-  final Color color;
+
+  /// Page base color; null uses the theme's scaffold color.
+  final Color? color;
 
   /// Mask, blur and framing laid over the global image; null uses the global
   /// wallpaper's own. A character following the global image may adjust its own.
@@ -66,6 +67,7 @@ class MoeGlobalWallpaper extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = MoeWallpaperTheme.maybeOf(context);
     final source = theme?.sourceFor(slot, Theme.of(context).brightness);
+    final color = this.color ?? Theme.of(context).scaffoldBackgroundColor;
     if (theme == null || source == null) {
       return ColoredBox(color: color, child: child);
     }

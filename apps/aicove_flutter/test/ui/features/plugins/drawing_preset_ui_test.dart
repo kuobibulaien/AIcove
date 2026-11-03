@@ -325,14 +325,7 @@ void main() {
       final parts = PersonaPromptCodec.parse(saved.personaPrompt);
       expect(parts.drawingPresetId, 'role-b');
       expect(parts.userPrompt, '温柔');
-      // ADR0092: the requirement moved into a preset only this role used.
-      expect(parts.customDrawingPrompt, isEmpty);
-      expect(
-        store.catalog.presets.any(
-          (p) => p.prompts.ownSections.any((s) => s.text.contains('绿色眼睛')),
-        ),
-        isTrue,
-      );
+      expect(parts.customDrawingPrompt, '绿色眼睛');
       expect(parts.drawingArtistPresetName, isNull);
       expect(parts.drawingToolPresetName, isNull);
       expect(tester.takeException(), isNull);

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/features/agent_context/domain/tavern_compatibility_port.dart';
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
+import 'package:aicove_flutter/src/features/plugins/time_awareness/time_awareness_role_options.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_library.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_library_provider.dart';
 import 'package:aicove_flutter/src/features/stickers/sticker_pack_grants.dart';
@@ -37,7 +38,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    final labels = ['音色', '生图', '记忆', '酒馆', '表情包', '主动关怀', '时间感知'];
+    final labels = ['音色', '生图', '记忆', '酒馆', '表情包', '主动回复', '时间感知'];
     final rows = [
       for (final id in [
         'tts',
@@ -104,6 +105,34 @@ void main() {
         reason: id,
       );
     }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('时间感知点开只改这个角色，不写全局配置', (tester) async {
+    await tester.pumpWidget(
+      const _TestApp(initialPluginIds: {'time_awareness'}),
+    );
+    await tester.pumpAndSettle();
+    final host = tester.state<_TestAppState>(find.byType(_TestApp));
+    final row = find.byKey(const ValueKey('enabled-plugin-time_awareness'));
+    await tester.ensureVisible(row);
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('all-plugins-time-current')));
+    await tester.pumpAndSettle();
+    expect(host.selectedPluginIds, {
+      'time_awareness',
+      TimeAwarenessRoleOptions.noCurrentTimeId,
+    });
+    expect(find.descendant(of: row, matching: find.text('不告诉现在几点')),
+        findsOneWidget);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('aicove.plugins.time_awareness.config'), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('all-plugins-time-current')));
+    await tester.pumpAndSettle();
+    expect(host.selectedPluginIds, {'time_awareness'});
     expect(tester.takeException(), isNull);
   });
 
@@ -217,8 +246,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('关闭'));
     await tester.pumpAndSettle();
-    expect(find.descendant(of: row, matching: find.text('狗狗、旧图')),
-        findsOneWidget);
+    expect(
+      find.descendant(of: row, matching: find.text('已选 2 组')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

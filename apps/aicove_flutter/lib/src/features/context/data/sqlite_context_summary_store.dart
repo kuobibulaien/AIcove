@@ -9,7 +9,8 @@ import '../../chat/domain/message.dart';
 import '../domain/context_summary.dart';
 
 /// `context_summaries` 的专用 Adapter（参数化 SQL，不走 Drift 表定义）。
-class SqliteContextSummaryStore implements ContextSummaryStorePort {
+class SqliteContextSummaryStore
+    implements ContextSummaryStorePort, ContextSummaryManagementStorePort {
   SqliteContextSummaryStore(this.database, this.loadMessages);
   final db.AppDatabase database;
   final Future<List<Message>> Function(String ownerId) loadMessages;
@@ -65,6 +66,126 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         .getSingleOrNull();
     return row == null ? null : _decode(row);
   }
+
+  Future<ContextSummary?> _autoRecord(String owner, String? boundary) async {
+    final row = await database
+        .customSelect(
+          "SELECT * FROM context_summaries WHERE owner_id = ? AND kind = 'auto' "
+          'AND topic_boundary IS ? ORDER BY created_at DESC, rowid DESC LIMIT 1',
+          variables: [Variable(owner), Variable<String>(boundary)],
+        )
+        .getSingleOrNull();
+    return row == null ? null : _decode(row);
+  }
+
+  bool _managementValid(ContextSummary record, List<Message> all) {
+    if (!_valid(record, all)) return false;
+    try {
+      validateContextSummary(record.summary);
+      return true;
+    } on ContextCompactionException {
+      return false;
+    }
+  }
+
+  @override
+  Future<List<ContextSummaryHistoryEntry>> listHistory(String ownerId) =>
+      database.transaction(() async {
+        final owner = await _owner(ownerId);
+        final all = await loadMessages(ownerId);
+        final manual = await _manualRecord(
+          ownerId,
+          owner.contextStartMessageId,
+        );
+        final auto = await _autoRecord(ownerId, owner.contextStartMessageId);
+        final rows = await database
+            .customSelect(
+              'SELECT * FROM context_summaries WHERE owner_id = ? '
+              'ORDER BY created_at DESC, rowid DESC',
+              variables: [Variable(ownerId)],
+            )
+            .get();
+        return rows
+            .map((row) {
+              final record = _decode(row);
+              return ContextSummaryHistoryEntry(
+                record: record,
+                isValid: _managementValid(record, all),
+                isCurrent: record.id == manual?.id || record.id == auto?.id,
+              );
+            })
+            .toList(growable: false);
+      });
+
+  @override
+  Future<ContextSummaryChange> updateCurrent({
+    required String ownerId,
+    required ContextSummaryKind kind,
+    required String? expectedBoundaryId,
+    required ContextSummary expectedSummary,
+    required String summary,
+    DateTime? createdAt,
+  }) async {
+    validateContextSummary(summary);
+    return database.transaction(() async {
+      final owner = await _owner(ownerId);
+      final before = kind == ContextSummaryKind.manual
+          ? await _manualRecord(ownerId, owner.contextStartMessageId)
+          : await _autoRecord(ownerId, owner.contextStartMessageId);
+      if (owner.contextStartMessageId != expectedBoundaryId ||
+          before == null ||
+          expectedSummary.ownerId != ownerId ||
+          expectedSummary.kind != kind ||
+          before.id != expectedSummary.id ||
+          before.summary != expectedSummary.summary ||
+          before.sourceDigest != expectedSummary.sourceDigest ||
+          before.boundaryId != expectedSummary.boundaryId ||
+          before.topicBoundary != expectedSummary.topicBoundary ||
+          before.createdAt.millisecondsSinceEpoch !=
+              expectedSummary.createdAt.millisecondsSinceEpoch ||
+          jsonEncode(before.sourceIds) !=
+              jsonEncode(expectedSummary.sourceIds) ||
+          !_managementValid(before, await loadMessages(ownerId))) {
+        throw const ContextCompactionException('摘要或聊天已变化，请重新读取后再修改。');
+      }
+      final savedAt = DateTime.fromMillisecondsSinceEpoch(
+        (createdAt ?? DateTime.now()).millisecondsSinceEpoch,
+      );
+      await database.customStatement(
+        'UPDATE context_summaries SET summary = ?, created_at = ? '
+        'WHERE id = ? AND owner_id = ?',
+        [summary.trim(), savedAt.millisecondsSinceEpoch, before.id, ownerId],
+      );
+      final after = ContextSummary(
+        id: before.id,
+        ownerId: before.ownerId,
+        kind: before.kind,
+        boundaryId: before.boundaryId,
+        topicBoundary: before.topicBoundary,
+        summary: summary.trim(),
+        sourceIds: List.unmodifiable(before.sourceIds),
+        sourceDigest: before.sourceDigest,
+        createdAt: savedAt,
+      );
+      return ContextSummaryChange(before: before, after: after);
+    });
+  }
+
+  @override
+  Future<void> deleteCurrentAuto({
+    required String ownerId,
+    required String? expectedBoundaryId,
+  }) => database.transaction(() async {
+    final owner = await _owner(ownerId);
+    if (owner.contextStartMessageId != expectedBoundaryId) {
+      throw const ContextCompactionException('话题已变化，请重新读取后再删除摘要。');
+    }
+    await database.customStatement(
+      "DELETE FROM context_summaries WHERE owner_id = ? AND kind = 'auto' "
+      'AND topic_boundary IS ?',
+      [ownerId, expectedBoundaryId],
+    );
+  });
 
   List<Object?> _row(
     String id,
@@ -273,7 +394,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       AppLogger.info(
         'AutomaticContext',
         '自动压缩已保存',
-        metadata: {'conversationId': snapshot.ownerId, 'sourceCount': ids.length},
+        metadata: {
+          'conversationId': snapshot.ownerId,
+          'sourceCount': ids.length,
+        },
       );
       return ContextSummary(
         id: id,

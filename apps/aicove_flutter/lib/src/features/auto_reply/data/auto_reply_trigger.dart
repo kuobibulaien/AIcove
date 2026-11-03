@@ -149,12 +149,6 @@ class AutoReplyTrigger {
   bool shouldFire(DateTime now, {bool allowNightOverride = false}) {
     if (!isActive) return false;
 
-    // 夜间检查
-    if (!allowNightOverride && !allowNight) {
-      final hour = now.hour;
-      if (hour >= 23 || hour < 7) return false;
-    }
-
     return !nextFireAt.isAfter(now);
   }
 
@@ -202,6 +196,11 @@ class AutoReplyTrigger {
         currentLastUserMessageId != null || currentLastUserMessageAt != null;
     if (hadNoUserMessageAtCreate && hasUserMessageNow) return true;
 
+    // 原有用户消息消失（清空会话）同样使自动触发器失效。
+    if (contextLastUserMessageId != null && currentLastUserMessageId == null) {
+      return true;
+    }
+
     // 2) 优先用 ID 判断（最稳）
     if (contextLastUserMessageId != null && currentLastUserMessageId != null) {
       return currentLastUserMessageId != contextLastUserMessageId;
@@ -241,18 +240,18 @@ class AutoReplyTrigger {
     bool? requireExact,
     int? delayMinutes,
     bool? manual,
-    DateTime? lastFiredAt,
-    String? contactId,
-    String? prompt,
+    Object? lastFiredAt = _unset,
+    Object? contactId = _unset,
+    Object? prompt = _unset,
     AutoReplyTriggerPriority? priority,
-    String? cachedContent,
-    String? contextSnapshot,
-    String? contextLastUserMessageId,
-    DateTime? contextLastUserMessageAt,
-    DateTime? preparedAt,
+    Object? cachedContent = _unset,
+    Object? contextSnapshot = _unset,
+    Object? contextLastUserMessageId = _unset,
+    Object? contextLastUserMessageAt = _unset,
+    Object? preparedAt = _unset,
     TriggerSource? source,
     String? conversationId,
-    String? expireReason,
+    Object? expireReason = _unset,
     ProactiveAction? action,
   }) {
     return AutoReplyTrigger(
@@ -266,20 +265,18 @@ class AutoReplyTrigger {
       requireExact: requireExact ?? this.requireExact,
       delayMinutes: delayMinutes ?? this.delayMinutes,
       manual: manual ?? this.manual,
-      lastFiredAt: lastFiredAt ?? this.lastFiredAt,
-      contactId: contactId ?? this.contactId,
-      prompt: prompt ?? this.prompt,
+      lastFiredAt: identical(lastFiredAt, _unset) ? this.lastFiredAt : lastFiredAt as DateTime?,
+      contactId: identical(contactId, _unset) ? this.contactId : contactId as String?,
+      prompt: identical(prompt, _unset) ? this.prompt : prompt as String?,
       priority: priority ?? this.priority,
-      cachedContent: cachedContent ?? this.cachedContent,
-      contextSnapshot: contextSnapshot ?? this.contextSnapshot,
-      contextLastUserMessageId:
-          contextLastUserMessageId ?? this.contextLastUserMessageId,
-      contextLastUserMessageAt:
-          contextLastUserMessageAt ?? this.contextLastUserMessageAt,
-      preparedAt: preparedAt ?? this.preparedAt,
+      cachedContent: identical(cachedContent, _unset) ? this.cachedContent : cachedContent as String?,
+      contextSnapshot: identical(contextSnapshot, _unset) ? this.contextSnapshot : contextSnapshot as String?,
+      contextLastUserMessageId: identical(contextLastUserMessageId, _unset) ? this.contextLastUserMessageId : contextLastUserMessageId as String?,
+      contextLastUserMessageAt: identical(contextLastUserMessageAt, _unset) ? this.contextLastUserMessageAt : contextLastUserMessageAt as DateTime?,
+      preparedAt: identical(preparedAt, _unset) ? this.preparedAt : preparedAt as DateTime?,
       source: source ?? this.source,
       conversationId: conversationId ?? this.conversationId,
-      expireReason: expireReason ?? this.expireReason,
+      expireReason: identical(expireReason, _unset) ? this.expireReason : expireReason as String?,
       action: action ?? this.action,
     );
   }
@@ -594,3 +591,5 @@ class AutoReplyTriggerLog {
     return AutoReplyTrigger._parseSource(value);
   }
 }
+
+const Object _unset = Object();

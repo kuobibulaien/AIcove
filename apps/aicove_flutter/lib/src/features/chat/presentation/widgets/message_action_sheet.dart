@@ -18,6 +18,7 @@ enum MessageAction {
   edit, // 编辑（用户消息）
   regenerate, // 重新生成（AI消息）
   regenerateMedia, // 仅重新生成当前图片或语音
+  editAndRegenerateMedia, // 修改提示词后重新生成当前图片
   enhanceRegenerate, // 增强生成（AI消息）
   delete, // 删除单条消息
   quote, // 引用回复
@@ -173,15 +174,21 @@ Future<void> showMediaActionMenu(
   ];
 
   if (allowRegenerate) {
-    items.insert(
-      1,
+    items.insertAll(1, [
       MoePopupMenuItem(
         icon: Icons.refresh_rounded,
         label: mediaType == MediaType.image ? '重新生成图片' : '重新生成语音',
         width: 88,
         onTap: () => onAction(MessageAction.regenerateMedia),
       ),
-    );
+      if (mediaType == MediaType.image)
+        MoePopupMenuItem(
+          icon: Icons.edit_note_rounded,
+          label: '改词重画',
+          width: 72,
+          onTap: () => onAction(MessageAction.editAndRegenerateMedia),
+        ),
+    ]);
   }
 
   // Media menus follow the same editor focus policy as text message menus.

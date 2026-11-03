@@ -31,6 +31,21 @@ class TraceStore {
 
   final ValueNotifier<List<TraceEvent>> entries =
       ValueNotifier<List<TraceEvent>>(<TraceEvent>[]);
+  final Map<String, ValueNotifier<List<TraceEvent>>> _sessionEntries =
+      <String, ValueNotifier<List<TraceEvent>>>{};
+
+  ValueListenable<List<TraceEvent>> entriesForSession(String? sessionId) {
+    final normalized = sessionId?.trim() ?? '';
+    if (normalized.isEmpty) return entries;
+    return _sessionEntries.putIfAbsent(
+      normalized,
+      () => ValueNotifier<List<TraceEvent>>(
+        entries.value
+            .where((e) => e.sessionId == normalized)
+            .toList(growable: false),
+      ),
+    );
+  }
 
   final Map<String, _TraceRuntimeState> _runtimeStates =
       <String, _TraceRuntimeState>{};
@@ -177,6 +192,12 @@ class TraceStore {
       list.removeRange(0, list.length - 400);
     }
     entries.value = list;
+    final sessionNotifier = _sessionEntries[event.sessionId];
+    if (sessionNotifier != null) {
+      sessionNotifier.value = list
+          .where((e) => e.sessionId == event.sessionId)
+          .toList(growable: false);
+    }
 
     if (_storageAvailable) {
       if (_initialized) {
@@ -408,6 +429,10 @@ class TraceStore {
     _runtimeStates.clear();
     _preInitBuffer.clear();
     entries.value = <TraceEvent>[];
+    for (final notifier in _sessionEntries.values) {
+      notifier.value = const <TraceEvent>[];
+    }
+    _sessionEntries.clear();
     _writeChain = Future<void>.value();
     _initCompleter = null;
     _initialized = false;

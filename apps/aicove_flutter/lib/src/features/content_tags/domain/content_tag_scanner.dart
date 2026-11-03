@@ -1,3 +1,4 @@
+import '../../../core/utils/markdown_fence.dart';
 import 'content_tag_registry.dart';
 import 'content_tag_spec.dart';
 
@@ -187,7 +188,7 @@ class ContentTagScanner {
       // （如思维链里写“这轮要用<tts>”），当普通文字并继续扫描，避免吞掉后文；
       // 否则才是流式输出中尚未写完的元素。
       final rest = _scan(text.substring(open!.end), base + open.end);
-      final stray = rest.any(
+      final stray = !active.wrapsRestWhenUnclosed && rest.any(
         (segment) =>
             (segment is ContentTagElement && segment.closed) ||
             segment is ContentTagOrphanClose,
@@ -242,6 +243,38 @@ class ContentTagScanner {
     return output.toString();
   }
 }
+
+/// 代码块（围栏与行内反引号）里的 `<` 换成占位符，扫描时就不会把示例代码
+/// 当成语义标签（ADR0048）。等长替换，区间偏移不变。
+const String _codeMask = '\uE000';
+final RegExp _inlineCode = RegExp(r'`[^`\n]+`');
+
+String maskCode(String text) {
+  if (!text.contains('<') || (!text.contains('`') && !text.contains('~~~'))) {
+    return text;
+  }
+  final chars = text.split('');
+  void mask(int start, int end) {
+    for (var i = start; i < end && i < chars.length; i++) {
+      if (chars[i] == '<') chars[i] = _codeMask;
+    }
+  }
+
+  final fences = scanFencedCodeBlocks(text);
+  for (final block in fences) {
+    mask(block.start, block.end);
+  }
+  for (final match in _inlineCode.allMatches(text)) {
+    if (fences.any((b) => match.start >= b.start && match.start < b.end)) {
+      continue;
+    }
+    mask(match.start, match.end);
+  }
+  return chars.join();
+}
+
+String unmaskCode(String text) =>
+    text.contains(_codeMask) ? text.replaceAll(_codeMask, '<') : text;
 
 /// [index] 处是否位于 JSON（含 JSON5 单引号）字符串字面量内，从 [start] 起算。
 /// 单引号只在值的开头才算字符串，避免 YAML 里的 `it's` 吞掉结束标签。

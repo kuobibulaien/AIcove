@@ -109,7 +109,23 @@ class SillyTavernVariableStore {
       jsonEncode(<String, dynamic>{'schemaVersion': 1, 'values': safeValues}),
       flush: true,
     );
-    await cloudLocalWrite(() => temp.rename(file.path));
+    await cloudLocalWrite(() async {
+      var changed = true;
+      try {
+        if (await file.exists()) {
+          final previous = await file.readAsBytes();
+          final next = await temp.readAsBytes();
+          changed =
+              previous.length != next.length ||
+              previous.indexed.any((entry) => entry.$2 != next[entry.$1]);
+        }
+      } on FileSystemException {
+        // Comparing content must not prevent replacing an unreadable file.
+        changed = true;
+      }
+      await temp.rename(file.path);
+      if (changed) notifyExternalSyncChange();
+    });
     return true;
   }
 

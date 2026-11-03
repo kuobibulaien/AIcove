@@ -126,17 +126,20 @@ class PluginRuntime {
           entry.value(inputs),
       ];
 
-  /// Builds every selected plugin's request scope, in installation order.
-  List<PluginRequestScope> requestScopes(
+  /// Builds scopes lazily, in installation order. The caller must register
+  /// or dispose each yielded scope before requesting the next one, so a
+  /// later factory failure cannot strand already constructed scopes.
+  Iterable<PluginRequestScope> requestScopes(
     RunSnapshot snapshot,
     List<String> pluginIds,
     PluginRequestInputs inputs,
-  ) => [
-        for (final entry in contributions(
-          snapshot,
-          AppContributions.requestScope,
-          pluginIds: pluginIds.toSet(),
-        ))
-          entry.value(inputs),
-      ];
+  ) sync* {
+    for (final entry in contributions(
+      snapshot,
+      AppContributions.requestScope,
+      pluginIds: pluginIds.toSet(),
+    )) {
+      yield entry.value(inputs);
+    }
+  }
 }

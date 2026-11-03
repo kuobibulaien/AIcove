@@ -161,6 +161,7 @@ class PromptPack {
     this.description = '',
     this.match = const [],
     this.fallback = false,
+    this.postProcessor = 'plain',
   });
 
   static const builtinPrefix = 'builtin.';
@@ -169,11 +170,36 @@ class PromptPack {
   final String pluginId;
   final String name;
   final String description;
+  final String postProcessor;
   final List<PromptMatchRule> match;
 
   /// The plugin's built-in pack used when no rule matches.
   final bool fallback;
   final List<PromptSection> sections;
+
+  String? get requiredImageFormat => switch (postProcessor) {
+    'novelai_manga' => 'novelai',
+    'moss_manga' => 'comfyui',
+    _ => null,
+  };
+
+  bool isCompatibleWithImageFormat(String format) =>
+      requiredImageFormat == null || requiredImageFormat == format.trim().toLowerCase();
+
+  static String postProcessorLabel(String postProcessor) => switch (postProcessor) {
+    'novelai_manga' => 'NovelAI 分镜解析',
+    'moss_manga' => 'MOSS 多格排版',
+    _ => '直接发送',
+  };
+
+  static String _readPostProcessor(Map<String, dynamic> json) {
+    final value = (json['postProcessor'] as String?)?.trim() ?? '';
+    if (value.isNotEmpty) return value;
+    final origins = {json['id'], json['forkedFrom']};
+    if (origins.contains('builtin.image.novelai_manga')) return 'novelai_manga';
+    if (origins.contains('builtin.image.moss_manga')) return 'moss_manga';
+    return 'plain';
+  }
 
   bool get builtIn => id.startsWith(builtinPrefix);
 
@@ -187,6 +213,7 @@ class PromptPack {
     String? id,
     String? name,
     String? description,
+    String? postProcessor,
     List<PromptMatchRule>? match,
     List<PromptSection>? sections,
   }) => PromptPack(
@@ -194,6 +221,7 @@ class PromptPack {
     pluginId: pluginId,
     name: name ?? this.name,
     description: description ?? this.description,
+    postProcessor: postProcessor ?? this.postProcessor,
     match: match ?? this.match,
     fallback: id == null ? fallback : false,
     sections: sections ?? this.sections,
@@ -204,6 +232,7 @@ class PromptPack {
     'pluginId': pluginId,
     'name': name,
     'description': description,
+    'postProcessor': postProcessor,
     'match': [for (final rule in match) rule.toJson()],
     'sections': [for (final s in sections) s.toJson()],
   };
@@ -213,6 +242,7 @@ class PromptPack {
     pluginId: json['pluginId'] as String,
     name: json['name'] as String? ?? '',
     description: json['description'] as String? ?? '',
+    postProcessor: _readPostProcessor(json),
     match: [
       for (final rule in json['match'] as List? ?? [])
         PromptMatchRule.fromJson(Map<String, dynamic>.from(rule as Map)),
@@ -625,6 +655,97 @@ class PromptPackLibrary {
     );
   }
 
+  /// Imports a standalone pack or an exported request's nested pack as a
+  /// new custom pack. Existing packs are never replaced.
+  ({PromptPackLibrary library, PromptPack pack}) importCustomJson(
+    Map<String, dynamic> json, {
+    required String newId,
+    String? expectedPluginId,
+    String? fallbackName,
+  }) {
+    final raw = json.containsKey('pack') ? json['pack'] : json;
+    if (raw is! Map) throw const FormatException('这个文件不是有效的提示词包');
+    final rawPluginId = raw['pluginId'];
+    final normalizedPluginId = rawPluginId is String
+        ? rawPluginId.trim()
+        : rawPluginId;
+    final pluginId = normalizedPluginId == null || normalizedPluginId == ''
+        ? expectedPluginId
+        : normalizedPluginId;
+    if (!PromptScopes.byPlugin.containsKey(pluginId)) {
+      throw const FormatException('这个文件不是有效的提示词包');
+    }
+    if (expectedPluginId != null && pluginId != expectedPluginId) {
+      if (pluginId == 'tts') {
+        throw const FormatException('这个文件是语音提示词包，请在语音提示词包里导入');
+      }
+      throw const FormatException('这个文件是生图方案，请在生图方案里导入');
+    }
+    final sections = raw['sections'];
+    if (sections is! List || sections.isEmpty) {
+      throw const FormatException('这个提示词包里没有任何内容，无法导入');
+    }
+    var idBase = newId.trim();
+    if (idBase.isEmpty) idBase = 'imported';
+    if (idBase.startsWith(PromptPack.builtinPrefix)) {
+      idBase = 'imported.$idBase';
+    }
+    var id = idBase;
+    for (var n = 2; byId(id) != null; n++) {
+      id = '${idBase}_$n';
+    }
+    final rawName = raw['name'];
+    if (rawName != null && rawName is! String) {
+      throw const FormatException('这个文件不是有效的提示词包');
+    }
+    var nameBase = (rawName as String?)?.trim() ?? '';
+    if (nameBase.isEmpty) nameBase = fallbackName?.trim() ?? '';
+    if (nameBase.isEmpty) {
+      nameBase = pluginId == 'image' ? '导入的生图方案' : '导入的提示词包';
+    }
+    final names = packsFor(pluginId as String).map((p) => p.name).toSet();
+    var name = nameBase;
+    for (var n = 2; names.contains(name); n++) {
+      name = '$nameBase ($n)';
+    }
+    final PromptPack pack;
+    try {
+      final sectionIds = <String>{};
+      final normalizedSections = <Map<String, dynamic>>[];
+      for (var index = 0; index < sections.length; index++) {
+        final section = Map<String, dynamic>.from(sections[index] as Map);
+        final scope = PromptScopes.canonical('${section['scope'] ?? ''}');
+        if (!PromptScopes.of(pluginId).containsKey(scope)) {
+          throw const FormatException('这个提示词包包含不支持的分节类型');
+        }
+        final rawId = section['id'] as String?;
+        final baseId = rawId == null || rawId.trim().isEmpty
+            ? 'section_${index + 1}'
+            : rawId;
+        var sectionId = baseId;
+        for (var n = 2; !sectionIds.add(sectionId); n++) {
+          sectionId = '${baseId}_$n';
+        }
+        normalizedSections.add({...section, 'id': sectionId, 'scope': scope});
+      }
+      pack = PromptPack.fromJson({
+        ...Map<String, dynamic>.from(raw),
+        'postProcessor': PromptPack._readPostProcessor(Map<String, dynamic>.from(raw)),
+        'id': id,
+        'pluginId': pluginId,
+        'name': name,
+        'sections': normalizedSections,
+      });
+    } on TypeError {
+      throw const FormatException('这个文件不是有效的提示词包');
+    }
+    try {
+      return (library: saveCustom(pack), pack: pack);
+    } on StateError catch (e) {
+      throw FormatException(e.message.toString());
+    }
+  }
+
   /// Saves a custom pack's name, description and rules.
   PromptPackLibrary saveCustom(PromptPack pack) {
     if (pack.builtIn) throw StateError('出厂包的名字和匹配规则不能改');
@@ -697,15 +818,12 @@ class PromptPackLibrary {
     }
     return PromptPackLibrary(
       builtins: builtins,
-      overrides: _carryRetiredSections(
-        {
-          for (final e in (json['overrides'] as Map? ?? {}).entries)
-            '${e.key}': BuiltinPackOverride.fromJson(
-              Map<String, dynamic>.from(e.value as Map),
-            ),
-        },
-        builtins,
-      ),
+      overrides: _carryRetiredSections({
+        for (final e in (json['overrides'] as Map? ?? {}).entries)
+          '${e.key}': BuiltinPackOverride.fromJson(
+            Map<String, dynamic>.from(e.value as Map),
+          ),
+      }, builtins),
       custom: [
         for (final p in json['custom'] as List? ?? [])
           PromptPack.fromJson(Map<String, dynamic>.from(p as Map)),
@@ -747,7 +865,9 @@ Map<String, BuiltinPackOverride> _carryRetiredSections(
   final result = <String, BuiltinPackOverride>{};
   for (final entry in overrides.entries) {
     final base = builtins.where((p) => p.id == entry.key).firstOrNull;
-    final live = {for (final s in base?.sections ?? const <PromptSection>[]) s.id};
+    final live = {
+      for (final s in base?.sections ?? const <PromptSection>[]) s.id,
+    };
     final sections = <String, ({String? text, bool? enabled})>{};
     final added = [...entry.value.added];
     for (final section in entry.value.sections.entries) {

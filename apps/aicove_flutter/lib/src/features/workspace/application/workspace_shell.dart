@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../../../core/utils/desktop_process_environment.dart';
 import 'package:aicove_quickjs/process.dart';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show GateOutcome, ToolCallScope;
@@ -15,9 +16,11 @@ class WorkspaceShell {
     required this.runId,
     this.isCancelled,
     this.environment,
+    this.localDirectory,
   });
   final WorkspaceStore store;
   final String workspace, runId;
+  final String? localDirectory;
   final bool Function()? isCancelled;
 
   /// Extra variables of this command, such as channel keys (ADR0109).
@@ -86,7 +89,9 @@ class WorkspaceShell {
     var settled = true;
     try {
       if (isCancelled?.call() ?? false) throw StateError('Command cancelled');
-      lease = await store.beginCommand(workspace, runId);
+      if (localDirectory == null) {
+        lease = await store.beginCommand(workspace, runId);
+      }
       if ((isCancelled?.call() ?? false) ||
           (timeout != null && watch.elapsed >= timeout)) {
         throw StateError(
@@ -136,9 +141,11 @@ class WorkspaceShell {
           runId: hostRunId,
           allowHost: true,
         );
-        fullPath = path;
+        fullPath = localDirectory == null
+            ? path
+            : '${store.directoryOf(workspace).path}/$path';
         text +=
-            '\nOutput truncated; ${output.fileTruncated ? 'only the last 8 MiB retained; ' : ''}full output: $path';
+            '\nOutput truncated; ${output.fileTruncated ? 'only the last 8 MiB retained; ' : ''}full output: $fullPath';
       } on Object catch (failure) {
         error = 'Cannot save shell output: $failure';
         text += '\n$error';
@@ -148,7 +155,9 @@ class WorkspaceShell {
       text: WorkspaceScriptOutput.modelTail(text).trimRight(),
       isError: error != null,
       structured: {
-        'output': stdout,
+        'output': output.truncated
+            ? WorkspaceScriptOutput.modelTail(stdout).trimRight()
+            : stdout,
         'truncated': output.truncated,
         if (fullPath != null) 'full_output_path': fullPath,
         'exit_code': exit,
@@ -170,9 +179,13 @@ class WorkspaceShell {
     Stopwatch watch,
     Duration? timeout,
   ) async {
-    // No await in between: concurrent shells cannot see another's variables.
-    DesktopJob.setEnvironment(environment?.call() ?? const {});
-    final job = DesktopJob.start(store.directoryOf(workspace).path, command);
+    final job = DesktopJob.start(
+      localDirectory ?? store.directoryOf(workspace).path,
+      command,
+      environment: desktopProcessEnvironment(
+        overrides: environment?.call() ?? const {},
+      ),
+    );
     final decoder = const Utf8Decoder(
       allowMalformed: true,
     ).startChunkedConversion(_OutputSink(output));

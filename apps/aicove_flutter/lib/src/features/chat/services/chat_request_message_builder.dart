@@ -5,21 +5,62 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../../core/api/providers/provider_adapter.dart' show ToolCall;
 import '../../settings/app_settings.dart';
 import '../domain/message.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/utils/mime_utils.dart';
+import '../../content_tags/domain/content_tag_registry.dart';
+import '../../content_tags/domain/content_tag_scanner.dart';
+import '../../content_tags/domain/content_tag_spec.dart';
 import 'chat_plugin_context_policy.dart';
+import 'chat_message_projection_codec.dart';
 
 /// 负责将会话消息转换为模型请求消息。
 ///
 /// 聚合图片、媒体附件与文本文件的请求转换。
 class ChatRequestMessageBuilder {
-  ChatRequestMessageBuilder({
-    required this.readImageAsBase64,
-  });
+  ChatRequestMessageBuilder({required this.readImageAsBase64});
 
   final Future<String?> Function(String imagePath) readImageAsBase64;
+
+  static final _draftScanner = ContentTagScanner(
+    ContentTagRegistry([
+      StaticContentTagProvider(
+        providerId: 'assistant-drafts',
+        tagSpecs: [
+          for (final name in const [
+            'think',
+            'thinking',
+            'thought',
+            'cot',
+            'reasoning',
+            '思考',
+            '思维链',
+            'comic_plan',
+          ])
+            ContentTagSpec(name: name, ownerId: ContentTagSpec.builtinOwnerId),
+        ],
+      ),
+    ]),
+  );
+
+  static String stripAssistantDraftTags(String text) {
+    final output = StringBuffer();
+    var seenElement = false;
+    var seenOrphan = false;
+    for (final segment in _draftScanner.scan(maskCode(text))) {
+      if (segment is ContentTagText) {
+        output.write(text.substring(segment.start, segment.end));
+      } else if (segment is ContentTagElement) {
+        seenElement = true;
+      } else if (segment is ContentTagOrphanClose) {
+        if (!seenElement && !seenOrphan) output.clear();
+        seenOrphan = true;
+      }
+    }
+    return output.toString().replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+  }
 
   static const String internalImageContextToolName = 'image_context';
   static const String nonVisionImageContextSource = 'history';
@@ -44,12 +85,24 @@ class ChatRequestMessageBuilder {
         pluginPolicy: pluginPolicy,
         inlineImagePrompts: inlineImagePrompts,
       );
-      if (pluginPolicy != null && identical(message, history.last) &&
-          message.role == 'user' && convertedMessages.isEmpty &&
+      if (pluginPolicy != null &&
+          identical(message, history.last) &&
+          message.role == 'user' &&
+          convertedMessages.isEmpty &&
           message.content.trim().isNotEmpty) {
         throw StateError('当前消息过滤已关闭插件的标签后为空，请输入正文或添加附件。');
       }
       reqMessages.addAll(convertedMessages);
+      final payload = message.rawPayload;
+      if (message.role == 'assistant' &&
+          (payload?['runStatus'] == 'cancelled' ||
+              payload?['runStatus'] == 'failed' ||
+              payload?['stopReason'] == 'inProgress')) {
+        reqMessages.add({
+          'role': 'assistant',
+          'content': '[本次请求已中断。以上工具可能已产生副作用；未拿到结果的调用需先核实状态，再继续任务。]',
+        });
+      }
     }
     return _mergeAdjacentAssistantTextMessages(reqMessages);
   }
@@ -68,8 +121,9 @@ class ChatRequestMessageBuilder {
         final previousText = (merged.last['content'] as String?)?.trim() ?? '';
         final currentText = (current['content'] as String?)?.trim() ?? '';
         if (currentText.isEmpty) continue;
-        merged.last['content'] =
-            previousText.isEmpty ? currentText : '$previousText\n$currentText';
+        merged.last['content'] = previousText.isEmpty
+            ? currentText
+            : '$previousText\n$currentText';
         continue;
       }
       merged.add(current);
@@ -96,12 +150,99 @@ class ChatRequestMessageBuilder {
     ChatPluginContextPolicy? pluginPolicy,
     bool inlineImagePrompts = true,
   }) async {
+    final rounds = ChatMessageProjectionCodec.replyRounds(message.rawPayload);
+    if (message.role == 'assistant' && rounds.isNotEmpty) {
+      final remainingCalls = ChatMessageProjectionCodec.toolCalls(
+        message.rawPayload,
+      );
+      final remainingResults = ChatMessageProjectionCodec.rawToolResults(
+        message.rawPayload,
+      );
+      final messages = <Map<String, dynamic>>[];
+      void appendRound(
+        List<Map<String, dynamic>> converted,
+        List<ToolCall> roundCalls,
+      ) {
+        final calls = <Map<String, dynamic>>[];
+        final results = <Map<String, dynamic>>[];
+        for (final call in roundCalls) {
+          final resultIndex = remainingResults.indexWhere(
+            (r) => r.toolCallId == call.id,
+          );
+          final result = resultIndex < 0
+              ? null
+              : remainingResults.removeAt(resultIndex);
+          if (pluginPolicy != null && !pluginPolicy.allowsTool(call.name)) {
+            continue;
+          }
+          calls.add(call.toOpenAIFormat());
+          results.add({
+            'role': 'tool',
+            'tool_call_id': call.id,
+            'name': call.name,
+            'content': result?.persistentText ?? '已中断，未拿到结果',
+          });
+        }
+        if (calls.isNotEmpty) {
+          if (converted.isEmpty) {
+            converted.add({'role': 'assistant', 'content': ''});
+          }
+          converted.first['tool_calls'] = calls;
+        }
+        messages.addAll([...converted, ...results]);
+      }
+
+      for (final (index, round) in rounds.indexed) {
+        // Convert each round through the same text/media policy as legacy raw.
+        final roundContent = round.rawText ?? round.replyText;
+        final converted = await _toRequestMessages(
+          message.copyWith(
+            content: roundContent,
+            rawPayload: null,
+            blocks: [
+              TextBlock(messageId: message.id, content: roundContent),
+              if (index == rounds.length - 1)
+                for (final block in message.blocks ?? const <MessageBlock>[])
+                  if (block is! TextBlock &&
+                      block is! ToolBlock &&
+                      block is! ThinkingBlock)
+                    block,
+            ],
+          ),
+          settings: settings,
+          supportsVision: supportsVision,
+          pluginPolicy: pluginPolicy,
+          inlineImagePrompts: inlineImagePrompts,
+        );
+        final roundCalls = <ToolCall>[];
+        for (final id in round.toolCallIds) {
+          final callIndex = remainingCalls.indexWhere((c) => c.id == id);
+          if (callIndex >= 0) {
+            roundCalls.add(remainingCalls.removeAt(callIndex));
+          }
+        }
+        appendRound(converted, roundCalls);
+      }
+      // Older/mixed progress records can contain settled calls outside the
+      // product-stage drafts. Keep their original order, without reusing calls
+      // that were already claimed by a round.
+      appendRound([], remainingCalls);
+      return messages;
+    }
+    // Native and inline reasoning are never replayed as assistant dialogue.
+    String requestText(String text) {
+      final clean = message.role == 'assistant'
+          ? stripAssistantDraftTags(text)
+          : text;
+      return pluginPolicy?.filterText(clean) ?? clean;
+    }
+
     final blocks = message.blocks;
     if (blocks == null || blocks.isEmpty) {
-      final content = pluginPolicy?.filterText(message.content) ?? message.content;
+      final content = requestText(message.content);
       if (content.trim().isEmpty) return [];
       return [
-        {'role': message.role, 'content': content}
+        {'role': message.role, 'content': content},
       ];
     }
 
@@ -111,9 +252,17 @@ class ChatRequestMessageBuilder {
 
     for (final block in blocks) {
       if (block is TextBlock) {
-        final text = pluginPolicy?.filterText(block.content) ?? block.content;
+        final text = requestText(block.content);
         if (text.trim().isEmpty) continue;
         parts.add({'type': 'text', 'text': text});
+        continue;
+      }
+
+      if (block is EmojiBlock) {
+        final text = formatEmojiBlockContextText(block);
+        if (text.isNotEmpty) {
+          parts.add({'type': 'text', 'text': text});
+        }
         continue;
       }
 
@@ -123,7 +272,7 @@ class ChatRequestMessageBuilder {
           // 模型自己生成的图只以它写过的标签回放，不论是否支持看图，
           // 让历史保持「回复里带 <image>」的样子，避免模型逐渐漏写标签。
           final tag = buildGeneratedImageTag(
-            block.prompt,
+            block.generationSnapshot?.basePrompt ?? block.prompt,
             inlinePrompt: inlineImagePrompts,
           );
           if (tag != null) parts.add({'type': 'text', 'text': tag});
@@ -142,7 +291,10 @@ class ChatRequestMessageBuilder {
         }
 
         if (block.mediaId != null) {
-          parts.add({'type': 'image_url', 'image_url': {'url': 'aicove-media://${block.mediaId}'}});
+          parts.add({
+            'type': 'image_url',
+            'image_url': {'url': 'aicove-media://${block.mediaId}'},
+          });
           continue;
         }
 
@@ -150,7 +302,7 @@ class ChatRequestMessageBuilder {
         if (url != null && url.isNotEmpty) {
           parts.add({
             'type': 'image_url',
-            'image_url': {'url': url}
+            'image_url': {'url': url},
           });
           continue;
         }
@@ -181,9 +333,11 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is FileBlock) {
-        final mimeType = MimeUtils.normalizeContentType(block.mimeType) ??
+        final mimeType =
+            MimeUtils.normalizeContentType(block.mimeType) ??
             MimeUtils.guessAttachmentMimeType(block.filePath);
-        if (MimeUtils.isAudioMimeType(mimeType) || MimeUtils.isVideoMimeType(mimeType)) {
+        if (MimeUtils.isAudioMimeType(mimeType) ||
+            MimeUtils.isVideoMimeType(mimeType)) {
           final file = File(block.filePath);
           final maxBytes = settings.maxFileUploadMB * 1024 * 1024;
           final size = await file.length();
@@ -193,7 +347,10 @@ class ChatRequestMessageBuilder {
           final data = base64Encode(await file.readAsBytes());
           parts.add({
             'type': 'file',
-            'file': {'filename': block.fileName, 'file_data': 'data:$mimeType;base64,$data'},
+            'file': {
+              'filename': block.fileName,
+              'file_data': 'data:$mimeType;base64,$data',
+            },
           });
           continue;
         }
@@ -204,7 +361,9 @@ class ChatRequestMessageBuilder {
       }
 
       if (block is ToolBlock) {
-        if (pluginPolicy != null && !pluginPolicy.allowsTool(block.toolName)) continue;
+        if (pluginPolicy != null && !pluginPolicy.allowsTool(block.toolName)) {
+          continue;
+        }
         if (extractInternalImageContextPayloadFromToolBlock(block) != null) {
           continue;
         }
@@ -214,9 +373,10 @@ class ChatRequestMessageBuilder {
             'type': 'function',
             'function': {
               'name': block.toolName,
-              'arguments':
-                  block.arguments != null ? jsonEncode(block.arguments) : '{}',
-            }
+              'arguments': block.arguments != null
+                  ? jsonEncode(block.arguments)
+                  : '{}',
+            },
           });
           toolResultMessages.add({
             'role': 'tool',
@@ -230,9 +390,7 @@ class ChatRequestMessageBuilder {
       }
     }
 
-    final assistantMessage = <String, dynamic>{
-      'role': message.role,
-    };
+    final assistantMessage = <String, dynamic>{'role': message.role};
 
     if (parts.isNotEmpty) {
       if (parts.length == 1 && parts.first['type'] == 'text') {
@@ -250,7 +408,7 @@ class ChatRequestMessageBuilder {
 
     return [
       if (parts.isNotEmpty || toolCalls.isNotEmpty) assistantMessage,
-      ...toolResultMessages
+      ...toolResultMessages,
     ];
   }
 

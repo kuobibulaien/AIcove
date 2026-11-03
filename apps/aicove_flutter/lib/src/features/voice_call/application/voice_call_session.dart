@@ -81,6 +81,11 @@ class VoiceCallSession {
   bool _ending = false;
   Future<void>? _starting;
   Future<void>? _hangingUp;
+  Future<void>? _cleanup;
+  Future<void>? _openingTts;
+  Future<void>? _startingOutput;
+  Future<void>? _startingRecognizer;
+  Future<Stream<Uint8List>>? _startingInput;
   _ReplyTurn? _reply;
   Timer? _poll;
   final List<String> _pendingUser = [];
@@ -112,25 +117,37 @@ class VoiceCallSession {
   Future<void> start() => _starting ??= _start();
 
   Future<void> _start() async {
+    if (_ending) {
+      await _cleanup;
+      return;
+    }
     final clock = Stopwatch()..start();
-    await tts.open();
-    if (_ending) return;
-    _log('合成连接就绪 +${clock.elapsedMilliseconds}ms');
-    await output.start(tts.sampleRate);
-    if (_ending) return;
-    await recognizer.start();
-    if (_ending) return;
-    _log('识别器就绪 +${clock.elapsedMilliseconds}ms');
-    _subscriptions
-      ..add(recognizer.events.listen(_onRecognition))
-      ..add(tts.audio.listen(_onTtsAudio));
-    final mic = await input.start();
-    if (_ending) return;
-    _subscriptions.add(mic.listen(_onMicAudio));
-    _poll = Timer.periodic(pollInterval, (_) => _checkTurnEnd());
-    _connectedAt = DateTime.now();
-    _setPhase(VoiceCallPhase.listening);
-    if (greetOnConnect) _startReply();
+    try {
+      await (_openingTts = tts.open());
+      if (_ending) return;
+      _log('合成连接就绪 +${clock.elapsedMilliseconds}ms');
+      await (_startingOutput = output.start(tts.sampleRate));
+      if (_ending) return;
+      await (_startingRecognizer = recognizer.start());
+      if (_ending) return;
+      _log('识别器就绪 +${clock.elapsedMilliseconds}ms');
+      _subscriptions
+        ..add(recognizer.events.listen(_onRecognition))
+        ..add(tts.audio.listen(_onTtsAudio));
+      final mic = await (_startingInput = input.start());
+      if (_ending) return;
+      _subscriptions.add(mic.listen(_onMicAudio));
+      _poll = Timer.periodic(pollInterval, (_) => _checkTurnEnd());
+      _connectedAt = DateTime.now();
+      _setPhase(VoiceCallPhase.listening);
+      if (greetOnConnect) _startReply();
+    } catch (_) {
+      unawaited(hangUp());
+      rethrow;
+    } finally {
+      // 挂断不等建连；启动任务自己等迟到资源释放完再结束。
+      if (_ending) await _cleanup;
+    }
   }
 
   /// 挂断。正在说的那句按已播出部分记入记录；重复调用返回同一次挂断。
@@ -138,35 +155,67 @@ class VoiceCallSession {
 
   Future<void> _hangUp() async {
     _ending = true;
+    _setPhase(VoiceCallPhase.ended);
     _poll?.cancel();
     _userTurnTimer?.cancel();
-    // 接通还没走完时先等它停下，免得挂断后才建好的连接无人释放。
-    try {
-      await _starting;
-    } catch (_) {}
-    _poll?.cancel();
+    final cleanup = _cleanup = _finishHangUp();
+    if (_connectedAt == null) {
+      // 建连可能还要等网络或设备：后台负责收尾，调用方可以立即离开。
+      unawaited(cleanup);
+    } else {
+      await cleanup;
+    }
+  }
+
+  Future<void> _finishHangUp() async {
     await _abortReply(interrupted: true, hangingUp: true);
-    // 已播进度算完就立刻停播，挂断后不再出声；不重建播放设备。
-    await _release('关闭播放', output.stop);
-    // 先停麦克风，再让识别器冲出最后一句；此时仍在订阅识别事件。
-    await _release('停止麦克风', input.stop);
-    await _release('识别收尾', recognizer.stop);
+    Future<void>? connectingCleanup;
+    if (_connectedAt == null) {
+      // 各资源只等自己的启动步骤，不让某个慢连接拖住其它资源的释放。
+      connectingCleanup = Future.wait<void>([
+        _releaseAfterStart('关闭播放', _startingOutput, output.stop),
+        _releaseAfterStart('停止麦克风', _startingInput, input.stop),
+        _releaseAfterStart('关闭合成', _openingTts, tts.close),
+      ]);
+      await _releaseAfterStart('识别收尾', _startingRecognizer, recognizer.stop);
+    } else {
+      // 已播进度算完就立刻停播；先停麦克风，再冲出识别器最后一句。
+      await _release('关闭播放', output.stop);
+      await _release('停止麦克风', input.stop);
+      await _release('识别收尾', recognizer.stop);
+    }
     await Future<void>.delayed(Duration.zero);
     // 挂断时还没提交的半句也记下来，只是不再回复。
     if (_pendingUser.isNotEmpty) {
       _addTurn(CallTurn(role: 'user', text: _joinPendingUser()));
       _pendingUser.clear();
     }
-    _setPhase(VoiceCallPhase.ended);
     for (final sub in _subscriptions) {
       await _release('取消订阅', sub.cancel);
     }
     _subscriptions.clear();
     await _release('释放识别器', recognizer.dispose);
-    await _release('关闭合成', tts.close);
+    if (connectingCleanup != null) {
+      await connectingCleanup;
+    } else {
+      await _release('关闭合成', tts.close);
+    }
     await _phases.close();
     await _partials.close();
     await _turns.close();
+  }
+
+  Future<void> _releaseAfterStart(
+    String what,
+    Future<Object?>? starting,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await starting;
+    } catch (_) {
+      // 启动失败也可能留下部分资源，仍须释放。
+    }
+    await _release(what, action);
   }
 
   /// 每项资源单独释放，一项失败不影响其它项。
@@ -179,6 +228,7 @@ class VoiceCallSession {
   }
 
   void _onMicAudio(Uint8List pcm) {
+    if (_ending) return;
     _meterMic(pcm);
     final busy =
         _phase == VoiceCallPhase.thinking || _phase == VoiceCallPhase.speaking;
@@ -279,12 +329,14 @@ class VoiceCallSession {
     if (_ending) return;
     // 打断但识别器还没来得及发 SpeechStarted 时，这里兜底收掉上一轮。
     if (_reply != null) await _abortReply(interrupted: true);
+    if (_ending) return;
     _addTurn(CallTurn(role: 'user', text: text));
     _log('用户说完（${text.runes.length} 字）');
     _startReply();
   }
 
   void _startReply() {
+    if (_ending) return;
     final reply = _ReplyTurn(
       CallReplySegmenter(minChars: segmentMinChars),
       playedBaseline: output.played,
@@ -328,6 +380,7 @@ class VoiceCallSession {
   }
 
   void _onTtsAudio(Uint8List pcm) {
+    if (_ending) return;
     final reply = _reply;
     if (reply == null || pcm.isEmpty) return;
     if (reply.receivedBytes == 0) _log('首块音频 +${reply.elapsedMs}ms');

@@ -248,13 +248,39 @@ void main() {
     expect(legacy.defaultSteps, 23);
   });
 
+  test('finite overrides round, clamp and align NovelAI dimensions', () {
+    final p = DrawingParameters.resolve(legacy, {
+      'width': 1000, 'height': 1000, 'steps': 1.5,
+      'count': 9.5, 'guidance_scale': 15,
+    }, novelAi: true);
+    expect([p.width, p.height, p.steps, p.count, p.guidanceScale],
+        [1024, 1024, 2, 4, 15]);
+    final edges = DrawingParameters.resolve(legacy,
+        {'width': -20, 'height': 9999, 'steps': 999, 'count': -2,
+         'guidance_scale': 99}, novelAi: true);
+    expect([edges.width, edges.height, edges.steps, edges.count, edges.guidanceScale],
+        [256, 2048, 100, 1, 20]);
+    final half = DrawingParameters.resolve(legacy, {'width': 800}, novelAi: true);
+    expect(half.width, 832);
+  });
+
+  test('preset fallbacks are normalized even without sampling support', () {
+    final p = DrawingParameters.resolve(const ImageConfig(
+      defaultWidth: 9999, defaultHeight: 1, defaultSteps: 999,
+      defaultCount: 0, defaultGuidanceScale: 99), {}, novelAi: false);
+    expect([p.width, p.height, p.steps, p.count, p.guidanceScale],
+        [2048, 256, 100, 1, 20]);
+    final comfy = DrawingParameters.resolve(legacy,
+        {'steps': 30.5, 'guidance_scale': 15}, novelAi: false,
+        supportsSamplingParameters: true);
+    expect(comfy.steps, 31);
+    expect(comfy.guidanceScale, 15);
+  });
+
   for (final args in <Map<String, dynamic>>[
-    {'width': 0},
-    {'height': 100000},
-    {'steps': 1.5},
     {'guidance_scale': double.nan},
     {'count': double.infinity},
-    {'width': 833},
+    {'width': 'abc'},
     {'steps': 'garbage'},
   ]) {
     test('rejects invalid image parameters $args', () {
@@ -262,11 +288,12 @@ void main() {
           throwsFormatException);
     });
   }
-  test('unsupported provider parameters are rejected, not silently forwarded',
+  test('unsupported provider parameters are ignored, including garbage',
       () {
-    expect(
-        () => DrawingParameters.resolve(legacy, {'steps': 35}, novelAi: false),
-        throwsFormatException);
+    final p = DrawingParameters.resolve(legacy,
+        {'steps': 'abc', 'guidance_scale': double.infinity}, novelAi: false);
+    expect(p.steps, legacy.defaultSteps);
+    expect(p.guidanceScale, legacy.defaultGuidanceScale);
     expect(
         DrawingParameters.resolve(legacy, {'width': 1024}, novelAi: false)
             .width,

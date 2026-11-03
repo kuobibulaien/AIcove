@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app_logger.dart';
+import '../media/media_index.dart';
 
 /// Root directory for the app's own data (database, logs, wallpapers, ...).
 ///
@@ -100,6 +101,9 @@ class AppDataMigration {
       }
       final rewrites = PathRewrites(from.path, to.path, extra: extra);
       _rewrites = rewrites;
+      // Each store keeps its own marker: installs that migrated before the
+      // media index was covered still get it rewritten once.
+      await rewriteMediaIndex(to, rewrites);
       await rewritePreferences(await SharedPreferences.getInstance(), rewrites);
     } catch (error) {
       // Keep using the old location while the old database is still there.
@@ -260,6 +264,22 @@ class AppDataMigration {
       }
     }
     await preferences.setBool(preferencesMarker, true);
+  }
+
+  @visibleForTesting
+  static Future<void> rewriteMediaIndex(
+    Directory dataDirectory,
+    PathRewrites rewrites,
+  ) async {
+    final root = Directory(p.join(dataDirectory.path, 'cloud_media'));
+    if (!await File(p.join(root.path, 'index.db')).exists()) return;
+    final index = MediaIndex(root);
+    try {
+      await index.importLegacy(root);
+      await rewriteDatabase(index, rewrites);
+    } finally {
+      await index.close();
+    }
   }
 
   /// Rewrites stored paths in every text column of the app's own tables.

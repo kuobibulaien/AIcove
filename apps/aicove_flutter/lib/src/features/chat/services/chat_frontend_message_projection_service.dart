@@ -4,9 +4,12 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/models/block_status.dart';
 import '../../../core/models/message_block.dart';
+import '../../../core/api/providers/provider_adapter.dart' show ToolCall;
 import '../../plugins/plugin_content_tags.dart';
 import '../../stickers/sticker_tag.dart';
+import '../../stickers/sticker_library.dart';
 import '../domain/message.dart';
 import 'chat_message_processor.dart';
 import 'chat_message_projection_codec.dart';
@@ -24,14 +27,32 @@ class ChatFrontendMessageProjectionService {
   }
 
   List<Message> projectMessage(Message rawMessage) {
+    final normalized = ChatMessageProjectionCodec.normalizeLegacyMediaPayload(
+      rawMessageId: rawMessage.id,
+      role: rawMessage.role,
+      payload: rawMessage.rawPayload,
+      blocks: [for (final block in rawMessage.blocks ?? const <MessageBlock>[]) block.toJson()],
+    );
+    if (!identical(normalized, rawMessage.rawPayload)) {
+      rawMessage = rawMessage.copyWith(rawPayload: normalized);
+    }
     final payload = rawMessage.rawPayload;
-    final cachedProjected =
-        ChatMessageProjectionCodec.projectedMessages(payload);
-    if (cachedProjected.isNotEmpty) {
-      return _normalizeProjectionFromRawMessage(rawMessage, [
-        for (final message in cachedProjected)
-          if (_stripCachedStickerMarkup(message) case final visible?) visible,
-      ]);
+    if (rawMessage.role != 'assistant' ||
+        !ChatMessageProjectionCodec.hasProjectionSemantics(payload)) {
+      final cachedProjected = ChatMessageProjectionCodec.projectedMessages(
+        payload,
+      );
+      if (cachedProjected.isNotEmpty) {
+        return _normalizeProjectionFromRawMessage(
+          rawMessage,
+          _dedupeProjectedMessages([
+            for (final message in cachedProjected)
+              if (_stripCachedStickerMarkup(message) case final visible?)
+                visible,
+          ]),
+          preserveStoredIds: true,
+        );
+      }
     }
 
     if (rawMessage.role != 'assistant') {
@@ -47,15 +68,20 @@ class ChatFrontendMessageProjectionService {
           ChatMessageProjectionCodec.supplementInsertOps(payload);
       if (supplementInsertOps.isNotEmpty) {
         final rebuiltBase = const ChatMessageProcessor().buildAssistantMessages(
-          replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
+          rawMessageId: rawMessage.id,
+          rawCreatedAt: rawMessage.createdAt,
+          replyText:
+              ChatMessageProjectionCodec.rawReplyText(payload) ??
               rawMessage.content,
           processedText:
               ChatMessageProjectionCodec.processedText(payload) ?? '',
-          displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
+          displayReplyText: ChatMessageProjectionCodec.displayReplyText(
+            payload,
+          ),
           pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
           contents: const [],
           toolAudioResults: const [],
-          toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
+          toolCalls: _displayToolCalls(payload),
           rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
           reasoning: ChatMessageProjectionCodec.reasoning(payload),
           // 图片、语音由补插记录放回原位，轮次里不再带。
@@ -63,6 +89,7 @@ class ChatFrontendMessageProjectionService {
             for (final round in ChatMessageProjectionCodec.replyRounds(payload))
               ReplyRound(
                 replyText: round.replyText,
+                rawText: round.rawText,
                 processedText: round.processedText,
                 pluginEvents: round.pluginEvents,
                 reasoning: round.reasoning,
@@ -73,29 +100,30 @@ class ChatFrontendMessageProjectionService {
         final rebuilt = _applyStoredSupplementInsertOps(
           rebuiltBase.messages,
           supplementInsertOps,
+          rawMessage,
         );
         if (rebuilt.isNotEmpty) {
-          return _normalizeProjectionFromRawMessage(rawMessage, rebuilt);
+          return _normalizeProjectionFromRawMessage(rawMessage, rebuilt, preserveStoredIds: true);
         }
       }
       final rebuilt = const ChatMessageProcessor().buildAssistantMessages(
-        replyText: ChatMessageProjectionCodec.rawReplyText(payload) ??
+        rawMessageId: rawMessage.id,
+        rawCreatedAt: rawMessage.createdAt,
+        replyText:
+            ChatMessageProjectionCodec.rawReplyText(payload) ??
             rawMessage.content,
         processedText: ChatMessageProjectionCodec.processedText(payload) ?? '',
         displayReplyText: ChatMessageProjectionCodec.displayReplyText(payload),
-          pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
+        pluginEvents: ChatMessageProjectionCodec.pluginEvents(payload),
         contents: ChatMessageProjectionCodec.pluginContents(payload),
         toolAudioResults: ChatMessageProjectionCodec.toolAudioResults(payload),
-        toolCalls: ChatMessageProjectionCodec.toolCalls(payload),
+        toolCalls: _displayToolCalls(payload),
         rawToolResults: ChatMessageProjectionCodec.rawToolResults(payload),
         reasoning: ChatMessageProjectionCodec.reasoning(payload),
         replyRounds: ChatMessageProjectionCodec.replyRounds(payload),
       );
       if (rebuilt.messages.isNotEmpty) {
-        return _normalizeProjectionFromRawMessage(
-          rawMessage,
-          rebuilt.messages,
-        );
+        return _normalizeProjectionFromRawMessage(rawMessage, rebuilt.messages);
       }
     }
 
@@ -110,14 +138,70 @@ class ChatFrontendMessageProjectionService {
     return <Message>[_projectPassthroughMessage(rawMessage)];
   }
 
+  List<ToolCall> _displayToolCalls(Map<String, dynamic>? payload) {
+    final calls = ChatMessageProjectionCodec.toolCalls(payload);
+    // Progress raw records intent before execution. Only settled steps become
+    // history cards; unfinished intent remains available for safe model replay.
+    if (payload?['stopReason'] != 'inProgress' &&
+        payload?['runStatus'] != 'cancelled' &&
+        payload?['runStatus'] != 'failed')
+      return calls;
+    final settled = {
+      for (final result in ChatMessageProjectionCodec.rawToolResults(payload))
+        result.toolCallId,
+    };
+    return [
+      for (final call in calls)
+        if (settled.contains(call.id)) call,
+    ];
+  }
+
   Message _projectPassthroughMessage(Message message) {
+    final sourceBlocks = message.blocks;
+    List<MessageBlock>? blocks = sourceBlocks;
+    var content = message.content;
+    if (sourceBlocks != null && sourceBlocks.isNotEmpty) {
+      var downgraded = false;
+      final nextBlocks = <MessageBlock>[];
+      for (final block in sourceBlocks) {
+        if (message.status != 'sending' &&
+            block is AudioBlock &&
+            block.url.trim().isEmpty &&
+            (block.text?.trim().isNotEmpty ?? false)) {
+          downgraded = true;
+          nextBlocks.add(
+            TextBlock(
+              id: block.id,
+              messageId: message.id,
+              content: block.text!.trim(),
+              status: BlockStatus.success,
+              createdAt: block.createdAt,
+            ),
+          );
+        } else {
+          nextBlocks.add(_resolveStickerBlock(block));
+        }
+      }
+      blocks = nextBlocks;
+      if (downgraded) {
+        if (content.trim().isEmpty && nextBlocks.length == 1) {
+          content = (nextBlocks.single as TextBlock).content;
+        }
+      }
+    }
     return message.copyWith(
       // DB sourceMessageId 是导入来源；展示操作必须指向当前 raw 行。
       sourceMessageId: message.id,
-      rawPayload: message.role == 'assistant' ? {
-        if (message.rawPayload?['runStatus'] != null) 'runStatus': message.rawPayload!['runStatus'],
-        if (message.rawPayload?['stopReason'] != null) 'stopReason': message.rawPayload!['stopReason'],
-      } : null,
+      content: content,
+      blocks: blocks,
+      rawPayload: message.role == 'assistant'
+          ? {
+              if (message.rawPayload?['runStatus'] != null)
+                'runStatus': message.rawPayload!['runStatus'],
+              if (message.rawPayload?['stopReason'] != null)
+                'stopReason': message.rawPayload!['stopReason'],
+            }
+          : null,
     );
   }
 
@@ -151,17 +235,59 @@ class ChatFrontendMessageProjectionService {
 
   List<Message> _normalizeProjectionFromRawMessage(
     Message rawMessage,
-    List<Message> messages,
-  ) {
+    List<Message> messages, {
+    bool preserveStoredIds = false,
+  }) {
     final normalized = <Message>[
-      for (final message in messages)
-        message.copyWith(
-          sourceMessageId: rawMessage.id,
-          createdAt: rawMessage.createdAt,
-          rawPayload: null,
+      for (final (index, message) in messages.indexed)
+        _normalizeProjectedMessage(
+          rawMessage,
+          message,
+          index,
+          preserveStoredIds: preserveStoredIds,
         ),
     ];
-    return ChatMessageProjectionCodec.applyRunStatus(_dedupeProjectedMessages(normalized), rawMessage.rawPayload);
+    return ChatMessageProjectionCodec.applyRunStatus(
+      normalized,
+      rawMessage.rawPayload,
+    );
+  }
+
+  Message _normalizeProjectedMessage(
+    Message raw,
+    Message projected,
+    int index, {
+    bool preserveStoredIds = false,
+  }) {
+    final id = preserveStoredIds || projected.id.startsWith('${raw.id}__proj_')
+        ? projected.id
+        : '${raw.id}__proj_r0_s${index}_${projected.blocks?.firstOrNull?.type.name ?? 'text'}';
+    return projected.copyWith(
+      id: id,
+      sourceMessageId: raw.id,
+      createdAt: raw.createdAt,
+      rawPayload: null,
+      blocks: projected.blocks == null
+          ? null
+          : [
+              for (final (blockIndex, block) in projected.blocks!.indexed)
+                MessageBlock.fromJson({
+                  ..._resolveStickerBlock(block).toJson(),
+                  'id': preserveStoredIds
+                      ? block.id
+                      : '${id}__b${blockIndex}_${block.type.name}',
+                  'messageId': id,
+                  'createdAt': raw.createdAt.toIso8601String(),
+                }),
+            ],
+    );
+  }
+
+  MessageBlock _resolveStickerBlock(MessageBlock block) {
+    if (block is! EmojiBlock) return block;
+    final path = StickerLibrary.resolveLocalPath(block.path, stickerId: block.emojiId);
+    if (path == block.path) return block;
+    return EmojiBlock.fromJson({...block.toJson(), 'path': path});
   }
 
   List<Message> _dedupeProjectedMessages(List<Message> messages) {
@@ -184,7 +310,10 @@ class ChatFrontendMessageProjectionService {
       'content': message.content,
       'blocks': <Map<String, dynamic>>[
         for (final block in message.blocks ?? const <MessageBlock>[])
-          block.toJson(),
+          (block.toJson()
+            ..remove('id')
+            ..remove('messageId')
+            ..remove('createdAt')),
       ],
     });
   }
@@ -215,15 +344,15 @@ class ChatFrontendMessageProjectionService {
       return const <Message>[];
     }
 
-    final textContent = textBlocks.map((block) => block.content.trim()).join(
-          '\n\n',
-        );
+    final textContent = textBlocks
+        .map((block) => block.content.trim())
+        .join('\n\n');
     if (textContent.isEmpty) {
       return const <Message>[];
     }
 
     final projected = <Message>[
-      Message.text(
+      Message(
         id: '${rawMessage.id}__proj_00_text',
         role: rawMessage.role,
         content: textContent,
@@ -245,6 +374,8 @@ class ChatFrontendMessageProjectionService {
           status: rawMessage.status,
           blocks: <MessageBlock>[
             ImageBlock(
+              id: '${projectedMessageId}__b0_image',
+              createdAt: rawMessage.createdAt,
               messageId: projectedMessageId,
               url: imageBlock.url,
               localPath: imageBlock.localPath,
@@ -253,6 +384,8 @@ class ChatFrontendMessageProjectionService {
               height: imageBlock.height,
               prompt: imageBlock.prompt,
               generationSnapshot: imageBlock.generationSnapshot,
+              versions: imageBlock.versions,
+              activeVersionIndex: imageBlock.activeVersionIndex,
               status: imageBlock.status,
             ),
           ],
@@ -266,14 +399,17 @@ class ChatFrontendMessageProjectionService {
   List<Message> _applyStoredSupplementInsertOps(
     List<Message> baseMessages,
     List<StoredSupplementInsertOp> insertOps,
+    Message rawMessage,
   ) {
     if (insertOps.isEmpty) {
       return baseMessages;
     }
+    baseMessages = _splitAtSupplementAnchors(baseMessages, insertOps);
     if (baseMessages.isEmpty) {
       return <Message>[
-        for (final op in insertOps)
-          if (_buildMessageFromStoredSupplementOp(op) case final message?)
+        for (final (index, op) in insertOps.indexed)
+          if (_buildMessageFromStoredSupplementOp(op, rawMessage, index)
+              case final message?)
             message,
       ];
     }
@@ -283,8 +419,12 @@ class ChatFrontendMessageProjectionService {
         _normalizedTextLength(_extractText(message)),
     ];
     final slotMessages = <int, List<Message>>{};
-    for (final op in insertOps) {
-      final message = _buildMessageFromStoredSupplementOp(op);
+    for (final (index, op) in insertOps.indexed) {
+      final message = _buildMessageFromStoredSupplementOp(
+        op,
+        rawMessage,
+        index,
+      );
       if (message == null) {
         continue;
       }
@@ -296,9 +436,7 @@ class ChatFrontendMessageProjectionService {
       (slotMessages[slot] ??= <Message>[]).add(message);
     }
 
-    final rebuilt = <Message>[
-      ...?slotMessages[0],
-    ];
+    final rebuilt = <Message>[...?slotMessages[0]];
     for (var index = 0; index < baseMessages.length; index += 1) {
       rebuilt.add(baseMessages[index]);
       rebuilt.addAll(slotMessages[index + 1] ?? const <Message>[]);
@@ -306,26 +444,114 @@ class ChatFrontendMessageProjectionService {
     return rebuilt;
   }
 
-  Message? _buildMessageFromStoredSupplementOp(StoredSupplementInsertOp op) {
+  /// A stored media anchor can fall inside a merged text bubble. Split only at
+  /// those semantic positions, not at punctuation or frontend chunk boundaries.
+  List<Message> _splitAtSupplementAnchors(
+    List<Message> messages,
+    List<StoredSupplementInsertOp> ops,
+  ) {
+    final anchors = {
+      for (final op in ops)
+        if (!op.forceAppendToTail) op.textCharsBefore,
+    };
+    final result = <Message>[];
+    var consumed = 0;
+    final whitespace = RegExp(r'\s');
+    for (final message in messages) {
+      final text = _extractText(message);
+      final length = _normalizedTextLength(text);
+      final cuts = [
+        for (final anchor in anchors)
+          if (anchor > consumed && anchor < consumed + length)
+            anchor - consumed,
+      ]..sort();
+      consumed += length;
+      if (cuts.isEmpty) {
+        result.add(message);
+        continue;
+      }
+      var normalized = 0;
+      var start = 0;
+      var cutIndex = 0;
+      final parts = <String>[];
+      for (
+        var index = 0;
+        index < text.length && cutIndex < cuts.length;
+        index++
+      ) {
+        if (!whitespace.hasMatch(text[index])) normalized++;
+        if (normalized == cuts[cutIndex]) {
+          parts.add(text.substring(start, index + 1));
+          start = index + 1;
+          cutIndex++;
+        }
+      }
+      parts.add(text.substring(start));
+      for (final (index, part) in parts.indexed) {
+        final id = index == 0 ? message.id : '${message.id}__part$index';
+        result.add(
+          message.copyWith(
+            id: id,
+            content: part.trim(),
+            blocks: message.blocks == null
+                ? null
+                : [
+                    if (index == 0)
+                      for (final block in message.blocks!)
+                        if (block is! TextBlock) block,
+                    TextBlock(
+                      id: '${id}__text',
+                      messageId: id,
+                      content: part.trim(),
+                      createdAt: message.createdAt,
+                    ),
+                  ],
+          ),
+        );
+      }
+    }
+    return result;
+  }
+
+  Message? _buildMessageFromStoredSupplementOp(
+    StoredSupplementInsertOp op,
+    Message rawMessage,
+    int index,
+  ) {
+    final id = op.legacyMessageId ?? '${rawMessage.id}__proj_supplement_${index}_${op.kind}';
     switch (op.kind) {
       case 'image':
         final localPath = op.localPath?.trim();
-        if (localPath == null || localPath.isEmpty) {
+        if ((localPath == null || localPath.isEmpty) &&
+            op.versions.isEmpty && op.status != BlockStatus.error) {
           return null;
         }
+        final image = ImageBlock(
+          id: op.legacyBlockId ?? '${id}__b0_image',
+          createdAt: rawMessage.createdAt,
+          messageId: id,
+          localPath: op.versions.isEmpty
+              ? localPath : op.versions[op.activeVersionIndex].localPath,
+          url: op.versions.isEmpty
+              ? null : op.versions[op.activeVersionIndex].url,
+          base64: op.versions.isEmpty
+              ? null : op.versions[op.activeVersionIndex].base64,
+          width: op.width, height: op.height,
+          prompt: op.prompt,
+          generationSnapshot: op.generationSnapshot,
+          versions: op.versions,
+          activeVersionIndex: op.activeVersionIndex,
+          status: op.status,
+        );
         return _projectPassthroughMessage(
           Message.fromBlocks(
-            id: 'img_${localPath.hashCode}_${op.textCharsBefore}',
+            id: id,
             role: 'assistant',
             blocks: <MessageBlock>[
-              ImageBlock(
-                messageId: 'img_${localPath.hashCode}_${op.textCharsBefore}',
-                localPath: localPath,
-                prompt: op.prompt,
-                generationSnapshot: op.generationSnapshot,
-              ),
+              op.versions.isEmpty
+                  ? image : image.withActiveVersion(op.activeVersionIndex),
             ],
-            createdAt: DateTime.now(),
+            createdAt: rawMessage.createdAt,
             status: 'sent',
           ),
         );
@@ -336,11 +562,13 @@ class ChatFrontendMessageProjectionService {
         }
         return _projectPassthroughMessage(
           Message.fromBlocks(
-            id: 'audio_${audioUrl.hashCode}_${op.textCharsBefore}',
+            id: id,
             role: 'assistant',
             blocks: <MessageBlock>[
               AudioBlock(
-                messageId: 'audio_${audioUrl.hashCode}_${op.textCharsBefore}',
+                id: op.legacyBlockId ?? '${id}__b0_audio',
+                createdAt: rawMessage.createdAt,
+                messageId: id,
                 url: audioUrl,
                 text: op.text?.trim().isNotEmpty ?? false
                     ? op.text!.trim()
@@ -348,7 +576,7 @@ class ChatFrontendMessageProjectionService {
                 unread: op.unread,
               ),
             ],
-            createdAt: DateTime.now(),
+            createdAt: rawMessage.createdAt,
             status: 'sent',
           ),
         );

@@ -35,7 +35,7 @@ void main() {
           });
           await tester.binding.setSurfaceSize(size);
           addTearDown(() => tester.binding.setSurfaceSize(null));
-          String? selected;
+          ComposerModelSelection? selected;
           await tester.pumpWidget(ProviderScope(
               child: MaterialApp(
             builder: (context, child) => MediaQuery(
@@ -57,15 +57,14 @@ void main() {
           await tester.tap(find.text('open'));
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
-          expect(find.text('默认队列'), findsOneWidget);
-          final target = find
-              .byKey(ValueKey('${queueAll ? 'queue' : 'other'}_${refs.last}'));
+          expect(find.text('Synthetic provider'), findsOneWidget);
+          final target = find.byKey(ValueKey('model_${refs.last}'));
           await tester.ensureVisible(target);
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
           await tester.tap(target);
           await tester.pumpAndSettle();
-          expect(selected, refs.last);
+          expect(selected?.modelRef, refs.last);
         });
       }
     }

@@ -20,7 +20,7 @@ Agent = 模型 + 上下文策略 + 工具策略 + 输出契约 + 后处理器
 2. 聊天主链路不得把 UI 投影作为模型上下文，必须从 DB raw message 组装。
 3. 工具调用、TTS、生图、记忆等能力要通过可调度契约接入 Agent Scheduler。
 4. 旧 Web 管理面板已按 ADR0031 删除；schema 与随包资源通过源码维护，App 端继续本地消费。
-5. 主动关怀 Analyzer 当前职责已拆分：`ContextAnalyzer.analyze(conversation, proactiveState: ...)` 只返回 `ContextAnalysisDecision?`；调度、会话主动状态更新、触发器写入存储由 `AnalyzerScheduler` 负责。测试应断言 analyzer 决策或 scheduler 存储结果，不再调用旧的 `analyzeAndSchedule()`。
+5. 主动回复 Analyzer 当前职责已拆分：`ContextAnalyzer.analyze(conversation, proactiveState: ...)` 只返回 `ContextAnalysisDecision?`；调度、会话主动状态更新、触发器写入存储由 `AnalyzerScheduler` 负责。测试应断言 analyzer 决策或 scheduler 存储结果，不再调用旧的 `analyzeAndSchedule()`。
 6. Prompt 默认节点由本地 JSON 与 `apps/aicove_flutter/tool/prompt_defaults_codegen.py` 维护；App 端不得本机覆盖默认节点模板，只能创建与默认节点 ID 不冲突的自定义节点。
 7. 全项目只有一处上下文装配与模型调用实现：Agent 的“看到什么”只由 `ContextProfile` 声明，“在哪、何时跑”只由调度器决定；后台 Agent 不得另写拼法或直连供应商，只依赖 DB、设置与配方启动，产出经投递通道写入并带来源标记（ADR0060）。
 

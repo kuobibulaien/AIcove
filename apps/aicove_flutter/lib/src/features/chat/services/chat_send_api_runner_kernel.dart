@@ -80,7 +80,15 @@ class KernelApiRunner implements ApiRunner {
           QuickJsPresetRuntime.open;
       final presetRuntime = config.presetScript == null
           ? null
-          : await openPresetRuntime(config.presetScript!);
+          : await openPresetRuntime(
+              PresetScriptSnapshot(
+                config.presetScript!.json,
+                toolsAllowed: config.presetScript!.toolsAllowed,
+                modelSupportsTools: config.presetScript!.modelSupportsTools,
+                callerToolChoice: config.providerRequestOptions?.toolChoice ??
+                    config.presetScript!.callerToolChoice,
+              ),
+            );
       if (presetRuntime != null) scope.addCloser(presetRuntime.close);
       final results = config.toolResultStore ?? ToolResultStore.shared;
       final owner = config.toolResultOwner ?? sessionId;
@@ -148,6 +156,7 @@ class KernelApiRunner implements ApiRunner {
             config,
             results,
             owner,
+            run.availableTools,
           ),
           postTool: product,
           encoder: run,
@@ -156,6 +165,7 @@ class KernelApiRunner implements ApiRunner {
         onTranscript: config.onTranscript,
       );
       config.onRunReady?.call(loop.steer);
+      config.onYieldReady?.call(loop.yieldAtBoundary);
       final kernel.AgentLoopResult result;
       try {
         result = await loop.run(
@@ -195,11 +205,12 @@ class KernelApiRunner implements ApiRunner {
 /// Records each settled call before the next tool starts, including denials.
 /// Preservation runs outside redaction so stored output obeys the same policy.
 class _RecordedTools implements kernel.ToolBatchExecutor {
-  _RecordedTools(this.inner, this.config, this.store, this.owner);
+  _RecordedTools(this.inner, this.config, this.store, this.owner, this.tools);
   final kernel.ToolBatchExecutor inner;
   final ApiConfig config;
   final ToolResultStore store;
   final String owner;
+  final List<AITool>? tools;
 
   @override
   kernel.BatchMode modeFor(
@@ -239,9 +250,11 @@ class _RecordedTools implements kernel.ToolBatchExecutor {
         ),
       );
     }
-    final text = call.name == 'codemode'
-        ? result.content
-        : await store.preserve(owner, result.content);
+    final text = await store.preserve(
+      owner,
+      result.content,
+      alreadyLimited: _findToolByName(call.name, tools)?.managesOutput ?? false,
+    );
     final preserved = kernel.KernelToolResult(
       callId: result.callId,
       name: result.name,
@@ -252,10 +265,9 @@ class _RecordedTools implements kernel.ToolBatchExecutor {
       outputRewritten: result.outputRewritten,
       terminationReason: result.terminationReason,
     );
-    await config.onToolStep?.call(
-      call.origin! as ToolCall,
-      _KernelRun._outcomeOf(preserved).toolResult,
-    );
+    final settled = _KernelRun._outcomeOf(preserved).toolResult;
+    await config.onToolStep?.call(call.origin! as ToolCall, settled);
+    await config.onToolCompleted?.call(call.origin! as ToolCall, settled);
     return preserved;
   }
 }
@@ -310,46 +322,55 @@ class _KernelRun
     required _AgentClientFactory agentClientFactory,
   }) : _trace = trace {
     final preset = presetRuntime;
-    if (preset != null && preset.businessTools.isNotEmpty) {
-      availableTools = [...?availableTools];
-    }
+    if (preset != null) availableTools = [...?availableTools];
     final nonDirect = {
       for (final tool in availableTools ?? const <AITool>[])
         if (tool.exposure != ToolExposure.direct) tool.name,
     };
-    requestTools = [
-      for (final schema in [...?config.tools, ...?preset?.tools])
+    _baseRequestTools = [
+      for (final schema in config.tools ?? const <Map<String, dynamic>>[])
         if (!nonDirect.contains((schema['function'] as Map)['name'])) schema,
     ];
     final toolNames = <String>{};
-    for (final schema in requestTools) {
+    for (final schema in _baseRequestTools) {
       final name = (schema['function'] as Map)['name'] as String;
       if (!toolNames.add(name)) throw StateError('重复工具名称：$name');
     }
-    for (final schema in preset?.businessTools ?? <Map<String, dynamic>>[]) {
-      final definition = schema['function'] as Map;
-      final name = definition['name'] as String;
-      availableTools!.add(
-        AITool(
-          name: name,
-          description: definition['description'] as String,
-          inputSchema: Map<String, dynamic>.from(
-            definition['parameters'] as Map? ?? const {},
-          ),
-          parameters: const {},
-          handler: (args) => preset!.action(name, args),
-        ),
-      );
+    _deferredTools = {
+      for (final tool in availableTools ?? const <AITool>[])
+        if (tool.exposure == ToolExposure.deferred) tool.name: tool,
+    };
+    _activatedTools.addAll(
+      {
+        ...calledMcpToolNames(config.messages),
+        // Assembly also recognizes legacy ToolBlocks with no call id. Their
+        // authorized declarations are the initial loadout, not stored state.
+        for (final schema in config.tools ?? const <Map<String, dynamic>>[])
+          (schema['function'] as Map)['name'] as String,
+      }.where(_deferredTools.containsKey),
+    );
+    if (_deferredTools.isNotEmpty) {
+      final search = createToolSearch(handler: (args) async {
+        final query = (args['query'] as String).trim();
+        final matches = query.isEmpty ? <Map<String, dynamic>>[] : CodemodeSearch([
+          for (final tool in _deferredTools.values)
+            if (!_activatedTools.contains(tool.name)) tool,
+        ]).search(query, limit: args['limit'] as int? ?? 8);
+        final loaded = [for (final match in matches) match['name'] as String];
+        _activatedTools.addAll(loaded);
+        return jsonEncode({
+          'loaded': loaded,
+          'tools': [for (final name in loaded) {
+            'name': name,
+            'description': _deferredTools[name]!.description,
+          }],
+        });
+      });
+      availableTools = [...?availableTools, search];
+      if (!toolNames.contains(toolSearchName)) _baseRequestTools.add(search.toOpenAISchema());
     }
     this.availableTools = availableTools;
-    requestOptions = preset?.toolChoice == null
-        ? config.providerRequestOptions
-        : (config.providerRequestOptions ?? const ProviderChatRequestOptions())
-              .copyWith(toolChoice: preset!.toolChoice);
-    for (final diagnostic in preset?.diagnostics ?? <String>[]) {
-      AppLogger.info(_logTag, 'Preset transport: $diagnostic');
-      trace?.note('预设传输', metadata: {'diagnostic': diagnostic});
-    }
+    _syncPresetTools();
     flowSettings = config.settings.callFlowSettings;
     final effectiveImageRoute = config.settings
         .resolveEffectiveImageGenerationRoute(config.modelFullId);
@@ -405,7 +426,13 @@ class _KernelRun
   final String? userText;
   final List<PluginResponseProcessor> responseProcessors;
   late final List<AITool>? availableTools;
-  late final ProviderChatRequestOptions? requestOptions;
+  ProviderChatRequestOptions? get requestOptions {
+    final choice = presetRuntime?.toolChoice;
+    return choice == null
+        ? config.providerRequestOptions
+        : (config.providerRequestOptions ?? const ProviderChatRequestOptions())
+            .copyWith(toolChoice: choice);
+  }
   final TraceLogger? _trace;
   final void Function(String toolName)? onToolExecuting;
   final void Function(String delta)? onStreamTextDelta;
@@ -414,7 +441,18 @@ class _KernelRun
   final void Function()? onStreamingFallback;
   final TraceContext? traceContext;
 
-  late final List<Map<String, dynamic>> requestTools;
+  late final List<Map<String, dynamic>> _baseRequestTools;
+  late final Map<String, AITool> _deferredTools;
+  final _activatedTools = <String>{};
+  final _presetTools = <AITool>{};
+  var _presetRequestTools = <Map<String, dynamic>>[];
+
+  List<Map<String, dynamic>> get requestTools => [
+    ..._baseRequestTools,
+    ..._presetRequestTools,
+    ...?presetRuntime?.transportTools,
+    for (final name in _activatedTools) _deferredTools[name]!.toOpenAISchema(),
+  ];
   late final CallFlowSettings flowSettings;
   late final bool fastImageRouteEnabled;
   late final Duration toolTimeout;
@@ -434,7 +472,7 @@ class _KernelRun
 
   final preToolNarrativeTexts = <String>[];
   final toolRoundDrafts =
-      <({String narrative, String reasoning, List<String> toolCallIds})>[];
+      <({String rawText, String narrative, String displayText, String reasoning, List<String> toolCallIds})>[];
   var pendingStableReviewImages = <PluginImageContent>[];
   var executedAnyTool = false;
   var lastRoundIndex = 1;
@@ -540,6 +578,64 @@ class _KernelRun
     kernel.TurnContext ctx,
   ) => RequestControl.run(ctx.cancellation, () => _prepare(running, mode, ctx));
 
+  Future<List<Map<String, dynamic>>> _preparePresetMessages(
+    List<Map<String, dynamic>> messages,
+  ) async {
+    final preset = presetRuntime;
+    if (preset == null) return messages;
+    final prepared = preset is PresetToolAwareRuntime
+        ? await (preset as PresetToolAwareRuntime).prepareWithTools(messages, tools: [
+            ..._baseRequestTools,
+            ..._presetRequestTools,
+            for (final name in _activatedTools)
+              _deferredTools[name]!.toOpenAISchema(),
+          ])
+        : await preset.prepare(messages);
+    _syncPresetTools();
+    return prepared;
+  }
+
+  /// Preset tools can change every round: its final-request script may add
+  /// tools or rewrite their schemas. First-party tools keep their names.
+  void _syncPresetTools() {
+    final preset = presetRuntime;
+    if (preset == null) return;
+    final tools = availableTools!;
+    tools.removeWhere(_presetTools.contains);
+    _presetTools.clear();
+    _presetRequestTools = [];
+    final taken = {
+      for (final tool in tools) tool.name,
+      for (final schema in _baseRequestTools)
+        (schema['function'] as Map)['name'] as String,
+    };
+    for (final schema in preset.businessTools) {
+      final definition = schema['function'] as Map;
+      final name = definition['name'] as String;
+      if (!taken.add(name)) continue;
+      final tool = AITool(
+        name: name,
+        description: definition['description'] as String,
+        inputSchema: Map<String, dynamic>.from(
+          definition['parameters'] as Map? ?? const {},
+        ),
+        parameters: const {},
+        handler: (args) => preset.action(name, args),
+      );
+      _presetTools.add(tool);
+      tools.add(tool);
+      _presetRequestTools.add(schema);
+    }
+  }
+
+  void _recordPresetRequestState() {
+    config.onToolSchemasChanged?.call(requestTools);
+    for (final diagnostic in presetRuntime?.diagnostics ?? <String>[]) {
+      AppLogger.info(_logTag, 'Preset transport: $diagnostic');
+      _trace?.note('预设传输', metadata: {'diagnostic': diagnostic});
+    }
+  }
+
   Future<kernel.PreparedRound> _prepare(
     List<Map<String, dynamic>> running,
     kernel.PrepareMode mode,
@@ -560,8 +656,9 @@ class _KernelRun
       current = await config.runtimeContext!.prepare(current, force: true);
       final budgeted = ToolMedia.wire(current, strip: false);
       final request = ToolMedia.wire(
-        await presetRuntime?.prepare(budgeted) ?? budgeted,
+        await _preparePresetMessages(budgeted),
       );
+      _recordPresetRequestState();
       _transportSnapshot = null;
       _transportPreviewFingerprint = '';
       _streamRaw = '';
@@ -577,8 +674,9 @@ class _KernelRun
     current = await config.runtimeContext?.prepare(current) ?? current;
     final budgeted = ToolMedia.wire(current, strip: false);
     final request = ToolMedia.wire(
-      await presetRuntime?.prepare(budgeted) ?? budgeted,
+      await _preparePresetMessages(budgeted),
     );
+    _recordPresetRequestState();
     _resetRoundOutputState();
     runningLength = current.length;
 
@@ -606,15 +704,17 @@ class _KernelRun
       final rich = await retryModelRound(
         cancellation: ctx.cancellation,
         send: () => _attempt(prepared.request, ctx.round),
-        onRetry: (attempt, delay) {
+        onRetryWithLimit: (attempt, maxRetries, delay) {
           onStreamTextReset?.call();
           _resetRoundOutputState();
+          config.onModelRetry?.call(attempt, maxRetries, delay);
           AppLogger.warning(
             _logTag,
             'Retrying current model round',
             metadata: {
               'round': ctx.round,
               'attempt': attempt,
+              'maxRetries': maxRetries,
               'delayMs': delay.inMilliseconds,
             },
           );
@@ -840,8 +940,8 @@ class _KernelRun
   }) async {
     if (!active() || ctx.cancellation.isCancelled)
       throw StateError('Script invocation closed');
-    if (name == 'codemode')
-      throw StateError('Recursive codemode is not available');
+    if (name == 'codemode' || name == toolSearchName)
+      throw StateError('$name is only available as a direct model tool');
     if (!(availableTools?.any((t) => t.name == name) ?? false))
       throw StateError('Tool unavailable: $name');
     final id = callId ?? 'script_${ctx.round}_${++_scriptCallSequence}';
@@ -883,8 +983,44 @@ class _KernelRun
     kernel.TurnContext ctx, {
     bool Function()? active,
   }) async {
+    final toolCall = call.origin! as ToolCall;
+    final finishActivity = config.onToolActivity?.call(toolCall);
+    try {
+      return await _runKernelTool(call, toolCall, ctx, active: active);
+    } finally {
+      finishActivity?.call();
+    }
+  }
+
+  Future<kernel.KernelToolResult> _runKernelTool(
+    kernel.KernelToolCall call,
+    ToolCall toolCall,
+    kernel.TurnContext ctx, {
+    bool Function()? active,
+  }) async {
+    if (toolCall.name == 'draw_image' && toolCall.arguments['prompt'] is String) {
+      final prompt = toolCall.arguments['prompt'] as String;
+      final expanded = expandComicPlanVariablesInPrompt(
+        prompt,
+        contextTexts: [
+          ...preToolNarrativeTexts,
+          if (lastRich?.reasoning.isNotEmpty ?? false)
+            '<think>${lastRich!.reasoning}</think>',
+          if (lastRich != null) lastRich!.text,
+        ],
+      );
+      if (expanded != prompt) {
+        toolCall = ToolCall(
+          id: toolCall.id,
+          name: toolCall.name,
+          arguments: {...toolCall.arguments, 'prompt': expanded},
+          rawArguments: toolCall.rawArguments,
+          thoughtSignature: toolCall.thoughtSignature,
+        );
+      }
+    }
     final outcome = await _executeToolCall(
-      toolCall: call.origin! as ToolCall,
+      toolCall: toolCall,
       availableTools: availableTools,
       toolTimeout: toolTimeout,
       flowSettings: flowSettings,
@@ -907,7 +1043,7 @@ class _KernelRun
           ctx.cancellation.isCancelled || !(active?.call() ?? true),
       stateOwner: config.toolResultOwner ?? sessionId,
       scriptTools: ScriptToolAccess(
-        List.unmodifiable(availableTools ?? const <AITool>[]),
+        List.unmodifiable((availableTools ?? const <AITool>[]).where((tool) => tool.name != toolSearchName)),
         (name, args, valid) => _scriptTool(
           name,
           args,

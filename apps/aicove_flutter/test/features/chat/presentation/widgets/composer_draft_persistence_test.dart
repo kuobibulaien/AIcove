@@ -4,9 +4,15 @@ import 'dart:async';
 import 'package:aicove_flutter/src/features/chat/application/chat_edit.dart';
 import 'package:aicove_flutter/src/features/chat/chat_layer_providers.dart';
 import 'package:aicove_flutter/src/core/services/attachment_picker_service.dart';
+import 'package:aicove_flutter/src/core/services/clipboard_attachment_service.dart';
+import 'package:aicove_flutter/src/ui/shared/widgets/index.dart';
+// ignore: depend_on_referenced_packages
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -424,6 +430,139 @@ void main() {
     expect(attachment, isNotNull);
     expect(restored, isNull);
   });
+
+  group('粘贴', () {
+    const pasteboard = MethodChannel('pasteboard');
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z0ioAAAAASUVORK5CYII=',
+    );
+    late PathProviderPlatform previousPathProvider;
+    late Directory tempDir;
+
+    void mockClipboard({String? text, Uint8List? image}) {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(pasteboard, (call) async {
+        return switch (call.method) {
+          'files' => <String>[],
+          'image' => image,
+          _ => null,
+        };
+      });
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.getData') {
+          return text == null ? null : <String, Object?>{'text': text};
+        }
+        if (call.method == 'Clipboard.hasStrings') {
+          return <String, Object?>{'value': text != null};
+        }
+        return null;
+      });
+    }
+
+    Future<void> pressPaste(WidgetTester tester) async {
+      await tester.tap(find.byType(TextField).first);
+      await tester.pump();
+      await tester.runAsync(() async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await _pumpComposerReady(tester);
+    }
+
+    setUp(() async {
+      previousPathProvider = PathProviderPlatform.instance;
+      tempDir = await Directory.systemTemp.createTemp('aicove_composer_paste');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir.path);
+    });
+
+    tearDown(() async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(pasteboard, null);
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      PathProviderPlatform.instance = previousPathProvider;
+      await tempDir.delete(recursive: true);
+    });
+
+    test('只有文字为空或单个网址时才取图片', () {
+      expect(ClipboardAttachmentService.prefersImageOver(null), isTrue);
+      expect(ClipboardAttachmentService.prefersImageOver('  '), isTrue);
+      expect(
+        ClipboardAttachmentService.prefersImageOver('https://a.cn/x.png'),
+        isTrue,
+      );
+      expect(ClipboardAttachmentService.prefersImageOver('表格里的文字'), isFalse);
+      expect(
+        ClipboardAttachmentService.prefersImageOver('看 https://a.cn'),
+        isFalse,
+      );
+    });
+
+    test('BMP 等格式转成 PNG，超出大小上限拦下', () async {
+      final bmp = img.encodeBmp(img.Image(width: 2, height: 2));
+      expect(ClipboardAttachmentService.imageExtensionOf(bmp), isNull);
+      final saved = await ClipboardAttachmentService.saveImage(bmp, maxMb: 1);
+      final attachment = (saved as AttachmentPickSuccess).attachment;
+      expect(attachment.path, endsWith('.png'));
+      expect(
+        ClipboardAttachmentService.imageExtensionOf(
+          await File(attachment.path).readAsBytes(),
+        ),
+        'png',
+      );
+
+      final big = Uint8List(1024 * 1024 + 1)..setAll(0, png);
+      expect(
+        await ClipboardAttachmentService.saveImage(big, maxMb: 1),
+        isA<AttachmentFileTooLarge>(),
+      );
+    });
+
+    testWidgets('剪贴板只有图片时粘贴成图片附件，不改文字', (tester) async {
+      mockClipboard(image: png);
+      await tester.pumpWidget(
+        _buildHost(conversation: _buildConversation('conv_a')),
+      );
+      await _pumpComposerReady(tester);
+
+      await pressPaste(tester);
+
+      expect(find.byType(ImageAttachmentPreview), findsOneWidget);
+      final input = tester.widget<TextField>(find.byType(TextField).first);
+      expect(input.controller!.text, isEmpty);
+      await _disposeComposer(tester);
+    });
+
+    testWidgets('剪贴板有普通文字时照常粘贴文字', (tester) async {
+      mockClipboard(text: '一段文字', image: png);
+      await tester.pumpWidget(
+        _buildHost(conversation: _buildConversation('conv_a')),
+      );
+      await _pumpComposerReady(tester);
+
+      await pressPaste(tester);
+
+      expect(find.byType(ImageAttachmentPreview), findsNothing);
+      final input = tester.widget<TextField>(find.byType(TextField).first);
+      expect(input.controller!.text, '一段文字');
+      await _disposeComposer(tester);
+    });
+  });
+}
+
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  _FakePathProviderPlatform(this.rootPath);
+
+  final String rootPath;
+
+  @override
+  Future<String?> getTemporaryPath() async => rootPath;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => rootPath;
 }
 
 Future<void> _pumpComposerReady(WidgetTester tester) async {

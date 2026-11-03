@@ -42,8 +42,8 @@ class MoeUiBlockScope extends InheritedWidget {
 
   final String conversationId;
 
-  /// Renderers of action panels by component name; only the assistant chat
-  /// gives them (ADR0094). Elsewhere such blocks show a note and do nothing.
+  /// Renderers of action panels by component name; only tool-mode chats
+  /// give them (ADR0094, ADR0111). Elsewhere such blocks show a note and do nothing.
   final Map<String, UiActionPanelBuilder>? actions;
 
   /// Puts a follow-up into the composer; never sends it.

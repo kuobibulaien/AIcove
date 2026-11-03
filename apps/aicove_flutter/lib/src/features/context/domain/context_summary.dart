@@ -145,10 +145,7 @@ abstract interface class ContextSummaryStorePort {
   /// 边界正好对应的有效手动摘要；来源被改动过则返回 null。
   Future<ContextSummary?> manualFor(String ownerId, String? boundaryId);
 
-  Future<ContextSummary> commitManual(
-    ContextSnapshot snapshot,
-    String summary,
-  );
+  Future<ContextSummary> commitManual(ContextSnapshot snapshot, String summary);
 
   /// 为「有边界、没摘要」的情况补一份手动摘要，不移动边界。
   Future<ContextSummary> saveRecoveredManual(
@@ -169,6 +166,38 @@ abstract interface class ContextSummaryStorePort {
 
   /// 清空聊天时删除该角色的全部摘要。
   Future<void> clear(String ownerId);
+}
+
+/// 摘要管理独立于发送端口，避免要求现有只读适配器实现管理操作。
+abstract interface class ContextSummaryManagementStorePort {
+  Future<List<ContextSummaryHistoryEntry>> listHistory(String ownerId);
+  Future<ContextSummaryChange> updateCurrent({
+    required String ownerId,
+    required ContextSummaryKind kind,
+    required String? expectedBoundaryId,
+    required ContextSummary expectedSummary,
+    required String summary,
+    DateTime? createdAt,
+  });
+  Future<void> deleteCurrentAuto({
+    required String ownerId,
+    required String? expectedBoundaryId,
+  });
+}
+
+class ContextSummaryHistoryEntry {
+  const ContextSummaryHistoryEntry({
+    required this.record,
+    required this.isValid,
+    required this.isCurrent,
+  });
+  final ContextSummary record;
+  final bool isValid, isCurrent;
+}
+
+class ContextSummaryChange {
+  const ContextSummaryChange({required this.before, required this.after});
+  final ContextSummary before, after;
 }
 
 /// 界面只调用这个端口做手动压缩；确认前的失败或取消都不会切换话题。

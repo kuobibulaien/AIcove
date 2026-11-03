@@ -8,11 +8,13 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/database/database.dart';
 import '../../../core/media/embedded_media_store.dart';
+import '../../../core/media/media_asset.dart';
 import '../../../core/media/media_store.dart';
 import '../../../core/sync/cloud_tracking.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
 import 'cloud_document.dart';
+import 'cloud_media_codec.dart';
 import 'device_names.dart';
 
 /// Files and preferences retain their existing owners. Their last synchronized
@@ -177,8 +179,9 @@ class CloudLocalStore {
   Future<Map<String, dynamic>> settingTimes(
     String kind,
     String id,
-    String device,
-  ) async {
+    String device, {
+    CloudLocalDocument? document,
+  }) async {
     if (kind == 'conversations' || kind == 'providers') {
       return {
         for (final row in await rows(
@@ -191,13 +194,13 @@ class CloudLocalStore {
           },
       };
     }
-    final doc = await read(kind, id);
+    final doc = document ?? await read(kind, id);
     if (kind == 'settings' && doc?.payload['storage'] == 'preference') {
       final key = doc!.payload['key'] as String;
       return cloudPreferenceTimes(
         preferences,
         key,
-        preferences.get(key),
+        doc.payload['json_value'],
         device,
       );
     }
@@ -301,12 +304,79 @@ class CloudLocalStore {
     await captureExternal();
   }
 
+  /// Upgrade comparison tokens only when the old token proves that the local
+  /// value is unchanged, including rows already marked dirty or frozen.
+  Future<void> prepareSchemaFingerprints() async {
+    const migration = 'cloud_content_fingerprint_v1';
+    if ((await rows('SELECT 1 FROM cloud_local_migrations WHERE name=?', [
+      migration,
+    ])).isNotEmpty) {
+      return;
+    }
+    final keys = await rows(
+      'SELECT kind,entity_id FROM cloud_versions WHERE local_json IS NOT NULL',
+    );
+    for (var start = 0; start < keys.length; start += 100) {
+      await db.transaction(() async {
+        for (final key in keys.skip(start).take(100)) {
+          final kind = key['kind'] as String, id = key['entity_id'] as String;
+          if (!cloudTables.containsKey(kind)) continue;
+          final known = (await rows(
+            'SELECT local_json,cloud_json FROM cloud_versions WHERE kind=? AND entity_id=?',
+            [kind, id],
+          )).single;
+          final current = await read(kind, id);
+          if (current == null || current.localJson == known['local_json']) {
+            continue;
+          }
+          final remote =
+              (jsonDecode(known['cloud_json'] as String) as Map)['payload']
+                  as Map?;
+          if (!_matchesSchemaFingerprint(
+            current,
+            known['local_json'] as String,
+            remote?['client_schema'],
+          )) {
+            continue;
+          }
+          await execute(
+            'UPDATE cloud_versions SET local_json=? WHERE kind=? AND entity_id=? AND local_json=?',
+            [current.localJson, kind, id, known['local_json']],
+          );
+        }
+      });
+    }
+    await execute('INSERT OR IGNORE INTO cloud_local_migrations VALUES(?)', [
+      migration,
+    ]);
+  }
+
+  bool _matchesSchemaFingerprint(
+    CloudLocalDocument current,
+    String baseline,
+    Object? previousSchema,
+  ) =>
+      {
+        kCloudRowSchema,
+        if (previousSchema is int) previousSchema,
+        // Older snapshot receipts omitted the wire schema. Each candidate still
+        // has to reproduce the saved hash exactly; this cannot rebase a real edit.
+        for (var schema = kCloudRowSchema - 1; schema >= 1; schema--) schema,
+      }.any((schema) {
+        final old = canonicalJson({
+          ...current.payload,
+          'client_schema': schema,
+        });
+        return baseline == 'sha256:${cloudObjectId(old)}' || baseline == old;
+      });
+
   /// Preserve already frozen operations before calling this one-time upgrade.
   /// Only the source reseeds complete message snapshots; receivers retain edits
   /// and wait for those snapshots instead of publishing incomplete history.
   Future<void> prepareMessageSnapshots({
     void Function(int, int)? onProgress,
   }) async {
+    await normalizeLegacyMessageMedia();
     if ((await rows(
       "SELECT 1 FROM cloud_local_migrations WHERE name='message_snapshots_v1'",
     )).isNotEmpty) {
@@ -331,10 +401,18 @@ class CloudLocalStore {
                   as String;
           if (old.startsWith('sha256:')) continue;
           var fingerprint = 'sha256:${cloudObjectId(old)}';
-          if (kind == 'messages' &&
-              (await read(kind, id, includeRelated: false))?.localJson ==
-                  fingerprint) {
-            fingerprint = (await read(kind, id))!.localJson;
+          if (kind == 'messages') {
+            final current = await read(kind, id, includeRelated: false);
+            final previous = jsonDecode(old) as Map;
+            if (current != null &&
+                (current.localJson == fingerprint ||
+                    _matchesSchemaFingerprint(
+                      current,
+                      old,
+                      previous['client_schema'],
+                    ))) {
+              fingerprint = (await read(kind, id))!.localJson;
+            }
           }
           await execute(
             'UPDATE cloud_versions SET local_json=? WHERE kind=? AND entity_id=? AND local_json=?',
@@ -424,10 +502,179 @@ class CloudLocalStore {
   Future<bool> hasHistory() async =>
       (await rows('SELECT COUNT(*) AS n FROM messages')).single['n'] != 0;
 
+  /// Representation-only upgrade. Frozen operations retain their original bytes;
+  /// only proven-clean receive baselines advance without creating an own edit.
+  Future<int> normalizeLegacyMessageMedia() async {
+    const migration = 'legacy_message_media_v1';
+    if ((await rows('SELECT 1 FROM cloud_local_migrations WHERE name=?', [
+      migration,
+    ])).isNotEmpty) {
+      return 0;
+    }
+    var after = '';
+    var repaired = 0;
+    while (true) {
+      final batch = await rows(
+        "SELECT id FROM messages WHERE id>? AND instr(raw_payload,'projectedMessages')>0 ORDER BY id LIMIT 100",
+        [after],
+      );
+      if (batch.isEmpty) break;
+      await db.transaction(() async {
+        for (final item in batch) {
+          final id = item['id'] as String;
+          final current = await read('messages', id);
+          if (current == null) continue;
+          final normalized = CloudMediaCodec.normalizeMessagePayload(
+            'messages',
+            current.payload,
+          );
+          final raw = (current.payload['row'] as Map)['raw_payload'];
+          final next = (normalized['row'] as Map)['raw_payload'];
+          if (raw == next) continue;
+          final baseline = await rows(
+            "SELECT local_json FROM cloud_versions WHERE kind='messages' AND entity_id=?",
+            [id],
+          );
+          final cleanReceiver =
+              (await state())['mode'] == 'receive' &&
+              (await rows(
+                "SELECT 1 FROM cloud_dirty WHERE kind='messages' AND entity_id=?",
+                [id],
+              )).isEmpty &&
+              baseline.isNotEmpty &&
+              baseline.single['local_json'] == current.localJson;
+          await execute(
+            'UPDATE messages SET raw_payload=? WHERE id=? AND raw_payload=?',
+            [next, id, raw],
+          );
+          if (cleanReceiver) {
+            await execute(
+              "UPDATE cloud_versions SET local_json=? WHERE kind='messages' AND entity_id=?",
+              [(await read('messages', id))!.localJson, id],
+            );
+            await execute(
+              "DELETE FROM cloud_dirty WHERE kind='messages' AND entity_id=?",
+              [id],
+            );
+          }
+          repaired++;
+        }
+      });
+      after = batch.last['id'] as String;
+    }
+    await execute('INSERT OR IGNORE INTO cloud_local_migrations VALUES(?)', [
+      migration,
+    ]);
+    if (repaired > 0) db.markTablesUpdated({db.messages});
+    return repaired;
+  }
+
+  /// Source-only attachment upgrade. Ordinary writes deliberately keep both
+  /// dirty journals: peers need a new causal revision, not a rewritten baseline.
+  Future<int> repairLegacyStickerMedia({
+    required MediaStore mediaStore,
+  }) => cloudLocalWrite(() async {
+    const migration = 'sticker_message_media_v1';
+    if ((await rows('SELECT 1 FROM cloud_local_migrations WHERE name=?', [
+      migration,
+    ])).isNotEmpty) {
+      return 0;
+    }
+    var repaired = 0;
+    for (final table in ['messages', 'message_blocks']) {
+      final column = table == 'messages' ? 'raw_payload' : 'data';
+      final filter = table == 'messages'
+          ? "(instr(raw_payload,'sticker_convert')>0 OR instr(raw_payload,'sticker')>0 OR instr(raw_payload,'emoji')>0)"
+          : "type='emoji' AND EXISTS (SELECT 1 FROM messages m "
+                "WHERE m.id=message_blocks.message_id AND m.deleted_at IS NULL "
+                "AND m.replaced_by IS NULL AND m.status<>'sending')";
+      var after = '';
+      while (true) {
+        final batch = await rows(
+          'SELECT id,$column AS value,created_at FROM $table '
+          "WHERE id>? AND $filter AND deleted_at IS NULL "
+          '${table == 'messages' ? "AND replaced_by IS NULL AND status<>'sending' " : ''}'
+          'ORDER BY id LIMIT 100',
+          [after],
+        );
+        if (batch.isEmpty) break;
+        for (final row in batch) {
+          final raw = row['value'];
+          if (raw is! String) continue;
+          Object? decoded;
+          try {
+            decoded = jsonDecode(raw);
+          } on FormatException {
+            continue;
+          }
+          final timestamp = (row['created_at'] as num?)?.toInt() ?? 0;
+          final at = timestamp > 0 && timestamp < 100000000000
+              ? timestamp * 1000
+              : timestamp;
+          final next = await CloudMediaCodec.rewriteStickerAttachments(
+            decoded,
+            (path) async {
+              final uri = Uri.tryParse(path);
+              if (path.isEmpty ||
+                  mediaIdFromReference(path) != null ||
+                  path.startsWith('assets/') ||
+                  path.startsWith('packages/') ||
+                  (uri?.scheme.isNotEmpty == true &&
+                      uri?.scheme != 'file' &&
+                      !p.windows.isAbsolute(path))) {
+                return path;
+              }
+              final file = File(
+                uri?.scheme == 'file' ? uri!.toFilePath() : path,
+              );
+              try {
+                if (!await file.exists()) return path;
+                final record = await mediaStore.register(
+                  file.path,
+                  createdAtMs: at,
+                  originalRequired: true,
+                  allowNetworkDownload: false,
+                );
+                return record.asset.reference;
+              } on IOException {
+                // A missing source (including one removed during the scan)
+                // is not a local edit and must not block unrelated history.
+                return path;
+              }
+            },
+            emojiData: table == 'message_blocks',
+          );
+          if (identical(next, decoded)) continue;
+          await db.transaction(() async {
+            final updated = await db.customUpdate(
+              'UPDATE $table SET $column=? WHERE id=? AND $column=? '
+              'AND $filter AND deleted_at IS NULL '
+              '${table == 'messages' ? "AND replaced_by IS NULL AND status<>'sending'" : ''}',
+              variables: [
+                Variable(jsonEncode(next)),
+                Variable(row['id'] as String),
+                Variable(raw),
+              ],
+            );
+            repaired += updated;
+          });
+        }
+        after = batch.last['id'] as String;
+      }
+    }
+    await execute('INSERT OR IGNORE INTO cloud_local_migrations VALUES(?)', [
+      migration,
+    ]);
+    if (repaired > 0) db.markTablesUpdated({db.messages, db.messageBlocks});
+    return repaired;
+  });
+
   Future<void> compactEmbeddedMedia({
     required MediaStore mediaStore,
     void Function(int, int)? onProgress,
   }) async {
+    await repairLegacyStickerMedia(mediaStore: mediaStore);
+    await normalizeLegacyMessageMedia();
     // After the one-time full pass, only messages with pending edits can hold
     // new inline media, so routine syncs never rescan the whole history.
     final incremental = (await rows(
@@ -577,6 +824,26 @@ class CloudLocalStore {
     return root.path;
   }
 
+  /// Also used by equal-content shortcuts, which must not bypass wire checks.
+  Future<void> validateRowPayload(
+    String kind,
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    if (!cloudTables.containsKey(kind)) return;
+    final row = payload['row'] as Map;
+    if (row[cloudTables[kind]] != id ||
+        (payload['client_schema'] as int) > kCloudRowSchema) {
+      throw const CloudSyncFailure('云端数据格式较新，请先更新应用');
+    }
+    final columns = _columns[kind] ??= (await rows(
+      'PRAGMA table_info("$kind")',
+    )).map((e) => e['name']).toSet();
+    if (!columns.containsAll(row.keys)) {
+      throw const CloudSyncFailure('云端包含此版本无法读取的数据字段');
+    }
+  }
+
   Future<void> apply(
     String kind,
     String id,
@@ -585,19 +852,12 @@ class CloudLocalStore {
   ) async {
     // 退役类型：不写本地（ADR0038）。
     if (retiredCloudKinds.contains(kind)) return;
+    if (!deleted)
+      payload = CloudMediaCodec.normalizeMessagePayload(kind, payload);
     if (cloudTables.containsKey(kind)) {
       final key = cloudTables[kind]!;
       final row = Map<String, dynamic>.from(payload['row'] as Map);
-      if (row[key] != id ||
-          (payload['client_schema'] as int) > kCloudRowSchema) {
-        throw const CloudSyncFailure('云端数据格式较新，请先更新应用');
-      }
-      final columns = _columns[kind] ??= (await rows(
-        'PRAGMA table_info("$kind")',
-      )).map((e) => e['name']).toSet();
-      if (!columns.containsAll(row.keys)) {
-        throw const CloudSyncFailure('云端包含此版本无法读取的数据字段');
-      }
+      await validateRowPayload(kind, id, payload);
       final snapshot =
           kind == 'messages' && payload.containsKey('message_snapshot_version');
       if (snapshot) {

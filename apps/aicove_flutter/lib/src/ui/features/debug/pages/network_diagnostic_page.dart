@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/moe_app_bar.dart';
+import '../../../../ui/shared/widgets/moe_inset_surface.dart';
 
 /// 网络诊断页面 - 输入 URL 发送请求，查看连通状态
 class NetworkDiagnosticPage extends StatefulWidget {
@@ -140,12 +141,9 @@ class _NetworkDiagnosticPageState extends State<NetworkDiagnosticPage> {
                 Row(
                   children: [
                     // 方法选择
-                    Container(
+                    MoeInsetSurface(
+                      radius: 8,
                       padding: const EdgeInsets.symmetric(horizontal: 8),
-                      decoration: BoxDecoration(
-                        color: colors.surface,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
                           value: _method,
@@ -437,14 +435,11 @@ class _ResultCardState extends State<_ResultCard> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Container(
+                MoeInsetSurface(
+                  radius: 4,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6,
                     vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     r.method,
@@ -524,19 +519,18 @@ class _ResultCardState extends State<_ResultCard> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Container(
-                  width: double.infinity,
+                MoeInsetSurface(
+                  radius: 6,
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: SelectableText(
-                    r.bodyPreview!,
-                    style: TextStyle(
-                      color: colors.text,
-                      fontSize: 11,
-                      fontFamily: 'monospace',
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: SelectableText(
+                      r.bodyPreview!,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ),
                 ),

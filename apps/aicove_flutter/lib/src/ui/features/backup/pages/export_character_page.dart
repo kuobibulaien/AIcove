@@ -303,33 +303,45 @@ class _ExportCharacterPageState extends ConsumerState<ExportCharacterPage> {
     }
   }
 
-  Future<void> _showExportSuccess(ExportResult result) async {
-    final share = await showMeoTalkDialog(
-      context: context,
-      title: '导出成功',
-      cancelText: '完成',
-      confirmText: '分享',
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('文件：${result.fileName}'),
-          const SizedBox(height: 4),
-          Text('角色数：${result.conversationCount}'),
-          Text('消息数：${result.messageCount}'),
-          Text('文件大小：${_formatSize(result.sizeBytes)}'),
-          Text(widget.password.isEmpty ? '未加密' : '已用密码加密'),
-        ],
-      ),
-    );
-    if (share == true) {
-      await Share.shareXFiles([XFile(result.filePath)]);
-    }
-  }
+  Future<void> _showExportSuccess(ExportResult result) =>
+      showExportSuccessDialog(
+        context,
+        result,
+        encrypted: widget.password.isNotEmpty,
+      );
+}
 
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+/// 导出完成后展示文件信息，用户可选择分享。
+Future<void> showExportSuccessDialog(
+  BuildContext context,
+  ExportResult result, {
+  required bool encrypted,
+}) async {
+  final share = await showMeoTalkDialog(
+    context: context,
+    title: '导出成功',
+    cancelText: '完成',
+    confirmText: '分享',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('文件：${result.fileName}'),
+        const SizedBox(height: 4),
+        Text('角色数：${result.conversationCount}'),
+        Text('消息数：${result.messageCount}'),
+        Text('文件大小：${_formatSize(result.sizeBytes)}'),
+        Text(encrypted ? '已用密码加密' : '未加密'),
+      ],
+    ),
+  );
+  if (share == true) {
+    await Share.shareXFiles([XFile(result.filePath)]);
   }
+}
+
+String _formatSize(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
 }

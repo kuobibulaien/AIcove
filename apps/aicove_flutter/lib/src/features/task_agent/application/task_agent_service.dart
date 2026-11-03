@@ -104,8 +104,9 @@ class TaskAgentService {
       if (task == null) return TaskControlOutcome.remote;
       if ((_running[taskId]?.isCancelled ?? false) ||
           task.status.isTerminal ||
-          instruction.trim().isEmpty)
+          instruction.trim().isEmpty) {
         return TaskControlOutcome.ignored;
+      }
       final checkpoint =
           await process.checkpoint(taskId) ??
           TaskCheckpoint(
@@ -187,31 +188,37 @@ class TaskAgentService {
       final task = await store.get(taskId);
       if (task == null) return TaskControlOutcome.remote;
       final checkpoint = await process.checkpoint(taskId);
+      if (checkpoint == null ||
+          !await store.canConsumeReply(
+            controlId: controlId,
+            taskId: taskId,
+            answersReceiptId: answersReceiptId,
+          )) {
+        return TaskControlOutcome.ignored;
+      }
+      await process.saveCheckpoint(
+        taskId,
+        TaskCheckpoint(
+          messages: [
+            ...checkpoint.contextMessages,
+            if (checkpoint.question != null)
+              {'role': 'assistant', 'content': checkpoint.question},
+            {'role': 'user', 'content': answer},
+          ],
+          transcript: TaskAgentRunner.continueTranscript(
+            previous: checkpoint.transcript,
+            processLog: checkpoint.lastLog,
+            question: checkpoint.question ?? '',
+            answer: answer,
+          ),
+        ),
+      );
       if (!await store.consumeReply(
         controlId: controlId,
         taskId: taskId,
         answersReceiptId: answersReceiptId,
       )) {
         return TaskControlOutcome.ignored;
-      }
-      if (checkpoint != null) {
-        await process.saveCheckpoint(
-          taskId,
-          TaskCheckpoint(
-            messages: [
-              ...checkpoint.contextMessages,
-              if (checkpoint.question != null)
-                {'role': 'assistant', 'content': checkpoint.question},
-              {'role': 'user', 'content': answer},
-            ],
-            transcript: TaskAgentRunner.continueTranscript(
-              previous: checkpoint.transcript,
-              processLog: checkpoint.lastLog,
-              question: checkpoint.question ?? '',
-              answer: answer,
-            ),
-          ),
-        );
       }
       return TaskControlOutcome.applied;
     });
@@ -231,8 +238,9 @@ class TaskAgentService {
       controlId: controlId,
       taskId: taskId,
     );
-    if (task == null || task.status.isTerminal)
+    if (task == null || task.status.isTerminal) {
       return TaskControlOutcome.ignored;
+    }
     final running = _running[taskId];
     if (running != null) {
       running.cancel();
@@ -248,6 +256,15 @@ class TaskAgentService {
     );
     if (recorded != null) await _publish(recorded);
     return TaskControlOutcome.applied;
+  }
+
+  /// Stops deleted-chat work immediately, without waiting for external calls
+  /// or writing cancellation receipts into a conversation that is gone.
+  Future<void> abortForDeletedConversation(String conversationId) async {
+    for (final task in await store.byConversation(conversationId)) {
+      if (!task.status.isTerminal) _running[task.id]?.cancel();
+    }
+    await store.abortForDeletedConversation(conversationId);
   }
 
   /// Startup: interrupted runs get a receipt without replaying anything,
@@ -459,6 +476,7 @@ class TaskAgentService {
           ),
         );
       });
+      cancellation.throwIfCancelled();
       recorded = await store.finish(
         task.id,
         from: {AgentTaskStatus.running},
@@ -546,9 +564,12 @@ class TaskAgentService {
       final target = await store.delivery(receiptId);
       if (target == null) return;
       final (taskId, conversationId) = target;
-      if (!await ownsConversation(conversationId)) return;
       final receipt = block ?? await _receiptFromTask(taskId, receiptId);
-      if (receipt == null) return;
+      if (receipt == null) {
+        await store.finishMissingTaskDelivery(receiptId);
+        return;
+      }
+      if (!await ownsConversation(conversationId)) return;
       if (!await store.claimDelivery(receiptId)) return;
       var delivered = false;
       try {

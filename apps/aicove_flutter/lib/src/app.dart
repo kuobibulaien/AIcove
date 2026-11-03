@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'features/plugins/prompts/prompt_pack_migration.dart';
 import 'features/task_agent/application/delegate_task_plugin.dart';
 import 'features/task_agent/task_agent_providers.dart';
@@ -32,6 +33,7 @@ import 'core/log_history_service.dart';
 import 'core/services/android_keep_alive_manager.dart';
 import 'core/app_logger.dart';
 import 'core/api_logger.dart';
+import 'features/observability/frame_jank_recorder.dart';
 import 'features/observability/trace_store.dart';
 import 'features/chat/domain/conversation.dart';
 import 'features/auto_reply/data/analyzer_scheduler.dart';
@@ -72,6 +74,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    FrameJankRecorder.instance.pageName = () => _detailObserver.topPageName;
 
     // 初始化日志系统（从文件加载当天日志）
     _initializeLoggers();
@@ -142,6 +145,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void dispose() {
     _recentConversationsWarmupRetryTimer?.cancel();
     _router.dispose();
+    FrameJankRecorder.instance.pageName = null;
     _detailObserver.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -151,6 +155,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       ref.read(chatActionsProvider).onAppBackground();
+      if (Platform.isAndroid || Platform.isIOS) {
+        unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(false)).catchError((Object _) {}));
+      }
       // 日志已改为实时存储，无需在后台保存
     }
     if (state == AppLifecycleState.resumed) {

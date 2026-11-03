@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:isolate';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
 import 'package:aicove_quickjs/process.dart';
+import 'package:aicove_flutter/src/core/utils/desktop_process_environment.dart';
+import 'package:aicove_flutter/src/features/plugins/mcp/mcp_stdio_launch.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_review.dart';
 import 'package:aicove_flutter/src/features/workspace/application/workspace_script.dart';
 import 'package:aicove_flutter/src/features/workspace/application/workspace_shell.dart';
@@ -85,10 +88,201 @@ void main() {
     );
     expect(keyed.isError, isFalse);
     expect(await file('key.txt').readAsString(), 'pst-test');
-    final plain = await run(r'printf "%s" "${AICOVE_KEY_NOVELAI-unset}" > plain.txt');
+    final plain = await run(
+      r'printf "%s" "${AICOVE_KEY_NOVELAI-unset}" > plain.txt',
+    );
     expect(plain.isError, isFalse);
     expect(await file('plain.txt').readAsString(), 'unset');
   });
+  test(
+    'shell variables do not leak to unrelated child processes',
+    () async {
+      final result = await approved(
+        () => WorkspaceShell(
+          store: store,
+          workspace: ws,
+          runId: 'private_environment',
+          environment: () => {'AICOVE_TEST_SHELL_PRIVATE': 'private'},
+        ).run(r'printf "%s" "$AICOVE_TEST_SHELL_PRIVATE"'),
+      );
+      expect(result.isError, isFalse, reason: result.text);
+      expect((result.structured as Map)['output'], 'private');
+      expect(
+        _hostContainsEnvironmentVariable('AICOVE_TEST_SHELL_PRIVATE'),
+        isFalse,
+      );
+      final unrelated = await Process.run('/bin/sh', [
+        '-c',
+        r'printf "%s" "${AICOVE_TEST_SHELL_PRIVATE-unset}"',
+      ]);
+      expect(unrelated.exitCode, 0);
+      expect(unrelated.stdout, 'unset');
+    },
+    skip: Platform.isWindows,
+  );
+  test(
+    'desktop PATH preserves MCP precedence, home expansion and nvm',
+    () async {
+      for (final version in ['v9.20.0', 'v22.3.0', 'v22.10.0', 'invalid']) {
+        await Directory(
+          '${root.path}/.nvm/versions/node/$version/bin',
+        ).create(recursive: true);
+      }
+      final parent = {'HOME': root.path, 'PATH': '/parent:/same'};
+      final overrides = {'PATH': '~/tools:/same', 'TOKEN': 'private'};
+      final env = desktopProcessEnvironment(
+        parent: parent,
+        overrides: overrides,
+        platform: 'macos',
+      );
+      expect(env['PATH']!.split(':'), [
+        '${root.path}/tools',
+        '/same',
+        '/parent',
+        '/opt/homebrew/bin',
+        '/usr/local/bin',
+        '/usr/bin',
+        '/bin',
+        '${root.path}/.local/bin',
+        '${root.path}/.cargo/bin',
+        '${root.path}/.nvm/versions/node/v22.10.0/bin',
+      ]);
+      expect(env['TOKEN'], 'private');
+      expect(parent['PATH'], '/parent:/same');
+      expect(overrides['PATH'], '~/tools:/same');
+      if (!Platform.isWindows) {
+        expect(
+          mcpProcessEnvironment(parent: parent, overrides: overrides),
+          env,
+        );
+      }
+    },
+  );
+  test('Windows shared environment preserves legacy MCP casing and order', () {
+    final parent = {
+      'Path': r'C:\Parent;C:\Same',
+      'Token': 'parent',
+      'z': 'last',
+    };
+    final overrides = {
+      'PATH': r'c:\same;C:\User;C:\Parent',
+      'TOKEN': 'child',
+      'a': 'first',
+    };
+    final env = desktopProcessEnvironment(
+      parent: parent,
+      overrides: overrides,
+      platform: 'windows',
+    );
+    expect(env.keys.toList(), ['Token', 'z', 'TOKEN', 'a', 'PATH']);
+    expect(env['PATH'], r'c:\same;C:\User;C:\Parent;C:\Same');
+    expect(env['Token'], 'parent');
+    expect(env['TOKEN'], 'child');
+    expect(env.containsKey('Path'), isFalse);
+    if (Platform.isWindows) {
+      expect(mcpProcessEnvironment(parent: parent, overrides: overrides), env);
+    }
+  });
+  test(
+    'native child environment preserves Unicode, equals and empty values',
+    () async {
+      expect(
+        await _jobOutput(
+          root.path,
+          Platform.isWindows
+              ? r'[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); [Console]::Write($env:AICOVE_TEST_ENV + "|" + $env:AICOVE_TEST_EMPTY)'
+              : r'printf "%s|%s" "$AICOVE_TEST_ENV" "$AICOVE_TEST_EMPTY"',
+          environment: {
+            'AICOVE_TEST_ENV': '二号=值',
+            if (Platform.isWindows) 'aicove_test_env': '二号=值',
+            'AICOVE_TEST_EMPTY': '',
+          },
+        ),
+        '二号=值|',
+      );
+    },
+  );
+  test(
+    'shell gets GUI PATH completion with command variables first',
+    () async {
+      final result = await approved(
+        () => WorkspaceShell(
+          store: store,
+          workspace: ws,
+          runId: 'gui_path',
+          environment: () => {
+            'PATH': '/aicove/custom',
+            'AICOVE_TEST_ENV': 'value',
+          },
+        ).run(r'printf "%s\n%s" "$PATH" "$AICOVE_TEST_ENV"'),
+      );
+      expect(result.isError, isFalse, reason: result.text);
+      final output = (result.structured as Map)['output'] as String;
+      expect(output, startsWith('/aicove/custom:'));
+      expect(output, contains('/opt/homebrew/bin'));
+      expect(output, contains('/usr/local/bin'));
+      expect(output, endsWith('\nvalue'));
+    },
+    skip: Platform.isWindows,
+  );
+  test(
+    'legacy setter copies and validates without changing the host',
+    () async {
+      addTearDown(() => DesktopJob.setEnvironment({}));
+      final variables = {'AICOVE_TEST_ENV': 'saved'};
+      DesktopJob.setEnvironment(variables);
+      variables['AICOVE_TEST_ENV'] = 'mutated';
+      for (final invalid in [
+        {'': 'value'},
+        {'BAD=NAME': 'value'},
+        {'BAD\x00NAME': 'value'},
+        {'AICOVE_TEST_ENV': 'bad\x00value'},
+      ]) {
+        expect(() => DesktopJob.setEnvironment(invalid), throwsArgumentError);
+        expect(
+          () => DesktopJob.start(root.path, 'echo never', environment: invalid),
+          throwsArgumentError,
+        );
+      }
+      expect(
+        await _jobOutput(root.path, r'printf "%s" "$AICOVE_TEST_ENV"'),
+        'saved',
+      );
+      expect(
+        await _jobOutput(
+          root.path,
+          r'printf "%s" "$AICOVE_TEST_ENV"',
+          environment: {'AICOVE_TEST_ENV': 'explicit'},
+        ),
+        'explicit',
+      );
+      expect(
+        await _jobOutput(
+          root.path,
+          r'printf "%s" "${AICOVE_TEST_ENV-unset}"',
+          environment: {},
+        ),
+        'unset',
+      );
+      expect(_hostContainsEnvironmentVariable('AICOVE_TEST_ENV'), isFalse);
+    },
+    skip: Platform.isWindows,
+  );
+  test(
+    'concurrent isolates keep native child environments separate',
+    () async {
+      final cwd = root.path;
+      final results = await Future.wait([
+        for (final value in ['one', '二号=值']) _isolateJob(cwd, value),
+      ]);
+      expect(results, ['one', '二号=值']);
+      expect(
+        await _jobOutput(cwd, r'printf "%s" "${AICOVE_TEST_ENV-unset}"'),
+        'unset',
+      );
+    },
+    skip: Platform.isWindows,
+  );
   test('denied or non-human approval cannot launch a command', () async {
     for (final outcome in [GateOutcome.denied, GateOutcome.approved]) {
       final scope = ToolCallScope()..outcome = outcome;
@@ -612,6 +806,71 @@ void main() {
     },
   );
 }
+
+bool _hostContainsEnvironmentVariable(String name) {
+  final libc = ffi.DynamicLibrary.process();
+  final allocate = libc
+      .lookupFunction<
+        ffi.Pointer<ffi.Void> Function(ffi.IntPtr, ffi.IntPtr),
+        ffi.Pointer<ffi.Void> Function(int, int)
+      >('calloc');
+  final free = libc
+      .lookupFunction<
+        ffi.Void Function(ffi.Pointer<ffi.Void>),
+        void Function(ffi.Pointer<ffi.Void>)
+      >('free');
+  final getenv = libc
+      .lookupFunction<
+        ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>),
+        ffi.Pointer<ffi.Char> Function(ffi.Pointer<ffi.Char>)
+      >('getenv');
+  final bytes = utf8.encode(name);
+  final key = allocate(bytes.length + 1, 1);
+  if (key == ffi.nullptr) throw StateError('Cannot allocate environment name');
+  try {
+    key.cast<ffi.Uint8>().asTypedList(bytes.length + 1).setAll(0, bytes);
+    return getenv(key.cast()) != ffi.nullptr;
+  } finally {
+    free(key);
+  }
+}
+
+Future<String> _jobOutput(
+  String cwd,
+  String command, {
+  Map<String, String>? environment,
+}) async {
+  final job = DesktopJob.start(cwd, command, environment: environment);
+  final bytes = <int>[];
+  final watch = Stopwatch()..start();
+  try {
+    while (watch.elapsed < const Duration(seconds: 10)) {
+      final chunk = job.read();
+      if (chunk == null) {
+        final status = job.exitCode;
+        if (status != null) {
+          if (status != 0) throw StateError('Child exited with $status');
+          return utf8.decode(bytes);
+        }
+      } else {
+        bytes.addAll(chunk);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    throw TimeoutException('Native job did not finish');
+  } finally {
+    job.kill();
+    job.close();
+  }
+}
+
+Future<String> _isolateJob(String cwd, String value) => Isolate.run(() async {
+  DesktopJob.setEnvironment({'AICOVE_TEST_ENV': value});
+  return _jobOutput(
+    cwd,
+    r'''sleep 0.05; /bin/sh -c 'printf "%s" "$AICOVE_TEST_ENV"' ''',
+  );
+});
 
 Future<String> _isolateWrite(String root, String workspace) =>
     Isolate.run(() async {

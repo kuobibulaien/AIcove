@@ -63,7 +63,32 @@ class ClaudeAdapter implements ProviderAdapter {
         }
       } else {
         reachedChat = true;
-        final normalizedContent = _normalizeContent(content);
+        final dynamic normalizedContent;
+        if (role == 'tool') {
+          normalizedContent = [
+            {
+              'type': 'tool_result',
+              'tool_use_id': msg['tool_call_id'],
+              'content': content ?? '',
+              if (msg['is_error'] == true) 'is_error': true,
+            },
+          ];
+        } else {
+          final normalized = _normalizeContent(content);
+          final calls = msg['tool_calls'] as List? ?? const [];
+          normalizedContent = calls.isEmpty
+              ? normalized
+              : [
+                  ..._asContentBlocks(normalized),
+                  for (final call in calls)
+                    {
+                      'type': 'tool_use',
+                      'id': call['id'],
+                      'name': call['function']['name'],
+                      'input': _toolArguments(call['function']['arguments']),
+                    },
+                ];
+        }
         if (normalizedContent == null) {
           continue;
         }
@@ -127,12 +152,12 @@ class ClaudeAdapter implements ProviderAdapter {
         if (previousContent is List) {
           parts.addAll(previousContent);
         } else if (previousContent != null) {
-          parts.add(previousContent);
+          parts.addAll(_asContentBlocks(previousContent));
         }
         if (currentContent is List) {
           parts.addAll(currentContent);
         } else if (currentContent != null) {
-          parts.add(currentContent);
+          parts.addAll(_asContentBlocks(currentContent));
         }
         bool isResult(dynamic p) => p is Map && p['type'] == 'tool_result';
         merged.last['content'] = [
@@ -141,6 +166,18 @@ class ClaudeAdapter implements ProviderAdapter {
       }
     }
     return merged;
+  }
+
+  List<dynamic> _asContentBlocks(dynamic content) => content is List
+      ? content
+      : [
+          if (content is String && content.isNotEmpty)
+            {'type': 'text', 'text': content},
+        ];
+
+  Map<String, dynamic> _toolArguments(dynamic arguments) {
+    final decoded = arguments is String ? jsonDecode(arguments) : arguments;
+    return decoded is Map ? Map<String, dynamic>.from(decoded) : {};
   }
 
   void _applyRequestOptions(

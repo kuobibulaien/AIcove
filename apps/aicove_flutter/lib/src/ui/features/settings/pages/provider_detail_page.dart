@@ -36,6 +36,7 @@ import '../../../../core/api/providers/provider_extra_body.dart';
 import '../widgets/provider_extra_body_editor.dart';
 import '../widgets/tts_request_template_editor.dart';
 import '../widgets/provider_asr_settings_group.dart';
+import '../../../../features/voice_call/domain/asr_request_format.dart';
 import '../widgets/fish_audio_provider_notice.dart';
 import '../../../../features/plugins/tts/tts_request_format.dart';
 
@@ -336,8 +337,6 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
       context: context,
       title: 'API 格式',
       showCloseButton: true,
-      isDismissible: false,
-      enableDrag: false,
       builder: (context) => MoeAutoSaveForm(
         snapshot: () => selected,
         save: () async {
@@ -709,8 +708,10 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
       settings: settings,
     );
     final isTtsProvider = ProviderDetailRequestFormat.isTtsProvider(provider);
-    // 纯识别渠道的格式在「语音识别」分组里切，不显示对话／合成的 API 格式。
+    // 纯识别渠道的格式在「语音识别」分组里切，不显示对话／合成的 API 格式；
+    // 关掉识别后恢复显示，好把渠道改回对话用。
     final isAsrOnlyProvider =
+        AsrRequestFormat.ofConfig(provider.customConfig) != null &&
         provider.capabilities.isNotEmpty &&
         provider.capabilities.every((item) => item == ModelType.stt.value);
     final showChatApiPath =
@@ -810,6 +811,11 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
           ProviderAsrSettingsGroup(
             key: ValueKey('asr_${provider.id}'),
             provider: provider,
+            hasSpeechRecognitionModels:
+                settings
+                    ?.getProviderModelsByType(provider.id, type: ModelType.stt)
+                    .isNotEmpty ??
+                false,
             onSave: (values) =>
                 _actions.saveCustomConfigValues(provider, values),
           ),
@@ -998,7 +1004,13 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
         .map(
           (modelId) => _ProviderModelEntry(
             modelId: modelId,
-            displayName: displayNames[modelId] ?? '',
+            displayName:
+                resolveCustomModelDisplayName(
+                  displayNames,
+                  modelId,
+                  providerId: provider.id,
+                ) ??
+                '',
           ),
         )
         .toList(growable: false);
@@ -1031,7 +1043,14 @@ String _buildProviderDetailWarmSignature(
       ..write('|')
       ..write(modelId)
       ..write('=')
-      ..write(displayNames[modelId] ?? '');
+      ..write(
+        resolveCustomModelDisplayName(
+              displayNames,
+              modelId,
+              providerId: provider.id,
+            ) ??
+            '',
+      );
   }
   return buffer.toString();
 }

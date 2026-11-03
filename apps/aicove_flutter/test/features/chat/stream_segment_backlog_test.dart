@@ -86,28 +86,53 @@ void main() {
         addTearDown(fixture.dispose);
         await fixture.start();
         const sentence = '这是一段完整的离线分段测试正文。';
-        fixture.add(List.filled(12, sentence).join() + tail);
-        await Future<void>.delayed(const Duration(milliseconds: 250));
-        var previousCount = fixture.bubbles.length;
-        var maxJump = 0;
-        void observe() {
-          final count = fixture.bubbles.length;
-          final jump = count - previousCount;
-          if (jump > maxJump) maxJump = jump;
-          previousCount = count;
-        }
-
-        fixture.timeline.addListener(observe);
-        await fixture.finish().timeout(const Duration(seconds: 10));
-        fixture.timeline.removeListener(observe);
-        expect(fixture.bubbles.map((message) => message.displayText), [
+        final expected = [
           ...List.filled(12, sentence),
           if (tail.isNotEmpty) tail,
-        ]);
+        ];
+        final revealed = <List<String>>[];
+        String? pendingSourceId;
+        void observe() {
+          final bubbles = fixture.bubbles;
+          if (bubbles.isEmpty) return;
+          pendingSourceId ??= bubbles.first.sourceMessageId;
+          // ADR0115 replaces the pending source with the formal raw projection.
+          if (bubbles.any((m) => m.sourceMessageId != pendingSourceId)) return;
+          revealed.add(bubbles.map((m) => m.displayText).toList());
+        }
+
+        // Observe from the first reveal, including frames before completion.
+        fixture.timeline.addListener(observe);
+        fixture.add(List.filled(12, sentence).join() + tail);
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        await fixture.finish().timeout(const Duration(seconds: 10));
+        fixture.timeline.removeListener(observe);
+        var previousCount = 0;
+        for (final snapshot in revealed) {
+          expect(snapshot, expected.take(snapshot.length).toList());
+          expect(
+            snapshot.length - previousCount,
+            inInclusiveRange(0, 1),
+            reason: 'Revealed segments must not skip or retreat.',
+          );
+          previousCount = snapshot.length;
+        }
         expect(
-          maxJump,
-          lessThanOrEqualTo(1),
-          reason: 'Finishing must preserve the configured reveal interval.',
+          previousCount,
+          expected.length,
+          reason: 'Reveal every segment before replacing the pending source.',
+        );
+        final history = fixture.container.read(chatHistoryStoreProvider);
+        final raw = (await history.loadAllRawMessages(
+          fixture.conversation.id,
+        )).singleWhere((m) => m.role == 'assistant');
+        expect(raw.content, expected.join());
+        final projected = (await history.loadProjectedMessagesFromRawStore(
+          fixture.conversation.id,
+        )).where((m) => m.role == 'assistant');
+        expect(
+          fixture.bubbles.map((m) => m.displayText),
+          projected.map((m) => m.displayText),
         );
       },
     );

@@ -70,6 +70,41 @@ void main() {
     );
   });
 
+  test('hanging up before it connected leaves a cancelled call', () async {
+    final bubbles = <Message>[];
+    final archiver = VoiceCallArchiver(
+      newId: (prefix) => prefix,
+      appendBubble: (_, bubble) async => bubbles.add(bubble),
+    );
+    final block = await archiver.archive(
+      conversationId: 'nahida',
+      connectedAt: null,
+      turns: const [],
+      cancelled: true,
+    );
+    expect(block!.missedCall, MissedCall.cancelled);
+    expect(bubbles.single.role, 'user');
+    expect(bubbles.single.content, '[语音通话 已取消]');
+  });
+
+  test('missed calls keep their kind through JSON', () async {
+    for (final kind in MissedCall.values) {
+      final block = CallRecordBlock.missed(
+        messageId: 'm',
+        callId: 'c',
+        kind: kind,
+      );
+      final again = MessageBlock.fromJson(block.toJson()) as CallRecordBlock;
+      expect(again.missedCall, kind);
+      expect(again.content, missedCallLabel(kind));
+    }
+    // 未接来电和旧版本一样只写 missed，旧数据照样读成来电。
+    expect(
+      CallRecordBlock.missed(messageId: 'm', callId: 'c').toJson()['callRecord'],
+      {'callId': 'c', 'durationMs': 0, 'missed': true},
+    );
+  });
+
   test('older calls are still read from the local tables', () async {
     await database.customStatement(
       'INSERT INTO call_sessions '

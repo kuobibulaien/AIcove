@@ -381,14 +381,18 @@ void main() {
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
     _expectScrollMaterial(find.byType(MoeBottomSheet), liquid: true);
-    final before = tester.getTopLeft(find.byType(MoeBottomSheet));
+    final sheetSurface = find.descendant(
+      of: find.byType(MoeBottomSheet),
+      matching: find.byType(MoeFloatingSurface),
+    ).first;
+    final before = tester.getTopLeft(sheetSurface);
     final gesture = await tester.startGesture(before + const Offset(100, 12));
     await gesture.moveBy(const Offset(0, 20));
     await tester.pump();
     await gesture.moveBy(const Offset(0, 50));
     await tester.pump();
     expect(
-      tester.getTopLeft(find.byType(MoeBottomSheet)).dy,
+      tester.getTopLeft(sheetSurface).dy,
       greaterThan(before.dy),
     );
     _expectScrollMaterial(find.byType(MoeBottomSheet), liquid: true);

@@ -15,6 +15,8 @@ import 'package:aicove_flutter/src/features/auto_reply/data/background_message_r
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_frontend_message_projection_service.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
@@ -195,6 +197,36 @@ void main() {
   Future<void> sweep() => container
       .read(backgroundMessageReprocessorProvider)
       .reprocessRecentBackgroundMessages();
+  Future<List<model.Message>> projectCanonicalRaw() async {
+    final raw =
+        (await container.read(chatHistoryStoreProvider).loadAllRawMessages('c'))
+            .single;
+    expect(raw.id, _id);
+    expect(raw.rawPayload!.containsKey('projectedMessages'), false);
+    final projections = const ChatFrontendMessageProjectionService()
+        .projectMessage(raw);
+    expect(projections, isNotEmpty);
+    for (final message in projections) {
+      expect(message.sourceMessageId, _id);
+      expect(message.createdAt.millisecondsSinceEpoch, at);
+      for (final block in message.blocks ?? []) {
+        expect(block.createdAt.millisecondsSinceEpoch, at);
+      }
+    }
+    return projections;
+  }
+
+  test('unprocessed origin-device media older than 48 hours is still enriched', () async {
+    final old = DateTime.now().subtract(const Duration(days: 4)).millisecondsSinceEpoch;
+    await database.customStatement('UPDATE messages SET created_at=? WHERE id=?', [old, _id]);
+    container.read(chatSendServiceProvider);
+    await sweep();
+    expect(send.calls, 1);
+    final row = await database.select(database.messages).getSingle();
+    expect(row.createdAt, old);
+    expect(jsonDecode(row.rawPayload!)['bg_reprocessed'], true);
+  });
+
   test('only the origin device enriches the same replicated bg row', () async {
     final replicaDb = db.AppDatabase.forTesting(NativeDatabase.memory());
     await replicaDb
@@ -289,7 +321,11 @@ void main() {
       expect(jsonDecode(row.rawPayload!)['bg_reprocessed'], true);
       expect(row.deletedAt, isNull);
       expect(row.content, _body);
-      expect(jsonDecode(row.rawPayload!)['projectedMessages'], isNotEmpty);
+      final projections = await projectCanonicalRaw();
+      expect(
+        projections.map((message) => message.displayText).join(),
+        '正文抱抱你晚饭吃了吗',
+      );
       await sweep();
       expect(send.calls, 3);
     },
@@ -346,16 +382,15 @@ void main() {
       final row = await database.select(database.messages).getSingle();
       final snapshot = jsonDecode(row.rawPayload!);
       expect(snapshot['bg_reprocessed'], true);
-      final projections = snapshot['projectedMessages'] as List;
-      expect(
-        projections.any(
-          (m) => (m['blocks'] as List).any((b) => b['type'] == 'audio'),
-        ),
-        true,
-      );
-      expect(jsonEncode(projections), contains('月亮'));
-      expect(jsonEncode(projections), contains('前文'));
-      expect(jsonEncode(projections), contains('后文'));
+      final projections = await projectCanonicalRaw();
+      final audio = projections.expand((message) => message.audios).single;
+      expect(audio.url, 'https://example.invalid/audio.wav');
+      expect(audio.text, '抱抱你');
+      expect(projections.map((message) => message.displayText), [
+        '前文',
+        '[语音]',
+        '[图片：月亮]后文',
+      ]);
       await sweep();
       expect(send.calls, 3);
     },
@@ -376,20 +411,21 @@ void main() {
       await task;
       expect(container.read(chatStatusProvider), ChatStatus.idle);
       final raw = await database.select(database.messages).getSingle();
-      final payload = jsonDecode(raw.rawPayload!);
-      final projections = payload['projectedMessages'] as List;
+      expect(jsonDecode(raw.rawPayload!)['bg_reprocessed'], true);
+      final projections = await projectCanonicalRaw();
       expect(
-        projections.where(
-          (m) => (m['blocks'] as List).any((b) => b['type'] == 'audio'),
-        ),
+        projections.where((message) => message.audios.isNotEmpty),
         hasLength(1),
       );
-      expect(
-        projections.every(
-          (m) => m['sourceMessageId'] == _id && m['createdAt'] == at,
-        ),
-        true,
-      );
+      final audio = projections.expand((message) => message.audios).single;
+      expect(audio.url, 'https://example.invalid/audio.wav');
+      expect(audio.text, '抱抱你');
+      expect(audio.unread, true);
+      expect(projections.map((message) => message.displayText), [
+        '正文',
+        '[语音]',
+        '晚饭吃了吗',
+      ]);
       expect((await mappings.getByRawMessage(_id)).length, projections.length);
     },
   );
@@ -443,7 +479,11 @@ void main() {
       expect(rows.single.deletedAt, isNull);
       final payload = jsonDecode(rows.single.rawPayload!);
       expect(payload['bg_reprocessed'], true);
-      expect(payload['projectedMessages'], isNotEmpty);
+      final projections = await projectCanonicalRaw();
+      expect(
+        projections.map((message) => message.displayText).join(),
+        '正文抱抱你晚饭吃了吗',
+      );
       final maps = await mappings.getByRawMessage(_id);
       expect(maps, isNotEmpty);
       expect(

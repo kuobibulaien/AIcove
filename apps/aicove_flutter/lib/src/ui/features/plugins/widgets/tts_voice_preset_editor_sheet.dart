@@ -1,6 +1,5 @@
 library;
 
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -12,11 +11,13 @@ import '../../../../features/plugins/tts/providers/tts_voice_provider.dart';
 import '../../../../features/plugins/tts/tts_config.dart';
 import '../../../../features/plugins/tts/tts_provider_context.dart';
 import '../../../../features/plugins/tts/tts_voice_catalog_service.dart';
+import '../../../../features/plugins/tts/voice_preset_editor_helper.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../core/storage/app_data_directory.dart';
+
+part 'tts_voice_preset_editor_sections.dart';
 
 Future<void> showTtsVoicePresetEditorSheet({
   required BuildContext context,
@@ -31,8 +32,6 @@ Future<void> showTtsVoicePresetEditorSheet({
     context: context,
     title: preset == null ? '自定义音色' : '编辑音色',
     showCloseButton: true,
-    isDismissible: false,
-    enableDrag: false,
     builder: (sheetContext) => _TtsVoicePresetEditorSheetContent(
       parentContext: context,
       notifier: notifier,
@@ -148,7 +147,7 @@ class _TtsVoicePresetEditorSheetContentState
     ];
     _localAudioPath = preset?.localAudioPath;
     _savedLocalPath = _localAudioPath;
-    _localAudioFileName = _extractFileName(_localAudioPath);
+    _localAudioFileName = extractVoiceFileName(_localAudioPath);
     final initialEntry = _resolveInitialBindingEntry();
     _selectedBindingProviderId = initialEntry?.providerId;
     _selectedBindingModelId = initialEntry?.modelId;
@@ -192,18 +191,10 @@ class _TtsVoicePresetEditorSheetContentState
         return;
       }
 
-      final sourceFile = File(picked.path!);
-      final bytes = await sourceFile.readAsBytes();
-      final appDir = await appDataDirectory();
-      final voicesDir = Directory('${appDir.path}/voices');
-      if (!await voicesDir.exists()) {
-        await voicesDir.create(recursive: true);
-      }
-
-      final fileName =
-          '${DateTime.now().millisecondsSinceEpoch}_${picked.name}';
-      final savedFile = File('${voicesDir.path}/$fileName');
-      await savedFile.writeAsBytes(bytes);
+      final savedPath = await storeVoiceFile(
+        sourcePath: picked.path!,
+        name: picked.name,
+      );
 
       if (_localAudioPath != null &&
           _localAudioPath != widget.preset?.localAudioPath) {
@@ -211,7 +202,7 @@ class _TtsVoicePresetEditorSheetContentState
       }
 
       setState(() {
-        _localAudioPath = savedFile.path;
+        _localAudioPath = savedPath;
         _localAudioFileName = picked.name;
       });
     } catch (e) {
@@ -316,9 +307,8 @@ class _TtsVoicePresetEditorSheetContentState
     String? requestAudioUrl;
 
     if (_hasLocalFile && (capabilities?.canUploadFile ?? false)) {
-      final file = File(_localAudioPath!);
-      audioBytes = await file.readAsBytes();
-      fileName = _extractFileName(_localAudioPath);
+      audioBytes = await readVoiceFileBytes(_localAudioPath!);
+      fileName = extractVoiceFileName(_localAudioPath);
     } else if (_hasUrlInput && (capabilities?.canUploadUrl ?? false)) {
       requestAudioUrl = _audioUrlController.text.trim();
     } else if (_hasLocalFile) {
@@ -346,7 +336,7 @@ class _TtsVoicePresetEditorSheetContentState
         ),
       );
 
-      final binding = _extractBindingFromRemoteVoice(
+      final binding = bindingFromRemoteVoice(
         remoteVoice: result.voice,
         entry: entry,
         bindingContext: bindingContext,
@@ -405,79 +395,11 @@ class _TtsVoicePresetEditorSheetContentState
   }
 
   void _removeBinding(VoiceChannelBinding binding) {
-    setState(() {
-      _bindings = _bindings.where((item) {
-        return !(item.providerId == binding.providerId &&
-            item.adapterId == binding.adapterId &&
-            (item.modelId ?? '') == (binding.modelId ?? '') &&
-            item.remoteVoiceId == binding.remoteVoiceId);
-      }).toList();
-    });
+    setState(() => _bindings = removeVoiceBinding(_bindings, binding));
   }
 
   void _upsertBinding(VoiceChannelBinding binding) {
-    final next = [..._bindings];
-    final index = next.indexWhere((item) {
-      final sameAdapter =
-          item.normalizedAdapterId != null &&
-          binding.normalizedAdapterId != null &&
-          item.normalizedAdapterId == binding.normalizedAdapterId;
-      final sameProvider =
-          item.normalizedProviderId == binding.normalizedProviderId;
-      return (sameAdapter || sameProvider) &&
-          (item.modelId ?? '') == (binding.modelId ?? '');
-    });
-    if (index >= 0) {
-      next[index] = binding;
-    } else {
-      next.add(binding);
-    }
-    setState(() {
-      _bindings = next;
-    });
-  }
-
-  VoiceChannelBinding _extractBindingFromRemoteVoice({
-    required VoicePreset remoteVoice,
-    required TtsAvailableModelEntry entry,
-    required TtsProviderContext bindingContext,
-  }) {
-    final matchedBinding = remoteVoice.resolveBinding(
-      providerId: entry.providerId,
-      adapterId: bindingContext.voiceProviderId,
-      modelId: entry.modelId,
-    );
-    if (matchedBinding != null) {
-      return matchedBinding;
-    }
-
-    String? remoteVoiceId;
-    for (final binding in remoteVoice.effectiveBindings) {
-      final candidate = binding.remoteVoiceId.trim();
-      if (candidate.isNotEmpty) {
-        remoteVoiceId = candidate;
-        break;
-      }
-    }
-    remoteVoiceId ??= remoteVoice.aliyunVoiceId?.trim();
-    remoteVoiceId ??= remoteVoice.siliconFlowVoiceUri?.trim();
-
-    if (remoteVoiceId == null || remoteVoiceId.isEmpty) {
-      throw TtsProviderException('渠道返回成功，但未解析到音色 ID');
-    }
-
-    return VoiceChannelBinding(
-      providerId: entry.providerId,
-      providerName: entry.providerName,
-      adapterId:
-          bindingContext.voiceProviderId ??
-          entry.voiceProviderId ??
-          entry.providerId,
-      modelId: entry.modelId,
-      remoteVoiceId: remoteVoiceId,
-      status: remoteVoice.aliyunVoiceStatus,
-      sourceKind: VoiceBindingSourceKind.remoteCreated,
-    );
+    setState(() => _bindings = upsertVoiceBinding(_bindings, binding));
   }
 
   Future<void> _save() async {
@@ -739,7 +661,7 @@ class _TtsVoicePresetEditorSheetContentState
               if (selectedEntry != null) ...[
                 const SizedBox(height: 12),
                 _buildInfoCard(
-                  text: _buildBindingCapabilityText(
+                  text: describeBindingCapability(
                     entry: selectedEntry,
                     capabilities: selectedCapabilities,
                     bindingContext: selectedContext,
@@ -825,172 +747,11 @@ class _TtsVoicePresetEditorSheetContentState
     );
   }
 
-  Widget _buildBindingsSection(MoeColors colors) {
-    if (_bindings.isEmpty) {
-      return _buildInfoCard(
-        text: '当前还没有渠道音色绑定。你可以先保存基础素材，之后再回来补渠道 ID。',
-        color: colors.muted,
-      );
-    }
-
-    return Column(
-      children: _bindings.map((binding) {
-        final status = binding.status?.trim();
-        final sourceKind = _describeSourceKind(binding.sourceKind);
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: MoeG2Decoration(
-              radius: 8,
-              color: colors.primary.withValues(alpha: 0.08),
-              border: Border.all(color: colors.primary.withValues(alpha: 0.16)),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        binding.providerName,
-                        style: TextStyle(
-                          color: colors.text,
-                          fontSize: 14,
-                          fontWeight: MoeFontWeights.emphasis,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '模型: ${binding.modelId ?? '未指定'}',
-                        style: TextStyle(color: colors.muted, fontSize: 12),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '音色 ID: ${binding.remoteVoiceId}',
-                        style: TextStyle(color: colors.muted, fontSize: 12),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '来源: $sourceKind',
-                        style: TextStyle(color: colors.muted, fontSize: 12),
-                      ),
-                      if (status != null && status.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          '状态: $status',
-                          style: TextStyle(color: colors.muted, fontSize: 12),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (!_isBuiltIn)
-                  MoeIconButton(
-                    icon: Icons.delete_outline,
-                    size: 18,
-                    padding: const EdgeInsets.all(4),
-                    minTouchTarget: 28,
-                    color: colors.muted,
-                    enabled: !_submitting,
-                    onTap: _submitting ? null : () => _removeBinding(binding),
-                  ),
-              ],
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  String _buildBindingCapabilityText({
-    required TtsAvailableModelEntry entry,
-    required TtsCapabilities? capabilities,
-    required TtsProviderContext? bindingContext,
-  }) {
-    final parts = <String>['${entry.providerName} / ${entry.displayName}'];
-
-    if (bindingContext == null || !bindingContext.hasVoiceProvider) {
-      parts.add('当前渠道暂不支持在线创建，只能手填音色 ID');
-      return parts.join(' · ');
-    }
-
-    if (capabilities != null) {
-      final uploadModes = <String>[];
-      if (capabilities.canUploadUrl) uploadModes.add('公网直链');
-      if (capabilities.canUploadFile) uploadModes.add('本地文件');
-      if (uploadModes.isNotEmpty) {
-        parts.add('支持 ${uploadModes.join(' / ')}');
-      }
-      if (capabilities.needsPromptText) {
-        parts.add('生成时需要参考文本');
-      }
-      if (capabilities.needsApproval) {
-        parts.add('创建后需审核');
-      }
-    }
-
-    parts.add(bindingContext.hasApiKey ? '可在线创建' : '缺少 API Key');
-    return parts.join(' · ');
-  }
-
-  String _describeSourceKind(VoiceBindingSourceKind sourceKind) {
-    switch (sourceKind) {
-      case VoiceBindingSourceKind.remoteCreated:
-        return '在线创建';
-      case VoiceBindingSourceKind.manual:
-        return '手动填写';
-      case VoiceBindingSourceKind.imported:
-        return '远端导入';
-      case VoiceBindingSourceKind.legacy:
-        return '旧字段迁移';
-    }
-  }
-
-  Widget _buildSectionTitle(String text, MoeColors colors) {
-    return Text(
-      text,
-      style: TextStyle(
-        color: colors.text,
-        fontSize: 14,
-        fontWeight: MoeFontWeights.emphasis,
-      ),
-    );
-  }
-
-  Widget _buildInfoCard({required String text, required Color color}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: MoeG2Decoration(
-        radius: 8,
-        color: color.withValues(alpha: 0.08),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(text, style: TextStyle(color: color, fontSize: 12)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String? _extractFileName(String? path) {
-    if (path == null || path.isEmpty) return null;
-    return path.split('/').last.split('\\').last;
-  }
-
   void _deleteFileIfNeeded(String? path, {bool keepIfOriginal = false}) {
-    if (path == null || path.isEmpty || path == _savedLocalPath) return;
-    if (keepIfOriginal && path == widget.preset?.localAudioPath) {
-      return;
-    }
-    try {
-      File(path).deleteSync();
-    } catch (_) {}
+    deleteVoiceFileIfNeeded(
+      path,
+      savedPath: _savedLocalPath,
+      keepPath: keepIfOriginal ? widget.preset?.localAudioPath : null,
+    );
   }
 }

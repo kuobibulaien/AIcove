@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
+
 import '../../../core/api/providers/provider_adapter_factory.dart';
 import '../../../core/api/thinking/thinking_level_resolver.dart';
 import '../../../core/services/system_reminder_service.dart';
+import '../../chat/application/conversation_model.dart';
 import '../../chat/domain/conversation.dart';
 import '../../chat/domain/conversation_context_window.dart';
 import '../../chat/domain/message.dart';
@@ -10,6 +13,7 @@ import '../../chat/services/api_runner.dart';
 import '../../chat/services/chat_send_service.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
+import '../../plugins/time_awareness/time_awareness_role_options.dart';
 import '../../settings/app_settings.dart';
 import '../domain/voice_call_ports.dart';
 
@@ -36,6 +40,8 @@ const Set<String> kVoiceCallContextPluginIds = {'memory', 'time_awareness'};
 List<String> voiceCallPluginIds(List<String>? enabled) => [
   for (final id in kVoiceCallContextPluginIds)
     if (enabled == null || enabled.contains(id)) id,
+  if (enabled?.contains(TimeAwarenessRoleOptions.noCurrentTimeId) ?? false)
+    TimeAwarenessRoleOptions.noCurrentTimeId,
 ];
 
 /// 通话轮次在快照里的占位。装配时它是历史的最后一条，预设的后置指令和助手预填
@@ -48,11 +54,9 @@ const String kVoiceCallTurnsAnchor = '⟦AICOVE_VOICE_CALL_TURNS⟧';
 /// 接通前摘要的占位，排在最近几条原文前面；摘要整理好之前先去掉。
 const String kVoiceCallBriefAnchor = '⟦AICOVE_VOICE_CALL_BRIEF⟧';
 
-/// 通话用的模型：与打字聊天的首选模型一致。
-String voiceCallModelRef(AppSettings settings) =>
-    settings.defaultChatModels.isNotEmpty
-    ? settings.defaultChatModels.first
-    : settings.defaultModelName;
+/// 通话用的模型：与这个角色打字聊天的首选模型一致。
+String voiceCallModelRef(AppSettings settings, Conversation conversation) =>
+    conversationPrimaryModel(settings, conversation);
 
 /// 当前话题的全部原文（打字聊天的上下文窗口）。
 Future<List<Message>> loadVoiceCallWindow(
@@ -93,7 +97,7 @@ Future<ApiConfig> prepareVoiceCallBaseConfig(
       anchor('voice_call_turns', kVoiceCallTurnsAnchor),
     ],
     userText: null,
-    overrideModel: voiceCallModelRef(settings),
+    overrideModel: voiceCallModelRef(settings, callConversation),
     // 历史里有占位，不能写回预设变量或自动摘要。
     persistSideEffects: false,
     deferReminders: true,
@@ -154,6 +158,7 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
   @override
   Stream<String> streamReply(List<CallTurn> turns) {
     late final StreamController<String> controller;
+    final cancellation = KernelCancellation();
     var cancelled = false;
     final emitted = StringBuffer();
     controller = StreamController<String>(
@@ -161,6 +166,7 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
         final turnId = 'call_turn_${DateTime.now().microsecondsSinceEpoch}';
         final trace = await _startTrace(turnId, turns.length);
         try {
+          if (cancelled || cancellation.isCancelled) return;
           final result = await runner.executeApiCall(
             config: base.copyWith(
               messages: buildVoiceCallMessages(
@@ -174,15 +180,18 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
             sessionId: sessionId,
             turnId: turnId,
             traceContext: trace,
+            cancellation: cancellation,
             userText: null,
             responseProcessors: const [],
             availableTools: const [],
             enableStreaming: true,
             onStreamTextDelta: (delta) {
+              if (cancelled || cancellation.isCancelled) return;
               emitted.write(delta);
               if (!cancelled && !controller.isClosed) controller.add(delta);
             },
           );
+          if (cancelled || cancellation.isCancelled) return;
           // 流式失败回退成整段响应时没有增量：把还没转发的部分补上。
           final full = result.rawReplyText.trim().isNotEmpty
               ? result.rawReplyText
@@ -198,6 +207,11 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
           }
           _recordTrace(trace, TraceStage.turnCompleted);
         } catch (error, stack) {
+          if (error is KernelCancelledException ||
+              cancelled ||
+              cancellation.isCancelled) {
+            return;
+          }
           _recordTrace(
             trace,
             TraceStage.turnFailed,
@@ -210,8 +224,11 @@ class ApiRunnerCallReplyGenerator implements CallReplyGeneratorPort {
           if (!controller.isClosed) await controller.close();
         }
       },
-      // 模型请求不支持中途取消，取消后只是不再转发后续文字。
-      onCancel: () => cancelled = true,
+      // 不等待 runner：它的 finally 会关闭 controller，等待会形成死锁。
+      onCancel: () {
+        cancelled = true;
+        cancellation.cancel();
+      },
     );
     return controller.stream;
   }

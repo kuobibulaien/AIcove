@@ -23,6 +23,29 @@ void main() {
     });
   });
 
+  test('stored time switches are ignored and request traces keep current time', () {
+    final config = TimeAwarenessConfig.fromJson({
+      'includeCurrentTime': false,
+      'includeMessageTimestamp': false,
+    });
+    expect(config.includeCurrentTime, isTrue);
+    expect(config.toJson(), isNot(contains('includeMessageTimestamp')));
+    expect(config.copyWith(includeCurrentTime: false).toJson()['includeCurrentTime'], isFalse);
+    final schema = TimeAwarenessPlugin(config).metadata.configSchema;
+    expect(schema, isNot(contains('includeCurrentTime')));
+    expect(schema, isNot(contains('includeMessageTimestamp')));
+  });
+
+  test('legacy custom template timestamp placeholder renders to empty text', () {
+    final guide = TimeAwarenessPlugin(TimeAwarenessConfig(
+      systemGuidePromptTemplate: '时间说明\n{message_timestamp_explanation}\n{previous_user_message_explanation}',
+    )).buildSystemReminderFieldGuide();
+    expect(guide, contains('时间说明'));
+    expect(guide, contains('上一条真实用户消息'));
+    expect(guide, isNot(contains('{message_timestamp_explanation}')));
+    expect(guide, isNot(contains('[YYYY-MM-DD HH:mm]')));
+  });
+
   group('TimeAwarenessPlugin 系统提醒数据', () {
     test('启用后生成简洁中文时间提示', () {
       final plugin = TimeAwarenessPlugin(TimeAwarenessConfig(enabled: true));
@@ -83,14 +106,14 @@ void main() {
       expect(payload, isNull);
     });
 
-    test('字段含义说明会描述当前时间模板和历史时间戳', () {
+    test('字段含义说明只描述提醒，不再承诺历史消息前缀', () {
       final plugin = TimeAwarenessPlugin(TimeAwarenessConfig(enabled: true));
 
       final guide = plugin.buildSystemReminderFieldGuide();
 
       expect(guide, contains('{datetime}'));
       expect(guide, contains('设备本地时间'));
-      expect(guide, contains('[YYYY-MM-DD HH:mm]'));
+      expect(guide, isNot(contains('[YYYY-MM-DD HH:mm]')));
     });
 
     test('当前时间模板会真实影响 reminder 文案', () {

@@ -170,9 +170,17 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     List<ChatMessageListItem> items,
     ChatActions actions, {
     required bool reverseForViewport,
+    bool includeToolActivity = false,
   }) {
     return SliverChildBuilderDelegate(
       (context, index) {
+        if (includeToolActivity && index == items.length) {
+          return ChatToolActivityLine(
+            key: const ValueKey('tool-activity-footer'),
+            conversationId: widget.conversationId,
+            documentStyle: _documentStyle,
+          );
+        }
         final item = reverseForViewport
             ? items[items.length - 1 - index]
             : items[index];
@@ -181,14 +189,17 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           _buildListItemWidget(context, item, actions),
         );
       },
-      childCount: items.length,
+      childCount: items.length + (includeToolActivity ? 1 : 0),
       addAutomaticKeepAlives: false,
       addRepaintBoundaries: true,
-      findChildIndexCallback: (key) => _findChildIndexForKey(
-        key,
-        items,
-        reverseForViewport: reverseForViewport,
-      ),
+      findChildIndexCallback: (key) =>
+          includeToolActivity && key == const ValueKey('tool-activity-footer')
+              ? items.length
+              : _findChildIndexForKey(
+                  key,
+                  items,
+                  reverseForViewport: reverseForViewport,
+                ),
     );
   }
 
@@ -412,6 +423,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
                   block,
                   position,
                 ),
+            onSelectImageVersion: (imgBlock, versionIndex) =>
+                _selectImageVersion(context, message, imgBlock, versionIndex),
           ),
         ),
       );
@@ -474,6 +487,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           block,
           position,
         ),
+        onSelectImageVersion: (imgBlock, versionIndex) =>
+            _selectImageVersion(context, message, imgBlock, versionIndex),
       );
       if (isMe) return bubble;
       return FrontendMessageProbe(
@@ -599,6 +614,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         margin: const EdgeInsets.symmetric(vertical: 8),
         child: MoeFloatingSurface(
           radius: 12,
+          blurEnabled: false,
           shadows: const [],
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Text(
@@ -707,10 +723,15 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         MediaRegenerationTarget.canRegenerate(message, audioBlock);
     final hasAudioText =
         audioBlock != null && audioText != null && audioText.isNotEmpty;
-    final globalExpand =
-        ref.read(appSettingsProvider).valueOrNull?.expandAudioText ?? true;
+    final defaultExpand =
+        (ChatViewScope.maybeOf(context) ??
+                ChatViewPrefs.resolve(
+                  null,
+                  ref.read(appSettingsProvider).valueOrNull,
+                ))
+            .expandAudioText;
     final localExpand = ref.read(audioMessageTextExpandedProvider(message.id));
-    final isAudioExpanded = localExpand ?? globalExpand;
+    final isAudioExpanded = localExpand ?? defaultExpand;
 
     final effectiveMessageText = (hasAudioText && audioText.isNotEmpty)
         ? audioText
@@ -723,7 +744,10 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       isUserMessage: isMe,
       allowSelect:
           !liveCall && widget.selection != null && message.status != 'sending',
-      editable: !liveCall,
+      editable:
+          !liveCall &&
+          (message.blocks == null ||
+              !message.blocks!.any((block) => block is EmojiBlock)),
       messageText: effectiveMessageText,
       selectedText: selectedText,
       showEnhanceRegenerate: enableEnhancedRegenerate && !canRegenerateAudio,
@@ -802,6 +826,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             }
             break;
           case MessageAction.save:
+          case MessageAction.editAndRegenerateMedia:
             break;
         }
       },
@@ -828,8 +853,9 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   Future<void> _regenerateMedia(
     BuildContext context,
     Message message,
-    MessageBlock block,
-  ) async {
+    MessageBlock block, {
+    String? customPrompt,
+  }) async {
     if (!MediaRegenerationTarget.canRegenerate(message, block)) return;
     final mediaLabel = MediaRegenerationTarget.kindOf(block)!.label;
     final actions = ref.read(chatActionsProvider);
@@ -839,6 +865,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         conversationId: widget.conversationId,
         messageId: message.id,
         blockId: block.id,
+        customPrompt: customPrompt,
       );
       if (context.mounted) MoeToast.show(context, '$mediaLabel已重新生成');
     } catch (error) {
@@ -850,6 +877,32 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
               : '$mediaLabel重新生成失败，原$mediaLabel已保留',
         );
       }
+    }
+  }
+
+  Future<void> _selectImageVersion(
+    BuildContext context,
+    Message message,
+    ImageBlock block,
+    int versionIndex,
+  ) async {
+    try {
+      await ref.read(chatActionsProvider).selectImageVersion(
+        conversationId: widget.conversationId,
+        messageId: message.id,
+        blockId: block.id,
+        versionIndex: versionIndex,
+      );
+    } on StateError catch (error) {
+      if (context.mounted) MoeToast.error(context, error.message);
+    } catch (error, stack) {
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'chat',
+        context: ErrorDescription('while selecting an image version'),
+      ));
+      if (context.mounted) MoeToast.error(context, '切换版本失败，请重试');
     }
   }
 
@@ -881,6 +934,24 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
           case MessageAction.regenerateMedia:
             await _regenerateMedia(context, message, block);
             break;
+          case MessageAction.editAndRegenerateMedia:
+            if (block is! ImageBlock) break;
+            final initialPrompt =
+                block.generationSnapshot?.basePrompt ?? block.prompt ?? '';
+            final edited = await showEditImagePromptDialog(
+              context,
+              initialPrompt: initialPrompt,
+            );
+            if (edited == null || edited.trim().isEmpty || !context.mounted) {
+              break;
+            }
+            await _regenerateMedia(
+              context,
+              message,
+              block,
+              customPrompt: edited.trim(),
+            );
+            break;
           case MessageAction.save:
             await saveChatMessageListMediaBlock(context, block);
             break;
@@ -889,6 +960,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
                 ? '[图片]'
                 : block is AudioBlock
                 ? '[语音]'
+                : block is EmojiBlock
+                ? '[表情]'
                 : '[媒体]';
             ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
               id: message.id,

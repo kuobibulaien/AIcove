@@ -45,6 +45,7 @@ class MemoryRequestScope extends PluginRequestScope {
       userMessage: ctx.userMessage,
       conversationId: ctx.conversationId,
       resumeBackgroundWork: !ctx.readOnly,
+      rawHistory: ctx.rawHistory,
     );
     _archive = memory?.archive;
     return memory?.core;

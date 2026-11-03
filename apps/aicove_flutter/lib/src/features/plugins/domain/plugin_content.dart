@@ -1,4 +1,5 @@
-import '../../../core/models/image_generation_snapshot.dart';
+import '../../../core/models/message_block.dart'
+    show ImageGenerationSnapshot, ImageVersionEntry;
 import 'package:flutter/widgets.dart';
 
 /// 插件返回的内容基类
@@ -20,12 +21,22 @@ class PluginImageContent extends PluginContent {
 
   /// 可选的图片说明
   final String? caption;
+  final int? width;
+  final int? height;
+  final int? slotId;
 
   final ImageGenerationSnapshot? generationSnapshot;
+  final List<ImageVersionEntry> versions;
+  final int activeVersionIndex;
   const PluginImageContent(
     this.localPath, {
     this.caption,
+    this.width,
+    this.height,
+    this.slotId,
     this.generationSnapshot,
+    this.versions = const [],
+    this.activeVersionIndex = 0,
   });
 }
 

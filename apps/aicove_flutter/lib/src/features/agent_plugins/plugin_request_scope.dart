@@ -31,7 +31,12 @@ class PluginRequestInputs {
     this.voicePrompts,
     this.imagePrompts,
     this.rolePluginIds,
+    this.conversationId,
+    this.packageExecutable = true,
   });
+
+  /// Whether package scopes may expose script execution tools.
+  final bool packageExecutable;
 
   final Ref ref;
   final AppSettings settings;
@@ -41,6 +46,9 @@ class PluginRequestInputs {
 
   /// Raw-derived history for this request (read only).
   final List<Message> history;
+
+  /// The current request owner, including requests with no chat history.
+  final String? conversationId;
   final DateTime? previousUserMessageTime;
   final bool useFastImageRoute;
   final bool useStableImageRoute;
@@ -94,6 +102,11 @@ abstract class PluginRequestScope {
   /// False when the plugin is off for this request; its context is then
   /// filtered out (ADR0017).
   bool get active;
+
+  /// Releases resources used to assemble contributions, not the returned
+  /// tools or deferred callbacks. Those own their execution resources and
+  /// remain usable after assembly; shared plugin instances are borrowed.
+  Future<void> dispose() async {}
 
   Future<String?> prompt(PluginRequestContext ctx) async => null;
 
