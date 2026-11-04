@@ -38,15 +38,23 @@ void main() {
         ),
         [r'C:\Program Files\node\node.exe', r'C:\users\me\a.js', 'a"b'],
       );
-      for (final input in [
-        'npx "oops',
-        'a | b',
-        'a > b',
-        r'node $HOME/a',
-        'a && b',
-      ]) {
+      for (final input in ['npx "oops']) {
         expect(() => parseMcpCommandLine(input), throwsFormatException);
       }
+      expect(parseMcpCommandLine(r'node $HOME/a'), ['node', r'$HOME/a']);
+      expect(
+        expandMcpCommandVariables(
+          [r'$HOME/a', r'${TOKEN}'],
+          {'HOME': '/tmp', 'TOKEN': 'ok'},
+        ),
+        ['/tmp/a', 'ok'],
+      );
+      expect(
+        parseMcpCommandLine('a | b'),
+        Platform.isWindows
+            ? ['cmd.exe', '/d', '/s', '/c', 'a | b']
+            : ['/bin/sh', '-c', 'a | b'],
+      );
       for (final args in [
         <String>['', r'C:\Program Files\node\', 'a"b', "a'b"],
         ['x', '你好'],
@@ -68,6 +76,38 @@ void main() {
       });
       expect(() => parseMcpEnvironment('bad line'), throwsFormatException);
     },
+  );
+
+  test(
+    'shell commands and variables use the merged environment',
+    () async {
+      final env = mcpProcessEnvironment(overrides: {'MCP_TEST_VALUE': 'hello'});
+      final direct = resolveMcpStdioLaunch('/bin/echo', [
+        r'${MCP_TEST_VALUE}',
+      ], env);
+      final directResult = await Process.run(
+        direct.command,
+        direct.args,
+        environment: env,
+      );
+      expect(directResult.stdout, 'hello\n');
+      final tokens = parseMcpCommandLine(
+        r'printf %s "$MCP_TEST_VALUE" | tr a-z A-Z',
+      );
+      final shell = resolveMcpStdioLaunch(
+        tokens.first,
+        tokens.skip(1).toList(),
+        env,
+      );
+      final result = await Process.run(
+        shell.command,
+        shell.args,
+        environment: env,
+      );
+      expect(result.exitCode, 0);
+      expect(result.stdout, 'HELLO');
+    },
+    skip: Platform.isWindows,
   );
 
   test(

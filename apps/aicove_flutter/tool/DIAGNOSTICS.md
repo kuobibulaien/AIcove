@@ -302,8 +302,8 @@ AICOVE_SEMANTICS_AUDIT=/tmp/semantics_audit.txt ./tool/flutterw test test/ui tes
 主界面前台运行时默认开启，Release 同样有效；通话小窗和后台任务不运行，Mac 窗口失去焦点时也不统计，离开前台后才回传的约 1 秒内帧数据会被放弃。分位数封顶 200ms，更慢的看 `uiMaxMs`/`rasterMaxMs`/`totalMaxMs`。用 `--event frameSummary`、`--event slowFrame`、`--event uiStall` 筛选：
 
 - `frameSummary`：每 60 秒及离开前台时一条。`frames`、`overBudgetFrames`（超当前刷新率预算）、`slowFrames`（≥100ms），界面 `uiP50Ms/uiP95Ms/uiMaxMs` 与绘制 `rasterP50Ms/rasterP95Ms/rasterMaxMs` 分开，`totalP95Ms/totalMaxMs` 含排队；`stalls/stallTotalMs/stallMaxMs` 汇总响应延迟，`suppressedSamples` 是被限流丢掉的样本数；`rssMb/peakRssMb/imageCacheMb` 是当时的内存采样，`peakRssMb` 为本次运行峰值。
-- `slowFrame`：单帧 ≥100ms，`uiMs/rasterMs/vsyncMs/totalMs` 指出卡在哪一段。引擎批量回传帧数据，记录时刻晚于发生时刻，真实时间用 `frameAgeMs` 反推；对照其他事件时不要只看 `sequence`。
-- `uiStall`：定时器比预期晚 ≥150ms，`stallMs` 是下限。覆盖没有在画帧时的阻塞，但只说明当时轮不到定时器，系统调度也可能造成，不能直接归因为应用代码。
+- `slowFrame`：单帧 ≥100ms，`uiMs/rasterMs/vsyncMs/totalMs` 指出卡在哪一段，`activePhases`/`syncSpans` 附带该帧时间窗内重叠的阶段与主线程 ≥8ms 同步操作。引擎批量回传帧数据，记录时刻晚于发生时刻，真实时间用 `frameAgeMs` 反推；对照其他事件时不要只看 `sequence`。
+- `uiStall`：定时器比预期晚 ≥150ms，`stallMs` 是下限，`activePhases`/`syncSpans` 附带阻塞时间窗内重叠的阶段与主线程 ≥8ms 同步操作。覆盖没有在画帧时的阻塞，但只说明当时轮不到定时器，系统调度也可能造成，不能直接归因为应用代码。
 
 每 60 秒 `slowFrame` 与 `uiStall` 合计最多 10 条样本。`pageName` 是最上层页面的类型名；`unknown` 表示这类页面未接入命名，`mixed` 表示这段时间内切过页面。内存与卡顿同时出现只是线索，不是因果证据。
 

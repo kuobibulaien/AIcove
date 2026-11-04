@@ -63,7 +63,7 @@ void main() {
   });
 
   testWidgets('existing options stay collapsed until tapped', (tester) async {
-    options.value = const DialogueOptions(messageId: 'a1', items: ['好', '不']);
+    options.value = const DialogueOptions(messageId: 'a1', items: [DialogueOption('好'), DialogueOption('不')]);
     await pump(tester);
     expect(_badge, findsOneWidget);
     expect(_firstOption, findsNothing);
@@ -79,7 +79,7 @@ void main() {
     expect(_badge, findsNothing);
     await finishReply(
       tester,
-      const DialogueOptions(messageId: 'a1', items: ['靠近', '离开']),
+      const DialogueOptions(messageId: 'a1', items: [DialogueOption('靠近'), DialogueOption('离开')]),
     );
     expect(_firstOption, findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
@@ -102,7 +102,7 @@ void main() {
       }
     });
     await pump(tester);
-    const next = DialogueOptions(messageId: 'a1', items: ['靠近', '离开']);
+    const next = DialogueOptions(messageId: 'a1', items: [DialogueOption('靠近'), DialogueOption('离开')]);
     await finishReply(tester, next);
     await tester.tap(find.byKey(const ValueKey('dialogue_option_1')));
     await tester.pumpAndSettle();
@@ -113,7 +113,7 @@ void main() {
   testWidgets('a reply without new options does not reopen old ones', (
     tester,
   ) async {
-    const old = DialogueOptions(messageId: 'a1', items: ['好', '不']);
+    const old = DialogueOptions(messageId: 'a1', items: [DialogueOption('好'), DialogueOption('不')]);
     options.value = old;
     await pump(tester);
     await finishReply(tester, old);

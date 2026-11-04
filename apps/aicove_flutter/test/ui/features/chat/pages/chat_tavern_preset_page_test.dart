@@ -24,7 +24,7 @@ const _source = '''
 ''';
 
 Future<void> _settle(WidgetTester tester) async {
-  for (var i = 0; i < 12; i++) {
+  for (var i = 0; i < 40; i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 10)),
     );

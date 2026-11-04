@@ -94,6 +94,18 @@ void main() {
 
   test('unknown stored names are ignored', () {
     expect(RoleAgentMode.fromValue('tool'), RoleAgentMode.tool);
+    expect(RoleAgentMode.fromValue('agent'), RoleAgentMode.agent);
+    expect(
+      roleWith(mode: RoleAgentMode.agent).effectiveAgentMode,
+      RoleAgentMode.agent,
+    );
+    expect(
+      roleWith(
+        id: kAicoveAssistantId,
+        mode: RoleAgentMode.agent,
+      ).effectiveAgentMode,
+      RoleAgentMode.tool,
+    );
     expect(RoleAgentMode.fromValue('bogus'), isNull);
     expect(RoleAgentMode.fromValue(null), isNull);
   });

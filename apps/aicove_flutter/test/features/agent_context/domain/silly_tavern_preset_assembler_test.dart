@@ -4,12 +4,218 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_assembler.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_ejs_evaluator.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_parser.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_world_book.dart';
 
 void main() {
   const parser = SillyTavernPresetParser();
   const assembler = SillyTavernPresetAssembler();
+
+  test('世界书深度条目先渲染 EJS 再注入', () {
+    final preset = parser.parseSource(
+      jsonEncode({
+        'prompts': [
+          {'identifier': 'chatHistory', 'marker': true},
+        ],
+        'prompt_order': [
+          {
+            'order': [
+              {'identifier': 'chatHistory', 'enabled': true},
+            ],
+          },
+        ],
+      }),
+      sourceFileName: 'test.json',
+    );
+    final result = assembler.assemble(
+      preset: preset,
+      historyMessages: [
+        {'role': 'user', 'content': 'hello'},
+      ],
+      context: const SillyTavernAssemblyContext(
+        characterName: 'C',
+        userName: 'U',
+        characterDescription: '',
+        scenario: '',
+        worldInjections: [
+          TavernWorldInjection(
+            id: 'w',
+            content: '<%= 2 + 3 %> {{char}}',
+            position: 4,
+            depth: 1,
+            role: 'system',
+            order: 0,
+          ),
+        ],
+      ),
+      maxContextTokens: 16000,
+      truncateHistory: false,
+    );
+    expect(result.messages.first['content'], '5 C');
+  });
+
+  test('深度注入展开结构化工具消息', () {
+    final preset = parser.parseSource(
+      jsonEncode({
+        'extensions': {
+          'SPreset': {
+            'MessageInjections': {
+              'call': {
+                'enabled': true,
+                'toolCalls': [
+                  {
+                    'id': 'c',
+                    'name': 'search',
+                    'arguments': {'q': 'x'},
+                  },
+                ],
+                'toolResults': [
+                  {'toolCallId': 'c', 'content': 'found'},
+                ],
+              },
+            },
+          },
+        },
+        'prompts': [
+          {
+            'identifier': 'call',
+            'role': 'system',
+            'content': '',
+            'injection_position': 1,
+            'injection_depth': 1,
+          },
+          {'identifier': 'chatHistory', 'marker': true},
+        ],
+        'prompt_order': [
+          {
+            'order': [
+              {'identifier': 'call', 'enabled': true},
+              {'identifier': 'chatHistory', 'enabled': true},
+            ],
+          },
+        ],
+      }),
+      sourceFileName: 'test.json',
+    );
+    final result = assembler.assemble(
+      preset: preset,
+      historyMessages: [
+        {'role': 'user', 'content': 'hello'},
+      ],
+      context: const SillyTavernAssemblyContext(
+        characterName: 'C',
+        userName: 'U',
+        characterDescription: '',
+        scenario: '',
+      ),
+      maxContextTokens: 16000,
+      truncateHistory: false,
+    );
+    expect(result.messages[0]['role'], 'assistant');
+    expect(result.messages[0]['tool_calls'][0]['function']['name'], 'search');
+    expect(result.messages[1]['tool_call_id'], 'c');
+    expect(result.messages[2]['content'], 'hello');
+  });
+
+  test('EJS、条件与结构化注入共同组装', () {
+    final preset = parser.parseSource(
+      jsonEncode({
+        'extensions': {
+          'SPreset': {
+            'MessageInjections': {
+              'call': {
+                'enabled': true,
+                'reasoning': '思考',
+                'signature': 'sig',
+                'toolCalls': [
+                  {
+                    'id': 'call1',
+                    'name': 'search',
+                    'arguments': {'q': 'hi'},
+                  },
+                ],
+                'toolResults': [
+                  {'toolCallId': 'call1', 'content': 'ok'},
+                ],
+              },
+            },
+          },
+        },
+        'prompts': [
+          {
+            'identifier': 'main',
+            'content':
+                "<% const data = getMessageVar('stat_data', { defaults: {} }); setvar('v', 3); %><%= _.get(data, 'customersDB.大学生.friendship', 0) %>/<%= Math.floor((getvar('stat_data.customersDB.大学生.friendship') + getvar('missing')) / 100) %> {{char}}",
+          },
+          {
+            'identifier': 'hidden',
+            'content': 'hidden',
+            'spreset_condition_enabled': true,
+            'spreset_condition_script': 'return false;',
+          },
+          {'identifier': 'call', 'content': ''},
+        ],
+        'prompt_order': [
+          {
+            'order': [
+              for (final id in ['main', 'hidden', 'call'])
+                {'identifier': id, 'enabled': true},
+            ],
+          },
+        ],
+      }),
+      sourceFileName: 'test.json',
+    );
+    final result = assembler.assemble(
+      preset: preset,
+      historyMessages: [],
+      context: const SillyTavernAssemblyContext(
+        characterName: 'C',
+        userName: 'U',
+        characterDescription: '',
+        scenario: '',
+        messageVariables: {
+          'stat_data': {
+            'customersDB': {
+              '大学生': {'friendship': '150'},
+            },
+          },
+        },
+      ),
+      maxContextTokens: 16000,
+      truncateHistory: false,
+    );
+    expect(result.messages[0]['content'], '150/1 C');
+    expect(result.variables['v'], '3');
+    expect(
+      result.messages[1]['tool_calls'][0]['function']['arguments'],
+      '{"q":"hi"}',
+    );
+    expect(result.messages[1]['reasoning_content'], '思考');
+    expect(result.messages[2]['tool_call_id'], 'call1');
+    expect(result.warnings.any((w) => w.contains('条件未满足')), isTrue);
+  });
+
+  test('EJS 空白剥离、变量写入及出错回退', () {
+    final variables = <String, String>{};
+    final warnings = <String>[];
+    String render(String text) => const SillyTavernEjsEvaluator().render(
+      text,
+      variables: variables,
+      messageVariables: null,
+      char: 'C',
+      user: 'U',
+      description: '',
+      scenario: '',
+      lastUserMessage: '',
+      warnings: warnings,
+    );
+    expect(render('A  <_% setvar("n", 2); _%>  <%- addvar("n", 3) %>'), 'A5');
+    expect(variables['n'], '5');
+    expect(render('安全<% throw Error("bad") %>文本'), '安全文本');
+    expect(warnings.single, contains('bad'));
+  });
 
   group('drawing prompt macros', () {
     const drawing =
@@ -183,10 +389,6 @@ void main() {
           'identifier': 'disabled',
           'content': '{{drawing_prompt_pack}}',
           'enabled': false,
-        },
-        {
-          'identifier': 'ejs',
-          'content': '<% unsupported %>{{drawing_prompt_pack}}',
         },
         {
           'identifier': 'mvu',

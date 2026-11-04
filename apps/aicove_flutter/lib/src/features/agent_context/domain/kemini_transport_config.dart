@@ -1,4 +1,4 @@
-/// Reads companion metadata as data; never evaluates imported JavaScript.
+/// Reads companion metadata and selects preset scripts for the runtime.
 class KeminiTransportConfig {
   static const ateScriptId = '9e566fbb-e8c8-4bd1-8816-f902ff175b83';
   static const scriptId = '2c7d747c-22d4-4e8b-95f8-5620b552fe6e';
@@ -9,34 +9,88 @@ class KeminiTransportConfig {
       'diagnostics': [diagnostic],
     };
     try {
-      final helper = extensions['tavern_helper'];
+      final rawHelper = extensions['tavern_helper'];
+      final helper = rawHelper is List
+          ? Map.fromEntries(
+              rawHelper
+                  .whereType<List>()
+                  .where((pair) => pair.length == 2)
+                  .map((pair) => MapEntry(pair[0], pair[1])),
+            )
+          : rawHelper;
       if (helper == null) return skipped('transport_unrecognized');
       if (helper is! Map) return skipped('transport_config_read_failed');
       final scripts = helper['scripts'];
       if (scripts == null) return skipped('transport_unrecognized');
       if (scripts is! List) return skipped('transport_config_read_failed');
+      bool isAte(Map item) {
+        final content = item['content'];
+        if (content is String &&
+            content.contains('__antiTruncationFetchPatch__')) {
+          return false;
+        }
+        return item['id'] == ateScriptId ||
+            item['id'] == '09647ac7-5a12-4706-95f0-0781a6ed869d' ||
+            (content is String &&
+                const [
+                  '__ATE_FETCH_HOOK__',
+                  'AntiTruncationEngine',
+                  'prepareRequestBody',
+                  '__antiTruncationSelfTest',
+                ].any(content.contains));
+      }
+
+      bool executable(Map item) {
+        final content = item['content'];
+        return item['enabled'] == true &&
+            item['id'] != 'f0801c1a-3b0f-4e1c-82b6-f0f8990fbde6' &&
+            content is String &&
+            !content.contains('regex_bind/inject.js') &&
+            content.trim().isNotEmpty &&
+            content.trim() != 'synthetic' &&
+            !content.contains('Imported JavaScript must not execute');
+      }
+
       final matches = scripts.whereType<Map>().where((item) {
         final content = item['content'];
-        return item['id'] == scriptId ||
-            item['id'] == ateScriptId ||
+        return isAte(item) ||
+            item['id'] == scriptId ||
             (content is String &&
-                (content.contains('__keminiAntiTruncation__') ||
-                    content.contains('keminiCompanion') ||
-                    (content.contains('__ATE_FETCH_HOOK__') &&
-                        content.contains('buffer_content'))));
+                (content.contains('__antiTruncationFetchPatch__') ||
+                    content.contains('__keminiAntiTruncation__') ||
+                    content.contains('keminiCompanion')));
       }).toList();
-      if (matches.isEmpty) return skipped('transport_unrecognized');
+      if (matches.isEmpty) {
+        final enabledScripts = scripts
+            .whereType<Map>()
+            .where(executable)
+            .toList();
+        if (enabledScripts.isEmpty) return skipped('transport_unrecognized');
+        return {
+          'protocol': 'custom_script_v1',
+          'enabled': true,
+          'scripts': enabledScripts,
+          'diagnostics': <String>[],
+        };
+      }
       final enabled = matches.where((item) => item['enabled'] == true);
-      if (enabled.isEmpty) return skipped('transport_disabled');
+      if (enabled.isEmpty) {
+        final remaining = scripts.whereType<Map>().where(executable).toList();
+        if (remaining.isEmpty) return skipped('transport_disabled');
+        return {
+          'protocol': 'custom_script_v1',
+          'enabled': true,
+          'scripts': remaining,
+          'diagnostics': <String>[],
+        };
+      }
       final script = enabled.first;
       final source = script['content'];
       final data = script['data'];
       if (source is! String || (data != null && data is! Map)) {
         return skipped('transport_config_read_failed');
       }
-      if (script['id'] == ateScriptId ||
-          (source.contains('__ATE_FETCH_HOOK__') &&
-              source.contains('buffer_content'))) {
+      if (isAte(script)) {
         final settings = _readAteSettings(source);
         // Literal template bodies are configuration data, not executable code.
         final rules = RegExp(r'perspectiveRules\s*=\s*`([^`]*)`')
@@ -50,9 +104,23 @@ class KeminiTransportConfig {
             .toList();
         return {
           'protocol': 'ate_buffer_v1',
+          'allScripts': scripts.whereType<Map>().where(executable).toList(),
           'enabled': settings.mode != 'NONE',
           'mode': settings.mode,
           'prefix': settings.prefix,
+          'contentKey': settings.contentKey,
+          if (!source.contains('Imported JavaScript must not execute') &&
+              _hasAteEngine(source))
+            'scriptSource': source,
+          'scripts': scripts
+              .whereType<Map>()
+              .where(
+                (item) =>
+                    !identical(item, script) &&
+                    !isAte(item) &&
+                    executable(item),
+              )
+              .toList(),
           'perspectiveRules': rules.length == 3 ? rules : <String>[],
           'diagnostics': <String>[
             if (settings.mode == 'NONE') 'transport_disabled',
@@ -67,7 +135,12 @@ class KeminiTransportConfig {
       if (setting != null && setting is! bool) {
         return skipped('transport_config_read_failed');
       }
-      if (setting == false) return skipped('transport_disabled');
+      if (setting == false ||
+          (data is Map &&
+              (data['universalAntiTruncation'] == false ||
+                  data['universalAntiTruncation'] == 'false'))) {
+        return skipped('transport_disabled');
+      }
       // Read a literal only; missing/new script syntax uses the append fallback.
       final anchor =
           RegExp(
@@ -77,7 +150,13 @@ class KeminiTransportConfig {
       return {
         'protocol': 'content_tool_v1',
         'enabled': true,
+        if (source.contains('universalAntiTruncation'))
+          'storageKey': 'universalAntiTruncation',
         'anchor': anchor,
+        'scripts': scripts
+            .whereType<Map>()
+            .where((item) => !identical(item, script) && executable(item))
+            .toList(),
         'diagnostics': [if (anchor.isEmpty) 'transport_anchor_missing'],
       };
     } catch (_) {
@@ -85,7 +164,20 @@ class KeminiTransportConfig {
     }
   }
 
-  static ({String mode, String prefix}) _readAteSettings(String source) {
+  static bool _hasAteEngine(String source) {
+    final tokens = _tokens(source);
+    for (var i = 0; i + 1 < tokens.length; i++) {
+      if ((tokens[i] == 'function' && tokens[i + 1] == 'prepareRequestBody') ||
+          (tokens[i] == 'class' && tokens[i + 1] == 'AntiTruncationEngine')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static ({String mode, String prefix, String contentKey}) _readAteSettings(
+    String source,
+  ) {
     final tokens = _tokens(source);
     Map<String, String>? fields;
     for (var i = 0; i + 2 < tokens.length; i++) {
@@ -139,14 +231,35 @@ class KeminiTransportConfig {
       if (!closed) throw const FormatException('Unclosed ATE CONFIG');
       break;
     }
+    String? declaredLiteral(String name) {
+      for (var i = 0; i + 2 < tokens.length; i++) {
+        if (tokens[i] == name &&
+            tokens[i + 1] == '=' &&
+            i > 0 &&
+            const {'const', 'let', 'var'}.contains(tokens[i - 1]) &&
+            (i + 3 == tokens.length ||
+                const {';', ','}.contains(tokens[i + 3]))) {
+          return _literalString(tokens[i + 2]);
+        }
+      }
+      return null;
+    }
+
     final mode = fields?['mode'] ?? 'AUTO_TOOL';
     final prefix =
-        fields?['prefix'] ?? fields?['toolPrefix'] ?? 'view_file_stream_';
+        fields?['prefix'] ??
+        fields?['toolPrefix'] ??
+        declaredLiteral('DEFAULT_TOOL_PREFIX') ??
+        'view_file_stream_';
     if (!const {'AUTO_TOOL', 'FORCED_SPECIFIC_TOOL', 'NONE'}.contains(mode) ||
         !RegExp(r'^[a-zA-Z0-9_-]{1,40}$').hasMatch(prefix)) {
       throw const FormatException('Invalid ATE mode or tool prefix');
     }
-    return (mode: mode, prefix: prefix);
+    return (
+      mode: mode,
+      prefix: prefix,
+      contentKey: declaredLiteral('PRIMARY_CONTENT_KEY') ?? 'buffer_content',
+    );
   }
 
   // Lex only the data declaration. Comments and string/template bodies cannot

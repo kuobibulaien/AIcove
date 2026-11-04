@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../features/workspace/domain/workspace_models.dart';
 import '../../../../features/workspace/webapp/webapp_launcher.dart';
 import '../../../../features/workspace/webapp/webapp_server.dart';
 import '../../../../features/workspace/workspace_providers.dart';
@@ -49,10 +48,6 @@ class _WorkspaceFilePageState extends ConsumerState<WorkspaceFilePage> {
 
   Future<_Content> _load() async {
     final store = await ref.read(workspaceStoreProvider.future);
-    final size = (await store.stat(widget.workspaceId, widget.path))?.size;
-    if (size != null && size > WorkspaceLimits.maxFileBytes) {
-      return (bytes: null, text: null, size: size);
-    }
     final (bytes, _) = await store.read(widget.workspaceId, widget.path);
     String? text;
     if (!WorkspaceFilePage.isImage(widget.path)) {

@@ -28,12 +28,21 @@ class CloudSyncScheduler {
   Future<void>? _work;
   bool _closed = false;
 
-  void start() {
+  void start({bool immediate = true}) {
     if (_closed || _timer != null) return;
     _timer = Timer.periodic(const Duration(minutes: 30), (_) {
       unawaited(synchronizeIfDue());
     });
-    unawaited(synchronizeIfDue());
+    if (immediate) unawaited(synchronizeIfDue());
+  }
+
+  void foreground(bool active) {
+    if (active) {
+      start();
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
   }
 
   bool get due {
@@ -77,5 +86,6 @@ class CloudSyncScheduler {
   void close() {
     _closed = true;
     _timer?.cancel();
+    _timer = null;
   }
 }

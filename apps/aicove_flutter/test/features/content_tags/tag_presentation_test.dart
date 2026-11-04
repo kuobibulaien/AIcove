@@ -17,6 +17,10 @@ String _describe(List<TagDisplayPart> parts) => parts
     .join(' ');
 
 void main() {
+  test('summary chooses first meaningful text segment without controls', () {
+    expect(extractSummaryTitle('<button>☀</button><span>≈</span><span>浪潮创作规划</span><span>正在读取</span>'), '浪潮创作规划');
+    expect(extractSummaryTitle('<script>bad</script><style>bad</style><span>{{x}} \$1</span><b>标题</b>'), '标题');
+  });
   test('folds, unwraps body, drops options', () {
     expect(
       _describe(projectTagPresentation(

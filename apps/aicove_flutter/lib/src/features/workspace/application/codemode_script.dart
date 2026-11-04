@@ -10,7 +10,6 @@ import 'package:aicove_quickjs/aicove_quickjs.dart';
 import '../../../core/network/public_network.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../data/workspace_store.dart';
-import '../domain/workspace_models.dart';
 import 'codemode_declarations.dart';
 import 'codemode_search.dart';
 import 'codemode_source.dart';
@@ -35,7 +34,10 @@ class CodemodeScript {
   final WorkspaceStore store;
   final String? Function() workspace;
   final String runId, owner, callId;
-  final Future<WorkspaceFileTarget> Function(String path, {bool rejectFallback})?
+  final Future<WorkspaceFileTarget> Function(
+    String path, {
+    bool rejectFallback,
+  })?
   resolveFile;
   final ScriptToolAccess? tools;
   final bool Function()? isCancelled;
@@ -218,8 +220,8 @@ return JSON.stringify(__state);
                 };
               case 'readBytes':
                 final offset = args[1] as int, length = args[2] as int;
-                if (offset < 0 || length < 0 || length > 4 * 1024 * 1024)
-                  throw ArgumentError('Read chunk exceeds 4 MiB');
+                if (offset < 0 || length < 0)
+                  throw ArgumentError('Invalid read offset or length');
                 final target = resolveFile == null
                     ? WorkspaceFileTarget(
                         ManagedWorkspaceFiles(store, cwd(), runId),
@@ -247,17 +249,12 @@ return JSON.stringify(__state);
                 final bytes = base64Decode(args[1] as String),
                     offset = args[2] as int;
                 access.checkWritable(path);
-                if (bytes.length > 4 * 1024 * 1024)
-                  throw ArgumentError('Write chunk exceeds 4 MiB');
                 final stat = await access.stat(path);
                 final (previous, revision) = stat == null
                     ? (Uint8List(0), null)
                     : await access.read(path);
-                if (offset < 0 ||
-                    offset > previous.length ||
-                    (!access.isLocal &&
-                        offset + bytes.length > WorkspaceLimits.maxFileBytes))
-                  throw ArgumentError('Invalid write offset or size');
+                if (offset < 0 || offset > previous.length)
+                  throw ArgumentError('Invalid write offset');
                 final end = offset + bytes.length;
                 final data = Uint8List(
                   args[3] == true

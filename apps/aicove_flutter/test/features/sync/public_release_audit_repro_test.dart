@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/core/media/media_asset.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_media.dart';
 import 'package:aicove_flutter/src/features/sync/data/lan_transport.dart';
+import 'package:aicove_flutter/src/features/sync/domain/lan_contract.dart';
 import 'lan_repository_test.dart'
     show LanTestDevice, lanTestDevice, seedLan, copyLan;
 
@@ -103,16 +104,8 @@ void main() {
         approved: true,
       )..online = true;
       final media = LanMedia(b.local, b.media, (peer, body) async {
-        final id = body['id'] as String;
-        requests.add(id);
-        return {
-          'asset': MediaAsset(
-            id: id,
-            mimeType: 'image/png',
-            byteLength: 0,
-            createdAtMs: 1,
-          ).toJson(),
-        };
+        requests.add(body['id'] as String);
+        throw const LanSyncFailure('source original unavailable');
       });
       for (var i = 0; i < 9; i++) {
         final id = i.toRadixString(16).padLeft(64, '0');
@@ -125,8 +118,9 @@ void main() {
               MediaAsset(
                 id: id,
                 mimeType: 'image/png',
-                byteLength: 0,
+                byteLength: 1,
                 createdAtMs: 1,
+                originalSha256: id,
               ).toJson(),
             ),
           ],

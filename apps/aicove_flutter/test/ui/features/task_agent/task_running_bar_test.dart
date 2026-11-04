@@ -174,6 +174,45 @@ void main() {
     expect(find.byKey(const ValueKey('task-running-task_1')), findsNothing);
   });
 
+  testWidgets('pauses polling in the background and catches up on resume', (tester) async {
+    var reads = 0;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          agentTaskByIdProvider.overrideWith((ref, taskId) async {
+            reads++;
+            return _task(AgentTaskStatus.running);
+          }),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: TaskRunningBar(taskId: 'task_1', textColor: Colors.black),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(reads, 1);
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(reads, 2);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 6));
+    expect(reads, 2);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(reads, 3);
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(reads, 4);
+  });
+
   testWidgets('renders the running state for the preview', (tester) async {
     tester.view.physicalSize = const Size(360, 120);
     tester.view.devicePixelRatio = 1;

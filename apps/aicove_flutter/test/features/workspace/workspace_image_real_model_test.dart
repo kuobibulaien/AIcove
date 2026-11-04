@@ -55,7 +55,7 @@ Future<(List<String>, String)> _ask({required bool vision}) async {
         messages: [
           {
             'role': 'system',
-            'content': '你是用户的助手。工作区 ID 是 ${ws.id}，需要看文件时用 workspace_read。',
+            'content': '你是用户的助手。工作区 ID 是 ${ws.id}，需要看文件时用 read。',
           },
           {'role': 'user', 'content': question},
         ],
@@ -86,7 +86,7 @@ void main() {
       final (calls, reply) = await _ask(vision: true);
       // ignore: avoid_print
       print('vision calls: $calls\nvision reply: $reply');
-      expect(calls, contains('workspace_read'));
+      expect(calls, contains('read'));
       expect(reply, contains('橙'));
     },
     skip: skip,
@@ -99,7 +99,7 @@ void main() {
       final (calls, reply) = await _ask(vision: false);
       // ignore: avoid_print
       print('text-only calls: $calls\ntext-only reply: $reply');
-      expect(calls, contains('workspace_read'));
+      expect(calls, contains('read'));
       expect(reply, isNot(contains('橙')));
       expect(reply, contains('模型'));
       expect(reply, contains('换'));

@@ -932,6 +932,32 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   _installPlatformChannelMocks();
 
+  for (final tag in ['tts', 'image']) {
+    test('未闭合 $tag 流中挂起，结束后作为正文保留', () async {
+      final reply = '前文<$tag>未完成内容';
+      final harness = await _buildHarness(
+        convId: 'unfinished_${tag}_${DateTime.now().microsecondsSinceEpoch}',
+        settings: _buildTestSettings(ttsEnabled: true),
+        script: [
+          _DeltaStep(reply),
+          const _DelayStep(Duration(milliseconds: 600)),
+        ],
+        replyText: reply,
+      );
+      addTearDown(harness.dispose);
+
+      harness.startSend();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final live = await harness.loadTimeline();
+      expect(_assistantRealText(live).map((m) => m.displayText).join(),
+          isNot(contains('未完成内容')));
+      await harness.awaitActiveSend();
+      final finalText = _assistantRealText(await harness.loadTimeline())
+          .map((m) => m.displayText).join();
+      expect(finalText, reply);
+    });
+  }
+
   test('本轮失败留下受控异常类型和代码位置，不导出异常正文', () async {
     final logs = <LogEntry>[];
     final harness = await _buildHarness(

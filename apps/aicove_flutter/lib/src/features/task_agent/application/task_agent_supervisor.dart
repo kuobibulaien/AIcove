@@ -26,22 +26,56 @@ class TaskAgentSupervisor {
   Timer? _timer;
   Future<void>? _scan;
 
+  bool _foreground = true;
+  bool _recovered = false;
+  Future<void>? _recovery;
+
   Future<void> start() async {
+    _foreground = true;
+    if (!_recovered) {
+      await (_recovery ??= _recover().whenComplete(() => _recovery = null));
+    }
+    if (!_foreground || !_recovered) return;
     if (_timer != null) return;
     _timer = Timer.periodic(interval, (_) => unawaited(scan()));
+    await scan();
+  }
+
+  Future<void> _recover() async {
     try {
       await (await service).recover();
+      _recovered = true;
     } catch (error) {
       AppLogger.warning('TaskAgent', '杂活任务启动恢复失败', metadata: {
         'error': error.toString(),
       });
     }
-    await scan();
   }
 
   void stop() {
+    _foreground = false;
     _timer?.cancel();
     _timer = null;
+  }
+
+  void foreground(bool active) {
+    if (active) {
+      unawaited(start());
+    } else {
+      stop();
+    }
+  }
+
+  /// Retry receipts held while this conversation was generating.
+  Future<void> flushConversation(String conversationId) async {
+    try {
+      await (await service).flushConversation(conversationId);
+    } catch (error) {
+      AppLogger.warning('TaskAgent', '杂活回执补发失败', metadata: {
+        'convId': conversationId,
+        'error': error.toString(),
+      });
+    }
   }
 
   /// One pass; overlapping calls share it.

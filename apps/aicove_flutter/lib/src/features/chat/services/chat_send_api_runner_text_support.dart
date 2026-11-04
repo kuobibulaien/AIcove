@@ -73,7 +73,7 @@ List<String> _replyRoundTexts({
     ),
   ];
   if (texts.every((text) => text.isEmpty)) texts.last = mergedText;
-  return texts;
+  return stitchReplyRoundTags(texts);
 }
 
 /// Each tool round keeps its own semantic source and display stages.
@@ -81,8 +81,8 @@ Future<List<AssistantReplyDisplayProjection>> _projectReplyRounds(
   List<String> texts,
   ApiConfig config,
 ) async => [
-  for (final text in texts)
-    await AssistantReplyDisplaySource(text).project(
+  for (final (index, text) in texts.indexed)
+    await AssistantReplyDisplaySource(text, contextTexts: texts.take(index)).project(
       scripts: config.presetRegexScripts,
       authorized: config.presetRegexAuthorized,
     ),
@@ -327,7 +327,8 @@ class _VisibleAssistantStreamFilter {
   ];
 
   String _pending = '';
-  String? _activeCloseTag;
+  _HiddenStreamTagSpec? _activeTag;
+  int _activeOpenTagLength = 0;
 
   /// 已透传、尚未配对关闭的「带属性 image 开标签」数量。
   /// 带属性开标签（如 <image source="history">）不进 hidden 状态而是原样透传，
@@ -343,24 +344,41 @@ class _VisibleAssistantStreamFilter {
     output.write(StickerTag.removeFrom(firstPartyContentTagScanner, text));
   }
 
-  bool get _insideHiddenTag => _activeCloseTag != null;
+  bool get _insideHiddenTag => _activeTag != null;
 
   String consume(String delta) {
-    if (delta.isEmpty) return '';
     _pending = '$_pending$delta';
+    return _drain();
+  }
+
+  String flush() => _drain(flush: true);
+
+  String _drain({bool flush = false}) {
     final output = StringBuffer();
 
     while (_pending.isNotEmpty) {
       if (_insideHiddenTag) {
-        final closeTag = _activeCloseTag!;
-        final lowerPending = _pending.toLowerCase();
-        final closeIndex = lowerPending.indexOf(closeTag);
-        if (closeIndex < 0) {
-          _pending = _retainTail(_pending, closeTag.length - 1);
-          break;
+        final spec = _activeTag!;
+        final remaining = _pending.substring(_activeOpenTagLength).toLowerCase();
+        final closeIndex = remaining.indexOf(spec.closeTag);
+        final nextOpenIndex = _indexOfOpenTag(remaining, spec.openTagPrefix);
+        if (nextOpenIndex >= 0 && (closeIndex < 0 || nextOpenIndex < closeIndex)) {
+          final nextStart = _activeOpenTagLength + nextOpenIndex;
+          if (_findTagEnd(_pending, nextStart) < 0 && !flush) break;
+          _emitVisible(output, _pending.substring(0, _activeOpenTagLength));
+          _pending = _pending.substring(_activeOpenTagLength);
+          _activeTag = null;
+          continue;
         }
-        _pending = _pending.substring(closeIndex + closeTag.length);
-        _activeCloseTag = null;
+        if (closeIndex >= 0) {
+          _pending = _pending.substring(_activeOpenTagLength + closeIndex + spec.closeTag.length);
+          _activeTag = null;
+          continue;
+        }
+        if (!flush) break;
+        _emitVisible(output, _pending.substring(0, _activeOpenTagLength));
+        _pending = _pending.substring(_activeOpenTagLength);
+        _activeTag = null;
         continue;
       }
 
@@ -374,13 +392,20 @@ class _VisibleAssistantStreamFilter {
         final tagEndIndex = _findTagEnd(_pending, openIndex);
         if (tagEndIndex < 0) {
           _pending = _pending.substring(openIndex);
+          if (flush) {
+            _emitVisible(output, _pending);
+            _pending = '';
+          }
           break;
         }
         final opening = _pending.substring(openIndex, tagEndIndex + 1);
         final element = firstPartyContentTagScanner.scan(opening).first;
-        _pending = _pending.substring(tagEndIndex + 1);
-        if (!StickerTag.isElement(element)) {
-          _activeCloseTag = hiddenTagMatch.closeTag;
+        if (StickerTag.isElement(element)) {
+          _pending = _pending.substring(tagEndIndex + 1);
+        } else {
+          _pending = _pending.substring(openIndex);
+          _activeTag = _hiddenTagSpecs.firstWhere((spec) => spec.closeTag == hiddenTagMatch.closeTag);
+          _activeOpenTagLength = tagEndIndex + 1 - openIndex;
         }
         continue;
       }
@@ -403,7 +428,7 @@ class _VisibleAssistantStreamFilter {
 
       final partialPrefixLength =
           _findTrailingOpenTagPrefixLength(lowerPending);
-      if (partialPrefixLength > 0) {
+      if (partialPrefixLength > 0 && !flush) {
         final visibleEnd = _pending.length - partialPrefixLength;
         if (visibleEnd > 0) {
           _emitVisible(output, _pending.substring(0, visibleEnd));
@@ -499,11 +524,6 @@ class _VisibleAssistantStreamFilter {
       }
     }
     return maxLength;
-  }
-
-  String _retainTail(String value, int maxLength) {
-    if (value.length <= maxLength) return value;
-    return value.substring(value.length - maxLength);
   }
 
   int _findTrailingPrefixLength(String value, String prefix) {

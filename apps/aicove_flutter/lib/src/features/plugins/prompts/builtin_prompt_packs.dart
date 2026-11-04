@@ -296,20 +296,25 @@ const kBuiltinPromptPacks = <PromptPack>[
 
 ## 直接输出分镜（每轮 1–8 页）
 
-在每个 `<image>...</image>` 内直接写该页完整的 `@position manual / @page / @panel / @character` 分镜脚本（不要包代码块）；也可传入带编号、完整脚本与尺寸的参数 JSON：`<image>{ "id":1,"prompt":"完整分镜脚本","width":{default_width},"height":{default_height} }</image>`。
+在每个 `<image>...</image>` 内直接写该页完整的 `@page / @panel / @character` 分镜脚本（不要包代码块）；也可传入带编号、完整脚本与尺寸的参数 JSON：`<image>{ "id":1,"prompt":"完整分镜脚本","width":{default_width},"height":{default_height} }</image>`。
 
-先用 `<comic_plan>...</comic_plan>` 规划角色母表与本话分镜节奏，会在聊天界面自动折叠为「分镜规划」。需要复用角色设定时，在 `- 角色母表：` 下填写角色（C1、C2）的固定身份词与初始服装词；每个 `@character C1` 段可直接写当前镜头可见的完整英文外貌与服装标签，也可用 `@C1, @C1_outfit` 引用已填写的母表，客户端自动展开并保留 `Text:` 后的台词原样。
+先用 `<comic_plan>...</comic_plan>` 规划角色母表与本话分镜节奏，会在聊天界面自动折叠为「分镜规划」。需要复用角色设定时，在 `- 角色母表：` 下填写角色（C1、C2）的固定身份词与初始服装词；每个 `@character C1` 段可直接写该角色的完整英文外貌与服装标签，也可用 `@C1, @C1_outfit` 引用已填写的母表，客户端自动展开并保留 `Text:` 后的台词原样。
 
 跨页双联：在脚本中写 `double-page spread` 或 `見開きページ`，客户端会自动使用横版画布。
 
-## 分镜导演与构图文法（按当前剧情氛围自适应）
+## 分镜导演与构图文法（NovelAI V5 整页漫画规范）
 
-- **单页节奏与格数**：每页控制在 2–5 格（高潮爆发页 2–3 格，日常推进页 3–4 格），每格只抓一个核心动作瞬间，严禁同页连续两格画相似角度与表情。
+- **单页节奏与格数**：每页控制在 **2–4 格**（高潮爆发页 2–3 格，日常推进页 3–4 格），每格只抓一个核心动作瞬间，严禁同页连续两格画相似角度与表情。
+- **版式与每格内容写在 `base`（`@page` + `@panel`）**：
+  - `@page` 声明色彩风格、本页去重总人数词（如 `1girl, 1boy`）、总格数、阅读顺序、文字标签（`text, chinese text, speech bubbles`）及主画格排布英文句。
+  - 每个 `@panel` 段用自然语言配合简明机位/姿势 tag 写出该格方位、场景、人物动作神态与气泡位置，**不要用冗长句子描述复杂肢体关系（容易画糊）**。
+- **角色栏只放固定外观，同一角色跨格只开一个 `@character` 栏**：
+  - 在所有 `@panel` 之后，为本页每位登场角色各写**唯一一个** `@character C1` 段，**只放该角色的固定身份词、外貌特征与本页衣着（不含单格动作、气泡或台词）**，多人同页时在 `@negative` 写入其他角色的互斥外观特征防串色。
+- **气泡与嵌字铁律**：台词写在**所属 `@panel` 段末尾**（`Text: "中文台词"`，严禁写进 `@character` 或 `@negative`）；每格以 1 句对白为主（最多不超过 2 个气泡），单句精炼在 18 字以内，并说明气泡在格内的位置与尾巴朝向。
 - **风格化画格调度**：
   - 热血/动作：主冲击格占半页以上，相邻画格采用锐利斜切边框（`diagonal panel border`），配速度线与动势冲击（`speed lines, motion lines, dynamic angle`）。
   - 恋爱/少女：多用纵向修长格与破框演出（`outside border`），背景点缀花瓣、星屑或柔光（`falling petals, sparkling background, ornate border`）。
   - 悬疑/情绪：采用横向宽银幕视线格（`wide horizontal panel`）、眼神阴影特写（`shaded face, extreme close-up on eyes`）与静默留白格制造张力。
-- **气泡与嵌字铁律**：每格气泡不超过 2 个，单句台词精炼在 18 字以内；用 `Text: "中文台词"`（心声加 `thought bubble`，咆哮加 `jagged speech bubble`）写在对应发声角色段末尾。
 
 ## 单页分镜协议语法（NovelAI V4.5 / V5）
 
@@ -317,37 +322,37 @@ const kBuiltinPromptPacks = <PromptPack>[
 <comic_plan>
 - 角色母表:
   - C1:
-    - 固定身份词: 1girl, silver hair, long hair, purple eyes, petite
+    - 固定身份词: girl, silver hair, long hair, purple eyes, petite
     - 初始服装词: white dress, bare shoulders, ribbon
   - C2:
-    - 固定身份词: 1boy, black hair, tall, sharp eyes
+    - 固定身份词: boy, black hair, tall, sharp eyes
     - 初始服装词: black coat, collared shirt
-- 第1页规划: 3格，天台夕阳重逢，上格远景建立环境，左下格少女转身递信，右下格少年惊讶特写
+- 第1页规划: 3格，天台夕阳重逢，上格远景少女转身说话，右下格递信特写，左下格少年惊讶特写
 </comic_plan>
 <image>
-@position manual
 @page
-black and white manga, monochrome, greyscale, screentone, comic, 3 panels, reading order right to left, The top panel stretches across the width of the page.
+black and white manga, monochrome, greyscale, screentone, comic, 3 panels, reading order right to left, 1girl, 1boy, text, chinese text, speech bubbles, The top panel stretches across the width of the page, with two panels side by side below it.
 
 @panel 1
-upper wide panel, wide shot, school rooftop at sunset, dramatic clouds
-@character C1
-1girl, silver hair, long hair, purple eyes, petite, white dress, bare shoulders, ribbon, standing by fence, wind blowing hair, looking back, gentle smile
-@center 0.38,0.24
+upper wide panel, wide shot, school rooftop at sunset, dramatic clouds, silver-haired girl standing by fence, wind blowing hair, looking back, gentle smile, speech bubble, 縦書き, The speech bubble is in the upper right of the panel, and its tail points to her mouth.
 Text: "今天放学后，我一直在这里等你。"
 
 @panel 2
-lower right panel, medium close-up, extending hand holding a letter
-@character C1
-1girl, silver hair, long hair, purple eyes, petite, white dress, bare shoulders, ribbon, blushing, shy eyes, holding envelope toward viewer
-@center 0.72,0.65
+lower right panel, medium close-up, silver-haired girl blushing, shy eyes, extending hand holding a letter toward viewer
 
 @panel 3
-lower left panel, close-up, surprised expression, emphasis lines
-@character C2
-1boy, black hair, tall, sharp eyes, black coat, collared shirt, wide eyes, parted lips, blushing
-@center 0.28,0.70
+lower left panel, close-up, black-haired boy with wide eyes, parted lips, blushing, surprised expression, emphasis lines, speech bubble, 縦書き, The speech bubble is in the upper left of the panel, and its tail points to his mouth.
 Text: "诶？这是……给我的吗？"
+
+@character C1
+girl, silver hair, long hair, purple eyes, petite, white dress, bare shoulders, ribbon
+@negative
+black hair, short hair, tall, black coat
+
+@character C2
+boy, black hair, tall, sharp eyes, black coat, collared shirt
+@negative
+silver hair, long hair, purple eyes, white dress, ribbon
 </image>
 ```
 
@@ -364,32 +369,37 @@ Text: "诶？这是……给我的吗？"
         id: 'novelai_manga.prompt',
         scope: PromptScopes.imageToolPrompt,
         title: '提示词参数（NovelAI 分镜漫画）',
-        text: '''按 NovelAI 分镜协议编写单页漫画脚本（每页 2–5 格，兼顾主次画格大小对比与镜头调度）：
-- 每个 `@character C1` 段可直接写当前镜头可见的完整英文外貌与服装标签；如需复用角色设定，可在 `<comic_plan>` 的 `- 角色母表：` 下填写角色（C1、C2）的固定身份词与初始服装词，再用 `@C1, @C1_outfit` 引用母表。客户端自动展开引用并保留 `Text:` 后的台词原样；
-- 顶部写 `@position manual` 与 `@page`（声明漫画风格、总格数与主画格版式英文句，如 `black and white manga, monochrome, greyscale, screentone, comic, 3 panels, reading order right to left, The main panel fills most of the page.`；彩漫写 `colored manga, vibrant colors, comic`；跨页双联写 `double-page spread` 或 `見開きページ`，客户端会自动使用横版画布）
-- 按画格依次写 `@panel 1`、`@panel 2`…：
-  - 先写画格位置、尺寸、景别与背景动效（如 `upper wide panel, wide shot`、`lower left inset cut-in panel, extreme close-up, speed lines`）
-  - 再用 `@character C1` 写该格出场人物的完整外貌、当前服装与动作神态（可直接写完整英文词或引用角色母表），用 `@center x,y`（0.0–1.0）指定人物在画布中的中心坐标，并在该角色段末尾用 `Text: "中文台词"` 写气泡台词（单格不超过 2 个气泡，单句不超过 18 字）
+        text: '''按 NovelAI V5 整页漫画分镜协议编写单页脚本（每页控制在 2–4 格，兼顾主次画格大小对比与镜头调度）：
+- 顶部写 `@page`（声明漫画色彩风格、本页去重总人数词如 `1girl, 1boy`、总格数、阅读顺序、`text, chinese text, speech bubbles` 与主画格版式英文句，如 `black and white manga, monochrome, greyscale, screentone, comic, 3 panels, reading order right to left, 1girl, 1boy, text, chinese text, speech bubbles, The main panel fills most of the page.`；彩漫写 `colored manga, full color, vibrant colors, comic`；跨页双联写 `double-page spread` 或 `見開きページ`，客户端会自动使用横版画布）
+- 按画格依次写 `@panel 1`、`@panel 2`…（版式与每格发生的事全部写在 `@panel`）：
+  - 写出画格位置大小、景别机位与姿势 tag（不用冗长复杂长句描述肢体关系）、该格人物的动作神态，以及气泡位置与尾巴朝向英文句
+  - 在该 `@panel` 段最末尾用 `Text: "中文台词"` 写所属该格的台词（每格以 1 句对白为主，单句不超过 18 字；严禁把 `Text:` 写进 `@character` 或 `@negative`）
+- 在所有 `@panel` 之后写本页登场人物的 `@character C1`、`@character C2`…（**同一角色跨格在本页只开一个角色栏**）：
+  - 只写该角色的固定身份词、稳定外貌与本页服装（可直接写完整英文词，或用 `@C1, @C1_outfit` 引用 `<comic_plan>` 角色母表；主体词用不带数字的 `girl` / `boy`），不写单格动作或台词
+  - 多人同页时在 `@character` 下用 `@negative` 排除本页其他角色的互斥外观特征防串色
 - 负面提示词（negative_prompt）：只写画质与解剖纠错（如 `lowres, bad anatomy, bad hands, worst quality`），严禁写 `text, comic, screentone, halftone, multiple views, speech bubble`
 
 示例：
-@position manual
 @page
-black and white manga, monochrome, greyscale, screentone, comic, 2 panels, reading order right to left, The upper panel takes up more than half of the page.
+black and white manga, monochrome, greyscale, screentone, comic, 2 panels, reading order right to left, 1girl, 1boy, text, chinese text, speech bubbles, The upper panel takes up more than half of the page.
 
 @panel 1
-upper panel, wide shot, classroom, sunlight through window
-@character C1
-1girl, silver hair, school uniform, looking out window, gentle smile
-@center 0.35,0.22
+upper panel, wide shot, classroom, sunlight through window, silver-haired girl looking out window, gentle smile, speech bubble, 縦書き, The speech bubble is in the upper right of the panel, and its tail points to her mouth.
 Text: "今天放学后，去天台聊聊吧。"
 
 @panel 2
-lower right panel, close-up, surprised expression
+lower panel, close-up, black-haired boy blushing, wide eyes, surprised expression, speech bubble, 縦書き, The speech bubble is in the upper left of the panel, and its tail points to his mouth.
+Text: "诶？只有我们两个吗……"
+
+@character C1
+girl, silver hair, long hair, school uniform, serafuku
+@negative
+black hair, short hair
+
 @character C2
-1boy, black hair, school uniform, blushing, wide eyes
-@center 0.72,0.68
-Text: "诶？只有我们两个吗……"''',
+boy, black hair, short hair, gakuran
+@negative
+silver hair, long hair, serafuku''',
       ),
       _paramsNovelAi,
     ],

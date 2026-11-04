@@ -499,8 +499,9 @@ class AssistantWriteTools {
 
   static const _modeSchema = {
     'type': 'string',
-    'enum': ['chat', 'tool'],
-    'description': 'chat=聊天，tool=全权限 Agent；AIcove酱恒为 tool。修改已有角色不改变聊天样式',
+    'enum': ['chat', 'tool', 'agent'],
+    'description':
+        '工作模式：chat 聊天（不带工具）／tool 工具（单层 Agent）／agent 智能体（前台路由＋后台子 Agent）',
   };
   static const _modelSchema = {
     'type': 'string',
@@ -829,9 +830,9 @@ class AssistantWriteTools {
         _optionalText(args[RoleField.personaPrompt]) ??
         (throw _Invalid('人设提示词不能为空'));
     final options = _modeAndModel(args);
-    final mode = RoleAgentMode.values.byName(
-      options[RoleField.agentMode] as String? ?? 'chat',
-    );
+    final mode =
+        RoleAgentMode.fromValue(options[RoleField.agentMode] as String?) ??
+        RoleAgentMode.chat;
     final id = await roles.create(mode: mode);
     await roles.edit(id, {
       RoleField.displayName: name,
@@ -892,11 +893,11 @@ class AssistantWriteTools {
     final fields = <String, Object?>{};
     if (args.containsKey(RoleField.agentMode)) {
       final mode = args[RoleField.agentMode];
-      if (mode != 'chat' && mode != 'tool') {
-        throw _Invalid('agent_mode 应为 chat 或 tool');
+      if (mode != 'chat' && mode != 'tool' && mode != 'agent') {
+        throw _Invalid('agent_mode 应为 chat、tool 或 agent');
       }
-      if (roleId == kAicoveAssistantId && mode == 'chat') {
-        throw _Invalid('AIcove酱恒为 tool 模式，不能改为 chat');
+      if (roleId == kAicoveAssistantId && mode != 'tool') {
+        throw _Invalid('AIcove酱恒为 tool 模式，不能改为 $mode');
       }
       fields[RoleField.agentMode] = mode;
     }

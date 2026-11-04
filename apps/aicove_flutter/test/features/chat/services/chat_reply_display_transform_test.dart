@@ -5,6 +5,28 @@ import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('stitches split tags outside code and keeps unrelated rounds', () {
+    expect(stitchReplyRoundTags(['前<comic_plan>角色', '', '续</comic_plan>后']), ['前', '', '<comic_plan>角色续</comic_plan>后']);
+    expect(stitchReplyRoundTags(['```<comic_plan>```', '</comic_plan>']), ['```<comic_plan>```', '</comic_plan>']);
+    expect(stitchReplyRoundTags(['<comic_plan>旧', '<comic_plan>新</comic_plan>']), ['<comic_plan>旧', '<comic_plan>新</comic_plan>']);
+  });
+  test('expands image variables from prior rounds', () {
+    const plan = '<comic_plan>\n- 角色母表:\n  - C1:\n    - 固定身份词: silver hair\n</comic_plan>';
+    expect(expandComicPlanCharacterVariables('<image>@C1</image>', contextTexts: [plan]), '<image>silver hair</image>');
+  });
+  test('expands only the closed image after a bare image mention', () {
+    const plan = '<comic_plan>\n- 角色母表:\n  - C1:\n    - 固定身份词: silver hair\n</comic_plan>';
+    const prefix = '<wave_plan>提到 <image> 标签</wave_plan>\n正文 @C1\n$plan\n';
+    expect(
+      expandComicPlanCharacterVariables('${prefix}<image>@C1</image>'),
+      '${prefix}<image>silver hair</image>',
+    );
+  });
+  test('keeps an unclosed think tag in visible text', () {
+    final result = extractAssistantThinking('正文 <think>未闭合的内容');
+    expect(result.text, '正文 <think>未闭合的内容');
+    expect(result.reasoning, isEmpty);
+  });
   group('expandComicPlanVariablesInPrompt', () {
     const plan = '''<comic_plan>
 - 角色母表:

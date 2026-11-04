@@ -13,10 +13,19 @@ Message _assistant(String id, String content, {String? status}) =>
       createdAt: DateTime(2026, 9, 29, 12),
     ).copyWith(status: status);
 
+List<String> _texts(
+  String text, {
+  Set<String> tags = defaultDialogueOptionTags,
+  Set<String> foldTags = const {},
+}) => [
+  for (final option in parseDialogueOptions(text, tags: tags, foldTags: foldTags))
+    option.text,
+];
+
 void main() {
   test('parses <option> children, ignoring surrounding text', () {
     expect(
-      parseDialogueOptions(
+      _texts(
         '她笑了。\n<OPTIONS>\n<option>😏 靠近一点</option>\n'
         '<option> 转身离开 </option>\n<option>😏 靠近一点</option>\n</options>',
       ),
@@ -25,7 +34,7 @@ void main() {
   });
 
   test('falls back to one option per line and strips list markers', () {
-    expect(parseDialogueOptions('<options>\n1. 答应\n2、拒绝\n- 沉默\n\n</options>'), [
+    expect(_texts('<options>\n1. 答应\n2、拒绝\n- 沉默\n\n</options>'), [
       '答应',
       '拒绝',
       '沉默',
@@ -33,9 +42,9 @@ void main() {
   });
 
   test('uses the last options block and ignores text without one', () {
-    expect(parseDialogueOptions('没有选项 <option>x</option>'), isEmpty);
+    expect(_texts('没有选项 <option>x</option>'), isEmpty);
     expect(
-      parseDialogueOptions('<options>旧</options>正文<options>新</options>'),
+      _texts('<options>旧</options>正文<options>新</options>'),
       ['新'],
     );
   });
@@ -78,10 +87,14 @@ void main() {
     );
     final withOptions = _assistant('a1', '好的<options>去吃饭\n去散步</options>');
     final trailingMedia = _assistant('a2', '[图片]');
-    expect(latestDialogueOptions([user, withOptions, trailingMedia])?.items, [
-      '去吃饭',
-      '去散步',
-    ]);
+    expect(
+      latestDialogueOptions([
+        user,
+        withOptions,
+        trailingMedia,
+      ])?.items.map((item) => item.text),
+      ['去吃饭', '去散步'],
+    );
     expect(latestDialogueOptions([withOptions, user]), isNull);
     expect(
       latestDialogueOptions([
@@ -106,11 +119,58 @@ void main() {
     expect(items.single.message.displayText, '正文');
   });
 
+  test('bold category prefixes become labels and placeholders are dropped', () {
+    const text =
+        '<wave_options>\n1. **稳步推进**：先把门锁好\n'
+        '2. **积极行动：** 追上去问清楚\n'
+        '3. **出奇制胜**——躲进柜子\n'
+        '4. **暧昧挑逗**：本场景不适用\n'
+        '5. **彻底发癫**：不适用。\n'
+        '6. **整句加粗的选项**\n</wave_options>';
+    expect(parseDialogueOptions(text, tags: {'wave_options'}), const [
+      DialogueOption('先把门锁好', label: '稳步推进'),
+      DialogueOption('追上去问清楚', label: '积极行动'),
+      DialogueOption('躲进柜子', label: '出奇制胜'),
+      DialogueOption('**整句加粗的选项**'),
+    ]);
+    expect(
+      const DialogueOption('先把门锁好', label: '稳步推进').display,
+      '稳步推进：先把门锁好',
+    );
+  });
+
+  test('unnumbered bold options keep their asterisks intact', () {
+    expect(
+      parseDialogueOptions('<options>**稳步推进**：行动\n**整句加粗**\n* 普通项</options>'),
+      const [
+        DialogueOption('行动', label: '稳步推进'),
+        DialogueOption('**整句加粗**'),
+        DialogueOption('普通项'),
+      ],
+    );
+  });
+
+  test('a single line using literal \\n separators is split', () {
+    expect(
+      _texts(r'<options>1. 答应\n2. 拒绝\n3. 沉默</options>'),
+      ['答应', '拒绝', '沉默'],
+    );
+  });
+
+  test('signature depends on option text, not labels', () {
+    const a = DialogueOptions(
+      messageId: 'a1',
+      items: [DialogueOption('走', label: '稳步推进')],
+    );
+    const b = DialogueOptions(messageId: 'a1', items: [DialogueOption('走')]);
+    expect(a.signature, b.signature);
+  });
+
   test('preset option tags such as branches are parsed when mapped', () {
     const text = '正文<branches>A. 去吃饭\nB. 去散步</branches>';
-    expect(parseDialogueOptions(text), isEmpty);
+    expect(_texts(text), isEmpty);
     expect(
-      parseDialogueOptions(text, tags: {'options', 'branches'}),
+      _texts(text, tags: {'options', 'branches'}),
       ['去吃饭', '去散步'],
     );
   });
@@ -118,17 +178,17 @@ void main() {
   group('code and fold boundaries', () {
     test('backticked and fenced tags are never options', () {
       const inline = '用 `<options>a</options>` 写选项';
-      expect(parseDialogueOptions(inline), isEmpty);
+      expect(_texts(inline), isEmpty);
       expect(stripDialogueOptions(inline), inline);
       const fenced = '示例：\n```\n<options>a</options>\n```\n结束';
-      expect(parseDialogueOptions(fenced), isEmpty);
+      expect(_texts(fenced), isEmpty);
       expect(stripDialogueOptions(fenced), fenced);
       expect(
-        parseDialogueOptions('`<options>x</options>`<options>真的</options>'),
+        _texts('`<options>x</options>`<options>真的</options>'),
         ['真的'],
       );
       expect(
-        parseDialogueOptions('<options><option>写 `<b>` 标签</option></options>'),
+        _texts('<options><option>写 `<b>` 标签</option></options>'),
         ['写 `<b>` 标签'],
       );
       expect(
@@ -140,12 +200,12 @@ void main() {
     test('options written inside a fold stay inside it', () {
       const nya = '<think_nya>要写 <options> 吗</think_nya>正文';
       expect(stripDialogueOptions(nya), nya);
-      expect(parseDialogueOptions(nya), isEmpty);
+      expect(_texts(nya), isEmpty);
       const nyaTilde = '<think_nya~><options>假</options></think_nya~>正文';
-      expect(parseDialogueOptions(nyaTilde), isEmpty);
+      expect(_texts(nyaTilde), isEmpty);
       expect(stripDialogueOptions(nyaTilde), nyaTilde);
       const think = '<think><options>假</options></think>正文<options>真</options>';
-      expect(parseDialogueOptions(think), ['真']);
+      expect(_texts(think), ['真']);
       expect(
         stripDialogueOptions(think),
         '<think><options>假</options></think>正文',
@@ -154,29 +214,29 @@ void main() {
 
     test('an unclosed fold still wraps options written after it', () {
       const text = '<think><options><option>离开</option></options>';
-      expect(parseDialogueOptions(text), isEmpty);
+      expect(_texts(text), isEmpty);
       expect(stripDialogueOptions(text), text);
       const custom = '<tuiyan>推演<options>假</options>';
-      expect(parseDialogueOptions(custom, foldTags: {'tuiyan'}), isEmpty);
+      expect(_texts(custom, foldTags: {'tuiyan'}), isEmpty);
       expect(stripDialogueOptions(custom, foldTags: {'tuiyan'}), custom);
     });
 
     test('caller fold tags wrap options; option tags win a name clash', () {
       const text = '<tuiyan><options>假</options></tuiyan>正文';
-      expect(parseDialogueOptions(text), ['假']);
-      expect(parseDialogueOptions(text, foldTags: {'tuiyan'}), isEmpty);
+      expect(_texts(text), ['假']);
+      expect(_texts(text, foldTags: {'tuiyan'}), isEmpty);
       expect(stripDialogueOptions(text, foldTags: {'tuiyan'}), text);
       expect(
-        parseDialogueOptions('<details>甲\n乙</details>', tags: {'details'}),
+        _texts('<details>甲\n乙</details>', tags: {'details'}),
         ['甲', '乙'],
       );
     });
 
     test('only closed tags produce clickable options', () {
-      expect(parseDialogueOptions('正文<options><option>a</option>'), isEmpty);
-      expect(parseDialogueOptions('<options><option>a</options>'), isEmpty);
+      expect(_texts('正文<options><option>a</option>'), isEmpty);
+      expect(_texts('<options><option>a</options>'), isEmpty);
       expect(
-        parseDialogueOptions('<options><option>a</option><option>b</options>'),
+        _texts('<options><option>a</option><option>b</options>'),
         ['a'],
       );
     });

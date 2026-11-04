@@ -1,10 +1,14 @@
 library;
 
 import 'dart:math';
+import 'dart:convert';
+
+import 'package:aicove_quickjs/aicove_quickjs.dart';
 
 import '../../../core/utils/token_estimator.dart';
 import '../../conversation_state/domain/mvu_content.dart';
 import 'silly_tavern_macro_evaluator.dart';
+import 'silly_tavern_ejs_evaluator.dart';
 import 'silly_tavern_preset.dart';
 import 'silly_tavern_world_book.dart';
 
@@ -111,6 +115,7 @@ class _ResolvedInjection {
   final String promptId;
   final int depth;
   final int order;
+  final Map? messageInjection;
 
   const _ResolvedInjection({
     required this.role,
@@ -118,6 +123,7 @@ class _ResolvedInjection {
     required this.promptId,
     required this.depth,
     required this.order,
+    this.messageInjection,
   });
 }
 
@@ -208,6 +214,23 @@ class SillyTavernPresetAssembler {
         warnings.add('${prompt.identifier} 仅用于非 normal 触发，当前请求已跳过');
         continue;
       }
+      if (prompt.spresetConditionEnabled &&
+          prompt.spresetConditionScript.trim().isNotEmpty) {
+        try {
+          final script = prompt.spresetConditionScript.trim();
+          final expression =
+              script.startsWith('function') || script.contains('=>')
+              ? '($script)()'
+              : '(function(){ $script })()';
+          if (QuickJsSync.evaluate('Boolean($expression)') != 'true') {
+            warnings.add('${prompt.name} 的条件未满足，已跳过');
+            continue;
+          }
+        } catch (error) {
+          warnings.add('${prompt.name} 的条件执行失败：$error');
+          continue;
+        }
+      }
       orderedPrompts.add(prompt);
     }
 
@@ -242,12 +265,23 @@ class SillyTavernPresetAssembler {
         );
         continue;
       }
-      if (!prompt.isAbsoluteInjection || content.trim().isEmpty) continue;
+      final extensions = preset.rawPreset['extensions'];
+      final spreset = extensions is Map ? extensions['SPreset'] : null;
+      final bindings = spreset is Map ? spreset['MessageInjections'] : null;
+      final binding = bindings is Map ? bindings[prompt.identifier] : null;
+      final messageInjection = binding is Map && binding['enabled'] == true
+          ? binding
+          : null;
+      if (!prompt.isAbsoluteInjection ||
+          (content.trim().isEmpty && messageInjection == null)) {
+        continue;
+      }
       injections.add(
         _ResolvedInjection(
           role: prompt.role,
           content: content.trim(),
           promptId: prompt.identifier,
+          messageInjection: messageInjection,
           depth: prompt.injectionDepth,
           order: prompt.injectionOrder,
         ),
@@ -256,7 +290,13 @@ class SillyTavernPresetAssembler {
 
     for (final world in context.worldInjections.where((e) => e.position == 4)) {
       final result = _macroEvaluator.evaluate(
-        world.content,
+        _renderEjs(
+          world.content,
+          context,
+          variables,
+          warnings,
+          lastUserMessage,
+        ),
         promptId: 'world.${world.id}',
         values: _buildMacroValues(context, lastUserMessage, drawingPlaceholder),
         variables: variables,
@@ -319,6 +359,25 @@ class SillyTavernPresetAssembler {
             lastUserMessage: lastUserMessage,
             drawingPlaceholder: drawingPlaceholder,
           );
+      final extensions = preset.rawPreset['extensions'];
+      final spreset = extensions is Map ? extensions['SPreset'] : null;
+      final allInjections = spreset is Map
+          ? spreset['MessageInjections']
+          : null;
+      final injection = allInjections is Map
+          ? allInjections[prompt.identifier]
+          : null;
+      if (injection is Map && injection['enabled'] == true) {
+        assembled.addAll(
+          _applyMessageInjection(
+            injection,
+            content,
+            prompt.identifier,
+            prompt.name,
+          ),
+        );
+        continue;
+      }
       if (content.trim().isEmpty) continue;
       assembled.add(
         SillyTavernAssemblyEntry(
@@ -601,6 +660,83 @@ class SillyTavernPresetAssembler {
         : result;
   }
 
+  List<SillyTavernAssemblyEntry> _applyMessageInjection(
+    Map injection,
+    String content,
+    String promptId,
+    String promptName,
+  ) {
+    final entries = <SillyTavernAssemblyEntry>[];
+    final calls = injection['toolCalls'] is List
+        ? injection['toolCalls'] as List
+        : const [];
+    final results = injection['toolResults'] is List
+        ? injection['toolResults'] as List
+        : const [];
+    final message = <String, dynamic>{
+      'role': 'assistant',
+      'content': content.trim(),
+    };
+    if (injection['reasoning'] is String &&
+        (injection['reasoning'] as String).isNotEmpty) {
+      message['reasoning_content'] = injection['reasoning'];
+    }
+    if (injection['signature'] is String &&
+        (injection['signature'] as String).isNotEmpty) {
+      message['signature'] = injection['signature'];
+    }
+    if (calls.isNotEmpty) {
+      message['tool_calls'] = [
+        for (final call in calls.whereType<Map>())
+          {
+            'id': call['id'],
+            'type': 'function',
+            'function': {
+              'name': call['name'],
+              'arguments': call['arguments'] is String
+                  ? call['arguments']
+                  : jsonEncode(call['arguments'] ?? {}),
+            },
+            if (call['signature'] is String &&
+                (call['signature'] as String).isNotEmpty)
+              'signature': call['signature'],
+          },
+      ];
+    }
+    if (content.trim().isNotEmpty ||
+        calls.isNotEmpty ||
+        message.containsKey('reasoning_content') ||
+        message.containsKey('signature')) {
+      entries.add(
+        SillyTavernAssemblyEntry(
+          message: message,
+          source: 'preset.$promptId',
+          label: promptName,
+          isHistory: false,
+          protectedFromTruncation: true,
+        ),
+      );
+    }
+    for (final result in results.whereType<Map>()) {
+      entries.add(
+        SillyTavernAssemblyEntry(
+          message: {
+            'role': 'tool',
+            'tool_call_id': result['toolCallId'],
+            'content': result['content'] ?? '',
+            if ((result['name'] ?? '').toString().isNotEmpty)
+              'name': result['name'],
+          },
+          source: 'preset.$promptId',
+          label: promptName,
+          isHistory: false,
+          protectedFromTruncation: true,
+        ),
+      );
+    }
+    return entries;
+  }
+
   List<SillyTavernAssemblyEntry> _buildHistoryBlock({
     required List<Map<String, dynamic>> historyMessages,
     required List<_ResolvedInjection> injections,
@@ -644,6 +780,31 @@ class SillyTavernPresetAssembler {
                 .where((item) => item.order == order && item.role == role)
                 .toList();
             if (rolePrompts.isEmpty) continue;
+            if (rolePrompts.any((item) => item.messageInjection != null)) {
+              for (final item in rolePrompts) {
+                if (item.messageInjection != null) {
+                  entries.addAll(
+                    _applyMessageInjection(
+                      item.messageInjection!,
+                      item.content,
+                      item.promptId,
+                      '酒馆深度注入 depth=${item.depth} order=$order',
+                    ),
+                  );
+                } else {
+                  entries.add(
+                    SillyTavernAssemblyEntry(
+                      message: {'role': role, 'content': item.content},
+                      source: 'preset.injection.${item.promptId}',
+                      label: '酒馆深度注入 depth=${item.depth} order=$order',
+                      isHistory: false,
+                      protectedFromTruncation: true,
+                    ),
+                  );
+                }
+              }
+              continue;
+            }
             entries.add(
               SillyTavernAssemblyEntry(
                 message: <String, dynamic>{
@@ -696,7 +857,15 @@ class SillyTavernPresetAssembler {
         final position = prompt.identifier == 'worldInfoBefore' ? 0 : 1;
         content = context.worldInjections
             .where((e) => e.position == position)
-            .map((e) => e.content)
+            .map(
+              (e) => _renderEjs(
+                e.content,
+                context,
+                variables,
+                warnings,
+                lastUserMessage,
+              ),
+            )
             .join('\n');
       default:
         if (prompt.marker && _emptyDynamicMarkers.contains(prompt.identifier)) {
@@ -704,10 +873,6 @@ class SillyTavernPresetAssembler {
         } else {
           content = prompt.content;
         }
-    }
-    if (containsEjs(content)) {
-      warnings.add('${prompt.name} 含 EJS 模板（<% %>），本期不支持，已跳过该条目');
-      return '';
     }
     if (context.messageVariables == null && isMvuSpecificContent(content)) {
       warnings.add('${prompt.name} 是 MVU 变量专用内容，本会话未启用 MVU 变量，已跳过');
@@ -717,6 +882,13 @@ class SillyTavernPresetAssembler {
       context,
       lastUserMessage,
       drawingPlaceholder,
+    );
+    content = _renderEjs(
+      content,
+      context,
+      variables,
+      warnings,
+      lastUserMessage,
     );
     final result = _macroEvaluator.evaluate(
       content,
@@ -731,6 +903,24 @@ class SillyTavernPresetAssembler {
     unknownMacros.addAll(result.unknownMacros);
     return result.text;
   }
+
+  String _renderEjs(
+    String content,
+    SillyTavernAssemblyContext context,
+    Map<String, String> variables,
+    List<String> warnings,
+    String lastUserMessage,
+  ) => const SillyTavernEjsEvaluator().render(
+    content,
+    variables: variables,
+    messageVariables: context.messageVariables,
+    char: context.characterName,
+    user: context.userName,
+    description: context.characterDescription,
+    scenario: context.scenario,
+    lastUserMessage: lastUserMessage,
+    warnings: warnings,
+  );
 
   Map<String, String> _buildMacroValues(
     SillyTavernAssemblyContext context,

@@ -224,7 +224,7 @@ void main() {
     await root.delete(recursive: true);
   });
 
-  test('开启时：请求里有当前变量，历史更新块被去掉，预设协议示例保留，EJS 条目跳过', () async {
+  test('开启时：请求里有当前变量，历史更新块被去掉，预设协议示例保留，EJS 条目求值', () async {
     final text = await requestText();
     expect(text, contains('当前变量：15'));
     expect(text, contains('她笑了。'));
@@ -234,7 +234,8 @@ void main() {
       text,
       contains("<UpdateVariable>_.set('路径', 旧, 新);</UpdateVariable>"),
     );
-    expect(text, isNot(contains('EJS内容')));
+    expect(text, contains('EJS内容'));
+    expect(text, isNot(contains('<%')));
     expect(text, isNot(contains('[-30,100]')), reason: 'InitVar 条目永不注入');
     expect(text, contains('这里是教堂。'));
 

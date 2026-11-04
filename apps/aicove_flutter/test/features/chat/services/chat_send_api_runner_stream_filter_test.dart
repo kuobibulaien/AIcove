@@ -595,6 +595,35 @@ void _runAll(RunnerFactory createRunner) {
     });
   }
 
+  for (final (chunks, visible) in <(List<String>, String)>[
+    (['前<image>普通<im', 'age>隐藏</image>后'], '前<image>普通后'),
+    (['前<image>普通<image>未结束'], '前<image>普通<image>未结束'),
+    (['前<image>普通<think>隐藏</think>中<image>隐藏</image>后'], '前<image>普通中后'),
+    (['前<thi'], '前<thi'),
+    (['前<think>未结束'], '前<think>未结束'),
+    (['前<think>旧<think attr="x', '">隐藏</think>后'], '前<think>旧后'),
+  ]) {
+    test('stream reanchors or flushes unfinished tags: $chunks', () async {
+      final runner = createRunner(
+        agentClientFactory: (timeout) => _StickerStreamingClient(timeout, chunks),
+      );
+      final deltas = <String>[];
+      await runner.executeApiCall(
+        config: ApiConfig(
+          settings: _buildTestSettings(),
+          modelFullId: 'openai:gpt-3.5-turbo',
+          providerApiBase: 'https://api.openai.com/v1',
+          providerApiKey: 'test-key', customConfig: const {},
+          messages: const [{'role': 'user', 'content': '继续'}],
+        ),
+        sessionId: 'unfinished_tag', userText: '继续',
+        responseProcessors: const [], enableStreaming: true,
+        onStreamTextDelta: deltas.add,
+      );
+      expect(deltas.join(), visible);
+    });
+  }
+
   test(
       'stream callback should receive visible text only before inline image tags',
       () async {

@@ -115,7 +115,7 @@ void main() {
     );
   });
 
-  test('世界书跳过：InitVar 永不注入，EJS 跳过，MVU 关闭时跳过专属条目', () async {
+  test('世界书跳过：InitVar 永不注入，EJS 保留，MVU 关闭时跳过专属条目', () async {
     final book = TavernWorldBook.parse({
       'entries': {
         '0': {
@@ -153,8 +153,8 @@ void main() {
 
     expect(
       await injected(true),
-      unorderedEquals(['{{get_message_variable::stat_data}}', '普通']),
+      unorderedEquals(['<% x %>', '{{get_message_variable::stat_data}}', '普通']),
     );
-    expect(await injected(false), ['普通']);
+    expect(await injected(false), unorderedEquals(['<% x %>', '普通']));
   });
 }

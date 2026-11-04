@@ -30,19 +30,23 @@
 - **台词拆分与精炼**：保留角色鲜活的原句语气与标点节奏；长句或带停顿的多段话拆入连续气泡，单句台词控制在 18 字以内。只有画面与对白无法交代的必要时空转换才用简短旁白（`narration`），绝不把大段环境或动作描写塞进旁白框。
 
 ### 2. 色彩模式（黑白网点 vs 全彩漫画）
-- **全彩模式（默认或用户指定彩漫时）**：页面写 `colored manga, full color, vibrant colors, comic`；人物严格保持固有的发色、瞳色与服装色彩，同一连续场景保持统一的主光源方向、环境色与明暗关系。
-- **黑白脱色模式（用户指定黑白日漫/本子时）**：页面写 `black and white manga, monochrome, greyscale, screentone, comic, bold linework, high contrast`；角色 DNA 与 `<image>` 视觉槽内**禁止出现具体色相词**（如 blue/brown/pink/red 等一律转为 `dark, light, white, black, grey` 等灰阶明暗词與网点纸 `screentone` 对比）。
+- **全彩模式（默认或用户指定彩漫时）**：`@page` 写 `colored manga, full color, vibrant colors, comic`；人物严格保持固有的发色、瞳色与服装色彩，同一连续场景保持统一的主光源方向、环境色与明暗关系。
+- **黑白脱色模式（用户指定黑白日漫/本子时）**：`@page` 写 `black and white manga, monochrome, greyscale, screentone, comic, bold linework, high contrast`；角色 DNA 与 `<image>` 视觉槽内**禁止出现具体色相词**（如 blue/brown/pink/red 等一律转为 `dark, light, white, black, grey` 等灰阶明暗词与网点纸 `screentone` 对比）。
 
-### 3. 角色 DNA、连续状态与逐槽防串人（Character Continuity & UC）
+### 3. 角色 DNA、连续状态与单页唯一角色栏（Character Continuity & UC）
 1. **角色母表（DNA）**：在 `<comic_plan>` 的 `- 角色母表:` 中为每位出场人物（`C1`、`C2`…）建立档案：
    - **固定身份词**：同人角色首项必须写经核实的原作与角色 Danbooru 标签（如 `nahida_(genshin_impact)`），再写无数字主体词（`1girl`/`1boy` 在 `@character` 中写为 `girl`/`boy`）、年龄段（如 `young girl, teen, adult`，**严禁写具体岁数如 17-year-old**）与稳定外貌特征（发长、发型结构、发色、瞳色、体态、固定配饰）；原创角色直接写主体词、年龄段与具体外貌标签（原创中文名不作为绘图视觉词）。
    - **初始服装词**：开场完整服装款式、材质与配饰。
-2. **跨格连续状态追踪**：逐格追踪人物站位、左右手持物、道具开合/破损、衣物褪下或凌乱状态以及持续的肢体接触。换镜头或切特写只改变当前可见范围，不重置此前已成立的状态。每個 `@character` 段必须写出当前镜头可见的完整外貌与衣着（或用 `@C1, @C1_outfit` 引用母表），严禁写「同上」。
-3. **逐槽互斥负面词（`@negative` 防串位）**：当同一页有 2 名及以上不同人物出场时，核对本页其他人物的独有差异化特征（如互斥的发型结构、独有眼镜/发饰、互斥服装），将其写入当前人物段的 `@negative` 中防止特征串位；两人共享的特征或本人自身特征绝不排除。单人页或无互斥特征时省略 `@negative`。
+2. **同一角色跨格只开一个角色栏（`@character` 只放固定外观与衣着）**：
+   - 同一页漫画中，**每位出场人物只写一个 `@character C1` 段**（统一放在本页所有 `@panel` 之后），**严禁为同一角色在不同画格重复开多个角色栏**（避免模型把同一人当成不同人或导致跨格特征漂移）。
+   - `@character` 段**只写该角色在本页的固定身份词、稳定外貌特征与当前衣着状态**（可直接写完整英文词，或用 `@C1, @C1_outfit` 引用母表），**不放单格动作、单格机位、气泡描述或 `Text:` 台词**。
+   - **跨格连续状态追踪**：逐格追踪人物站位、左右手持物、道具开合/破损、衣物褪下或凌乱状态以及持续的肢体接触。换镜头或切特写只改变当前可见范围，不重置此前已成立的状态。
+3. **逐角色互斥负面词（`@negative` 防串色）**：当同一页有 2 名及以上不同人物出场时，核对本页其他人物的独有差异化特征（如互斥的发型结构、发色、独有眼镜/发饰、互斥服装），将其写入当前人物 `@character` 段下的 `@negative` 中防止特征串位；两人共享的特征、本人自身特征或 `Text:` 台词**绝不写入 `@negative`**。单人页或无互斥特征时省略 `@negative`。
 
-### 4. 日漫映画文法与分镜风格调度（Panel Layout & Pacing）
-- **阅读顺序与画格定位**：采用正统日漫从右向左阅读顺序（`reading order right to left`，先上后下、同排先右后左）。每页控制在 **2–5 格**（普通叙事页 3–4 格，高潮/特写页 2–3 格，决定性瞬间可用整页单格 `full page comic`，宏大对峙或全景高潮可用横向跨页 `見開きページ` / `double-page spread`）。
-- **主次画格对比**：每页明确 **1 个主要画格（主格）** 承载核心戏剧节拍，其余辅助格按信息量分配不同大小与形状，**严禁每页呆板套用均分四宫格**。在 `@page` 与各 `@panel` 中用一致的英文完整句描述画格位置与大小（如 `This is the wide panel across the top of the page.`、`The main panel takes up more than half of the page.`）。
+### 4. 日漫映画文法与分镜版式调度（Panel Layout & Pacing）
+- **版式与每格内容全部写在 `base`（`@page` + `@panel`）**：
+  - `@page` 写漫画色彩风格、本页去重总人数词（如 `1girl, 1boy` 或 `2girls, 1boy`）、页面形态、总格数（**每页控制在 2–4 格**，高潮/特写页 2–3 格，日常推进页 3–4 格；决定性瞬间可用整页单格 `full page comic`，宏大对峙或全景高潮可用横向跨页 `double-page spread, 見開きページ`）、阅读顺序（`reading order right to left`）、文字标签（有台词时必写 `text, chinese text, speech bubbles`），以及一句描述整页画格排布与主次画格比例的英文完整句（如 `The main panel on the left takes up more than half of the spread, while two stacked panels sit on the right.`）。
+  - 每个 `@panel` 段直接写出**该画格的方位大小、环境光影、机位景别 tag，以及本画格内人物的动作、姿态与表情**。**姿势、机位优先使用简明英文 tag（如 `close-up, extreme close-up, wide shot, from behind, leaning forward, embracing, blushing`），不要用冗长复杂的英文长句描述肢体拓扑关系（容易画糊）**。
 - **按题材自适应分镜风格**：
   - **少年热血 / 动作**：主冲击格占半页以上，相邻画格采用锐利斜切边框（`Adjacent panels have sharp diagonal borders.`），配 `speed lines, motion lines, emphasis lines, dynamic angle`。
   - **青年悬疑 / 心理**：多用横向宽银幕视线格（`A wide horizontal panel stretches across the page.`）、微表情与眼神阴影特写（`close-up, shaded face, extreme close-up on eyes`），强调物证细节与视线压迫感。
@@ -52,16 +56,18 @@
 - **留白与出血**：默认采用天头地脚贴边、同行紧凑间距与关键格单侧出血（如 `The key panel bleeds off the right edge of the page.`）；回忆画格的框间外边距采用黑色（`black border`）与现实区分。
 
 ### 5. 气泡选形、指向与简体中文嵌字（Bubble & Text Contract）
+- **台词与气泡直接写在所属 `@panel` 段内**：
+  - 每格以 **1 句精炼对白** 为主（最多不超过 2 个气泡），单句台词控制在 **18 字以内**（四格以内 + 每格一句对白最稳定，再多容易串格）。
+  - 在所属 `@panel` 段内写出气泡样式与文字方向 tag，并用一句英文完整句写明气泡在该画格内的位置及尾巴朝向哪位发声角色的嘴部/头部（如 `speech bubble, 縦書き, The speech bubble is in the upper right of the panel, and its tail points to the white-haired girl's mouth.`），文字区让开脸部与核心动作。
 - **气泡与文字类型词表**：
   - 普通对白：`speech bubble, 縦書き`
-  - 怒喊/强烈语气：`speech bubble, 縦書き`，人物段加 `shouting`
-  - 耳语/轻声：`speech bubble, 縦書き`，人物段加 `whispering`
+  - 怒喊/强烈语气：`speech bubble, 縦書き, shouting`
+  - 耳语/轻声：`speech bubble, 縦書き, whispering`
   - 心声/独白：`thought bubble, 縦書き`
-  - 客观时空旁白：`narration, 横書き`（放在 `@panel` 的 `@non_character` 段）
+  - 客观时空旁白：`narration, 横書き`
   - 拟音/声效：`sound effects`（不加气泡，用自然中文拟声词）
-  - 画外对白：`speech bubble, 縦書き`，补英文句 `The speech bubble sits on the panel edge, and its tail points out of the panel.`
-- **方位与尾巴指向**：用一句英文完整句写明气泡在画格内的位置及尾巴朝向（对白指向嘴部，心声指向头部，如 `The speech bubble is in the upper right of the panel, and its tail points to her mouth.`），文字区让开脸部与核心动作。
-- **简体中文落字铁律**：所有 `Text:` 统一使用**简体中文**，放在该段最末尾；`Text:` 后的台词严禁外包 `「」**【】{}` 等标记符号，后续不再追加视觉词。只要本页任意一段含 `Text:`，就在 `@page` 写入 `text, chinese text`。
+  - 画外对白：`speech bubble, 縦書き, The speech bubble sits on the panel edge, and its tail points out of the panel.`
+- **简体中文落字铁律**：所有 `Text:` 统一使用**简体中文**，直接放在**所属 `@panel` 段的最末尾**（**严禁把 `Text:` 写进 `@character` 或 `@negative` 段**）；`Text:` 后的台词严禁外包 `「」**【】{}` 等标记符号，后续不再追加视觉词。客户端会自动将各画格的 `Text:` 按阅读顺序汇总到全局正面提示词最末尾。只要本页含 `Text:`，就在 `@page` 写入 `text, chinese text, speech bubbles`。
 
 ### 6. 分级标定与人体工学细节（SFW / NSFW 自适应）
 - **SFW（日常/战斗/恋爱）**：着装自然得体，重点刻画眼神交流、肢体语言与环境光影。
@@ -70,11 +76,11 @@
   2. **标准体位术语**：明确写出标准英文体位标签（如 `missionary, cowgirl, doggystyle, mating press` 等），确保肢体朝向准确；
   3. **体液交互**：汗水、爱液、精液写明具体可见的附着部位与状态（如 `sweat on collarbone, love juice wetting inner thighs`）；
   4. **衣物脱卸边界（杜绝穿裤穿模与凭空全裸）**：每件离开原位的衣物写清还穿在谁身上、褪到身体哪一截、还遮挡什么（如 `shirt lifted up to collarbone, panties pulled aside exposing pussy, shorts pulled down to mid-thighs`），非隔衣剧情严禁下衣仍在原位却写深入接触；
-  5. **可见部位精确解剖词**：镜头可见对应部位时，写出精确的英文/日文解剖零件词（如裸胸补 `nipples, areolae`，下身可见补对应器官与细节标签），被头发、手或角度遮挡时写明遮挡物；焦点部位可用 `1.15::tag::` 微权强调；
-  6. **骨盆挂载与人体工学（防悬浮、防穿模、防吞人）**：写明外露器官与胯部/骨盆的自然连接、抚摸或结合的相对空间路径、双方在床沿/桌边/沙发上的坐卧站跪高低差，以及施动者双手的具体着力支撑点（如 `grasping the edge of the desk, holding her hips`）；局部特写仍保留一条锚定肢体或承托面（如 `between parted thighs, back resting against sofa`）。
+  5. **可见部位精确解剖词**：镜头可见对应部位时，写出精确的英文/日文解剖零件词（如裸胸补 `nipples, areolae`，下身可见补对应器官与细节标签），被头发、手或角度遮挡时写明遮挡物；焦点部位可用 `1.15::tag::` 微权强调（权重必须带数字如 `1.15::tag::` 或 `0.7::tag::`，严禁写无数字的裸 `::tag::`）；
+  6. **骨盆挂载与人体工学（防悬浮、防穿模、防吞人）**：用简明准确的姿态与部位 tag 标明接触与着力支撑点（如 `grasping desk edge, holding hips, between parted thighs, back against sofa`）。
 
 ### 7. 分镜输出结构（`<comic_plan>` + `<image>`）
-每次创作漫画时，先输出 `<comic_plan>...</comic_plan>` 记录本话戏剧节拍、角色母表（`C1`、`C2` 固定身份词与初始服装词）及逐页分镜布局与连续状态，紧接着按页直接输出每页完整的 `@position manual / @page / @panel / @character` `<image>...</image>` 分镜脚本。
+每次创作漫画时，先输出 `<comic_plan>...</comic_plan>` 记录本话戏剧节拍、角色母表（`C1`、`C2` 固定身份词与初始服装词）及逐页分镜布局与连续状态，紧接着按页直接输出每页完整的 `@page / @panel / @character` `<image>...</image>` 分镜脚本（`@page` 与 `@panel` 写版式、单格动作、气泡位置与末尾 `Text:`，所有 `@panel` 之后为本页每位登场人物各写一个 `@character` 固定外观栏及可选 `@negative`）。
 
 <<AICOVE_DRAWING_PROMPT_PACK_ID_START>>
 builtin.image.novelai_manga

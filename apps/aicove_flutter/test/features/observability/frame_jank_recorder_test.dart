@@ -84,6 +84,25 @@ void main() {
     expect(state['totalMs'], 135);
   });
 
+  test('卡顿和慢帧只关联时间窗内的阶段与同步段', () async {
+    final now = DateTime.now().microsecondsSinceEpoch;
+    recorder.recordSyncSpan('lan.old', now - 2000000, now - 1980000);
+    recorder.recordSyncSpan('lan.short', now - 5000, now);
+    recorder.recordSyncSpan('lan.work', now - 30000, now - 10000);
+    recorder.enterPhase('lan.capture');
+    recorder.handleBeatLateness(const Duration(milliseconds: 300));
+    recorder.handleTimings([_frame(uiMs: 120)]);
+    recorder.exitPhase('lan.capture');
+    final entries = await drained();
+    for (final entry in entries) {
+      final state = _state(entry);
+      expect(state['activePhases'], ['lan.capture']);
+      expect(state['syncSpans'], [
+        {'tag': 'lan.work', 'ms': 20.0},
+      ]);
+    }
+  });
+
   test('超过上限的样本不写日志，只在汇总里计数', () async {
     for (var i = 0; i < 25; i++) {
       recorder.handleBeatLateness(const Duration(milliseconds: 300));
@@ -189,11 +208,13 @@ void main() {
     final observer = MoeDetailStackObserver();
     addTearDown(observer.dispose);
     final navigator = GlobalKey<NavigatorState>();
-    await tester.pumpWidget(MaterialApp(
-      navigatorKey: navigator,
-      navigatorObservers: [observer],
-      home: const SizedBox(),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        navigatorObservers: [observer],
+        home: const SizedBox(),
+      ),
+    );
     expect(observer.topPageName, 'MainPage');
 
     navigator.currentState!.pushParallaxSlide<void>(page: const _DemoPage());

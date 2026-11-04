@@ -139,9 +139,10 @@
               "type": "string",
               "enum": [
                 "chat",
-                "tool"
+                "tool",
+                "agent"
               ],
-              "description": "chat=聊天，tool=全权限 Agent；AIcove酱恒为 tool。修改已有角色不改变聊天样式"
+              "description": "工作模式：chat 聊天（不带工具）／tool 工具（单层 Agent）／agent 智能体（前台路由＋后台子 Agent）"
             },
             "model_override": {
               "type": "string",
@@ -201,6 +202,14 @@
             },
             "message_id": {
               "type": "string"
+            },
+            "max_chars": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
             },
             "active_topic_only": {
               "type": "boolean",

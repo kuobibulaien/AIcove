@@ -18,7 +18,7 @@ class SillyTavernPresetParseException implements Exception {
 
 /// SillyTavern Chat Completion 预设唯一 JSON 解析入口。
 class SillyTavernPresetParser {
-  static const int maxSourceBytes = 2 * 1024 * 1024;
+  static const int maxSourceBytes = 16 * 1024 * 1024;
   static const int maxPromptCount = 1000;
   static const int maxOrderGroupCount = 100;
   static const int maxOrderEntryCount = 2000;
@@ -34,7 +34,7 @@ class SillyTavernPresetParser {
     bool regexAuthorized = false,
   }) {
     if (utf8.encode(source).length > maxSourceBytes) {
-      throw const SillyTavernPresetParseException('预设文件超过 2 MB，已拒绝导入');
+      throw const SillyTavernPresetParseException('预设文件超过 16 MB，已拒绝导入');
     }
 
     dynamic decoded;
@@ -119,6 +119,8 @@ class SillyTavernPresetParser {
         ).clamp(0, 1000),
         injectionOrder: _int(prompt['injection_order'], fallback: 100),
         injectionTriggers: _stringList(prompt['injection_trigger']),
+        spresetConditionEnabled: prompt['spreset_condition_enabled'] == true,
+        spresetConditionScript: _string(prompt['spreset_condition_script']),
         attachIndex: attachment.index,
         attachRole: attachment.role,
         attachSide: attachment.side,

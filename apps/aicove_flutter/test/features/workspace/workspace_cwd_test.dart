@@ -42,13 +42,10 @@ void main() {
         [
           'codemode',
           'workspace_open',
-          'workspace_create',
           'read',
           'write',
           'edit',
-          'workspace_list',
-          'workspace_glob',
-          'workspace_grep',
+          'workspace_search',
         ],
       );
       expect(
@@ -59,13 +56,10 @@ void main() {
           'bash',
           'codemode',
           'workspace_open',
-          'workspace_create',
           'read',
           'write',
           'edit',
-          'workspace_list',
-          'workspace_glob',
-          'workspace_grep',
+          'workspace_search',
         ],
       );
       for (final tool in tools)

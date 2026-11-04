@@ -87,6 +87,12 @@ void main() {
     );
   });
 
+  test('delegation description excludes roleplay and prior context', () {
+    final description = delegateTaskTool(_Port()).description;
+    expect(description, contains('严禁用于查阅角色设定、前文剧情或角色扮演'));
+    expect(description, contains('调用外部服务'));
+  });
+
   test('office plugins are web search and MCP connectors', () {
     expect(isOfficePluginId('web_search'), isTrue);
     expect(isOfficePluginId('mcp:notes'), isTrue);

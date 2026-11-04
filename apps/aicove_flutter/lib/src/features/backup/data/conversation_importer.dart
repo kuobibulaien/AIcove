@@ -6,6 +6,8 @@ import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
 
 import 'transfer_safety.dart';
+import '../../../core/database/converters/database_converters.dart';
+import '../../context/domain/context_summary.dart';
 import '../models/export_format.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/repositories/repositories.dart';
@@ -255,10 +257,6 @@ class ConversationImporter {
                     resolution == ImportConflictResolution.replace)) {
               throw ImportException('目标角色在回收站中，请先恢复角色或导入为新副本');
             }
-            if (resolution == ImportConflictResolution.merge &&
-                scopes.contains(SyncScope.characterSettings)) {
-              throw ImportException('暂不支持合并基本偏好。请取消基本偏好，或选择新副本/替换；现有数据不会被修改。');
-            }
             conflicts.add(ImportConflict(
               type: 'conversation',
               id: convId,
@@ -318,6 +316,8 @@ class ConversationImporter {
                 if (includeHistory &&
                     resolution == ImportConflictResolution.replace) {
                   await _msgRepo.deleteByConversation(originalId);
+                  await _convRepo.clearContextSummaries(originalId);
+                  await _convRepo.setContextBoundary(originalId, null);
                 }
                 break;
               default:
@@ -383,6 +383,12 @@ class ConversationImporter {
           } else if (scopes.contains(SyncScope.characterCards)) {
             await _mergeBasicCard(conv, newConvId, fileMapping);
           }
+          if (existingConvIds.contains(originalId) &&
+              resolution != ImportConflictResolution.createNew &&
+              scopes.contains(SyncScope.characterSettings)) {
+            await _mergeSettings(conv, newConvId, fileMapping,
+                merge: resolution == ImportConflictResolution.merge);
+          }
           importedConvIds.add(newConvId);
 
           // 导入消息
@@ -397,6 +403,16 @@ class ConversationImporter {
                 await _msgRepo.getAllByConversationOrderedStable(newConvId);
             _validateMergeOrder(existingMsgs, convMessages);
             existingMsgIds = existingMsgs.map((m) => m.id).toSet();
+            for (final msg in convMessages) {
+              final source = _sourceId(msg['source_message_id'], msg['id'] as String);
+              for (final existing in existingMsgs) {
+                if (existing.id == msg['id'] || existing.id == source ||
+                    existing.sourceMessageId == msg['id'] || existing.sourceMessageId == source) {
+                  messageIdMapping[msg['id'] as String] = existing.id;
+                  break;
+                }
+              }
+            }
             existingSourceMsgIds = {
               ...existingMsgIds,
               ...existingMsgs.map((m) => m.sourceMessageId).whereType<String>(),
@@ -469,6 +485,42 @@ class ConversationImporter {
           }
 
           if (!includeHistory) continue;
+          if (conv.containsKey('context_summaries') || conv.containsKey('context_start_message_id')) {
+            final messages = await _msgRepo.getAllByConversationOrderedStable(newConvId);
+            final ids = messages.map((m) => m.id).toSet();
+            String? mapped(dynamic value) {
+              if (value == null) return null;
+              final id = messageIdMapping[value] ?? value as String;
+              if (!ids.contains(id)) throw ImportException('聊天摘要引用的消息不存在，已取消导入');
+              return id;
+            }
+            final blocks = await _blockRepo.getByMessages(ids.toList());
+            final byMessage = <String, List<domain.MessageBlock>>{};
+            for (final block in blocks) {
+              final decoded = MessageBlockConverter.fromDb(block);
+              if (decoded != null) byMessage.putIfAbsent(block.messageId, () => []).add(decoded);
+            }
+            final rawMessages = [for (final m in messages) MessageConverter.fromDb(m, blocks: byMessage[m.id])];
+            if (resolution != ImportConflictResolution.merge && conv.containsKey('context_summaries')) {
+              await _convRepo.clearContextSummaries(newConvId);
+            }
+            for (final item in (conv['context_summaries'] as List? ?? const [])) {
+              final row = Map<String, dynamic>.from(item as Map);
+              if (row['owner_id'] != originalId) throw ImportException('聊天摘要所属角色不匹配');
+              final sourceIds = (jsonDecode(row['source_ids'] as String) as List).map((id) => mapped(id)!).toList();
+              final sourceSet = sourceIds.toSet();
+              row['id'] = resolution == ImportConflictResolution.createNew ? genId('summary') : row['id'];
+              row['owner_id'] = newConvId;
+              row['boundary_id'] = mapped(row['boundary_id']);
+              row['topic_boundary'] = mapped(row['topic_boundary']);
+              row['source_ids'] = jsonEncode(sourceIds);
+              row['source_digest'] = contextSourceDigest(rawMessages.where((m) => sourceSet.contains(m.id)));
+              await _convRepo.saveContextSummary(row);
+            }
+            if (conv.containsKey('context_start_message_id')) {
+              await _convRepo.setContextBoundary(newConvId, mapped(conv['context_start_message_id']));
+            }
+          }
           final lastMessage = await _msgRepo.getLastMessageStable(newConvId);
           if (lastMessage == null) {
             await _convRepo.clearSummary(
@@ -771,6 +823,44 @@ class ConversationImporter {
     ));
   }
 
+  Future<void> _mergeSettings(Map<String, dynamic> data, String id,
+      Map<String, String> files, {required bool merge}) async {
+    final existing = (await _convRepo.getById(id))!;
+    Value<T> field<T>(String key, T Function(dynamic) convert) {
+      final value = data[key];
+      return value == null ? const Value.absent() : Value(convert(value));
+    }
+    Value<String?> nullableString(String key, String Function(dynamic) convert) {
+      if (!data.containsKey(key) || (merge && data[key] == null)) return const Value.absent();
+      return Value(data[key] == null ? null : convert(data[key]));
+    }
+    String plugins(dynamic value) => merge && existing.enabledPlugins != null
+        ? jsonEncode({...((jsonDecode(existing.enabledPlugins!) as List).cast<String>()), ...((jsonDecode(value as String) as List).cast<String>())}.toList())
+        : value as String;
+    String levels(dynamic value) => merge && existing.thinkingLevels != null
+        ? jsonEncode({...jsonDecode(existing.thinkingLevels!) as Map, ...jsonDecode(value as String) as Map})
+        : value as String;
+    await _convRepo.upsert(ConversationsCompanion.insert(
+      id: id, title: existing.title, displayName: existing.displayName,
+      createdAt: existing.createdAt, updatedAt: DateTime.now().millisecondsSinceEpoch,
+      sessionProvider: nullableString('session_provider', (v) => v as String),
+      enabledPlugins: nullableString('enabled_plugins', plugins),
+      recipeId: nullableString('recipe_id', (v) => v as String),
+      thinkingLevels: nullableString('thinking_levels', levels),
+      chatBackgroundBlurSigma: !data.containsKey('chat_background_blur_sigma') || (merge && data['chat_background_blur_sigma'] == null)
+          ? const Value.absent() : Value((data['chat_background_blur_sigma'] as num?)?.toDouble()),
+      defaultProvider: field('default_provider', (v) => v as String),
+      chatBackgroundImage: field('chat_background_image_file', (v) => files[v] ?? v as String),
+      chatBackgroundMaskOpacity: field('chat_background_mask_opacity', (v) => (v as num).toDouble()),
+      chatBackgroundFraming: field('chat_background_framing', (v) => v as String),
+      isPinned: field('is_pinned', (v) => v as bool),
+      isHidden: field('is_hidden', (v) => v as bool),
+      isFavorite: field('is_favorite', (v) => v as bool),
+      isMuted: field('is_muted', (v) => v as bool),
+      notificationSound: field('notification_sound', (v) => v as bool),
+    ));
+  }
+
   /// 导入会话
   Future<void> _importConversation(
     Map<String, dynamic> conv,
@@ -802,6 +892,11 @@ class ConversationImporter {
       selfAddress: Value(conv['self_address'] as String?),
       addressUser: Value(conv['address_user'] as String?),
       defaultProvider: Value(conv['default_provider'] as String?),
+      sessionProvider: Value(conv['session_provider'] as String?),
+      enabledPlugins: Value(conv['enabled_plugins'] as String?),
+      recipeId: Value(conv['recipe_id'] as String?),
+      thinkingLevels: Value(conv['thinking_levels'] as String?),
+      chatBackgroundBlurSigma: Value((conv['chat_background_blur_sigma'] as num?)?.toDouble()),
       createdAt: conv['created_at'] as int? ?? nowMs,
       updatedAt: nowMs,
       isPinned: Value(conv['is_pinned'] as bool? ?? false),

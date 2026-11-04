@@ -23,6 +23,7 @@ import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/proactive_reply_generator.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_backend_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
@@ -506,7 +507,8 @@ void main() {
     () async {
       final value = container();
       final generator = value.read(proactiveReplyGeneratorProvider);
-      final conversation = (await generator.loadConversation(_conv))!;
+      final conversation = (await generator.loadConversation(_conv))!
+          .copyWith(agentMode: RoleAgentMode.agent);
       final ordinary = await value
           .read(chatSendServiceProvider)
           .prepareApiConfig(
@@ -594,7 +596,8 @@ void main() {
       final inputs = <PluginRequestInputs>[];
       final value = container();
       final generator = value.read(proactiveReplyGeneratorProvider);
-      final conversation = (await generator.loadConversation(_conv))!;
+      final conversation = (await generator.loadConversation(_conv))!
+          .copyWith(agentMode: RoleAgentMode.agent);
       final manager = value.read(pluginManagerProvider);
       final probe = _ProbePlugin(inputs.add);
       manager.register(probe);

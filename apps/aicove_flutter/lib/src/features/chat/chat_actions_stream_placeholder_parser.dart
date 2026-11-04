@@ -79,8 +79,8 @@ String _stripHiddenImageTagsForDisplay(String value) {
   if (value.isEmpty) return value;
   return firstPartyContentTagScanner
       .scan(value)
-      // 未闭合的快速模式生图标签同样隐藏，不外泄提示词
-      .where((segment) => !ImagePlugin.isInlineImageElement(segment))
+      .where((segment) => !(segment is ContentTagElement &&
+          segment.closed && ImagePlugin.isInlineImageElement(segment)))
       .map((segment) => segment.raw)
       .join();
 }
@@ -236,7 +236,7 @@ extension _StreamPlaceholderParser on _StreamPlaceholderDelivery {
       final cached = _parsedTimeline;
       if (cached != null) return cached;
     }
-    final segments = _extractRawSegments(rawText);
+    final segments = _extractRawSegments(rawText, sealTail: sealTail);
     final orderedDescriptors = <_StreamDescriptor>[];
     _StreamDescriptor? activeText;
 
@@ -417,7 +417,10 @@ extension _StreamPlaceholderParser on _StreamPlaceholderDelivery {
     };
   }
 
-  List<_RawStreamSegment> _extractRawSegments(String rawText) {
+  List<_RawStreamSegment> _extractRawSegments(
+    String rawText, {
+    required bool sealTail,
+  }) {
     if (rawText.isEmpty) return const <_RawStreamSegment>[];
     final segments = <_RawStreamSegment>[];
     final pendingText = StringBuffer();
@@ -432,6 +435,10 @@ extension _StreamPlaceholderParser on _StreamPlaceholderDelivery {
     for (final segment in firstPartyContentTagScanner.scan(rawText)) {
       if (segment is ContentTagElement &&
           segment.spec.display == ContentTagDisplay.tts) {
+        if (!segment.closed && sealTail) {
+          pendingText.write(segment.raw);
+          continue;
+        }
         flushText();
         if (!segment.closed) {
           if (enableTtsPlaceholders) {
@@ -449,9 +456,13 @@ extension _StreamPlaceholderParser on _StreamPlaceholderDelivery {
         continue;
       }
       if (ImagePlugin.isInlineImageElement(segment)) {
+        if (!(segment as ContentTagElement).closed && sealTail) {
+          pendingText.write(segment.raw);
+          continue;
+        }
         flushText();
         segments.add(const _RawStreamSegment(_RawStreamSegmentKind.image, ''));
-        if (!(segment as ContentTagElement).closed) break;
+        if (!segment.closed) break;
         continue;
       }
       pendingText.write(segment.raw);

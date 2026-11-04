@@ -586,7 +586,10 @@ class _KernelRun
     final prepared = preset is PresetToolAwareRuntime
         ? await (preset as PresetToolAwareRuntime).prepareWithTools(messages, tools: [
             ..._baseRequestTools,
-            ..._presetRequestTools,
+            // Wave's no-op tool is recreated from the current round, not an
+            // independent collision with its own previous-round schema.
+            if (preset is! QuickJsPresetRuntime || !preset.isWaveTransport)
+              ..._presetRequestTools,
             for (final name in _activatedTools)
               _deferredTools[name]!.toOpenAISchema(),
           ])
@@ -835,6 +838,10 @@ class _KernelRun
           roundIndex: round,
           traceId: traceContext?.traceId,
         );
+        if (preset == null) {
+          final tail = streamTextFilter.flush();
+          if (tail.isNotEmpty) onStreamTextDelta?.call(tail);
+        }
         unawaited(
           StreamMonitorService.recordSuccess(
             modelFullId: config.modelFullId,
@@ -890,6 +897,10 @@ class _KernelRun
 
     await _pendingOutput;
     if (_outputError != null) throw _outputError!;
+    if (shouldAttemptStreaming && preset != null) {
+      final tail = _scriptStreamFilter.flush();
+      if (tail.isNotEmpty) onStreamTextDelta?.call(tail);
+    }
     return rich;
   }
 

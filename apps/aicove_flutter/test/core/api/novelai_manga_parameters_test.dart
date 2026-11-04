@@ -135,6 +135,38 @@ void main() {
     expect(positive['char_captions'][1]['char_caption'], isNot(contains('@')));
   });
 
+  test('dialogue in negatives is moved to the positive caption', () async {
+    for (final prompt in [
+      '@page\nmanga\n@negative\nwatermark\nText: 「页上的话」\n@panel\nscene\n@character C1\ngirl\nText: 『你好』\n@negative\ntext, comic, red hair\n@center 0.2,0.3\nText: 还在撑着眼皮呀……',
+      '@page\nmanga\n@panel 1\nscene\nText: 「第一格」\n@panel 2\nscene\nText: 『第二格』\n@character C1\ngirl',
+      '@page\nchinese text\n@panel\nscene\n@character C1\n@negative\nText: 你好\n@page\n@negative\nwatermark\nText: 再见',
+    ]) {
+      Map? sent;
+      final api = AgentApiClient(client: NoRedirectMockClient((request) async {
+        sent = (jsonDecode(request.body) as Map)['parameters'] as Map;
+        return http.Response('{"image":"AQ=="}', 200);
+      }));
+      await api.generateImage(provider: 'novelai', model: 'nai-diffusion-5-full',
+          providerApiBase: 'https://local.test', providerApiKey: 'test', prompt: prompt);
+      final base = sent!['v4_prompt']['caption']['base_caption'] as String;
+      final negative = sent!['v4_negative_prompt']['caption'] as Map;
+      expect(base, matches(RegExp(r'(?:^|, )text(?:,|\n|$)')));
+      expect(base, matches(RegExp(r'(?:^|, )chinese text(?:,|\n|$)')));
+      expect(base, endsWith(prompt.contains('还在') ? '\nText: 页上的话\n\n你好\n\n还在撑着眼皮呀……' : prompt.contains('再见') ? '\nText: 再见\n\n你好' : '\nText: 第一格\n\n第二格'));
+      expect(RegExp('chinese text').allMatches(base).length, 1);
+      expect(jsonEncode(negative), isNot(contains('Text:')));
+      expect(jsonEncode(negative), isNot(matches(RegExp(r'[\u4e00-\u9fff]'))));
+      if (prompt.contains('还在')) expect(negative['char_captions'][0]['char_caption'], 'red hair');
+    }
+  });
+
+  test('sanitizer preserves weight blocks and removes bare wrappers', () {
+    expect(MangaPromptSanitizer.positive('::artist:ningen mame::, ::no text::', ''), 'artist:ningen mame');
+    expect(MangaPromptSanitizer.positive('1.2::solo, artist:foo::', '2girls'), '1.2::artist:foo::');
+    expect(MangaPromptSanitizer.positive('1.2::artist:foo, no text::', ''), '1.2::artist:foo::');
+    expect(MangaPromptSanitizer.positive('1.2::solo, no text::, scenery', '2girls'), 'scenery');
+  });
+
   test('sanitizer handles brackets, weights, and line separators', () {
     expect(MangaPromptSanitizer.positive(
       '{{no text}}，(solo)\n[no text], 1.2::[no text]::, scenery',

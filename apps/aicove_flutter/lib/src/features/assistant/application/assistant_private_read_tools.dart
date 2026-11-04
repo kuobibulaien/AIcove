@@ -151,8 +151,6 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
     deleteMemory,
   };
 
-  static const _maxLines = 100;
-  static const _maxChars = 1500;
 
   static const _roleId = {
     'type': 'string',
@@ -162,7 +160,7 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
   List<AITool> _atomicTools() => [
     assistantTool(
       readChat,
-      '读某个角色的聊天记录（从新到旧，最多 $_maxLines 条）。默认无需逐次审批；开启「修改前每次问我」时，第一次读一个角色要用户同意，'
+      '读某个角色的聊天记录（从新到旧）。默认无需逐次审批；开启「修改前每次问我」时，第一次读一个角色要用户同意，'
       '同意后这个角色以后可以直接读。只在排查需要时读，读到的内容别复述给用户以外的地方。',
       {
         'role_id': _roleId,
@@ -175,6 +173,8 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
         'before_message_id': {'type': 'string', 'description': '只读此消息之前的记录'},
         'after_message_id': {'type': 'string', 'description': '只读此消息之后的记录'},
         'message_id': {'type': 'string', 'description': '读取指定消息全文'},
+        'max_chars': {'type': 'integer', 'minimum': 1},
+        'offset': {'type': 'integer', 'minimum': 0},
         'active_topic_only': {'type': 'boolean', 'description': '只读当前话题'},
       },
       ['role_id'],
@@ -389,7 +389,8 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
             'action': {
               'type': 'string',
               'enum': ['read', 'append', 'update', 'write', 'delete'],
-              'description': '操作类型：read 读取、append 追加聊天、update/write 新增或修改、delete 删除',
+              'description':
+                  '操作类型：read 读取、append 追加聊天、update/write 新增或修改、delete 删除',
             },
           },
           'required': ['target', 'action', 'role_id'],
@@ -476,8 +477,14 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
     return assistantToolError('还没有读这个角色的授权，或刚被收回；需要时重新调用一次，会请用户同意');
   }
 
-  static String _clip(String text) =>
-      text.length <= _maxChars ? text : '${text.substring(0, _maxChars)}…（截断）';
+  static String _content(String content, Map<String, dynamic> args, {bool single = false}) {
+    final offset = ((args['offset'] as num?)?.toInt() ?? 0).clamp(0, content.length);
+    final max = args['max_chars'];
+    if (max is! num) return content.substring(offset);
+    final end = (offset + max.toInt().clamp(1, content.length + 1)).clamp(0, content.length);
+    final result = content.substring(offset, end);
+    return !single && end < content.length ? '$result…（截断）' : result;
+  }
 
   Future<Map<String, Object?>?> _authorizeWrite(String ownerId) async {
     if (!AssistantToolGate.unrestricted &&
@@ -570,8 +577,8 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
     final refused = await _authorize(role.id);
     if (refused != null) return refused;
     if (rawMessages != null) return _readRawChat(role, args);
-    final limit = (args['limit'] is num ? (args['limit'] as num).toInt() : 30)
-        .clamp(1, _maxLines);
+    final requestedLimit = args['limit'] is num ? (args['limit'] as num).toInt() : 30;
+    final limit = requestedLimit < 1 ? 1 : requestedLimit;
     final before = DateTime.tryParse('${args['before'] ?? ''}');
     final keyword = '${args['keyword'] ?? ''}'.trim();
     final lines = await messages(
@@ -588,7 +595,7 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
           {
             'role': line.role,
             'at': line.at.toIso8601String(),
-            'content': _clip(line.content),
+            'content': _content(line.content, args),
           },
       ],
     };
@@ -618,8 +625,8 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
     }
     final keyword = (args['keyword'] as String? ?? '').trim();
     final legacyBefore = DateTime.tryParse('${args['before'] ?? ''}');
-    final limit = (args['limit'] is num ? (args['limit'] as num).toInt() : 30)
-        .clamp(1, _maxLines);
+    final requestedLimit = args['limit'] is num ? (args['limit'] as num).toInt() : 30;
+    final limit = requestedLimit < 1 ? 1 : requestedLimit;
     final selected = <Message>[];
     for (var i = all.length - 1; i >= 0; i--) {
       final m = all[i];
@@ -649,7 +656,7 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
             'role': m.role,
             'at': m.createdAt.toIso8601String(),
             'status': m.status,
-            'content': messageId == null ? _clip(m.content) : m.content,
+            'content': _content(m.content, args, single: messageId != null),
           },
       ],
     };
@@ -732,10 +739,10 @@ class AssistantPrivateReadTools extends AssistantToolGroup {
       'role': role.displayName,
       'count': items.length,
       'memories': [
-        for (final item in items.take(_maxLines))
+        for (final item in items)
           {
             'title': item.title,
-            'content': _clip(item.content),
+            'content': item.content,
             if (item.locked) 'locked': true,
           },
       ],

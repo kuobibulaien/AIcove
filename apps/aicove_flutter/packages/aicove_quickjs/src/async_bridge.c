@@ -21,6 +21,7 @@ typedef struct {
   JSValue result;
   CancelFlag *cancel;
   double deadline;
+  int64_t timeout_ms;
   int failed;
 } AsyncSandbox;
 
@@ -62,12 +63,13 @@ EXPORT void *aqjs_async_create(void *flag, intptr_t heap, int64_t milliseconds) 
   AsyncSandbox *s = calloc(1, sizeof(*s));
   if (!s) return NULL;
   s->cancel = flag;
+  s->timeout_ms = milliseconds;
   s->deadline = milliseconds > 0 ? clock_ms() + milliseconds : 0;
   s->result = JS_UNDEFINED;
   s->runtime = JS_NewRuntime();
   if (!s->runtime) { free(s); return NULL; }
   JS_SetMemoryLimit(s->runtime, (size_t)heap);
-  JS_SetMaxStackSize(s->runtime, 512u * 1024u);
+  JS_SetMaxStackSize(s->runtime, 2u * 1024u * 1024u);
   JS_SetInterruptHandler(s->runtime, interrupted, s);
   s->context = JS_NewContext(s->runtime);
   if (!s->context) { JS_FreeRuntime(s->runtime); free(s); return NULL; }
@@ -75,8 +77,13 @@ EXPORT void *aqjs_async_create(void *flag, intptr_t heap, int64_t milliseconds) 
 }
 EXPORT void aqjs_async_begin(void *handle, const char *source, intptr_t length) {
   AsyncSandbox *s = handle;
+  if (!JS_IsUndefined(s->result)) {
+    JS_FreeValue(s->context, s->result); s->result = JS_UNDEFINED;
+  }
+  s->failed = 0;
+  s->deadline = s->timeout_ms > 0 ? clock_ms() + s->timeout_ms : 0;
   JS_UpdateStackTop(s->runtime);
-  s->result = JS_Eval(s->context, source, (size_t)length, "workspace.js", JS_EVAL_TYPE_GLOBAL);
+  s->result = JS_Eval(s->context, source, (size_t)length, "runtime.js", JS_EVAL_TYPE_GLOBAL);
   if (JS_IsException(s->result)) {
     s->result = JS_GetException(s->context); s->failed = 1;
   }
@@ -85,8 +92,8 @@ EXPORT void aqjs_async_begin(void *handle, const char *source, intptr_t length) 
 EXPORT int aqjs_async_step(void *handle) {
   AsyncSandbox *s = handle;
   JS_UpdateStackTop(s->runtime);
-  if (s->failed) return -1;
   if (interrupted(s->runtime, s)) return -2;
+  if (s->failed) return -1;
   for (int i = 0; i < 64 && JS_IsJobPending(s->runtime); ++i) {
     JSContext *ctx = NULL;
     if (JS_ExecutePendingJob(s->runtime, &ctx) < 0) {
@@ -96,6 +103,7 @@ EXPORT int aqjs_async_step(void *handle) {
     }
     if (interrupted(s->runtime, s)) return -2;
   }
+  if (JS_IsJobPending(s->runtime)) return 2;
   JSPromiseStateEnum state = JS_PromiseState(s->context, s->result);
   if (state == JS_PROMISE_PENDING) return 0;
   return state == JS_PROMISE_REJECTED ? -1 : 1;

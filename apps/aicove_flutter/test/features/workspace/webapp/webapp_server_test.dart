@@ -64,7 +64,11 @@ void main() {
     }
     final response = await request.close();
     final bytes = await response.fold<List<int>>([], (a, b) => a..addAll(b));
-    expect(response.headers.value('cache-control'), 'no-store');
+    expect(
+      response.headers.value('cache-control'),
+      'no-store',
+      reason: '$method $path host=$host status=${response.statusCode}',
+    );
     expect(response.headers.value('x-content-type-options'), 'nosniff');
     expect(response.headers.value('referrer-policy'), 'no-referrer');
     expect(
@@ -139,7 +143,7 @@ void main() {
     );
     await server.start();
     server.allow(ws);
-    client = HttpClient();
+    client = HttpClient()..findProxy = (_) => 'DIRECT';
   });
 
   tearDown(() async {
@@ -147,6 +151,27 @@ void main() {
     await server.close();
     await store.close();
     await root.delete(recursive: true);
+  });
+
+  test('loopback entry requires an explicit workspace and redirects', () async {
+    for (final path in ['/__ws/$ws/game.html', '/game.html?__ws=$ws']) {
+      final request = await client.getUrl(
+        Uri.parse('http://127.0.0.1:${server.port}$path'),
+      );
+      request.followRedirects = false;
+      final response = await request.close();
+      expect(response.statusCode, 302);
+      final target = Uri.parse(response.headers.value('location')!);
+      expect(target.host, '$ws.localhost');
+      expect(target.port, server.port);
+      expect(target.path, '/game.html');
+      expect(target.queryParameters.containsKey('__ws'), false);
+      await response.drain<void>();
+    }
+    expect(
+      (await send('/game.html', host: '127.0.0.1:${server.port}')).status,
+      403,
+    );
   });
 
   test(
@@ -180,7 +205,7 @@ void main() {
           '/game.html',
           headers: {'Service-Worker': 'script'},
         )).status,
-        403,
+        200,
       );
       for (final method in ['OPTIONS', 'PUT', 'DELETE', 'POST']) {
         expect((await send('/game.html', method: method)).status, 405);
@@ -605,6 +630,33 @@ void main() {
       expect(activity, [true, false, true]);
     },
   );
+
+  test('new activation cancels an idle shutdown waiting in the queue', () async {
+    await server.close();
+    final release = Completer<void>();
+    final entered = Completer<void>();
+    final calls = <bool>[];
+    server = WebAppServer(
+      store: store,
+      dataDir: root,
+      clock: () => now,
+      setWebAppActive: (active) async {
+        calls.add(active);
+        if (active && !entered.isCompleted) {
+          entered.complete();
+          await release.future;
+        }
+      },
+    );
+    final first = server.activate();
+    await entered.future;
+    now = now.add(const Duration(minutes: 2));
+    final idle = server.checkIdle();
+    final renewed = server.activate();
+    release.complete();
+    await Future.wait([first, idle, renewed]);
+    expect(calls, [true]);
+  });
 
   test(
     'recorded port is preferred; concurrent starts consume notice once',

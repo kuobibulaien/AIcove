@@ -63,6 +63,7 @@ class QuickJsAsyncSession {
       stopped = reason;
       queue.clear();
       native.cancelSet(flag);
+      commands?.send(null);
       onStop?.call();
     }
 
@@ -102,6 +103,7 @@ class QuickJsAsyncSession {
       switch (data[0]) {
         case 'ready':
           commands = data[1] as SendPort;
+          if (!_active) commands?.send(null);
         case 'text':
           if (_active) {
             for (final value in data[1] as List) {
@@ -129,7 +131,6 @@ class QuickJsAsyncSession {
           if (!closed.isCompleted) closed.complete();
       }
     });
-    final stopwatch = Stopwatch()..start();
     final worker = await Isolate.spawn(_asyncWorker, [
       events.sendPort,
       flag.address,
@@ -137,22 +138,31 @@ class QuickJsAsyncSession {
       timeout?.inMilliseconds ?? 0,
       source,
     ]);
-    final timer = Timer.periodic(const Duration(milliseconds: 5), (_) {
+    void interrupt(Object reason) {
       if (!_active) return;
-      if ((isCancelled?.call() ?? false) ||
-          (timeout != null && stopwatch.elapsed >= timeout)) {
-        final reason = (isCancelled?.call() ?? false)
-            ? const QuickJsException('Invocation cancelled')
-            : TimeoutException('JavaScript deadline exceeded', timeout);
-        stop(reason);
-        if (!result.isCompleted) result.completeError(reason);
-      }
-    });
+      stop(reason);
+      if (!result.isCompleted) result.completeError(reason);
+    }
+
+    final deadline = timeout == null
+        ? null
+        : Timer(timeout, () {
+            interrupt(
+              TimeoutException('JavaScript deadline exceeded', timeout),
+            );
+          });
+    final cancellation = isCancelled == null
+        ? null
+        : Timer.periodic(const Duration(milliseconds: 5), (_) {
+            if (isCancelled())
+              interrupt(const QuickJsException('Invocation cancelled'));
+          });
     try {
       return await result.future;
     } finally {
       stop();
-      timer.cancel();
+      deadline?.cancel();
+      cancellation?.cancel();
       // A single convergence budget covers both native shutdown and host I/O.
       // Futures cannot be killed: host commit guards remain false forever.
       var acknowledged = false;
@@ -203,7 +213,6 @@ void _asyncWorker(List arguments) {
   final commands = ReceivePort();
   events.send(['ready', commands.sendPort]);
   var finished = false;
-  Timer? timer;
   void finish(int state, [String? error]) {
     if (finished) return;
     finished = true;
@@ -213,7 +222,6 @@ void _asyncWorker(List arguments) {
             ? 'JavaScript interrupted'
             : _asyncText(native.asyncResult(runtime)));
     events.send(['done', state, value]);
-    timer?.cancel();
     commands.close();
     native.asyncDestroy(runtime);
     events.send(['closed']);
@@ -223,6 +231,7 @@ void _asyncWorker(List arguments) {
     if (finished) return;
     try {
       final state = native.asyncStep(runtime);
+      var pending = 0;
       if (state != -2) {
         final pointer = native.asyncTake(runtime);
         if (pointer != nullptr) {
@@ -230,12 +239,19 @@ void _asyncWorker(List arguments) {
           if ((packet['text'] as List).isNotEmpty) {
             events.send(['text', packet['text']]);
           }
+          pending = packet['pending'] as int;
           if ((packet['calls'] as List).isNotEmpty) {
             events.send(['calls', packet['calls']]);
           }
         }
       }
-      if (state != 0) finish(state);
+      if (state == 2) {
+        Timer.run(pump);
+      } else if (state == 0 && pending == 0) {
+        finish(-1, 'Unresolved async operation: host I/O is unavailable');
+      } else if (state != 0) {
+        finish(state);
+      }
     } catch (error) {
       finish(-1, '$error');
     }
@@ -243,6 +259,10 @@ void _asyncWorker(List arguments) {
 
   commands.listen((dynamic data) {
     if (finished) return;
+    if (data == null) {
+      pump();
+      return;
+    }
     final text = (data as String).toNativeUtf8();
     try {
       native.asyncDeliver(runtime, text.cast(), utf8.encode(data).length);
@@ -261,7 +281,6 @@ void _asyncWorker(List arguments) {
   } finally {
     malloc.free(source);
   }
-  timer = Timer.periodic(const Duration(milliseconds: 1), (_) => pump());
   pump();
 }
 
@@ -270,11 +289,12 @@ const _asyncBootstrap = r'''
   const pending = new Map(), stringify = JSON.stringify.bind(JSON), parse = JSON.parse.bind(JSON);
   let id = 0, calls = [], texts = [];
   const host = (method, args) => new Promise((resolve, reject) => {
+    if (globalThis.__aq_no_host) { reject(new Error('Unresolved async operation: host I/O is unavailable')); return; }
     if (typeof method !== 'string' || !Array.isArray(args)) { reject(new Error('Invalid host call')); return; }
     const key = ++id;
     pending.set(key, {resolve, reject}); calls.push([key, method, args]);
   });
-  const take = () => { const s = stringify({calls, text: texts}); calls = []; texts = []; return s; };
+  const take = () => { const s = stringify({calls, text: texts, pending: pending.size}); calls = []; texts = []; return s; };
   const deliver = json => {
     const [key, ok, value] = parse(json), p = pending.get(key);
     if (!p) return;

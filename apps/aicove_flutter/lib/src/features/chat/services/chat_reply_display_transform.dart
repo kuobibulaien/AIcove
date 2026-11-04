@@ -4,8 +4,43 @@ import '../../content_tags/domain/content_tag_registry.dart';
 import '../../content_tags/domain/content_tag_scanner.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
 import '../../plugins/plugin_content_tags.dart';
+import '../../plugins/image/image_plugin.dart';
 import '../../plugins/domain/plugin.dart' show PluginProcessResult;
 import '../../agent_plugins/plugin_response.dart';
+
+/// Moves an unfinished tag to the next nonempty round when it closes there.
+List<String> stitchReplyRoundTags(List<String> rounds) {
+  final result = List<String>.of(rounds);
+  final tags = RegExp(r'<(/?)([\p{L}_][\p{L}\p{N}_:.-]*)(?=[\s/>])[^>]*>', unicode: true);
+  for (var i = 0; i < result.length - 1; i++) {
+    final masked = maskCode(result[i]);
+    final stack = <RegExpMatch>[];
+    for (final tag in tags.allMatches(masked)) {
+      final name = tag[2]!.toLowerCase();
+      if (tag[1] == '/') {
+        if (stack.isNotEmpty && stack.last[2]!.toLowerCase() == name) {
+          stack.removeLast();
+        }
+      } else if (!tag[0]!.endsWith('/>')) {
+        stack.add(tag);
+      }
+    }
+    if (stack.isEmpty) continue;
+    final open = stack.first;
+    var next = i + 1;
+    while (next < result.length && result[next].trim().isEmpty) {
+      next++;
+    }
+    if (next == result.length) continue;
+    final name = RegExp.escape(open[2]!);
+    final boundary = RegExp('<(/?)$name(?=[\\s/>])[^>]*>', caseSensitive: false, unicode: true)
+        .firstMatch(maskCode(result[next]));
+    if (boundary == null || boundary[1] != '/') continue;
+    result[next] = result[i].substring(open.start) + result[next];
+    result[i] = result[i].substring(0, open.start);
+  }
+  return result;
+}
 
 const _assistantDrawImageReviewPrefix = '__AICOVE_DRAW_IMAGE_REVIEW__';
 
@@ -127,13 +162,25 @@ String expandComicPlanVariablesInPrompt(
   return _expandComicPrompt(prompt, identities, outfits);
 }
 
-String expandComicPlanCharacterVariables(String text) {
-  final variables = _resolveComicPlanVariables(text);
-  return text.replaceAllMapped(
-    RegExp(r'(<image\b[^>]*>)([\s\S]*?)(</image\s*>)', caseSensitive: false),
-    (image) =>
-        '${image[1]}${_expandComicPrompt(image[2]!, variables.identities, variables.outfits)}${image[3]}',
-  );
+String expandComicPlanCharacterVariables(
+  String text, {
+  Iterable<String> contextTexts = const [],
+}) {
+  final identities = <String, String>{};
+  final outfits = <String, String>{};
+  for (final source in [...contextTexts, text]) {
+    final variables = _resolveComicPlanVariables(source);
+    identities.addAll(variables.identities);
+    outfits.addAll(variables.outfits);
+  }
+  return firstPartyContentTagScanner.scan(text).map((segment) {
+    if (segment is ContentTagElement &&
+        segment.closed &&
+        ImagePlugin.isInlineImageElement(segment)) {
+      return '${segment.openTag}${_expandComicPrompt(segment.inner, identities, outfits)}${segment.closeTag}';
+    }
+    return segment.raw;
+  }).join();
 }
 
 final _thinkingScanner = ContentTagScanner(
@@ -160,6 +207,10 @@ final _thinkingScanner = ContentTagScanner(
       case ContentTagText():
         visible.write(text.substring(segment.start, segment.end));
       case ContentTagElement():
+        if (!segment.closed) {
+          visible.write(text.substring(segment.start, segment.end));
+          break;
+        }
         final inner = unmaskCode(segment.inner).trim();
         if (inner.isNotEmpty) thoughts.add(inner);
       case ContentTagOrphanClose():
@@ -251,9 +302,9 @@ Future<SillyTavernRegexApplyResult> applyAssistantDisplayRegex({
 /// Request callers supply snapshots; cached/background callers supply live
 /// regex and processor configuration when projecting this source.
 class AssistantReplyDisplaySource {
-  factory AssistantReplyDisplaySource(String text, {String reasoning = ''}) {
+  factory AssistantReplyDisplaySource(String text, {String reasoning = '', Iterable<String> contextTexts = const []}) {
     final extracted = extractAssistantThinking(
-      expandComicPlanCharacterVariables(text),
+      expandComicPlanCharacterVariables(text, contextTexts: contextTexts),
       reasoning: reasoning,
     );
     return AssistantReplyDisplaySource._(

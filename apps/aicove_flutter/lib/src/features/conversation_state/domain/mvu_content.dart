@@ -140,7 +140,7 @@ final RegExp _mvuSpecific = RegExp(
 bool isMvuSpecificContent(String text) => _mvuSpecific.hasMatch(text);
 
 /// 本轮世界书扫描要跳过的条目：`书id/条目id` → 提示。
-/// `[InitVar]` 永不注入；EJS 条目整条跳过；MVU 未生效时跳过 MVU 专属条目。
+/// `[InitVar]` 永不注入；MVU 未生效时跳过 MVU 专属条目。
 Map<String, String> mvuWorldEntrySkips(
   List<TavernWorldBook> books, {
   required bool mvuActive,
@@ -151,8 +151,6 @@ Map<String, String> mvuWorldEntrySkips(
       final id = '${book.id}/${entry.id}';
       if (isMvuInitVarEntry(entry)) {
         skips[id] = '';
-      } else if (containsEjs(entry.content)) {
-        skips[id] = '${entry.name} 含 EJS 模板（<% %>），本期不支持，已跳过该条目';
       } else if (!mvuActive && isMvuSpecificContent(entry.content)) {
         skips[id] = '${entry.name} 是 MVU 变量专用内容，本会话未启用 MVU 变量，已跳过';
       }

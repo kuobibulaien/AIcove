@@ -9,6 +9,8 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:aicove_flutter/src/core/database/database.dart';
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
+import 'package:aicove_flutter/src/features/context/domain/context_summary.dart';
 import 'package:aicove_flutter/src/core/database/repositories/repositories.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_exporter.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_importer.dart';
@@ -157,7 +159,7 @@ void main() {
     'chat_background_blur_sigma',
     'context_start_message_id'
   ]) {
-    test('T04 unsupported $field restore is rejected', () async {
+    test('T04 $field survives backup and restore', () async {
       final values = <String, Object>{
         'session_provider': 'provider/model',
         'enabled_plugins': '["memory"]',
@@ -172,19 +174,10 @@ void main() {
       final file = await export();
       final data = await entry(file, 'conversations.json');
       final card = (data['conversations'] as List).single as Map;
-      expect(
-        card.containsKey(field),
-        isFalse,
-        reason: 'v1 must not claim to preserve extended settings',
-      );
-      card[field] = values[field];
-      final unsupported = await rewrite(file, 'conversations.json', data);
-      await expectLater(
-        restore(unsupported),
-        throwsA(predicate((e) => e.toString().contains('暂不支持'))),
-      );
-      expect(await target.select(target.conversations).get(), isEmpty);
-      expect(await target.select(target.messages).get(), isEmpty);
+      expect(card[field], values[field]);
+      await restore(file);
+      final row = await target.customSelect('SELECT $field FROM conversations WHERE id = ?', variables: [const Variable('a')]).getSingle();
+      expect(row.data[field], values[field]);
     });
   }
   test('T05 asset avatar and remote poster survive round trip', () async {
@@ -231,20 +224,20 @@ void main() {
     await expectLater(
         export(selected: [...scopes, SyncScope.memory]), throwsA(anything));
   });
-  test('T09 settings merge is rejected without modifying local data', () async {
+  test('T09 settings merge preserves local data and merges preferences', () async {
     await conversation(target, 'a', name: 'old');
     await source
         .update(source.conversations)
-        .write(const ConversationsCompanion(isMuted: Value(true)));
+        .write(const ConversationsCompanion(isMuted: Value(true), enabledPlugins: Value('["memory","image"]'), thinkingLevels: Value('{"a":"high"}')));
+    await target.update(target.conversations).write(const ConversationsCompanion(enabledPlugins: Value('["image","tools"]'), thinkingLevels: Value('{"b":"low"}')));
     await message(target, 'original', content: 'must survive');
-    await expectLater(
-      restore(await export(),
+    await restore(await export(),
         selected: [SyncScope.characterSettings],
-        conflicts: {'a': ImportConflictResolution.merge}),
-      throwsA(predicate((e) => e.toString().contains('合并'))),
-    );
+        conflicts: {'a': ImportConflictResolution.merge});
     final existing = (await ConversationRepository(target).getById('a'))!;
-    expect(existing.isMuted, isFalse);
+    expect(existing.isMuted, isTrue);
+    expect(jsonDecode(existing.enabledPlugins!), ['image', 'tools', 'memory']);
+    expect(jsonDecode(existing.thinkingLevels!), {'a': 'high', 'b': 'low'});
     expect(existing.displayName, 'old');
     expect(
       (await MessageRepository(target).getById('original'))!.content,
@@ -427,35 +420,21 @@ void main() {
     expect(b.id, isNot('linked'));
     expect(jsonDecode(b.data)['messageId'], msg.id);
   });
-  test(
-    'T22 current context summaries are excluded and restore is refused', () async {
+  test('T22 context summary is restored with remapped messages', () async {
     await source.customStatement(
-        '''INSERT INTO context_summaries
-      (id, owner_id, kind, boundary_id, summary, source_ids, source_digest, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-        ['summary', 'a', 'topic', 'm', '承接摘要', '["m"]', 'digest', 2000]);
-      final original = await export();
-      final archive = ZipDecoder().decodeBytes(await original.readAsBytes());
-      expect(archive.findFile('context_summaries.json'), isNull);
-    final data = await entry(original, 'conversations.json');
-      ((data['conversations'] as List).single as Map)['context_summaries'] = [
-        {'id': 'summary', 'owner_id': 'a', 'summary': '承接摘要'},
-      ];
-      await expectLater(
-        restore(await rewrite(original, 'conversations.json', data)),
-        throwsA(predicate((e) => e.toString().contains('暂不支持'))),
-      );
-      expect(
-        await target.customSelect('SELECT * FROM context_summaries').get(),
-        isEmpty,
-      );
-    expect(await target.select(target.conversations).get(), isEmpty);
-      expect((await source
-                .customSelect('SELECT summary FROM context_summaries')
-                .getSingle())
-            .read<String>('summary'),
-        '承接摘要',
-      );
+        "UPDATE conversations SET context_start_message_id = ? WHERE id = ?", ['m', 'a']);
+    await source.customStatement(
+        'INSERT INTO context_summaries (id, owner_id, kind, boundary_id, summary, source_ids, source_digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ['summary', 'a', 'manual', 'm', '承接摘要', '["m"]', 'digest', 2000]);
+    await conversation(target, 'a');
+    final result = await restore(await export(), conflicts: {'a': ImportConflictResolution.createNew});
+    final id = result.conversationIds.single;
+    final msg = (await MessageRepository(target).getAllByConversationOrderedStable(id)).single;
+    final row = await target.customSelect('SELECT * FROM context_summaries WHERE owner_id = ?', variables: [Variable(id)]).getSingle();
+    expect(row.read<String>('boundary_id'), msg.id);
+    expect(jsonDecode(row.read<String>('source_ids')), [msg.id]);
+    expect(row.read<String>('source_digest'), contextSourceDigest([MessageConverter.fromDb(msg)]));
+    expect((await ConversationRepository(target).getById(id))!.contextStartMessageId, msg.id);
   });
   test('T23 basic card and legacy settings round trip', () async {
     await source.update(source.conversations).write(
@@ -527,7 +506,8 @@ void main() {
       () async {
     await source
         .update(source.conversations)
-        .write(const ConversationsCompanion(isMuted: Value(true)));
+        .write(const ConversationsCompanion(isMuted: Value(true), enabledPlugins: Value('["memory","image"]'), thinkingLevels: Value('{"a":"high"}')));
+    await target.update(target.conversations).write(const ConversationsCompanion(enabledPlugins: Value('["image","tools"]'), thinkingLevels: Value('{"b":"low"}')));
     final data = await entry(await export(selected: [SyncScope.characterCards]),
         'conversations.json');
     expect((data['conversations'] as List).single.containsKey('is_muted'),

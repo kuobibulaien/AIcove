@@ -23,13 +23,15 @@ class PackageStore {
     );
   }
 
-  /// Uncompressed size limit for one package. Checked while reading,
-  /// before anything larger is loaded into memory.
+  /// Legacy size constants retained for source compatibility.
   static const maxPackageBytes = 20 * 1024 * 1024;
 
   static const maxFileBytes = 8 * 1024 * 1024;
 
-  /// Entry limit for one package.
+
+  static const maxArchiveBytes = 24 * 1024 * 1024;
+
+
   static const maxPackageFiles = 1000;
 
   /// Imports and deletes run one at a time per package root, so concurrent
@@ -44,23 +46,43 @@ class PackageStore {
       for (final entry in files.entries)
         if (!_isIgnored(entry.key)) entry.key: entry.value,
     };
-    final budget = _Budget();
-    for (final bytes in cleaned.values) {
-      budget.add(bytes.length);
-    }
     final package = AicovePackage.parse(cleaned);
     return _serialized(() => _install(package, cleaned));
   }
 
   /// Imports a package folder; [directory] is the folder holding the
-  /// manifest. Links are rejected so nothing outside the folder is read.
+  /// manifest. Links inside it may only point inside it, so nothing outside
+  /// the folder is read.
   Future<AicovePackage> importDirectory(Directory directory) async =>
       importFiles(await _readTree(directory));
 
+  /// Imports whatever [path] names: a package folder, a zip, or a lone
+  /// `SKILL.md`/manifest file standing for its folder. The path the user
+  /// chose may itself be a link.
+  Future<AicovePackage> importPath(String path) async =>
+      switch (await FileSystemEntity.type(path)) {
+        FileSystemEntityType.directory => importDirectory(
+          Directory(await Directory(path).resolveSymbolicLinks()),
+        ),
+        FileSystemEntityType.file => importFile(File(path)),
+        _ => throw PackageFormatException('找不到要安装的包：$path'),
+      };
+
+  /// A `SKILL.md` or manifest file imports its folder; any other file is
+  /// read as a zip.
+  Future<AicovePackage> importFile(File file) async {
+    final name = p.basename(file.path);
+    if (name == AicovePackage.manifestName || name == 'SKILL.md') {
+      return importDirectory(
+        Directory(await file.parent.resolveSymbolicLinks()),
+      );
+    }
+    return importZip(await file.readAsBytes());
+  }
+
   /// Imports a zip whose root, or single top-level folder, holds the
   /// manifest. Entries are checked on the raw directory (links, duplicates,
-  /// encryption) before anything is inflated, and inflating stops as soon as
-  /// the real output passes the budget; declared sizes are never trusted.
+  /// encryption) before anything is inflated.
   Future<AicovePackage> importZip(List<int> bytes) async {
     final ZipDirectory directory;
     try {
@@ -68,7 +90,6 @@ class PackageStore {
     } on Object {
       throw const PackageFormatException('不是有效的 zip 文件');
     }
-    final budget = _Budget();
     final names = <String>{};
     final files = <String, List<int>>{};
     for (final header in directory.fileHeaders) {
@@ -91,12 +112,7 @@ class PackageStore {
       if (file.flags & 1 != 0) {
         throw PackageFormatException('不支持加密的 zip：$name');
       }
-      final content = _inflate(
-        file,
-        name,
-        budget.remainingBytes.clamp(0, maxFileBytes),
-      );
-      budget.add(content.length);
+      final content = _inflate(file, name);
       files[name] = content;
     }
     final tops = {for (final path in files.keys) path.split('/').first};
@@ -221,7 +237,9 @@ class PackageStore {
     }
   }
 
-  /// Reads a bounded package folder; links are always rejected.
+  /// Reads a package folder. Links are followed only when their
+  /// real target stays inside the folder; a link back to a folder already
+  /// being walked is skipped so cycles cannot loop.
   static Future<Map<String, List<int>>> _readTree(
     Directory directory,
   ) async {
@@ -229,58 +247,57 @@ class PackageStore {
         FileSystemEntityType.directory) {
       throw const PackageFormatException('包目录不能是链接或普通文件');
     }
+    final root = await directory.resolveSymbolicLinks();
     final files = <String, List<int>>{};
-    final budget = _Budget();
-    await for (final entity in directory.list(
-      recursive: true,
-      followLinks: false,
-    )) {
-      final relative = p
-          .relative(entity.path, from: directory.path)
-          .split(p.separator)
-          .join('/');
-      _validateNames([relative]);
-      if (entity is Link) {
-        throw PackageFormatException('包里不能有链接：$relative');
+    Future<void> walk(String real, String prefix, Set<String> ancestors) async {
+      await for (final entity in Directory(real).list(followLinks: false)) {
+        final name = p.basename(entity.path);
+        final relative = prefix.isEmpty ? name : '$prefix/$name';
+        _validateNames([relative]);
+        if (_isIgnored(relative)) continue;
+        var target = entity;
+        if (entity is Link) {
+          final String resolved;
+          try {
+            resolved = await entity.resolveSymbolicLinks();
+          } on FileSystemException {
+            throw PackageFormatException('包里的链接指向不存在的位置：$relative');
+          }
+          if (!p.equals(root, resolved) && !p.isWithin(root, resolved)) {
+            throw const FormatException('包内链接不能指向包目录外部');
+          }
+          target = switch (await FileSystemEntity.type(
+            resolved,
+            followLinks: false,
+          )) {
+            FileSystemEntityType.directory => Directory(resolved),
+            FileSystemEntityType.file => File(resolved),
+            _ => throw PackageFormatException('包里的链接目标无法读取：$relative'),
+          };
+        }
+        if (target is Directory) {
+          final next = await target.resolveSymbolicLinks();
+          if (ancestors.contains(next)) continue;
+          await walk(next, relative, {...ancestors, next});
+          continue;
+        }
+        if (target is! File) continue;
+        final content = await target.readAsBytes();
+        files[relative] = content;
       }
-      if (_isIgnored(relative) || entity is! File) continue;
-      budget.checkNext(await entity.length());
-      // A streaming cap also covers growth between stat and read.
-      final sink = _CappedSink(
-        budget.remainingBytes.clamp(0, maxFileBytes),
-        const PackageFormatException('读取内容超过 20 MiB 总量或 8 MiB 单文件限制'),
-      );
-      await for (final chunk in entity.openRead()) {
-        sink.add(chunk);
-      }
-      final content = sink.bytes.takeBytes();
-      budget.add(content.length);
-      files[relative] = content;
     }
+
+    await walk(root, '', {root});
     return files;
   }
 
-  /// Inflates one zip entry, failing as soon as the output passes [limit].
-  static List<int> _inflate(ZipFile file, String name, int limit) {
+  static List<int> _inflate(ZipFile file, String name) {
     final raw = file.rawContent?.toUint8List() ?? Uint8List(0);
-    final tooBig = PackageFormatException(
-      '解压内容超过 20 MiB 总量或 8 MiB 单文件限制（$name）',
-    );
     switch (file.compressionMethod) {
       case ZipFile.zipCompressionStore:
-        if (raw.length > limit) throw tooBig;
         return raw;
       case ZipFile.zipCompressionDeflate:
-        final out = _CappedSink(limit, tooBig);
-        final sink = io.ZLibDecoder(raw: true).startChunkedConversion(out);
-        const chunk = 64 * 1024;
-        for (var i = 0; i < raw.length; i += chunk) {
-          sink.add(
-            raw.sublist(i, i + chunk > raw.length ? raw.length : i + chunk),
-          );
-        }
-        sink.close();
-        return out.bytes.takeBytes();
+        return io.ZLibDecoder(raw: true).convert(raw);
       default:
         throw PackageFormatException('不支持的 zip 压缩方式：$name');
     }
@@ -307,44 +324,3 @@ class PackageStore {
       );
 }
 
-class _CappedSink implements Sink<List<int>> {
-  _CappedSink(this.limit, this.error);
-
-  final int limit;
-  final PackageFormatException error;
-  final BytesBuilder bytes = BytesBuilder(copy: false);
-
-  @override
-  void add(List<int> data) {
-    if (bytes.length + data.length > limit) throw error;
-    bytes.add(data);
-  }
-
-  @override
-  void close() {}
-}
-
-class _Budget {
-  int _bytes = 0;
-  int _files = 0;
-
-  int get remainingBytes => PackageStore.maxPackageBytes - _bytes;
-
-  void checkNext(int bytes) {
-    if (bytes > PackageStore.maxFileBytes) {
-      throw const PackageFormatException('单文件超过 8 MiB（单包上限 20 MiB）');
-    }
-    if (_bytes + bytes > PackageStore.maxPackageBytes) {
-      throw const PackageFormatException('包超过 20 MiB');
-    }
-    if (_files + 1 > PackageStore.maxPackageFiles) {
-      throw const PackageFormatException('包里的文件超过 1000 个');
-    }
-  }
-
-  void add(int bytes) {
-    checkNext(bytes);
-    _bytes += bytes;
-    _files++;
-  }
-}

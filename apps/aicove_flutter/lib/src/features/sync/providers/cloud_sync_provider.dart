@@ -43,6 +43,12 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
   final Ref ref;
   CloudSyncEngine? _engine;
   CloudSyncScheduler? _scheduler;
+  bool _foreground = true;
+
+  void foreground(bool active) {
+    _foreground = active;
+    _scheduler?.foreground(active);
+  }
   CloudApi? _api;
   AccountConnection? _connected;
   String? _token;
@@ -123,7 +129,8 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
           if ((await local.state())['enabled'] != 1) return false;
           await engine.synchronize();
           return mounted && state.error == null;
-        })..start();
+        });
+        if (_foreground) _scheduler!.start();
       } catch (_) {
         if (mounted && generation == _generation) {
           state = const CloudProgress('云同步初始化失败，请稍后重试');

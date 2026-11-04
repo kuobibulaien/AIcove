@@ -93,10 +93,11 @@ aicove/
 ├── CLAUDE.md / GEMINI.md          # 各 harness 入口，只指向 AGENTS.md
 ├── README.md                      # 产品介绍（给用户看）
 ├── DEVELOPMENT.md                 # 本文件：架构约束 + 项目宪法（验证流程唯一权威）
-├── hooks/memory.py                # 会话钩子：自动注入项目记忆、追加需求日志
+├── hooks/memory.py                # 会话钩子与记忆 CLI：注入项目记忆、SQLite 读写与检索需求日志／经验教训
 ├── docs/项目记忆/                  # 所有 agent 共用的长期记忆
 │   ├── README.md                  #   当前状态（hook 每次注入）
-│   ├── 需求日志.md                 #   用户原话 + 一句话结果
+│   ├── memory.db                  #   需求日志 SQLite 主库（仅本地）
+│   ├── 需求日志.md                 #   最近 30 条需求自动预览（勿手改）
 │   ├── 决策记录/                   #   架构级决定（ADR），一事一文件
 │   ├── 经验教训.md                 #   踩坑硬约束
 │   ├── 术语表.md / 模块边界补充.md

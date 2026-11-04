@@ -569,12 +569,13 @@ blonde hair
           sectionPrompt['caption'] as Map<String, dynamic>;
       expect(
         sectionCaption['base_caption'],
-        '見開きページ, 2girls, full color, wide shot',
+        '見開きページ, 2girls, full color, wide shot, text, chinese text\n'
+        'Text: 原来……梦是会留下痕迹的。',
       );
       expect(
         (sectionCaption['char_captions'] as List).single,
         {
-          'char_caption': 'girl, white hair\nText: 原来……梦是会留下痕迹的。',
+          'char_caption': 'girl, white hair',
           'centers': [
             {'x': 0.25, 'y': 0.75},
           ],

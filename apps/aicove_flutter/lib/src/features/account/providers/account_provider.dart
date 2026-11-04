@@ -22,12 +22,25 @@ final accountProvider = StateNotifierProvider<AccountController, AccountState>(
 );
 
 class AccountController extends StateNotifier<AccountState> {
-  AccountController(this._account) : super(const AccountState(busy: true)) {
+  AccountController(this._account, {DateTime Function()? now})
+      : _now = now ?? DateTime.now, super(const AccountState(busy: true)) {
     unawaited(_initialize());
     _renewal = Timer.periodic(renewInterval, (_) => unawaited(_renew()));
   }
   final AccountPort _account;
-  late final Timer _renewal;
+  Timer? _renewal;
+  final DateTime Function() _now;
+  DateTime? _lastRenewAt;
+
+  void foreground(bool active) {
+    _renewal?.cancel();
+    _renewal = null;
+    if (!active) return;
+    _renewal = Timer.periodic(renewInterval, (_) => unawaited(_renew()));
+    if (_lastRenewAt != null && _now().difference(_lastRenewAt!) >= renewInterval) {
+      unawaited(_renew());
+    }
+  }
 
   /// Well inside the server token lifetime, so a long-running app never
   /// reaches expiry between checks.
@@ -36,15 +49,20 @@ class AccountController extends StateNotifier<AccountState> {
   Future<void> _initialize() async {
     await _run(() async {
       await _account.load();
+      _lastRenewAt = _now();
       await _account.refresh();
     }, initializing: true);
   }
 
   Future<bool> login(String server, String username, String password) =>
-      _run(() => _account.login(server, username, password));
+      _run(() {
+        _lastRenewAt = _now();
+        return _account.login(server, username, password);
+      });
   Future<bool> logout() => _run(_account.logout);
   Future<bool> refresh() => _run(() async {
     await _account.load();
+    _lastRenewAt = _now();
     await _account.refresh();
   });
 
@@ -53,6 +71,7 @@ class AccountController extends StateNotifier<AccountState> {
   Future<void> _renew() async {
     if (state.busy || _account.connection?.hasSession != true) return;
     try {
+      _lastRenewAt = _now();
       await _account.refresh();
       if (mounted) state = AccountState(connection: _account.connection);
     } on AccountFailure catch (error) {
@@ -67,7 +86,7 @@ class AccountController extends StateNotifier<AccountState> {
 
   @override
   void dispose() {
-    _renewal.cancel();
+    _renewal?.cancel();
     super.dispose();
   }
 

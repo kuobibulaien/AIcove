@@ -415,8 +415,9 @@ void main() {
   });
 
   for (final (mode, label, style) in [
-    (RoleAgentMode.chat, '聊天', ChatDisplayStyle.bubble),
+    (RoleAgentMode.chat, '纯聊天', ChatDisplayStyle.bubble),
     (RoleAgentMode.tool, '工具', ChatDisplayStyle.document),
+    (RoleAgentMode.agent, '智能体', ChatDisplayStyle.bubble),
   ]) {
     testWidgets('以$label模式创建角色默认用${style.name}样式', (tester) async {
       final draft = buildConversation().copyWith(id: 'new_conv');
@@ -445,9 +446,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpAndSettle();
 
-      if (mode == RoleAgentMode.tool) {
-        await tester.ensureVisible(find.text('工具'));
-        await tester.tap(find.text('工具'));
+      if (mode != RoleAgentMode.chat) {
+        await tester.ensureVisible(find.text(label));
+        await tester.tap(find.text(label));
         await tester.pumpAndSettle();
       }
       final container = ProviderScope.containerOf(

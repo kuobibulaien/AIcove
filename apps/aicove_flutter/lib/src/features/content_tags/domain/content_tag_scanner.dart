@@ -40,7 +40,7 @@ class ContentTagElement extends ContentTagSegment {
   /// 原样开标签，如 `<TTS voice="a">`。
   final String openTag;
 
-  /// 原样正文；同名嵌套保留在内，其他标签需要时由调用方再次扫描。
+  /// 原样正文；其他标签需要时由调用方再次扫描。
   final String inner;
 
   /// 原样闭标签；未闭合或自闭合时为空。
@@ -87,7 +87,7 @@ class ContentTagOrphanClose extends ContentTagSegment {
 
 /// 唯一的语义标签扫描器（ADR0044）。
 ///
-/// 口径：大小写不敏感；允许属性（带引号的值可含 `>`）；同一标签按深度配对嵌套；
+/// 口径：大小写不敏感；允许属性（带引号的值可含 `>`）；同名开标签重新锚定；
 /// 支持自闭合；未闭合的开标签吞到文本末尾并标记 [ContentTagElement.closed] 为
 /// false；孤立闭标签单独成段；未注册的 `<xxx>` 当普通文本。
 class ContentTagScanner {
@@ -125,7 +125,6 @@ class ContentTagScanner {
 
     ContentTagSpec? active;
     RegExpMatch? open;
-    var depth = 0;
     for (final match in pattern.allMatches(text)) {
       final spec = registry.lookup(match.group(2)!)!;
       final closing = match.group(1) == '/';
@@ -154,33 +153,35 @@ class ContentTagScanner {
         } else {
           active = spec;
           open = match;
-          depth = 1;
         }
         continue;
       }
       if (!identical(spec, active)) continue;
+      // 自闭合是完整元素，不是新的起始标签，留在正文里由调用方再扫描。
+      if (selfClosing) continue;
       if (active.jsonPayload &&
           isInsideJsonString(text, open!.end, match.start)) {
         continue;
       }
       if (closing) {
-        depth--;
-        if (depth == 0) {
-          segments.add(ContentTagElement(
-            base + open!.start,
-            spec: active,
-            openTag: open.group(0)!,
-            inner: text.substring(open.end, match.start),
-            closeTag: match.group(0)!,
-            closed: true,
-            selfClosing: false,
-          ));
-          cursor = match.end;
-          active = null;
-          open = null;
-        }
-      } else if (!selfClosing) {
-        depth++;
+        segments.add(ContentTagElement(
+          base + open!.start,
+          spec: active,
+          openTag: open.group(0)!,
+          inner: text.substring(open.end, match.start),
+          closeTag: match.group(0)!,
+          closed: true,
+          selfClosing: false,
+        ));
+        cursor = match.end;
+        active = null;
+        open = null;
+      } else {
+        segments.add(ContentTagText(base + open!.start, open.group(0)!));
+        segments.addAll(_scan(text.substring(open.end, match.start), base + open.end));
+        cursor = match.end;
+        active = spec;
+        open = match;
       }
     }
     if (active != null) {
@@ -211,7 +212,17 @@ class ContentTagScanner {
     } else {
       flushText(text.length);
     }
-    return segments;
+    final merged = <ContentTagSegment>[];
+    for (final segment in segments) {
+      if (segment is ContentTagText && merged.isNotEmpty &&
+          merged.last is ContentTagText && merged.last.end == segment.start) {
+        final previous = merged.removeLast() as ContentTagText;
+        merged.add(ContentTagText(previous.start, previous.text + segment.text));
+      } else {
+        merged.add(segment);
+      }
+    }
+    return merged;
   }
 
   /// 按注册表生成请求副本文本；保留的元素会递归过滤其正文。

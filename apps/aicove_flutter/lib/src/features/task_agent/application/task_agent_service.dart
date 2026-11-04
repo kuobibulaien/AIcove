@@ -53,6 +53,7 @@ class TaskAgentService {
     required this.findReceipt,
     required this.ownsConversation,
     required this.deviceId,
+    this.conversationBusy = _defaultConversationBusy,
     this.preset = const TaskAgentPreset(),
     this.maxConcurrent = 3,
     String Function()? newId,
@@ -70,6 +71,9 @@ class TaskAgentService {
   final Future<TaskReceiptBlock?> Function(String receiptId) findReceipt;
   final Future<bool> Function(String conversationId) ownsConversation;
   final Future<String> Function() deviceId;
+  final FutureOr<bool> Function(String conversationId) conversationBusy;
+
+  static bool _defaultConversationBusy(String conversationId) => false;
   final TaskAgentPreset preset;
   final int maxConcurrent;
   final String Function() _newId;
@@ -529,6 +533,7 @@ class TaskAgentService {
     RecordedReceipt recorded, {
     bool relayNow = true,
   }) async {
+    if (await conversationBusy(recorded.task.conversationId)) return;
     try {
       await writeReceipt(recorded);
       await store.markReceiptWritten(
@@ -549,6 +554,16 @@ class TaskAgentService {
     }
   }
 
+  Future<void> flushConversation(String conversationId) async {
+    if (await conversationBusy(conversationId)) return;
+    for (final receipt in await store.unwrittenReceipts()) {
+      if (receipt.task.conversationId == conversationId) {
+        await _publish(receipt, relayNow: false);
+      }
+    }
+    await deliverPending();
+  }
+
   /// Relays every pending receipt this device is responsible for.
   Future<void> deliverPending() async {
     for (final receiptId in await store.pendingDeliveries()) {
@@ -564,6 +579,12 @@ class TaskAgentService {
       final target = await store.delivery(receiptId);
       if (target == null) return;
       final (taskId, conversationId) = target;
+      if (await conversationBusy(conversationId)) return;
+      if ((await store.unwrittenReceipts()).any(
+        (receipt) => receipt.block.receiptId == receiptId,
+      )) {
+        return;
+      }
       final receipt = block ?? await _receiptFromTask(taskId, receiptId);
       if (receipt == null) {
         await store.finishMissingTaskDelivery(receiptId);

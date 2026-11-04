@@ -26,6 +26,13 @@ final stagedMessagesResetEpochProvider =
 
 // ===== 发送状态 =====
 
+/// 会话整轮结束、回到空闲时发出会话 ID。
+final conversationIdleEventsProvider = Provider<StreamController<String>>((ref) {
+  final controller = StreamController<String>.broadcast();
+  ref.onDispose(controller.close);
+  return controller;
+});
+
 /// 每个会话各自的发送状态（会话A和会话B互不影响）
 final conversationSendingProvider =
     StateProvider.family<bool, String>((ref, conversationId) => false);

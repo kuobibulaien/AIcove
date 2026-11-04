@@ -133,6 +133,7 @@ class _Scenario {
 
 const _scenarios = [
   _Scenario('all_plugins_stable'),
+  _Scenario('agent_mode', agentMode: RoleAgentMode.agent),
   _Scenario('all_plugins_fast', mode: CallFlowMode.fast),
   _Scenario('all_plugins_no_tool_model', tools: false),
   _Scenario('no_plugins', plugins: []),
@@ -147,6 +148,7 @@ const _scenarios = [
   _Scenario('tts_enabled', plugins: ['tts', 'time_awareness'], tts: true),
   _Scenario('web_search_takeover', plugins: ['web_search'], webSearch: true),
   _Scenario('tool_mode_preset_tools_off', plugins: ['image'], preset: true, presetTools: false, agentMode: RoleAgentMode.tool),
+  _Scenario('agent_mode_preset_tools_off', plugins: ['image'], preset: true, presetTools: false, agentMode: RoleAgentMode.agent),
   _Scenario('chat_mode_preset_tools_off', plugins: ['image'], preset: true, presetTools: false),
   _Scenario('tool_mode_preset_tools_off_unsupported_model', plugins: ['image'], preset: true, presetTools: false, tools: false, agentMode: RoleAgentMode.tool),
   _Scenario('tool_mode_web_search', plugins: ['web_search'], webSearch: true,

@@ -8,8 +8,12 @@ void main() {
       () {
     expect(
         off.filterText(
-            'a<IMAGE source="history">x\n<image>nested</image>y</IMAGE>b<TtS voice="x>y">voice</tTs>c'),
+            'a<IMAGE source="history">x</IMAGE>b<TtS voice="x>y">voice</tTs>c'),
         'abc');
+    // 闭合前又出现同类起始标签：前一个起始标签按正文保留（同名重新锚定）。
+    expect(
+        off.filterText('a<image>x<image>nested</image>y</image>b'),
+        'a<image>xyb');
     expect(off.filterText('a<image />b<tts/>c'), 'abc');
     expect(off.filterText('a<image>unfinished'), 'a');
     expect(off.filterText('a</image>b'), 'ab');

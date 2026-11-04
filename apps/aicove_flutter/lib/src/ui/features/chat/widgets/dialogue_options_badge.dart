@@ -65,8 +65,8 @@ class _DialogueOptionsBadgeState extends ConsumerState<DialogueOptionsBadge> {
           for (var index = 0; index < options!.items.length; index++)
             MoePopupMenuItem(
               key: ValueKey('dialogue_option_$index'),
-              label: options.items[index],
-              onTap: () => _select(options, options.items[index]),
+              label: options.items[index].display,
+              onTap: () => _select(options, options.items[index].text),
             ),
         ],
       );

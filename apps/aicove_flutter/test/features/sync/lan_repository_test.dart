@@ -67,6 +67,18 @@ class LanCountingLocalStore extends CloudLocalStore {
   final revisionQueries = <(String, List<Object?>)>[];
   Completer<void>? externalEntered, externalRelease;
   final readCounts = <String, int>{};
+  int validations = 0;
+
+  @override
+  Future<void> validateRowPayload(
+    String kind,
+    String id,
+    Map<String, dynamic> payload,
+  ) async {
+    validations++;
+    await super.validateRowPayload(kind, id, payload);
+  }
+
   final readFailures = <String, Object>{};
   Future<void> Function(String, List<Object?>)? beforeExecute;
 
@@ -493,6 +505,105 @@ void main() {
       hasLength(1),
     );
   });
+  test('constructed revisions validate without a JSON round trip', () {
+    final valid = conflictRevision('valid', 'device');
+    expect(valid.validate, returnsNormally);
+    expect(LanRevision.fromJson(valid.toJson()).hash, valid.hash);
+    final invalid = LanRevision(
+      kind: 'messages',
+      id: 'invalid',
+      vector: {},
+      payload: {},
+    );
+    expect(invalid.validate, throwsA(isA<LanSyncFailure>()));
+    final invalidTimes = LanRevision(
+      kind: 'settings',
+      id: 'invalid',
+      vector: {'a': 1},
+      payload: {},
+    );
+    expect(invalidTimes.validate, throwsA(isA<LanSyncFailure>()));
+    expect(
+      () => valid.validate(knownDocumentBytes: lanMaxDocumentBytes + 1),
+      throwsA(isA<LanSyncFailure>()),
+    );
+  });
+
+  test(
+    'manifest summaries preserve hot revisions and detect changed documents',
+    () async {
+      final hot = conflictRevision('hot', 'a');
+      await storeConflict(a, [hot]);
+      final cached = await a.repo.revision(hot.hash);
+      await a.local.db.transaction(() async {
+        for (var i = 0; i < 2100; i++) {
+          await storeConflict(a, [
+            conflictRevision('scan-${i.toString().padLeft(4, '0')}', 'a'),
+          ]);
+        }
+      });
+      final local = a.local as LanCountingLocalStore;
+      var after = '';
+      do {
+        final page = await a.repo.manifest(after: after, limit: 200);
+        after = page['after'] as String;
+        if (page['has_more'] != true) break;
+      } while (true);
+      expect(identical(await a.repo.revision(hot.hash), cached), isTrue);
+      final validations = local.validations;
+      after = '';
+      do {
+        final page = await a.repo.manifest(after: after, limit: 200);
+        after = page['after'] as String;
+        if (page['has_more'] != true) break;
+      } while (true);
+      expect(local.validations, validations);
+      await a.local.execute(
+        'UPDATE lan_revisions SET document_json=? WHERE hash=?',
+        ['{}', hot.hash],
+      );
+      final page = await a.repo.manifest(limit: 200);
+      expect(
+        (page['items'] as List).where((item) => item['entity_id'] == 'hot'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'recent relays received revisions and reuses unchanged assembled items',
+    () async {
+      await seedLan(b);
+      await b.repo.capture();
+      final manifest = await b.repo.manifest();
+      for (final item in manifest['items'] as List) {
+        for (final hash in item['hashes'] as List) {
+          await a.repo.receive(await b.repo.revision(hash as String));
+        }
+      }
+      final first = await a.repo.recentChanges();
+      final second = await a.repo.recentChanges();
+      expect(identical(first['items'], second['items']), isTrue);
+      expect(first['revision'], greaterThan(0));
+      expect(first['run'], isA<String>());
+      expect(first['has_more_dirty'], false);
+      for (final item in first['items'] as List) {
+        for (final hash in item['hashes'] as List) {
+          await c.repo.receive(await a.repo.revision(hash as String));
+        }
+      }
+      expect(
+        (await c.local.read('messages', 'message'))!.payload['row']['content'],
+        '原文',
+      );
+      await a.local.execute(
+        "UPDATE messages SET status='sending' WHERE id='message'",
+      );
+      final sending = await a.repo.recentChanges();
+      expect(identical(second['items'], sending['items']), isFalse);
+    },
+  );
+
   test('manifest batches only selected page heads in one query', () async {
     final expected = <String, List<String>>{};
     await a.local.db.transaction(() async {
@@ -1096,6 +1207,16 @@ void main() {
         await a.local.execute(
           "DELETE FROM cloud_local_migrations WHERE name='lan_content_fingerprint_v1_queued'",
         );
+        // A missing migration marker is observed when the repository starts.
+        a = LanTestDevice(
+          a.local,
+          a.media,
+          LanRepository(
+            a.local,
+            CloudMediaCodec(a.media, allowNetworkDownload: false),
+            'a',
+          ),
+        );
         final before = await a.local.rows('SELECT counter FROM lan_state');
         final revisions = await a.local.rows('SELECT hash FROM lan_revisions');
         await a.repo.capture();
@@ -1141,6 +1262,16 @@ void main() {
       );
       await a.local.execute(
         "DELETE FROM cloud_local_migrations WHERE name='lan_content_fingerprint_v1_queued'",
+      );
+      // A missing migration marker is observed when the repository starts.
+      a = LanTestDevice(
+        a.local,
+        a.media,
+        LanRepository(
+          a.local,
+          CloudMediaCodec(a.media, allowNetworkDownload: false),
+          'a',
+        ),
       );
       final before = await a.local.rows('SELECT counter FROM lan_state');
       await a.repo.capture();
@@ -1201,6 +1332,16 @@ void main() {
       );
       await a.local.execute(
         "DELETE FROM cloud_local_migrations WHERE name='lan_content_fingerprint_v1_queued'",
+      );
+      // A missing migration marker is observed when the repository starts.
+      a = LanTestDevice(
+        a.local,
+        a.media,
+        LanRepository(
+          a.local,
+          CloudMediaCodec(a.media, allowNetworkDownload: false),
+          'a',
+        ),
       );
       final before = await a.local.rows('SELECT counter FROM lan_state');
       final local = a.local as LanCountingLocalStore;

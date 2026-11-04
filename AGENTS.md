@@ -9,8 +9,8 @@
 | 当前状态（hook 每次注入） | `docs/项目记忆/README.md` |
 | 架构约束、项目宪法、验证方式 | `DEVELOPMENT.md` |
 | 命令：日志、调试、Dart MCP、SDK、发布 | `apps/aicove_flutter/tool/DIAGNOSTICS.md` |
-| 架构决策／模块边界／踩坑／术语 | `docs/项目记忆/决策记录/`、`模块边界补充.md`、`经验教训.md`、`术语表.md` |
-| 用户原话与每次结果（仅本地） | `docs/项目记忆/需求日志.md`，续接上次任务时读末尾几条 |
+| 架构决策／模块边界／踩坑／术语 | `docs/项目记忆/决策记录/`、`模块边界补充.md`、`经验教训.md`（按词查整条用 `python3 hooks/memory.py lessons <关键词>`）、`术语表.md` |
+| 用户原话与每次结果（仅本地） | SQLite `docs/项目记忆/memory.db`（`需求日志.md` 为自动生成的最近 30 条预览，勿手改）；查最近用 `python3 hooks/memory.py recent`，搜索用 `python3 hooks/memory.py search <关键词>` |
 | 界面布局、公共组件 | `apps/aicove_flutter/docs/界面布局说明.md`、`公共组件总览.md`（只查用到的章节） |
 | 模块说明、已完成方案的归档 | `apps/aicove_flutter/docs/`（入口 `README.md`）、`05_历史归档/` |
 | 历史对话原文 | `trellis mem search <关键词>` |
@@ -23,7 +23,7 @@
 - 写完要验证，方式见 `DEVELOPMENT.md` 宪法第 7 条（默认 Mac 窄屏，不占用户手机）；修 bug 先写复现测试；不顺手扩大范围。
 - 改了用户可见界面，汇报附基于修改后源码的 Flutter 渲染预览图，标明「源码渲染预览」。
 - 子代理按全局规则 `~/.config/agents/subagent-rules.md`，合适时可开，小任务用小模型。
-- 有实际改动时收工：补需求日志本次条目的「结果」一句；状态变了就原地改写 README 那一行；架构级决定写 ADR 并加索引；「表面原因≠真实原因」的 bug 记进经验教训。hook 实现在 `hooks/memory.py`。
+- 有实际改动时收工：用 `python3 hooks/memory.py done "一句话结果"`（无 hook 的 agent 加 `--agent gemini --prompt "用户原话"`）回写需求日志；状态变了就原地改写 README 那一行；架构级决定写 ADR 并加索引；「表面原因≠真实原因」的 bug 记进经验教训。hook 与查询 CLI 实现在 `hooks/memory.py`。
 - 编码：KISS、YAGNI、DRY，跟随现有风格；改公共组件同步 `公共组件总览.md`。
 - 界面：优先复用公共组件，不加无意义的包装框、徽标和层级；界面文案不用工程术语，不懂技术的人也能一眼看懂。
 
@@ -40,4 +40,4 @@
 - 默认直接在主目录的 main 上改和提交，不新开分支或 worktree；只有项目大改（跨多个模块的重构、架构调整、数据迁移）才开分支，并先说明。修 bug、小功能、打包都不开。
 - 可自行提交；不做 destructive reset；保护工作树里他人的改动；不部署、不碰生产环境。
 - 本地 main 含私人历史，禁止直接 push。公开仓库 `kuobibulaien/AIcove`，发布只用 `python3 apps/aicove_flutter/tool/publish_release.py <版本>`（见 DIAGNOSTICS.md「公开发布」）。
-- `需求日志.md`、`opusdocs/`、第三方预设与抓取资料只存本地（第三方预设公开即侵权），不 `git add -f`；提交前跑 `git ls-files -ci --exclude-standard`。
+- `memory.db*`、`需求日志.md`、`opusdocs/`、第三方预设与抓取资料只存本地（第三方预设公开即侵权），不 `git add -f`；提交前跑 `git ls-files -ci --exclude-standard`。

@@ -128,9 +128,9 @@ class DelegateTaskRequestScope extends PluginRequestScope {
 
   static const _prompt =
       '## 派活\n'
-      '你工具列表里有的工具（比如表情包链接导入）直接用，不用派活。'
-      '你没有上网搜索和读写文件的工具；这类事交给后台助手，调用 delegate_task（action=start）'
-      '去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n'
+      '角色设定、世界观与历史对话已在当前上下文中，日常聊天、角色扮演、写故事或画分镜严禁调用 delegate_task。\n'
+      '你工具列表里有的工具直接用，不用派活。仅当用户明确要求联网查现实信息、调用外部服务或读写工作区文件时，'
+      '才调用 delegate_task（action=start）交给后台助手去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n'
       '收到「杂活回执」之前，只能说在处理，绝不能编造结果。回执里有问题时，'
       '用你的口吻转问用户；用户回答后用 action=reply 把回答交回去。'
       '用户说不用了，用 action=cancel 取消。';
@@ -141,7 +141,7 @@ class DelegateTaskRequestScope extends PluginRequestScope {
 AITool delegateTaskTool(DelegateTaskPort port) => AITool(
   name: delegateTaskToolName,
   description:
-      '把你没有工具、需要上网搜索或读写文件的事交给后台助手。'
+      '仅在用户明确要求联网搜索现实信息、调用外部服务或读写工作区文件时，把任务交给后台助手（严禁用于查阅角色设定、前文剧情或角色扮演）。'
       'start 派活（写清楚要做什么）；reply 回答助手的提问；cancel 取消任务。'
       '只返回受理结果，不等任务完成；结果之后以「杂活回执」送达。',
   parameters: const {},

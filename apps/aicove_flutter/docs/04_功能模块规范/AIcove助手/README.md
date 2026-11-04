@@ -87,7 +87,7 @@
 - 未安装的包／不存在的连接器返回 `error: invalid`，包括 `all: true` 的调用。原有 `ws:` 等不可管理授权始终保留。改动可撤销，下一次 run 生效。
 - 新开启 `pkg:`／`mcp:` 与联网搜索同为 `major`；遵循现行 ADR0107：默认直接执行，开启「修改前每次问我」后向用户确认。
 
-`aicove_create_role`、`aicove_update_role` 支持 `agent_mode: chat|tool` 和 `model_override: providerId:modelId`；模型 ID 可含冒号，空字符串清空模型覆盖并恢复跟随默认。模式只接受这两个枚举值，AIcove酱拒绝改为 `chat`。新建时 `tool` 默认文档样式、`chat` 默认气泡样式；修改已有角色的模式不改变其聊天样式。模式与模型和其他角色字段在同一次保存写入，撤销恢复原始值（包括未设置的模式），不会把原始 `null` 改写成显式 `chat`。
+`aicove_role`（新建与修改角色）支持 `agent_mode: chat|tool|agent` 和 `model_override: providerId:modelId`；模型 ID 可含冒号，空字符串清空模型覆盖并恢复跟随默认。模式接受 `chat`（纯聊天，默认不带工具）、`tool`（工具模式，单层 Agent）、`agent`（智能体，前台路由＋后台子 Agent）三个枚举值，AIcove酱拒绝改为非 `tool`。新建时 `tool` 默认文档样式、`chat` 与 `agent` 默认气泡样式；修改已有角色的模式不改变其聊天样式。模式与模型和其他角色字段在同一次保存写入，撤销恢复原始值（包括未设置的模式），不会把原始 `null` 改写成显式 `chat`。
 
 ### 自动审批（参考 Claude Code auto mode 与 Codex Auto-review）
 

@@ -15,7 +15,6 @@ class PublicNetwork {
   }) : _resolve = resolve,
        _connect = connect ?? Socket.startConnect;
 
-  static const maxResponseBytes = 8 * 1024 * 1024;
   static const maxRedirects = 5;
   
   final Future<List<InternetAddress>> Function(String)? _resolve;
@@ -81,11 +80,10 @@ class PublicNetwork {
     String method = 'GET',
     Map<String, String> headers = const {},
     List<int>? body,
-    int maxBytes = maxResponseBytes,
+    int? maxBytes,
     Duration? timeout,
     bool Function()? isActive,
   }) async {
-    if (maxBytes < 0) throw ArgumentError('Invalid response limit');
     if (timeout != null && timeout <= Duration.zero) throw ArgumentError('Invalid fetch timeout');
     var callOpen = true;
     void check() {
@@ -230,7 +228,7 @@ class PublicNetwork {
         final bytes = BytesBuilder(copy: false);
         await for (final chunk in response) {
           check();
-          if (bytes.length + chunk.length > maxBytes) {
+          if (maxBytes != null && maxBytes > 0 && bytes.length + chunk.length > maxBytes) {
             throw StateError('文件超过大小上限');
           }
           bytes.add(chunk);

@@ -118,6 +118,8 @@ class SillyTavernPrompt {
   final int? attachIndex;
   final String? attachRole;
   final String? attachSide;
+  final bool spresetConditionEnabled;
+  final String spresetConditionScript;
 
   const SillyTavernPrompt({
     required this.identifier,
@@ -133,6 +135,8 @@ class SillyTavernPrompt {
     this.attachIndex,
     this.attachRole,
     this.attachSide,
+    this.spresetConditionEnabled = false,
+    this.spresetConditionScript = '',
   });
 
   bool get isAbsoluteInjection => injectionPosition == 1;

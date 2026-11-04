@@ -222,6 +222,28 @@ List<TagDisplayPart> _project(String text, TagPresentationMap map) {
   return parts;
 }
 
+String? extractSummaryTitle(String summaryInnerHtml) {
+  final cleaned = summaryInnerHtml.replaceAll(
+    RegExp(r'<(button|script|style)\b[^>]*>[\s\S]*?</\1\s*>', caseSensitive: false),
+    '',
+  );
+  final withoutInlineTags = cleaned.replaceAll(
+    RegExp(
+      r'</?(?:b|strong|i|em|u|s|code|mark|small|font|sub|sup)\b[^>]*>',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  for (final part in withoutInlineTags.split(RegExp(r'<[^>]*>'))) {
+    final text = part
+        .replaceAll(RegExp(r'\$\d+|\{\{[\s\S]*?\}\}'), '')
+        .replaceAll(RegExp(r'^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$', unicode: true), '')
+        .trim();
+    if (text.isNotEmpty && text.length <= 24) return text;
+  }
+  return null;
+}
+
 void _addFold(
   List<TagDisplayPart> parts,
   String defaultTitle,
@@ -233,8 +255,7 @@ void _addFold(
   var content = inner;
   final summary = _summaryElement.firstMatch(content);
   if (summary != null) {
-    final summaryText = summary.group(1)!.replaceAll(_markup, '').trim();
-    if (summaryText.isNotEmpty) title = summaryText;
+    title = extractSummaryTitle(summary.group(1)!) ?? title;
     content = content.replaceRange(summary.start, summary.end, '');
   }
   // 折叠正文里的语义标签同样按映射处理（选项丢弃、嵌套折叠展平为文字）。

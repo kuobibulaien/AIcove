@@ -30,9 +30,16 @@ void main() {
     required bool locked,
     required ValueChanged<RoleAgentMode> onChanged,
     Key? captureKey,
+    double textScale = 1,
   }) {
     return MaterialApp(
       theme: ThemeData(fontFamily: 'Preview', extensions: [MoeColors.light()]),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(textScale),
+        ),
+        child: child!,
+      ),
       home: Scaffold(
         body: Padding(
           padding: const EdgeInsets.all(24),
@@ -64,8 +71,11 @@ void main() {
 
     await tester.tap(find.text('工具'));
     await tester.pumpAndSettle();
-
     expect(picked, RoleAgentMode.tool);
+
+    await tester.tap(find.text('智能体'));
+    await tester.pumpAndSettle();
+    expect(picked, RoleAgentMode.agent);
   });
 
   testWidgets('锁定时不能切换', (tester) async {
@@ -78,25 +88,69 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('聊天'));
+    await tester.tap(find.text('纯聊天'));
     await tester.pumpAndSettle();
 
     expect(picked, isNull);
   });
 
+  testWidgets('窄屏大字号时只显示当前档位，不溢出', (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      app(mode: RoleAgentMode.agent, locked: false, onChanged: (_) {}, textScale: 1.8),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('智能体'), findsOneWidget);
+    expect(find.text('纯聊天'), findsNothing);
+  });
+
+  testWidgets('窄屏大字号时点开底部菜单切换', (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    RoleAgentMode? picked;
+    await tester.pumpWidget(
+      app(
+        mode: RoleAgentMode.agent,
+        locked: false,
+        onChanged: (mode) => picked = mode,
+        textScale: 1.8,
+      ),
+    );
+    await tester.tap(find.text('角色模式'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('纯聊天'));
+    await tester.pumpAndSettle();
+
+    expect(picked, RoleAgentMode.chat);
+    expect(tester.takeException(), isNull);
+  });
+
   if (_writePreview) {
-    for (final (name, mode, locked) in [
-      ('chat', RoleAgentMode.chat, false),
-      ('tool', RoleAgentMode.tool, false),
-      ('locked', RoleAgentMode.tool, true),
+    for (final (name, mode, locked, width, scale) in [
+      ('chat', RoleAgentMode.chat, false, 390.0, 1.0),
+      ('tool', RoleAgentMode.tool, false, 390.0, 1.0),
+      ('agent', RoleAgentMode.agent, false, 390.0, 1.0),
+      ('locked', RoleAgentMode.tool, true, 390.0, 1.0),
+      ('narrow-large-text', RoleAgentMode.agent, false, 320.0, 1.8),
     ]) {
       testWidgets('渲染预览：$name', (tester) async {
         final key = GlobalKey();
-        tester.view.physicalSize = const Size(390, 260);
+        tester.view.physicalSize = Size(width, 260);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
         await tester.pumpWidget(
-          app(mode: mode, locked: locked, onChanged: (_) {}, captureKey: key),
+          app(
+            mode: mode,
+            locked: locked,
+            onChanged: (_) {},
+            captureKey: key,
+            textScale: scale,
+          ),
         );
         await tester.pumpAndSettle();
 

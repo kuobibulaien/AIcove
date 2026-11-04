@@ -56,21 +56,29 @@ void main() {
     isCancelled: cancelled,
     networkFactory: network,
   );
-  Future<ToolOutput> call(Map<String, dynamic> args) =>
-      WorkspaceToolset(
+  Future<ToolOutput> call(Map<String, dynamic> args) => WorkspaceToolset(
+    store: store,
+    workspaceIds: {ws},
+    runId: 'script_run',
+    enableScripts: true,
+  ).tools().firstWhere((t) => t.name == 'codemode').invoke(args);
+
+  test(
+    'codemode accepts only code and manages its own optional deadline',
+    () async {
+      final tool = WorkspaceToolset(
         store: store,
         workspaceIds: {ws},
-        runId: 'script_run',
+        runId: 'r',
         enableScripts: true,
-      ).tools().firstWhere((t) => t.name == 'codemode').invoke(args);
-
-  test('codemode accepts only code and manages its own optional deadline', () async {
-    final tool=WorkspaceToolset(store:store,workspaceIds:{ws},runId:'r',enableScripts:true).tools().firstWhere((t)=>t.name=='codemode');
-    expect(tool.managesDeadline,true); expect(tool.executionTimeout,isNull);
-    expect((tool.inputSchema!['properties'] as Map).keys,['code']);
-    expect((await call({'code':'text(42);'})).text,contains('42'));
-    expect(()=>call({'path':'script.js'}),throwsFormatException);
-  });
+      ).tools().firstWhere((t) => t.name == 'codemode');
+      expect(tool.managesDeadline, true);
+      expect(tool.executionTimeout, isNull);
+      expect((tool.inputSchema!['properties'] as Map).keys, ['code']);
+      expect((await call({'code': 'text(42);'})).text, contains('42'));
+      expect(() => call({'path': 'script.js'}), throwsFormatException);
+    },
+  );
   test(
     'await fetch then byte write records this run and is undoable',
     () async {
@@ -118,24 +126,16 @@ await ws.writeBytes('bytes.bin',new Uint8Array($bytes).fill(7));
 const b=await ws.readBytes('bytes.bin',{length:$bytes});
 text([b.length,b.slice(0,4),b.slice(-4)]);
 ''');
+      expect(out.isError, false, reason: out.text);
+      final expected = base64Encode(Uint8List(bytes)..fillRange(0, bytes, 7));
       expect(
-        out.isError,
-        bytes > WorkspaceScript.maxChunkBytes,
-        reason: out.text,
+        out.text,
+        jsonEncode([
+          expected.length,
+          expected.substring(0, 4),
+          expected.substring(expected.length - 4),
+        ]),
       );
-      if (bytes <= WorkspaceScript.maxChunkBytes) {
-        final expected = base64Encode(Uint8List(bytes)..fillRange(0, bytes, 7));
-        expect(
-          out.text,
-          jsonEncode([
-            expected.length,
-            expected.substring(0, 4),
-            expected.substring(expected.length - 4),
-          ]),
-        );
-      } else {
-        expect(await store.stat(ws, 'bytes.bin'), isNull);
-      }
     });
   }
   for (final bytes in [
@@ -143,7 +143,7 @@ text([b.length,b.slice(0,4),b.slice(-4)]);
     4 * 1024 * 1024,
     4 * 1024 * 1024 + 1,
   ]) {
-    test('read chunk limit independently rejects $bytes', () async {
+    test('read chunk succeeds for $bytes', () async {
       await store.write(
         ws,
         'source',
@@ -153,14 +153,8 @@ text([b.length,b.slice(0,4),b.slice(-4)]);
       final out = await script().run(
         'text((await ws.readBytes("source",{length:$bytes})).length);',
       );
-      expect(
-        out.isError,
-        bytes > WorkspaceScript.maxChunkBytes,
-        reason: out.text,
-      );
-      if (bytes <= WorkspaceScript.maxChunkBytes) {
-        expect(out.text, '${((bytes + 2) ~/ 3) * 4}');
-      }
+      expect(out.isError, false, reason: out.text);
+      expect(out.text, '${((bytes + 2) ~/ 3) * 4}');
     });
   }
   test(
@@ -529,7 +523,10 @@ await new Promise(()=>{});
     );
     final declarations =
         (body['tools'] as List).single['functionDeclarations'] as List;
-    expect(declarations[0]['parameters'] ?? declarations[0]['parametersJsonSchema'], run.inputSchema);
+    expect(
+      declarations[0]['parameters'] ?? declarations[0]['parametersJsonSchema'],
+      run.inputSchema,
+    );
     expect(
       declarations[1]['parameters'],
       read.toOpenAISchema()['function']['parameters'],

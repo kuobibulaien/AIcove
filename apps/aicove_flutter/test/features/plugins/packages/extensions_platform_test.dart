@@ -163,7 +163,7 @@ void main() {
     Link('${source.path}/linked-file').createSync('/etc/passwd');
     await expectLater(
       store.importDirectory(source),
-      throwsA(isA<PackageFormatException>()),
+      throwsA(isA<FormatException>()),
     );
     final archive = Archive()
       ..addFile(
@@ -185,7 +185,7 @@ void main() {
   });
 
   test(
-    'enforces 8 MiB file, 20 MiB package and 1000 file limits including inflated zip',
+    'imports large and many files including inflated zip',
     () async {
       final big = List<int>.filled(PackageStore.maxFileBytes + 1, 65);
       for (final files in [
@@ -200,14 +200,10 @@ void main() {
           for (var i = 0; i < 1000; i++) 'assets/$i': [1],
         },
       ]) {
-        await expectLater(
-          store.importFiles(files),
-          throwsA(isA<PackageFormatException>()),
-        );
-        await expectLater(
-          store.importZip(zip(files)),
-          throwsA(isA<PackageFormatException>()),
-        );
+        final direct = await store.importFiles(files);
+        expect(direct.files.keys, containsAll(files.keys));
+        final zipped = await store.importZip(zip(files));
+        expect(zipped.files.keys, containsAll(files.keys));
       }
       final accepted = {
         ...skillFiles(),
@@ -321,6 +317,40 @@ void main() {
       );
     },
   );
+
+  test('skill JS invokes authorized workspace and package tools', () async {
+    final package = AicovePackage.parse({
+      ...skillFiles(),
+      'scripts/bridge.js': utf8.encode(
+        'const a = await tools.workspace_write({path: "a.txt"});'
+        'const b = await tools.read_skill_sample_skill({name: "sample-skill"});'
+        'return a.text + ":" + b.text;',
+      ),
+    });
+    AITool tool(String name) => AITool(
+      name: name,
+      description: name,
+      parameters: const {},
+      handler: (_) async => null,
+    );
+    final calls = <String>[];
+    final context = ToolCallContext(
+      sessionId: 'session', turnId: 'turn', round: 0, toolCallId: 'call',
+      scriptTools: ScriptToolAccess(
+        [tool('workspace_write'), tool('read_skill_sample-skill')],
+        (name, args, active) async {
+          expect(active(), isTrue);
+          calls.add(name);
+          return ToolOutput(text: name);
+        },
+      ),
+    );
+    final output = await context.run(() => PackageSkillTools(package).tools().last.invoke({
+      'name': 'sample-skill', 'path': 'scripts/bridge.js',
+    }));
+    expect(output.isError, false, reason: output.text);
+    expect(calls, ['workspace_write', 'read_skill_sample-skill']);
+  });
 
   test(
     'script registration, error/timeout isolation and next invocation rebuild',

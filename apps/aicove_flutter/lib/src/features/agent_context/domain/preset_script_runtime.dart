@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'kemini_transport_config.dart';
 import 'silly_tavern_preset.dart';
+import 'wave_transport_config.dart';
 
 /// JSON snapshot: no open runtime or callbacks survive a generation.
 class PresetScriptSnapshot {
@@ -21,6 +22,9 @@ class PresetScriptSnapshot {
     try {
       final snapshot = jsonDecode(json);
       final transport = snapshot is Map ? snapshot['transport'] : null;
+      if (transport is Map && transport['protocol'] == 'wave_context_v1') {
+        return transport['enabled'] == true && transport['delivery'] == true;
+      }
       return transport is Map &&
           const {
             'content_tool_v1',
@@ -45,14 +49,44 @@ class PresetScriptSnapshot {
     final body = root['data'] is Map ? root['data'] as Map : root;
     final extensions = body['extensions'] ?? root['extensions'];
     final config = extensions is Map ? extensions['SPreset'] : null;
-    final transport = KeminiTransportConfig.read(
-      extensions is Map ? extensions : const {},
-    );
+    final extensionMap = extensions is Map ? extensions : const {};
+    // A recognized Wave context owns its markers, including when disabled;
+    // otherwise a simultaneous Kemini match could rewrite the wrong protocol.
+    final transport =
+        WaveTransportConfig.read(extensionMap) ??
+        KeminiTransportConfig.read(extensionMap);
     return PresetScriptSnapshot(
       jsonEncode({
         'config': config is Map ? config : <String, dynamic>{},
         'transport': transport,
         'macros': macros,
+        'extensions': extensionMap,
+        'presetName': preset.name,
+        'prompts': preset.prompts
+            .map(
+              (p) => {
+                'id': p.identifier,
+                'identifier': p.identifier,
+                'name': p.name,
+                'role': p.role,
+                'content': p.content,
+                'enabled': preset.enabledPrompts.any(
+                  (e) => e.identifier == p.identifier,
+                ),
+                'system_prompt': p.systemPrompt,
+                'marker': p.marker,
+                'injection_position': p.injectionPosition,
+                'injection_depth': p.injectionDepth,
+                'injection_order': p.injectionOrder,
+                'injection_trigger': p.injectionTriggers,
+                'position': {
+                  'type': p.injectionPosition == 1 ? 'in_chat' : 'relative',
+                  'depth': p.injectionDepth,
+                  'order': p.injectionOrder,
+                },
+              },
+            )
+            .toList(),
         'activeIds': preset.enabledPrompts
             .where(
               (p) =>

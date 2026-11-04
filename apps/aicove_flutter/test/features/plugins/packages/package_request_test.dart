@@ -249,7 +249,7 @@ void main() {
     addTearDown(fresh.dispose);
     return fresh.read(chatSendServiceProvider).prepareApiConfig(
       conv: conversation(plugins.map((p) => p.id).toList()).copyWith(
-        agentMode: workspaceFailure ? RoleAgentMode.tool : RoleAgentMode.chat),
+        agentMode: workspaceFailure ? RoleAgentMode.tool : RoleAgentMode.agent),
       history: _history, userText: 'test', deferReminders: true,
     );
   }
@@ -282,11 +282,18 @@ void main() {
   test(
     'an enabled package contributes its prompt, tags and skill tool',
     () async {
-      final config = await prepare(['pkg:demo']);
+      final config = await container.read(chatSendServiceProvider).prepareApiConfig(
+        conv: conversation(['pkg:demo']).copyWith(agentMode: RoleAgentMode.agent),
+        history: _history, userText: '写一首',
+      );
+      final chat = await prepare(['pkg:demo']);
+      expect(messagesOf(chat), contains(_prompt));
+      expect(messagesOf(chat), contains('<mood>开心</mood>'));
+      expect(chat.tools, isNull);
 
       expect(messagesOf(config), contains(_prompt));
       expect(messagesOf(config), contains('<mood>开心</mood>'));
-      // delegate_task is built in for every chat run (ADR0088).
+      // Agent mode retains package tools alongside delegation.
       expect(toolsOf(config), [_tool, 'delegate_task', 'steer_task', 'read_tool_result']);
       expect(config.boundTools!.firstWhere((t) => t.name == _tool).description,
         isNot(contains('run_skill_js_')));

@@ -57,6 +57,30 @@ void main() {
     return jsonDecode(text!) as Map<String, dynamic>;
   }
 
+  test('chat and memory reads retain full content unless max_chars is provided', () async {
+    final long = 'x' * 70000;
+    var receivedLimit = 0;
+    tools = AssistantPrivateReadTools(
+      roles: () async => [_role('xue')], rolesNow: () => [_role('xue')],
+      grants: AssistantReadGrants(),
+      messages: (id, {required limit, before, keyword}) async {
+        receivedLimit = limit;
+        return [(role: 'user', content: long, at: _now)];
+      },
+      memories: (_) async => [for (var i = 0; i < 101; i++) (title: '$i', content: long, locked: false)],
+    );
+    Future<String> read(Map<String, dynamic> args) async =>
+        ((await run(AssistantPrivateReadTools.readChat, {'role_id': 'xue', ...args}, approved: true))['messages'] as List).single['content'] as String;
+    expect(await read({'limit': 150}), long);
+    expect(receivedLimit, 150);
+    expect(await read({'offset': 3}), long.substring(3));
+    expect(await read({'max_chars': 3}), 'xxx…（截断）');
+    expect(await read({'max_chars': 50000}), '${'x' * 50000}…（截断）');
+    final result = await run(AssistantPrivateReadTools.readMemory, {'role_id': 'xue'}, approved: true);
+    expect(result['memories'], hasLength(101));
+    expect((result['memories'] as List).last['content'], long);
+  });
+
   test(
     'aggregate context preserves grants, revocation and write approval',
     () async {
@@ -173,7 +197,15 @@ void main() {
       args,
       approved: true,
     );
-    expect((chat['messages'] as List).single['content'], endsWith('（截断）'));
+    expect((chat['messages'] as List).single['content'], 'x' * 3000);
+    final clipped = await run(AssistantPrivateReadTools.readChat, {
+      'role_id': 'xue',
+      'max_chars': 100,
+    });
+    expect(
+      (clipped['messages'] as List).single['content'],
+      '${'x' * 100}…（截断）',
+    );
     expect(
       tools.riskOf(AssistantPrivateReadTools.readMemory, args),
       AssistantRisk.readOnly,
@@ -229,7 +261,7 @@ void main() {
           Message(
             id: 'm2',
             role: 'assistant',
-            content: 'x' * 3000,
+            content: 'x' * 70000,
             createdAt: _now,
           ),
           Message(id: 'm3', role: 'user', content: 'new', createdAt: _now),
@@ -241,11 +273,21 @@ void main() {
       }, approved: true);
       expect(topic['context_start_message_id'], 'm1');
       expect((topic['messages'] as List).map((m) => m['id']), ['m3', 'm2']);
+      expect((topic['messages'] as List).last['content'], 'x' * 70000);
       final one = await run(AssistantPrivateReadTools.readChat, {
         'role_id': 'xue',
         'message_id': 'm2',
       });
-      expect((one['messages'] as List).single['content'], 'x' * 3000);
+      expect((one['messages'] as List).single['content'], 'x' * 70000);
+      final tail = await run(AssistantPrivateReadTools.readChat, {'role_id': 'xue', 'message_id': 'm2', 'offset': 200});
+      expect((tail['messages'] as List).single['content'], 'x' * 69800);
+      final segment = await run(AssistantPrivateReadTools.readChat, {
+        'role_id': 'xue',
+        'message_id': 'm2',
+        'offset': 200,
+        'max_chars': 100,
+      });
+      expect((segment['messages'] as List).single['content'], 'x' * 100);
       final page = await run(AssistantPrivateReadTools.readChat, {
         'role_id': 'xue',
         'before_message_id': 'm3',

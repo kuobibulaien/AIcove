@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -38,28 +39,50 @@ const _settingsKeys = {
   'is_favorite',
   'is_muted',
   'notification_sound',
+  'session_provider', 'enabled_plugins', 'recipe_id', 'thinking_levels',
+  'chat_background_blur_sigma',
 };
+const _chatHistoryKeys = {'context_start_message_id', 'context_summaries'};
 
 /// Selecting a supported scope must not silently discard unsupported content.
 void validateTransferConversation(
   Map<String, dynamic> source,
   Set<String> scopes,
 ) {
-  final unsupported = <String>{
-    if (scopes.contains(SyncScope.characterSettings)) ...[
-      'session_provider',
-      'enabled_plugins',
-      'recipe_id',
-      'thinking_levels',
-      'chat_background_blur_sigma',
-    ],
-    if (scopes.contains(SyncScope.chatHistory)) ...[
-      'context_start_message_id',
-      'context_summaries',
-    ],
-  }.where((key) => source[key] != null);
-  if (unsupported.isNotEmpty) {
-    throw const FormatException('暂不支持恢复角色模型、插件设置或话题边界与摘要。请使用不含这些内容的备份；现有数据不会被修改。');
+  void invalid() => throw const FormatException('备份中的角色设置或聊天摘要格式无效');
+  if (scopes.contains(SyncScope.characterSettings)) {
+    for (final key in ['session_provider', 'recipe_id', 'enabled_plugins', 'thinking_levels']) {
+      if (source[key] != null && source[key] is! String) { invalid(); }
+    }
+    final blur = source['chat_background_blur_sigma'];
+    if (blur != null && (blur is! num || !blur.isFinite)) { invalid(); }
+    for (final key in ['enabled_plugins', 'thinking_levels']) {
+      if (source[key] == null) continue;
+      dynamic decoded;
+      try { decoded = jsonDecode(source[key] as String); } catch (_) { invalid(); }
+      if (key == 'enabled_plugins' &&
+          (decoded is! List || decoded.any((v) => v is! String))) { invalid(); }
+      if (key == 'thinking_levels' &&
+          (decoded is! Map || decoded.values.any((v) => v is! String))) { invalid(); }
+    }
+  }
+  if (scopes.contains(SyncScope.chatHistory)) {
+    if (source['context_start_message_id'] != null && source['context_start_message_id'] is! String) invalid();
+    final summaries = source['context_summaries'];
+    if (summaries != null) {
+      if (summaries is! List) { invalid(); return; }
+      for (final item in summaries) {
+        if (item is! Map) { invalid(); continue; }
+        for (final key in ['id', 'owner_id', 'kind', 'boundary_id', 'summary', 'source_ids', 'source_digest']) {
+          if (item[key] is! String) invalid();
+        }
+        if (item['topic_boundary'] != null && item['topic_boundary'] is! String) invalid();
+        if (item['created_at'] is! int) invalid();
+        dynamic ids;
+        try { ids = jsonDecode(item['source_ids'] as String); } catch (_) { invalid(); }
+        if (ids is! List || ids.any((v) => v is! String)) invalid();
+      }
+    }
   }
 }
 
@@ -76,7 +99,8 @@ Map<String, dynamic> filterTransferConversation(
         'created_at',
         'updated_at',
         if (scopes.contains(SyncScope.characterCards)) ..._cardKeys,
-        if (scopes.contains(SyncScope.characterSettings)) ..._settingsKeys
+        if (scopes.contains(SyncScope.characterSettings)) ..._settingsKeys,
+        if (scopes.contains(SyncScope.chatHistory)) ..._chatHistoryKeys
       ])
         if (source.containsKey(key)) key: source[key],
     };

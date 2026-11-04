@@ -40,6 +40,12 @@ class AicovePackagesNotifier extends StateNotifier<List<AicovePackage>> {
   Future<AicovePackage> importDirectory(Directory directory) =>
       _change((store) => store.importDirectory(directory));
 
+  Future<AicovePackage> importPath(String path) =>
+      _change((store) => store.importPath(path));
+
+  Future<AicovePackage> importFile(File file) =>
+      _change((store) => store.importFile(file));
+
   Future<AicovePackage> importZip(List<int> bytes) =>
       _change((store) => store.importZip(bytes));
 

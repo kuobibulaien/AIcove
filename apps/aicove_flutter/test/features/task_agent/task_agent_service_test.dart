@@ -19,6 +19,22 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+class _CountingScanner extends TaskSyncScanner {
+  _CountingScanner(super.database);
+  int scans = 0;
+  final scanned = Completer<void>();
+
+  @override
+  Future<List<(String, String)>> receiptsWithoutDelivery() async {
+    scans++;
+    if (!scanned.isCompleted) scanned.complete();
+    return [];
+  }
+
+  @override
+  Future<List<(String, String)>> unconsumedControls() async => [];
+}
+
 typedef _Script =
     Future<TaskRunOutcome> Function(
       String transcript,
@@ -92,6 +108,7 @@ void main() {
   late List<String> relayed;
   late bool owns;
   late bool writeFails;
+  late bool busy;
   late TaskAgentService service;
   var ids = 0;
 
@@ -104,6 +121,7 @@ void main() {
     relayed = [];
     owns = true;
     writeFails = false;
+    busy = false;
     ids = 0;
     await database
         .into(database.conversations)
@@ -131,6 +149,7 @@ void main() {
       },
       findReceipt: (id) async => _find(written, id),
       ownsConversation: (_) async => owns,
+      conversationBusy: (_) => busy,
       deviceId: () async => 'mac',
       newId: () => 't${++ids}',
     );
@@ -139,6 +158,43 @@ void main() {
   tearDown(() async {
     await database.close();
     await dir.delete(recursive: true);
+  });
+
+  test('busy conversation retains receipts until flushed, including recovery', () async {
+    busy = true;
+    runner.scripts.add((_, _, _) async => _done('完成'));
+    await service.start(conversationId: 'c1', instruction: '查');
+    await service.idle();
+    await service.recover();
+    await service.flushConversation('c1');
+    expect(written, isEmpty);
+    expect(relayed, isEmpty);
+    expect(await store.unwrittenReceipts(), hasLength(1));
+    busy = false;
+    await service.flushConversation('other');
+    expect(written, isEmpty);
+    await service.flushConversation('c1');
+    expect(written, hasLength(1));
+    expect(relayed, hasLength(1));
+    expect(await store.unwrittenReceipts(), isEmpty);
+  });
+
+  test('written pending receipt waits while the conversation is busy', () async {
+    owns = false;
+    runner.scripts.add((_, _, _) async => _done('完成'));
+    await service.start(conversationId: 'c1', instruction: '查');
+    await service.idle();
+    expect(written, hasLength(1));
+    expect(await store.unwrittenReceipts(), isEmpty);
+    owns = true;
+    busy = true;
+    await service.deliverPending();
+    expect(relayed, isEmpty);
+    expect(await store.pendingDeliveries(), hasLength(1));
+    busy = false;
+    await service.flushConversation('c1');
+    expect(relayed, hasLength(1));
+    expect(await store.pendingDeliveries(), isEmpty);
   });
 
   test('a task runs, writes its receipt and relays it once', () async {
@@ -357,6 +413,25 @@ void main() {
         scanner: TaskSyncScanner(database),
         loadBlocks: (id) async => blocks[id] ?? const [],
       );
+    });
+
+    test('stop during recovery defers scanning until foreground resumes', () async {
+      final pending = Completer<TaskAgentService>();
+      final scanner = _CountingScanner(database);
+      final delayed = TaskAgentSupervisor(
+        service: pending.future,
+        scanner: scanner,
+        loadBlocks: (_) async => [],
+      );
+      final starting = delayed.start();
+      delayed.stop();
+      pending.complete(service);
+      await starting;
+      expect(scanner.scans, 0);
+      delayed.foreground(true);
+      await scanner.scanned.future.timeout(const Duration(seconds: 2));
+      expect(scanner.scans, 1);
+      delayed.stop();
     });
 
     test('a synced receipt gets a delivery and is relayed once', () async {

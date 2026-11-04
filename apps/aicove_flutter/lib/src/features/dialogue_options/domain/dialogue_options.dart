@@ -12,10 +12,33 @@ class DialogueOptions {
   const DialogueOptions({required this.messageId, required this.items});
 
   final String messageId;
-  final List<String> items;
+  final List<DialogueOption> items;
 
   /// 同一条回复的同一组选项只提示一次；选用后以此标记为已处理。
-  String get signature => '$messageId:${Object.hashAll(items)}';
+  String get signature =>
+      '$messageId:${Object.hashAll(items.map((item) => item.text))}';
+}
+
+/// 一条选项：[text] 是点选后发出的内容；[label] 是预设写在行首的分类名
+/// （如 `**稳步推进**：…` 里的“稳步推进”），只用于显示。
+class DialogueOption {
+  const DialogueOption(this.text, {this.label});
+
+  final String text;
+  final String? label;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DialogueOption && other.text == text && other.label == label;
+
+  @override
+  int get hashCode => Object.hash(text, label);
+
+  /// 选项菜单里显示的文字：分类作短前缀。
+  String get display => label == null ? text : '$label：$text';
+
+  @override
+  String toString() => display;
 }
 
 const _ownerId = 'dialogue_options';
@@ -31,9 +54,19 @@ final ContentTagScanner _optionScanner = ContentTagScanner(
 );
 
 final RegExp _listMarker = RegExp(
-  r'^\s*(?:[-*•·]|\d{1,2}[.、)）:：]|[A-Za-z][.、)）:：]|[（(]\d{1,2}[)）])\s*',
+  r'^\s*(?:[-•·]|\*(?!\*)|\d{1,2}[.、)）:：]|[A-Za-z][.、)）:：]|[（(]\d{1,2}[)）])\s*',
 );
 final RegExp _extraBlankLines = RegExp(r'\n{3,}');
+
+/// 行首加粗分类：`**稳步推进**：行动`、`**稳步推进：**行动`。必须带冒号或
+/// 破折号，整句加粗的普通选项不拆。
+final RegExp _boldLabel = RegExp(
+  r'^\*\*([^*\n]{1,16}?)(?:[：:]\*\*\s*[：:—-]{0,2}|\*\*\s*[：:—-]{1,2})'
+  r'\s*([\s\S]*)$',
+);
+
+/// 预设为不适用的分类保留编号时写的占位，不是可选的行动。
+final RegExp _unavailable = RegExp(r'^(?:本场景)?不适用[。.!！]?$');
 
 bool _mayContainOptions(String text, Set<String> tags) {
   final lower = text.toLowerCase();
@@ -99,7 +132,7 @@ ContentTagScanner _scannerForTags(Set<String> tags, Set<String> foldTags) {
 
 /// 解析一段回复文本中最后一组对话选项；没有时返回空列表。
 /// 只认顶层且完整闭合的选项标签。
-List<String> parseDialogueOptions(
+List<DialogueOption> parseDialogueOptions(
   String text, {
   Set<String> tags = defaultDialogueOptionTags,
   Set<String> foldTags = const {},
@@ -124,14 +157,36 @@ List<String> parseDialogueOptions(
           for (final segment in segments.whereType<ContentTagElement>())
             if (segment.closed) segment.inner,
         ]
-      : inner.split('\n');
+      : _splitLines(inner);
   final seen = <String>{};
   return [
     for (final item in raw)
-      if (unmaskCode(item.replaceFirst(_listMarker, '').trim()) case final value
-          when value.isNotEmpty && seen.add(value))
-        value,
+      if (_parseItem(unmaskCode(item.replaceFirst(_listMarker, '').trim()))
+          case final option?
+          when seen.add(option.text))
+        option,
   ];
+}
+
+/// 按行拆分；整组只有一行却用字面 `\n` 分隔时，按 `\n` 拆。
+List<String> _splitLines(String inner) {
+  final trimmed = inner.trim();
+  if (!trimmed.contains('\n') && trimmed.contains(r'\n')) {
+    return trimmed.split(r'\n');
+  }
+  return inner.split('\n');
+}
+
+DialogueOption? _parseItem(String value) {
+  if (value.isEmpty) return null;
+  final match = _boldLabel.firstMatch(value);
+  final label = match?.group(1)!.trim();
+  final text = (match?.group(2) ?? value).trim();
+  if (text.isEmpty || _unavailable.hasMatch(text)) return null;
+  return DialogueOption(
+    text,
+    label: label == null || label.isEmpty ? null : label,
+  );
 }
 
 /// 显示副本：去掉顶层 `<options>` 元素及孤立闭标签。[allowUnclosedTail] 为

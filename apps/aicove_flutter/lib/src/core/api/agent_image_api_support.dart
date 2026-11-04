@@ -860,6 +860,8 @@ class _AgentImageApiSupport {
         case 'position':
           useCoords = value.toLowerCase() == 'manual';
         case 'page':
+          currentPanel = null;
+          currentChar = null;
           targetKind = 'page_base';
         case 'panel':
           currentPanel = _NovelAiPanelDraft();
@@ -907,7 +909,7 @@ class _AgentImageApiSupport {
         final visual = line.substring(0, marker.start).trim().replaceFirst(RegExp(r'[,，]\s*$'), '');
         if (visual.isNotEmpty) visuals.add(visual);
         var dialogue = line.substring(marker.end).trim();
-        if (dialogue.length >= 2 && ((dialogue.startsWith('"') && dialogue.endsWith('"')) || (dialogue.startsWith('“') && dialogue.endsWith('”')))) {
+        if (dialogue.length >= 2 && ((dialogue.startsWith('"') && dialogue.endsWith('"')) || (dialogue.startsWith('“') && dialogue.endsWith('”')) || (dialogue.startsWith('「') && dialogue.endsWith('」')) || (dialogue.startsWith('『') && dialogue.endsWith('』')))) {
           dialogue = dialogue.substring(1, dialogue.length - 1).trim();
         }
         if (dialogue.isNotEmpty) texts.add(dialogue);
@@ -923,6 +925,9 @@ class _AgentImageApiSupport {
       texts.addAll(dialogue);
     }
     final (pageVisual, pageTexts) = splitCaption(pageBase);
+    final (negativeVisual, negativeTexts) = splitCaption(pageNegative);
+    pageNegative = negativeVisual;
+    pageTexts.addAll(negativeTexts);
     addBase(MangaPromptSanitizer.positive(pageVisual, raw));
     texts.addAll(pageTexts);
     addBase(pageNonCharacter);
@@ -934,14 +939,17 @@ class _AgentImageApiSupport {
       for (final c in panel.characters) {
         final (rawPos, dialogue) = splitCaption(c.positive);
         final pos = MangaPromptSanitizer.positive(rawPos, raw);
+        final (rawNeg, negativeDialogue) = splitCaption(c.negative);
         texts.addAll(dialogue);
+        texts.addAll(negativeDialogue);
         if (pos.isEmpty) continue;
         final center = <String, double>{'x': c.centerX, 'y': c.centerY};
         charCaptions.add(<String, dynamic>{'char_caption': pos, 'centers': <Map<String, double>>[center]});
-        negativeCharCaptions.add(<String, dynamic>{'char_caption': c.negative.trim(), 'centers': <Map<String, double>>[center]});
+        negativeCharCaptions.add(<String, dynamic>{'char_caption': MangaPromptSanitizer.negative(rawNeg), 'centers': <Map<String, double>>[center]});
       }
     }
     if (texts.isNotEmpty && !RegExp(r'(?:^|[,\n])\s*text\s*(?:[,\n]|$)', caseSensitive: false).hasMatch(visuals.join(', '))) visuals.add('text');
+    if (texts.isNotEmpty && RegExp(r'[\u4e00-\u9fff]').hasMatch(texts.join('\n')) && !RegExp(r'(?:^|[,\n])\s*chinese text\s*(?:[,\n]|$)', caseSensitive: false).hasMatch(visuals.join(', '))) visuals.add('chinese text');
     final baseCaption = visuals.join(', ') + (texts.isNotEmpty ? '\nText: ${texts.join('\n\n')}' : '');
     return _NovelAiCompiledPrompt(
       baseCaption: baseCaption,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
@@ -17,8 +18,9 @@ import 'frontend_diagnostics_service.dart';
 class FrameJankRecorder with WidgetsBindingObserver {
   FrameJankRecorder(this._diagnostics);
 
-  static final FrameJankRecorder instance =
-      FrameJankRecorder(FrontendDiagnosticsService.instance);
+  static final FrameJankRecorder instance = FrameJankRecorder(
+    FrontendDiagnosticsService.instance,
+  );
 
   static const unknownPage = 'unknown';
   static const mixedPage = 'mixed';
@@ -30,6 +32,57 @@ class FrameJankRecorder with WidgetsBindingObserver {
   static const _maxSamplesPerWindow = 10;
 
   final FrontendDiagnosticsPort _diagnostics;
+  final _syncSpans = Queue<(String, int, int)>();
+  final _phaseSpans = Queue<(String, int, int)>();
+  final _activePhases = <String, List<int>>{};
+
+  T traceSync<T>(String tag, T Function() action) {
+    final start = DateTime.now().microsecondsSinceEpoch;
+    try {
+      return action();
+    } finally {
+      recordSyncSpan(tag, start, DateTime.now().microsecondsSinceEpoch);
+    }
+  }
+
+  void recordSyncSpan(String tag, int startWallUs, int endWallUs) {
+    if (endWallUs - startWallUs < 8000) return;
+    if (_syncSpans.length == 32) _syncSpans.removeFirst();
+    _syncSpans.addLast((tag, startWallUs, endWallUs));
+  }
+
+  void enterPhase(String phase) {
+    (_activePhases[phase] ??= []).add(DateTime.now().microsecondsSinceEpoch);
+  }
+
+  void exitPhase(String phase) {
+    final starts = _activePhases[phase];
+    if (starts == null || starts.isEmpty) return;
+    final start = starts.removeLast();
+    if (starts.isEmpty) _activePhases.remove(phase);
+    if (_phaseSpans.length == 32) _phaseSpans.removeFirst();
+    _phaseSpans.addLast((phase, start, DateTime.now().microsecondsSinceEpoch));
+  }
+
+  Map<String, Object?> _attribution(int start, int end) {
+    final phases = <String>{};
+    for (final (phase, from, to) in _phaseSpans) {
+      if (from <= end && to >= start) phases.add(phase);
+    }
+    for (final entry in _activePhases.entries) {
+      if (entry.value.any((from) => from <= end)) phases.add(entry.key);
+    }
+    final spans = _syncSpans.where((s) => s.$2 <= end && s.$3 >= start).toList()
+      ..sort((a, b) => (b.$3 - b.$2).compareTo(a.$3 - a.$2));
+    return {
+      if (phases.isNotEmpty) 'activePhases': phases.toList(),
+      if (spans.isNotEmpty)
+        'syncSpans': [
+          for (final s in spans.take(6))
+            {'tag': s.$1, 'ms': (s.$3 - s.$2) / 1000},
+        ],
+    };
+  }
 
   /// 由应用壳提供当前页面的固定名称，不含用户数据。
   String? Function()? pageName;
@@ -127,7 +180,11 @@ class FrameJankRecorder with WidgetsBindingObserver {
     _stalls++;
     _stallTotalMs += ms;
     if (ms > _stallMaxMs) _stallMaxMs = ms;
-    _sample(FrontendStage.uiStall, page, {'stallMs': ms});
+    final now = DateTime.now().microsecondsSinceEpoch;
+    _sample(FrontendStage.uiStall, page, {
+      'stallMs': ms,
+      ..._attribution(now - lateness.inMicroseconds - 100000, now),
+    });
   }
 
   @visibleForTesting
@@ -137,13 +194,15 @@ class FrameJankRecorder with WidgetsBindingObserver {
     final page = _currentPage();
     _trackPage(page);
     // 一批帧可能跨过切页，此时无法确定某一帧属于哪个页面。
-    final batchPage =
-        _lastBatchPage == null || _lastBatchPage == page ? page : mixedPage;
+    final batchPage = _lastBatchPage == null || _lastBatchPage == page
+        ? page
+        : mixedPage;
     _lastBatchPage = page;
     final refreshHz =
         PlatformDispatcher.instance.displays.firstOrNull?.refreshRate;
-    final budgetUs =
-        refreshHz != null && refreshHz > 0 ? 1000000 / refreshHz : null;
+    final budgetUs = refreshHz != null && refreshHz > 0
+        ? 1000000 / refreshHz
+        : null;
     if (budgetUs != null) _refreshHz = refreshHz;
     for (final timing in timings) {
       final uiUs = timing.buildDuration.inMicroseconds;
@@ -158,8 +217,9 @@ class FrameJankRecorder with WidgetsBindingObserver {
       }
       if (totalUs < _slowFrameUs) continue;
       _slowFrames++;
-      final finishedAtUs =
-          timing.timestampInMicroseconds(FramePhase.rasterFinishWallTime);
+      final finishedAtUs = timing.timestampInMicroseconds(
+        FramePhase.rasterFinishWallTime,
+      );
       final ageMs =
           (DateTime.now().microsecondsSinceEpoch - finishedAtUs) ~/ 1000;
       _sample(FrontendStage.slowFrame, batchPage, {
@@ -168,6 +228,7 @@ class FrameJankRecorder with WidgetsBindingObserver {
         'vsyncMs': timing.vsyncOverhead.inMilliseconds,
         'totalMs': totalUs ~/ 1000,
         if (ageMs >= 0) 'frameAgeMs': ageMs,
+        ..._attribution(finishedAtUs - totalUs - 50000, finishedAtUs),
       });
     }
   }
@@ -258,7 +319,9 @@ class FrameJankRecorder with WidgetsBindingObserver {
         stage,
         facts: DiagnosticFacts(pageName: page, state: state),
       );
-    } catch (_) {/* 诊断失败不能影响界面。 */}
+    } catch (_) {
+      /* 诊断失败不能影响界面。 */
+    }
   }
 }
 

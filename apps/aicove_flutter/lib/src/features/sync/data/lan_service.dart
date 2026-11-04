@@ -10,6 +10,7 @@ import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/sync/cloud_tracking.dart';
 import 'package:image/image.dart' as img;
 import 'package:zxing2/qrcode.dart';
+import '../../observability/frame_jank_recorder.dart';
 import '../domain/lan_contract.dart';
 import '../domain/lan_sync_port.dart';
 import 'cloud_document.dart';
@@ -68,6 +69,11 @@ class LanService implements LanSyncPort {
       _recovering,
       _publishing;
   bool _syncAgain = false, _externalChanged = false;
+  bool _fullSyncRequested = false, _captureExternalRequested = false;
+  final _lastFullSyncAt = <String, DateTime>{};
+  final _peerRunId = <String, String>{};
+  final _ackedLocalRev = <String, int>{};
+  final _ackedRemoteRev = <String, int>{};
   bool _metadataRetry = false, _recoveryNeeded = false;
   int _retryAttempts = 0;
   static const _retryDelays = [
@@ -170,7 +176,7 @@ class LanService implements LanSyncPort {
     if (!_active) return;
     try {
       if (external || await repository.hasPendingChanges()) {
-        if (_active) await synchronize();
+        if (_active) await _synchronize(full: false, captureExternal: external);
       }
     } catch (e) {
       _error = _message(e);
@@ -570,6 +576,10 @@ class LanService implements LanSyncPort {
     peers.peers.remove(id);
     _pushedRecent.remove(id);
     _pulledRecent.remove(id);
+    _lastFullSyncAt.remove(id);
+    _peerRunId.remove(id);
+    _ackedLocalRev.remove(id);
+    _ackedRemoteRev.remove(id);
     await peers.save();
     await repository.local.execute(
       'DELETE FROM lan_media_queue WHERE peer_id=?',
@@ -669,6 +679,25 @@ class LanService implements LanSyncPort {
     LanPeer peer,
     Map<String, dynamic> body,
   ) async {
+    final phase = switch (body['method']) {
+      'recent' => 'lan.rpc.recent',
+      'manifest' => 'lan.rpc.manifest',
+      'put' => 'lan.rpc.put',
+      'revision' => 'lan.rpc.revision',
+      _ => null,
+    };
+    if (phase != null) FrameJankRecorder.instance.enterPhase(phase);
+    try {
+      return await _handleRpc(peer, body);
+    } finally {
+      if (phase != null) FrameJankRecorder.instance.exitPhase(phase);
+    }
+  }
+
+  Future<Map<String, dynamic>> _handleRpc(
+    LanPeer peer,
+    Map<String, dynamic> body,
+  ) async {
     switch (body['method']) {
       case 'recent':
         return repository.recentChanges();
@@ -748,8 +777,10 @@ class LanService implements LanSyncPort {
             .toList(),
       });
 
-  Future<void> _synchronize() {
+  Future<void> _synchronize({bool full = true, bool captureExternal = true}) {
     if (!_active || peers.peers.isEmpty) return Future.value();
+    _fullSyncRequested = _fullSyncRequested || full;
+    _captureExternalRequested = _captureExternalRequested || captureExternal;
     // A later request belongs to the next round, not to an old capture.
     _syncAgain = true;
     _startFiles();
@@ -760,7 +791,11 @@ class LanService implements LanSyncPort {
     try {
       do {
         _syncAgain = false;
-        await _sync();
+        final full = _fullSyncRequested;
+        final captureExternal = _captureExternalRequested;
+        _fullSyncRequested = false;
+        _captureExternalRequested = false;
+        await _sync(full: full, captureExternal: captureExternal);
         _metadataRetry = !_roundComplete;
       } while (_active && _syncAgain);
     } finally {
@@ -984,6 +1019,20 @@ class LanService implements LanSyncPort {
     double endProgress = 0.10,
   }) async {
     final page = await transport.rpc(peer, {'method': 'recent'});
+    return _pullRecentWithPage(
+      peer,
+      page,
+      startProgress: startProgress,
+      endProgress: endProgress,
+    );
+  }
+
+  Future<bool> _pullRecentWithPage(
+    LanPeer peer,
+    Map<String, dynamic> page, {
+    double startProgress = 0.06,
+    double endProgress = 0.10,
+  }) async {
     final token = page['token'] as String?;
     if (token != null && _pulledRecent[peer.id] == token) return true;
     final items = page['items'] as List;
@@ -1058,7 +1107,22 @@ class LanService implements LanSyncPort {
     return ok;
   }
 
-  Future<void> _sync() async {
+  Future<void> _sync({
+    required bool full,
+    required bool captureExternal,
+  }) async {
+    FrameJankRecorder.instance.enterPhase('lan.sync.client');
+    try {
+      await _syncRound(full: full, captureExternal: captureExternal);
+    } finally {
+      FrameJankRecorder.instance.exitPhase('lan.sync.client');
+    }
+  }
+
+  Future<void> _syncRound({
+    required bool full,
+    required bool captureExternal,
+  }) async {
     final clock = Stopwatch()..start();
     _roundPushed = _roundPulled = _roundFailed = 0;
     _roundProgress = 0;
@@ -1080,15 +1144,66 @@ class LanService implements LanSyncPort {
           }
           await _ensureBackup(peer);
           _startFiles();
+          Map<String, dynamic>? localBaseline;
+          Map<String, dynamic>? remoteBaseline;
+          final lastFull = _lastFullSyncAt[peer.id];
+          if (!full &&
+              lastFull != null &&
+              DateTime.now().difference(lastFull) <=
+                  const Duration(minutes: 10) &&
+              status['recent_changes'] == 1 &&
+              (await repository.local.rows(
+                'SELECT 1 FROM lan_pending_deletions WHERE peer_id=? LIMIT 1',
+                [peer.id],
+              )).isEmpty) {
+            await repository.capture(scanExternal: captureExternal);
+            final localRecent = await repository.recentChanges();
+            final remoteRecent = await transport.rpc(peer, {
+              'method': 'recent',
+            });
+            final localRev = localRecent['revision'];
+            final remoteRev = remoteRecent['revision'];
+            final localEvicted = localRecent['evicted_revision'];
+            final remoteEvicted = remoteRecent['evicted_revision'];
+            if (localRev is int &&
+                remoteRev is int &&
+                localEvicted is int &&
+                remoteEvicted is int &&
+                localRecent['has_more_dirty'] == false &&
+                remoteRecent['has_more_dirty'] == false &&
+                localEvicted <= (_ackedLocalRev[peer.id] ?? -1) &&
+                remoteEvicted <= (_ackedRemoteRev[peer.id] ?? -1) &&
+                remoteRecent['run'] is String &&
+                remoteRecent['run'] == _peerRunId[peer.id]) {
+              final pushed = await _pushRecent(peer, localRecent);
+              final pulled = await _pullRecentWithPage(peer, remoteRecent);
+              if (pushed &&
+                  pulled &&
+                  _roundFailed == 0 &&
+                  !await repository.hasPendingChanges()) {
+                _ackedLocalRev[peer.id] = localRev;
+                _ackedRemoteRev[peer.id] = remoteRev;
+                peer.lastSync = DateTime.now();
+                peer.online = true;
+                peer.error = null;
+                continue;
+              }
+            }
+          }
+          localBaseline = await repository.recentChanges();
+          if (status['recent_changes'] == 1) {
+            remoteBaseline = await transport.rpc(peer, {'method': 'recent'});
+          }
           var complete = await _pushRecent(
             peer,
-            await repository.recentChanges(),
+            localBaseline,
             startProgress: 0.02,
             endProgress: 0.06,
           );
-          if (status['recent_changes'] == 1 &&
-              !await _pullRecent(
+          if (remoteBaseline != null &&
+              !await _pullRecentWithPage(
                 peer,
+                remoteBaseline,
                 startProgress: 0.06,
                 endProgress: 0.10,
               )) {
@@ -1099,7 +1214,9 @@ class LanService implements LanSyncPort {
           var after = '';
           var pullScanned = 0;
           var pullTotal = 0;
+          var pullPages = 0;
           do {
+            pullPages++;
             final page = await transport.rpc(peer, {
               'method': 'manifest',
               'after': after,
@@ -1155,15 +1272,19 @@ class LanService implements LanSyncPort {
               throw const LanSyncFailure('同步摘要分页无效');
             }
             after = next;
-            if (!await _pushRecent(
-              peer,
-              await repository.recentChanges(),
-              startProgress: sliceEnd,
-              endProgress: sliceEnd,
-            )) {
+            if ((await repository.hasPendingChanges() ||
+                    pullPages % 10 == 0 ||
+                    _pushedRecent[peer.id] != repository.recentToken) &&
+                !await _pushRecent(
+                  peer,
+                  await repository.recentChanges(),
+                  startProgress: sliceEnd,
+                  endProgress: sliceEnd,
+                )) {
               complete = false;
             }
             if (status['recent_changes'] == 1 &&
+                pullPages % 10 == 0 &&
                 !await _pullRecent(
                   peer,
                   startProgress: sliceEnd,
@@ -1176,13 +1297,15 @@ class LanService implements LanSyncPort {
           await _drainDeletions(peer);
           await _metadata('正在整理本机修改', 0.58);
           await repository.capture();
-          final fullPushToken =
-              (await repository.recentChanges())['token'] as String?;
+          final fullPushRecent = await repository.recentChanges();
+          final fullPushToken = fullPushRecent['token'] as String?;
           after = '';
           var pushScanned = 0;
           var pushTotal = 0;
+          var pushPages = 0;
 
           do {
+            pushPages++;
             if (after.isNotEmpty && await repository.hasPendingChanges()) {
               await repository.capture(scanExternal: false);
             }
@@ -1256,18 +1379,32 @@ class LanService implements LanSyncPort {
             );
             after = page['after'] as String;
             if (page['has_more'] != true) break;
-            if (!await _pushRecent(
-              peer,
-              await repository.recentChanges(),
-              startProgress: sliceEnd,
-              endProgress: sliceEnd,
-            )) {
+            if ((await repository.hasPendingChanges() ||
+                    pushPages % 10 == 0 ||
+                    _pushedRecent[peer.id] != repository.recentToken) &&
+                !await _pushRecent(
+                  peer,
+                  await repository.recentChanges(),
+                  startProgress: sliceEnd,
+                  endProgress: sliceEnd,
+                )) {
               complete = false;
             }
           } while (_active);
           complete = complete && _active;
           _roundComplete = _roundComplete && complete;
           if (complete) {
+            if (remoteBaseline != null &&
+                remoteBaseline['run'] is String &&
+                remoteBaseline['revision'] is int &&
+                fullPushRecent['revision'] is int &&
+                remoteBaseline['evicted_revision'] is int &&
+                remoteBaseline['has_more_dirty'] is bool) {
+              _lastFullSyncAt[peer.id] = DateTime.now();
+              _peerRunId[peer.id] = remoteBaseline['run'] as String;
+              _ackedLocalRev[peer.id] = fullPushRecent['revision'] as int;
+              _ackedRemoteRev[peer.id] = remoteBaseline['revision'] as int;
+            }
             peer.lastSync = DateTime.now();
             if (fullPushToken != null) {
               _pushedRecent[peer.id] = fullPushToken;

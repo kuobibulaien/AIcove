@@ -29,6 +29,19 @@ class CountingLocalStore extends CloudLocalStore {
     super.support,
   );
   int externalScans = 0;
+  int externalEnqueues = 0;
+
+  @override
+  Future<void> execute(String sql, [List<Object?> args = const []]) async {
+    if (sql.contains(
+          'INSERT OR IGNORE INTO lan_dirty(kind,entity_id) VALUES',
+        ) &&
+        args.isNotEmpty &&
+        (args.first == 'settings' || args.first == 'plugin_presets')) {
+      externalEnqueues++;
+    }
+    return super.execute(sql, args);
+  }
 
   @override
   Future<List<CloudLocalDocument>> external() {
@@ -421,6 +434,24 @@ void main() {
     stdout.writeln('LAN_CAPTURE_BENCHMARK scans=${local.externalScans}');
     expect(local.externalScans, 1);
     expect((await b.repo.manifest())['items'], hasLength(17));
+  });
+
+  test('verified external snapshots skip requeue but detect edits', () async {
+    await addExternalFixtures(b);
+    final local = b.local as CountingLocalStore;
+    await b.repo.capture();
+    local.externalEnqueues = 0;
+    await b.repo.capture();
+    expect(local.externalEnqueues, 0);
+    await b.local.preferences.setString(
+      'aicove.plugins.throughput_0',
+      '{"value":99}',
+    );
+    await b.repo.capture();
+    expect(local.externalEnqueues, 1);
+    local.externalEnqueues = 0;
+    await b.repo.capture();
+    expect(local.externalEnqueues, 0);
   });
 
   test('target capture preserves unrelated committed dirty messages', () async {

@@ -1040,6 +1040,15 @@ class ChatTtsHandler {
     String? lastTextAnchorMessageId;
     final deferredImageJobs = <DeferredImageJob>[];
     final pendingTtsMessages = <Message>[];
+    // Raw messages use millisecond timestamps; delayed media must retain its slot.
+    int? lastSegmentTime;
+    DateTime nextSegmentTime() {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final previous = lastSegmentTime;
+      final timestamp = previous != null && now <= previous ? previous + 1 : now;
+      lastSegmentTime = timestamp;
+      return DateTime.fromMillisecondsSinceEpoch(timestamp);
+    }
 
     for (var i = 0; i < steps.length; i++) {
       final step = steps[i];
@@ -1055,7 +1064,7 @@ class ChatTtsHandler {
             role: 'assistant',
             sourceMessageId: sourceMessageId,
             content: text,
-            createdAt: DateTime.now(),
+            createdAt: nextSegmentTime(),
             status: 'sent',
           );
           await _appendMessageToConversation(
@@ -1072,7 +1081,7 @@ class ChatTtsHandler {
           );
           break;
         case ChatSequentialMultimodalStepType.sticker:
-          final stickerMsg = step.message?.copyWith(createdAt: DateTime.now());
+          final stickerMsg = step.message?.copyWith(createdAt: nextSegmentTime());
           if (stickerMsg == null) continue;
           await _waitSequentialSegmentDelay(segmentDelay);
           await _appendMessageToConversation(
@@ -1089,7 +1098,7 @@ class ChatTtsHandler {
           break;
         case ChatSequentialMultimodalStepType.pendingTts:
           final pendingMessage = step.message?.copyWith(
-            createdAt: DateTime.now(),
+            createdAt: nextSegmentTime(),
           );
           if (pendingMessage == null) continue;
           await _waitSequentialSegmentDelay(segmentDelay);
@@ -1116,7 +1125,7 @@ class ChatTtsHandler {
           final pending = _deferredImageDelivery.buildPendingPlaceholderMessage(
             messageId: genId('img'),
             prompt: imagePrompt,
-            createdAt: DateTime.now(),
+            createdAt: nextSegmentTime(),
             sourceMessageId: sourceMessageId,
             drawingSnapshot: _drawingSnapshot(pluginEvents),
           );

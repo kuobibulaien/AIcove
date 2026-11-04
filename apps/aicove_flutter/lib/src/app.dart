@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'features/account/providers/account_provider.dart';
 import 'features/plugins/prompts/prompt_pack_migration.dart';
 import 'features/task_agent/application/delegate_task_plugin.dart';
 import 'features/task_agent/task_agent_providers.dart';
@@ -155,6 +156,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       ref.read(chatActionsProvider).onAppBackground();
+      ref.read(cloudSyncProvider.notifier).foreground(false);
+      ref.read(accountProvider.notifier).foreground(false);
+      if (delegateTaskEnabled) {
+        ref.read(taskAgentSupervisorProvider).foreground(false);
+      }
       if (Platform.isAndroid || Platform.isIOS) {
         unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(false)).catchError((Object _) {}));
       }
@@ -162,7 +168,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     }
     if (state == AppLifecycleState.resumed) {
       unawaited(ref.read(lanSyncPortProvider.future).then((port) => port.foreground(true)).catchError((Object _) {}));
-      unawaited(ref.read(cloudSyncProvider.notifier).synchronizeIfDue());
+      ref.read(cloudSyncProvider.notifier).foreground(true);
+      ref.read(accountProvider.notifier).foreground(true);
       // 从后台恢复时，内存 ImageCache 可能已被系统回收；提前把"最近会话"的图片重新解码进缓存，
       // 让用户点进聊天页时尽量不出现"占位→图片跳出来"的闪一下。
       _requestRecentConversationsWarmup();
@@ -170,7 +177,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       unawaited(ref.read(analyzerSchedulerProvider).onAppResumed());
       unawaited(ref.read(proactiveCallSettlerProvider).settle());
       if (delegateTaskEnabled) {
-        unawaited(ref.read(taskAgentSupervisorProvider).scan());
+        ref.read(taskAgentSupervisorProvider).foreground(true);
       }
       // 后台投递的多模态消息在回前台时补跑插件链
       unawaited(ref

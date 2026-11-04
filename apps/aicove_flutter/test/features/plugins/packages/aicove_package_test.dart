@@ -329,8 +329,8 @@ void main() {
 
       await expectLater(
         store.importDirectory(src),
-        throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('链接'))),
+        throwsA(isA<FormatException>()
+            .having((e) => e.message, 'message', '包内链接不能指向包目录外部')),
       );
       expect(await store.list(), isEmpty);
     });
@@ -343,8 +343,21 @@ void main() {
 
       await expectLater(
         store.importDirectory(src),
-        throwsA(isA<PackageFormatException>()),
+        throwsA(isA<FormatException>()),
       );
+    });
+
+    test('internal links are imported and directory cycles are skipped', () async {
+      final src = Directory('${root.path}/source')..createSync();
+      File('${src.path}/SKILL.md').writeAsStringSync(
+        '---\nname: demo\ndescription: test\n---\nSkill',
+      );
+      final skills = Directory('${src.path}/skills')..createSync();
+      File('${skills.path}/original.md').writeAsStringSync('内部内容');
+      Link('${skills.path}/guide.md').createSync('original.md');
+      Link('${skills.path}/cycle').createSync('..');
+      final package = await store.importDirectory(src);
+      expect(utf8.decode(package.files['skills/guide.md']!), '内部内容');
     });
 
     test('a zip with duplicate entry names is rejected', () async {
@@ -368,7 +381,7 @@ void main() {
       );
     });
 
-    test('a zip whose content inflates past the budget is rejected', () async {
+    test('a zip whose content inflates past the former budget is imported', () async {
       final archive = Archive();
       void add(String name, List<int> bytes) =>
           archive.addFile(ArchiveFile(name, bytes.length, bytes));
@@ -378,11 +391,8 @@ void main() {
       final zip = ZipEncoder().encode(archive)!;
       expect(zip.length, lessThan(100 * 1024)); // highly compressible
 
-      await expectLater(
-        store.importZip(zip),
-        throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('MiB'))),
-      );
+      final package = await store.importZip(zip);
+      expect(package.files['skills/guide.md']!.length, PackageStore.maxPackageBytes + 1);
     });
 
     test('delete also drops a copy left aside by an interrupted replacement; '
@@ -399,23 +409,18 @@ void main() {
       expect(unrelated.existsSync(), isTrue);
     });
 
-    test('the size and file budgets stop reading early', () async {
+    test('large and many files can be imported', () async {
       final big = List<int>.filled(PackageStore.maxPackageBytes + 1, 0x61);
-      await expectLater(
-        store.importFiles({...files(manifest()), 'skills/big.md': big}),
-        throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('MiB'))),
-      );
+      final package = await store.importFiles({...files(manifest()), 'skills/guide.md': big});
+      expect(package.files['skills/guide.md']!.length, big.length);
 
-      final src = writeSource();
+      final src = Directory('${root.path}/many')..createSync();
+      File('${src.path}/SKILL.md').writeAsStringSync('---\nname: Many\ndescription: Many files\n---\nExample');
       for (var i = 0; i <= PackageStore.maxPackageFiles; i++) {
         File('${src.path}/n$i.md').writeAsStringSync('x');
       }
-      await expectLater(
-        store.importDirectory(src),
-        throwsA(isA<PackageFormatException>()
-            .having((e) => e.message, 'message', contains('1000'))),
-      );
+      final imported = await store.importDirectory(src);
+      expect(imported.files.length, greaterThan(PackageStore.maxPackageFiles));
     });
 
     test('concurrent imports of one package both finish', () async {

@@ -2,13 +2,14 @@ import 'dart:io';
 
 import '../../../core/utils/desktop_process_environment.dart';
 
-/// A command line is tokenized, never passed to a shell. Backslashes in Windows
+/// Backslashes in Windows
 /// paths remain literal; before a quote they follow Windows argv escaping rules.
 List<String> parseMcpCommandLine(String line) {
   final words = <String>[];
   var word = StringBuffer();
   String? quote;
   var started = false;
+  var needsShell = false;
   for (var i = 0; i < line.length; i++) {
     final c = line[i];
     if (c == '\\' && quote != "'") {
@@ -42,9 +43,6 @@ List<String> parseMcpCommandLine(String line) {
       if (c == quote) {
         quote = null;
       } else {
-        if (quote == '"' && (c == r'$' || c == '`')) {
-          throw const FormatException('不支持变量或命令替换，请填写实际参数');
-        }
         word.write(c);
       }
       started = true;
@@ -56,9 +54,7 @@ List<String> parseMcpCommandLine(String line) {
       word = StringBuffer();
       started = false;
     } else {
-      if ('|&;<>`\$'.contains(c)) {
-        throw const FormatException('不支持管道、重定向或变量替换，请直接填写程序和参数');
-      }
+      if ('|&;<>`'.contains(c)) needsShell = true;
       word.write(c);
       started = true;
     }
@@ -68,7 +64,54 @@ List<String> parseMcpCommandLine(String line) {
   if (words.isEmpty || words.first.isEmpty) {
     throw const FormatException('请填写启动命令');
   }
+  if (needsShell) {
+    return Platform.isWindows
+        ? ['cmd.exe', '/d', '/s', '/c', line.trim()]
+        : ['/bin/sh', '-c', line.trim()];
+  }
   return words;
+}
+
+List<String> expandMcpCommandVariables(
+  List<String> args,
+  Map<String, String> env,
+) => [
+  for (final arg in args)
+    arg.replaceAllMapped(
+      RegExp(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)'),
+      (m) => env[m[1] ?? m[2]] ?? '',
+    ),
+];
+
+class McpStdioLaunch {
+  const McpStdioLaunch(this.command, this.args, {this.runInShell = false});
+  final String command;
+  final List<String> args;
+  final bool runInShell;
+}
+
+McpStdioLaunch resolveMcpStdioLaunch(
+  String command,
+  List<String> args,
+  Map<String, String> env, {
+  String? cwd,
+}) {
+  final shell =
+      (command == '/bin/sh' && args.length >= 2 && args.first == '-c') ||
+      (command.toLowerCase() == 'cmd.exe' &&
+          args.length >= 4 &&
+          args[2] == '/c');
+  final expanded = shell
+      ? [command, ...args]
+      : expandMcpCommandVariables([command, ...args], env);
+  final executable = resolveMcpExecutable(expanded.first, env, cwd: cwd);
+  return McpStdioLaunch(
+    executable,
+    expanded.skip(1).toList(),
+    runInShell:
+        Platform.isWindows &&
+        RegExp(r'\.(cmd|bat)$', caseSensitive: false).hasMatch(executable),
+  );
 }
 
 String formatMcpCommandLine(String command, List<String> args) {
@@ -137,15 +180,14 @@ String resolveMcpExecutable(
     ]) {
       final file = File(path);
       if (!file.existsSync()) continue;
-      if (!Platform.isWindows && file.statSync().mode & 0x49 == 0) continue;
       if (Platform.isWindows &&
-          RegExp(r'\.(cmd|bat)$', caseSensitive: false).hasMatch(path)) {
-        throw const ProcessException(
-          '',
-          [],
-          '批处理命令可能隐式执行 shell；请改用 node 加 CLI 脚本路径，或 .exe 程序',
-        );
+          !RegExp(
+            r'\.(exe|com|cmd|bat)$',
+            caseSensitive: false,
+          ).hasMatch(path)) {
+        continue;
       }
+      if (!Platform.isWindows && file.statSync().mode & 0x49 == 0) continue;
       return file.absolute.path;
     }
   }

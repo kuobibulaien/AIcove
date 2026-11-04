@@ -7840,6 +7840,11 @@ void main() {
           .where((m) => m.blocks?.whereType<ImageBlock>().any((b) => b.status == BlockStatus.pending) == true).toList();
       expect(pendingImages, hasLength(1));
       final pendingImageId = pendingImages.single.id;
+      final pendingTime = pendingImages.single.createdAt.millisecondsSinceEpoch;
+      final pendingTextC = (await _loadFrontendTimelineMessages(container, conv.id))
+          .firstWhere((message) => message.displayText.trim() == '文本c。');
+      expect(pendingTextC.createdAt.millisecondsSinceEpoch, greaterThan(pendingTime),
+          reason: '独立 raw 消息以毫秒排序，后续文字必须排在慢图之后');
       final pendingTimeline = await _loadFrontendTimelineMessages(container, conv.id);
       final pendingIndex = pendingTimeline.indexWhere((m) => m.id == pendingImageId);
       expect(pendingTimeline[pendingIndex - 1].displayText.trim(), startsWith('文本b'));

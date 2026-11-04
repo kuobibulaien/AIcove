@@ -367,6 +367,17 @@ class ChatSendBackendService {
       settings: settings,
       modelRef: modelRef,
     );
+    final roleMode = conv.effectiveAgentMode;
+    final pureChatMode = roleMode == RoleAgentMode.chat;
+    final toolMode = roleMode == RoleAgentMode.tool;
+    final agentMode = roleMode == RoleAgentMode.agent;
+    final modelSupportsTools =
+        settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
+        !settings.isModelToolCallingDisabled(modelRef);
+    final supportsToolCalling =
+        !pureChatMode &&
+        (toolMode || (agentMode && boundPreset?.functionCalling != false)) &&
+        modelSupportsTools;
     final effectiveImageRoute = settings.resolveEffectiveImageGenerationRoute(
       modelRef,
     );
@@ -376,9 +387,11 @@ class ChatSendBackendService {
         (conv.enabledPlugins == null || conv.enabledPlugins!.contains('image'));
     final shouldUseStableImageRoute =
         !useForcedInlineImageRoute &&
+        supportsToolCalling &&
         effectiveImageRoute == EffectiveImageGenerationRoute.stable;
     final shouldUseFastImageRoute =
         useForcedInlineImageRoute ||
+        !supportsToolCalling ||
         effectiveImageRoute == EffectiveImageGenerationRoute.fast;
     if (resolvedConversationId != conv.id) {
       throw StateError('请求联系人与角色上下文不一致');
@@ -461,13 +474,6 @@ class ChatSendBackendService {
     // 旧选择已经在预设迁移中收成值，不能在执行时再覆盖快照。
     const String? boundImageToolPresetName = null;
     const String? boundImageArtistPresetName = null;
-    final modelSupportsTools =
-        settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
-        !settings.isModelToolCallingDisabled(modelRef);
-    final supportsToolCalling =
-        (conv.effectiveAgentMode == RoleAgentMode.tool ||
-            boundPreset?.functionCalling != false) &&
-        modelSupportsTools;
     final enabledPluginIds = conv.enabledPlugins?.toSet();
     var voiceRequest = await _ref
         .read(voicePresetApplicationProvider)
@@ -502,10 +508,7 @@ class ChatSendBackendService {
         pluginRuntime.install(plugin.agentPlugin, enabled: plugin.enabled);
       }
       pluginRuntime.install(tavernCompatAgentPlugin());
-      // ADR0088/0097: 聊天模式下，联网搜索与 MCP 交给杂活 Agent，聊天模型只拿到
-      // delegate_task；工具模式是完整 Agent，直接使用全部插件，不派活。
-      final toolMode = conv.effectiveAgentMode == RoleAgentMode.tool;
-      final officeToErrandAgent = delegateTaskEnabled && !toolMode;
+      final officeToErrandAgent = delegateTaskEnabled && agentMode;
       if (officeToErrandAgent) {
         pluginRuntime.install(
           delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider)),
@@ -749,11 +752,28 @@ class ChatSendBackendService {
           userName: promptUserName,
         );
         final mvuState = mvuView.active ? mvuView.mvu : null;
+        presetVariableSnapshot = await _sillyTavernVariableStore.load(
+          presetId: boundPreset.id,
+          conversationId: resolvedConversationId,
+        );
+        final regexVariables = Map<String, String>.of(presetVariableSnapshot.values);
+        final regexMacroValues = <String, String>{
+          'char': conv.displayName.trim().isEmpty ? conv.title : conv.displayName,
+          'user': promptUserName,
+          'description': contextPolicy.filterText(personaParts.rolePrompt),
+          'scenario': conv.description?.trim() ?? '',
+        };
+        final regexMessageVariables = mvuState == null
+            ? null
+            : <String, Object?>{'stat_data': mvuState.statData};
         presetRegexPromptResult = await _sillyTavernRegexProcessor
             .applyToPromptMessages(
               messages: reqMessages,
               scripts: boundPreset.regexScripts,
               authorized: boundPreset.regexAuthorized,
+              macroValues: regexMacroValues,
+              variables: regexVariables,
+              messageVariables: regexMessageVariables,
             );
         reqMessages = contextPolicy.filterMessages(
           presetRegexPromptResult.messages,
@@ -785,10 +805,9 @@ class ChatSendBackendService {
           scan: worldScan,
           scripts: boundPreset.regexScripts,
           authorized: boundPreset.regexAuthorized,
-        );
-        presetVariableSnapshot = await _sillyTavernVariableStore.load(
-          presetId: boundPreset.id,
-          conversationId: resolvedConversationId,
+          macroValues: regexMacroValues,
+          variables: regexVariables,
+          messageVariables: regexMessageVariables,
         );
         final reminderMessage = injectedReminder.isEmpty
             ? null
@@ -1201,7 +1220,9 @@ class ChatSendBackendService {
         ),
         presetScript: PresetScriptSnapshot.fromPreset(
           boundPreset,
-          toolsAllowed: supportsToolCalling,
+          toolsAllowed:
+              (toolMode || boundPreset?.functionCalling != false) &&
+              modelSupportsTools,
           modelSupportsTools: modelSupportsTools,
           macros: {
             'char': conv.displayName.trim().isEmpty
@@ -1243,10 +1264,10 @@ class ChatSendBackendService {
             boundPreset?.temperature ?? requestConfig.modelTemperature,
         modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
         modelContextMessageLimit: requestConfig.modelContextMessageLimit,
-        // 聊天模式办事交给杂活 Agent，一律去掉模型内置搜索（ADR0088）；
-        // 其余情况沿用旧规则：联网搜索插件接管才去掉。
+        // 纯聊天关闭内置搜索；派活或联网插件接管时也关闭内置搜索。
         providerRequestOptions:
-            officeToErrandAgent ||
+            pureChatMode ||
+                officeToErrandAgent ||
                 supportsToolCalling &&
                     pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
             ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)

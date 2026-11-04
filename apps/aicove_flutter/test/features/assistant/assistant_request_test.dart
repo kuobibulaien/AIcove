@@ -527,7 +527,9 @@ void main() {
           config.boundTools!.map((t) => t.name),
           isNot(contains('read_skill_local-skill')),
         );
-        final next = await prepare((await roleNow('role_li'))!);
+        final next = await prepare(
+          (await roleNow('role_li'))!.copyWith(agentMode: RoleAgentMode.agent),
+        );
         expect(
           next.boundTools!.map((t) => t.name),
           contains('read_skill_local-skill'),
@@ -858,6 +860,13 @@ void main() {
           (await call(config, AssistantWriteTools.updateRole, {
             'role_id': kAicoveAssistantId,
             'agent_mode': 'chat',
+          }))['error'],
+          'invalid',
+        );
+        expect(
+          (await call(config, AssistantWriteTools.updateRole, {
+            'role_id': kAicoveAssistantId,
+            'agent_mode': 'agent',
           }))['error'],
           'invalid',
         );

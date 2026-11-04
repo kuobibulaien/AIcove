@@ -992,11 +992,11 @@ class _ConversationsRoleStore implements AssistantRoleStore {
     bool has(String key) => fields.containsKey(key);
     String? text(String key) => fields[key] as String?;
     final modeName = text(RoleField.agentMode);
-    final mode = modeName == null
-        ? null
-        : RoleAgentMode.values.byName(modeName);
-    if (role.id == kAicoveAssistantId && mode == RoleAgentMode.chat) {
-      throw StateError('AIcove酱恒为 tool 模式，不能改为 chat');
+    final mode = RoleAgentMode.fromValue(modeName);
+    if (role.id == kAicoveAssistantId &&
+        mode != null &&
+        mode != RoleAgentMode.tool) {
+      throw StateError('AIcove酱恒为 tool 模式，不能改为 ${mode.name}');
     }
     String? persona;
     if (has(RoleField.personaPrompt) ||

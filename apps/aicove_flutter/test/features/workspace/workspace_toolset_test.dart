@@ -981,23 +981,18 @@ void main() {
       );
     },
   );
-  for (final n in [
-    WorkspaceLimits.maxWriteBytes - 1,
-    WorkspaceLimits.maxWriteBytes,
-    WorkspaceLimits.maxWriteBytes + 1,
-  ]) {
-    test('write and edited size boundary $n', () async {
-      final result = await call('write', {'path': 'big', 'content': 'x' * n});
-      expect(result.isError, n > WorkspaceLimits.maxWriteBytes);
-      await write('start');
-      final edited = await call('edit', {
-        'path': 'a.txt',
-        'old_text': 'start',
-        'new_text': 'x' * n,
-      });
-      expect(edited.isError, n > WorkspaceLimits.maxWriteBytes);
+  test('large writes and edits succeed', () async {
+    final content = 'x' * (WorkspaceLimits.maxWriteBytes + 1);
+    final result = await call('write', {'path': 'big', 'content': content});
+    expect(result.isError, false, reason: result.text);
+    await write('start');
+    final edited = await call('edit', {
+      'path': 'a.txt',
+      'old_text': 'start',
+      'new_text': content,
     });
-  }
+    expect(edited.isError, false, reason: edited.text);
+  });
   for (final n in [1999, 2000, 2001]) {
     test('read line count boundary $n', () async {
       await write(List.filled(n, 'x\n').join());

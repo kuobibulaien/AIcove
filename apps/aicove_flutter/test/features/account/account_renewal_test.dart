@@ -69,4 +69,23 @@ void main() {
     expect(account.refreshes, count);
     controller.dispose();
   });
+  testWidgets('background pauses renewal and resume renews only when due', (tester) async {
+    var now = DateTime(2026);
+    final account = CountingAccount();
+    final controller = AccountController(account, now: () => now);
+    await tester.pump();
+    controller.foreground(false);
+    now = now.add(AccountController.renewInterval);
+    await tester.pump(AccountController.renewInterval);
+    expect(account.refreshes, 1);
+    controller.foreground(true);
+    await tester.pump();
+    expect(account.refreshes, 2);
+    controller.foreground(false);
+    controller.foreground(true);
+    await tester.pump();
+    expect(account.refreshes, 2);
+    controller.dispose();
+  });
+
 }

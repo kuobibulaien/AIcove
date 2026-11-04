@@ -8,7 +8,6 @@ import 'package:aicove_quickjs/aicove_quickjs.dart';
 import '../../../core/network/public_network.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../data/workspace_store.dart';
-import '../domain/workspace_models.dart';
 import 'workspace_image.dart';
 
 /// Bounded tail used by text()/console and by the host-owned output artifact.
@@ -212,8 +211,8 @@ $code
                 }
                 final offset = _integer(values[1]),
                     length = _integer(values[2]);
-                if (offset < 0 || length < 0 || length > maxChunkBytes) {
-                  throw ArgumentError('Resource read chunk exceeds 4 MiB');
+                if (offset < 0 || length < 0) {
+                  throw ArgumentError('Invalid resource read offset or length');
                 }
                 return base64Encode(
                   bytes.sublist(
@@ -302,8 +301,8 @@ $code
                 final path = values[0] as String;
                 final offset = _integer(values[1]),
                     length = _integer(values[2]);
-                if (offset < 0 || length < 0 || length > maxChunkBytes) {
-                  throw ArgumentError('Byte read chunk exceeds 4 MiB');
+                if (offset < 0 || length < 0) {
+                  throw ArgumentError('Invalid byte read offset or length');
                 }
                 final bytes = await store!.readRange(
                   workspace,
@@ -322,27 +321,21 @@ $code
                 final path = values[0] as String;
                 store!.checkWritablePath(workspace, path);
                 final bytes = base64Decode(values[1] as String);
-                if (bytes.length > maxChunkBytes) {
-                  throw ArgumentError('Byte write chunk exceeds 4 MiB');
-                }
                 final offset = _integer(values[2]);
                 final stat = await store!.stat(workspace, path);
                 final (previous, revision) = stat == null
                     ? (Uint8List(0), null)
                     : await store!.read(workspace, path);
-                if (offset < 0 ||
-                    offset > previous.length ||
-                    offset + bytes.length > WorkspaceLimits.maxFileBytes) {
-                  throw ArgumentError('Invalid byte write offset or file size');
+                if (offset < 0 || offset > previous.length) {
+                  throw ArgumentError('Invalid byte write offset');
                 }
                 final truncate = values[3] as bool;
                 final data = Uint8List(
                   truncate
                       ? offset + bytes.length
-                      : (offset + bytes.length).clamp(
-                          previous.length,
-                          WorkspaceLimits.maxFileBytes,
-                        ),
+                      : (offset + bytes.length > previous.length
+                            ? offset + bytes.length
+                            : previous.length),
                 );
                 data.setAll(0, previous.take(data.length).toList());
                 data.setAll(offset, bytes);

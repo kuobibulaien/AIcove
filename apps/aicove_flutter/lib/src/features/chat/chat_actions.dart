@@ -449,6 +449,7 @@ class ChatActions {
     // 交接给下一条排队输入时保持发送中，中间不暴露空闲。
     if (_settleQueuedInputs(convId, task, deliver: !task.failed)) return;
     _setConversationSending(convId, false);
+    _ref.read(conversationIdleEventsProvider).add(convId);
     _setConversationStatus(convId, ChatStatus.idle);
   }
 

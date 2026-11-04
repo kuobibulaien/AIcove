@@ -217,6 +217,13 @@ void main() {
     expect(tools, isNot(contains('aicove_list_roles')));
     expect(tools, isNot(contains('workspace_open')));
     expect(config.toolPolicy, isNull);
+    expect(config.tools, isNull);
+    final agent = await prepare(container, RoleAgentMode.agent);
+    expect(agent.boundTools.map((t) => t.name), contains('delegate_task'));
+    expect(
+      agent.boundTools.map((t) => t.name),
+      isNot(contains('workspace_open')),
+    );
   });
 
   test('workspace selection survives subsequent requests and stays local to '

@@ -58,7 +58,10 @@ final autoReplyTriggersProvider =
 class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   final _uuid = const Uuid();
   Timer? _ticker;
-  bool _pollInProgress = false;
+  Future<void>? _activePoll;
+  bool _pollAgain = false;
+  int _pollFailures = 0;
+  bool _disposed = false;
   late AutoReplyTriggerStorage _storage;
 
   /// Triggers whose send is under way in this process. The trigger stays
@@ -85,8 +88,13 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   Future<List<AutoReplyTrigger>> build() async {
     _storage = AutoReplyTriggerStorage();
     final triggers = await _storage.loadTriggers();
-    _startTicker();
+    ref.listen(appSettingsProvider.select((s) => s.valueOrNull?.autoReplySettings),
+        (prev, next) {
+      if (prev != next) _scheduleFromStored(state.valueOrNull);
+    });
+    _scheduleFromStored(triggers);
     ref.onDispose(() {
+      _disposed = true;
       _ticker?.cancel();
     });
     return triggers;
@@ -95,6 +103,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   Future<void> refresh() async {
     state = const AsyncLoading();
     state = AsyncData(await _storage.loadTriggers());
+    _scheduleFromStored(state.valueOrNull);
   }
 
   /// Picks up a list written by sync. Keeps the current value meanwhile, so
@@ -103,9 +112,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.reload();
         state = AsyncData(await _storage.loadTriggers());
-        _ticker?.cancel();
-        _ticker = null;
-        _startTicker();
+        _scheduleFromStored(state.valueOrNull);
       });
 
   Future<void> removeTriggersForConversation(
@@ -124,6 +131,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       await _cancelBackgroundTaskByTriggerId(trigger.id);
       _emitEvent(AutoReplyTriggerEventType.deleted, trigger);
     }
+    _scheduleFromStored(state.valueOrNull);
   }
 
   Future<void> _appendHistoryLog({
@@ -216,6 +224,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       },
     );
     _emitEvent(AutoReplyTriggerEventType.created, trigger);
+    _scheduleFromStored(state.valueOrNull);
   }
 
   /// 创建触发器（新版，支持所有新字段）
@@ -301,6 +310,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       },
     );
     _emitEvent(AutoReplyTriggerEventType.created, trigger);
+    _scheduleFromStored(state.valueOrNull);
 
     return trigger;
   }
@@ -413,6 +423,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       },
     );
     _emitEvent(AutoReplyTriggerEventType.deleted, target.first);
+    _scheduleFromStored(state.valueOrNull);
   }
 
   Future<void> togglePause(String id) async {
@@ -449,6 +460,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
           : AutoReplyTriggerEventType.resumed,
       changed,
     );
+    _scheduleFromStored(state.valueOrNull);
   }
 
   Future<void> fireNow(String id) async {
@@ -466,89 +478,171 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     }
 
     await _handleTrigger(id, DateTime.now());
+    unawaited(_pollDueTriggers());
   }
 
-  void _startTicker() {
-    _ticker ??=
-        Timer.periodic(const Duration(seconds: 30), (_) => _pollDueTriggers());
-    _pollDueTriggers(); // run immediately once
-  }
+  void reschedule() => _scheduleFromStored(state.valueOrNull);
 
   @visibleForTesting
   Future<void> pollDueTriggersForTest() => _pollDueTriggers();
 
-  Future<void> _pollDueTriggers() async {
-    if (_pollInProgress) return;
-    _pollInProgress = true;
+  void _scheduleFromStored(List<AutoReplyTrigger>? triggers) {
+    if (_disposed) return;
+    if (_activePoll != null) {
+      _pollAgain = true;
+      return;
+    }
+    _ticker?.cancel();
+    _ticker = null;
+    final now = DateTime.now();
+    DateTime? earliest;
+    for (final trigger in triggers ?? const <AutoReplyTrigger>[]) {
+      if (!trigger.isActive) continue;
+      final candidate = _isInFlight(trigger.id, now)
+          ? _inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease)
+          : trigger.nextFireAt;
+      if (earliest == null || candidate.isBefore(earliest)) {
+        earliest = candidate;
+      }
+    }
+    if (earliest != null) {
+      final delay = earliest.difference(now);
+      _ticker = Timer(
+        delay < const Duration(seconds: 1) ? const Duration(seconds: 1) : delay,
+        () => unawaited(_pollDueTriggers()),
+      );
+    }
+  }
+
+  Future<void> _pollDueTriggers() {
+    if (_disposed) return Future.value();
+    if (_activePoll != null) {
+      _pollAgain = true;
+      return _activePoll!;
+    }
+    return _activePoll = _runPollLoop().whenComplete(() => _activePoll = null);
+  }
+
+  Future<void> _runPollLoop() async {
+    _ticker?.cancel();
+    _ticker = null;
     try {
-      await _pollDueTriggersUnlocked();
+      do {
+        _pollAgain = false;
+        await _pollDueTriggersUnlocked();
+        _pollFailures = 0;
+      } while (_pollAgain && !_disposed);
+    } catch (error, stackTrace) {
+      AppLogger.warning('AutoReplyTrigger', 'Trigger poll failed',
+          metadata: {'error': error.toString(), 'stackTrace': stackTrace.toString()});
+      if (!_disposed && (state.valueOrNull?.any((t) => t.isActive) ?? false)) {
+        _ticker?.cancel();
+        final seconds = 1 << (_pollFailures < 6 ? _pollFailures : 6);
+        _pollFailures++;
+        _ticker = Timer(Duration(seconds: seconds), () => unawaited(_pollDueTriggers()));
+      }
     } finally {
-      _pollInProgress = false;
+      if (_disposed) _ticker?.cancel();
     }
   }
 
   Future<void> _pollDueTriggersUnlocked() async {
     final current = state.valueOrNull;
-    if (current == null || current.isEmpty) return;
+    if (current == null) return;
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(hours: 24));
+    if (current.any((t) =>
+        (t.status == AutoReplyTriggerStatus.fired ||
+            t.status == AutoReplyTriggerStatus.expired) &&
+        t.lastFiredAt != null && t.lastFiredAt!.isBefore(cutoff))) {
+      await _cleanupCompletedTriggers(now);
+    }
+    if (!current.any((t) => t.isActive)) {
+      _ticker?.cancel();
+      _ticker = null;
+      return;
+    }
     final settings = await ref.read(appSettingsProvider.future);
     final autoReplySettings = settings.autoReplySettings;
-
-    final now = DateTime.now();
-
-    // Check if chat is active
     final activeChatId = ref.read(activeConversationIdProvider);
-
-    // 触发到期的触发器
     final ownership = await ProactiveOwnership.load();
-    for (final trigger in current) {
-      // 同步来的、归另一台设备负责的触发器由那台设备送达或作废，本机不碰。
-      if (!ownership.owns(trigger.conversationId)) continue;
-      // 正在发送的触发器不参与本轮任何判断（含精确窗口作废）。
-      if (_isInFlight(trigger.id, now)) continue;
-      // 已开始送达（可能是另一进程或被杀的上一次）：只按送达记录收尾。
-      // 读到之后对方才开始送达的情况，由下面的作废先认领来挡。
-      if (trigger.isActive &&
-          !trigger.nextFireAt.isAfter(now) &&
-          await _settleStartedDelivery(trigger, now)) {
-        continue;
-      }
-      final contactSettings = autoReplySettings.forContact(
-        trigger.conversationId,
-      );
-      final quietHoursActive = QuietHours.parse(
-        enabled: contactSettings.quietHoursEnabled,
-        start: contactSettings.quietHoursStart,
-        end: contactSettings.quietHoursEnd,
-      ).contains(now);
-      if (quietHoursActive && !trigger.allowNight) {
-        continue;
-      }
-
-      if (trigger.requireExact && !autoReplySettings.allowExactAlarm) {
-        continue;
-      }
-
-      if (trigger.shouldFire(now, allowNightOverride: false)) {
-        // ===== 作废检查（在标记 fired 之前）=====
-        final expireCheckResult =
-            await _checkShouldExpire(trigger, activeChatId);
-        if (expireCheckResult != null) {
-          // 应该作废，不触发
-          await _expireUnderClaim(trigger, expireCheckResult, now);
-          continue;
-        }
-        // ===== 作废检查结束 =====
-
-        await _handleTrigger(trigger.id, now);
+    DateTime? nextWakeAt;
+    void wake(DateTime candidate) {
+      if (nextWakeAt == null || candidate.isBefore(nextWakeAt!)) {
+        nextWakeAt = candidate;
       }
     }
 
-    // 清理过期的已完成触发器（保留最近24小时的记录用于查看日志）
-    await _cleanupCompletedTriggers(now);
-  }
-
-  bool _isSameDay(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
+    for (final trigger in current) {
+      if (!trigger.isActive || !ownership.owns(trigger.conversationId)) continue;
+      if (trigger.requireExact && !autoReplySettings.allowExactAlarm) continue;
+      if (_isInFlight(trigger.id, now)) {
+        wake(_inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease));
+        continue;
+      }
+      if (trigger.nextFireAt.isAfter(now)) {
+        wake(trigger.nextFireAt);
+        continue;
+      }
+      try {
+        if (await _settleStartedDelivery(trigger, now)) {
+          final claim = await _claimStore.stateOf(trigger.id, now: now);
+          if (claim is AutoReplyClaimDelivered && !claim.isStalled(now)) {
+            wake(claim.startedAt.add(AutoReplyClaimStore.lease));
+          } else if (claim is AutoReplyClaimHeld) {
+            wake(claim.leaseEndsAt);
+          } else if (claim is! AutoReplyClaimDelivered) {
+            wake(now.add(const Duration(minutes: 1)));
+          }
+          continue;
+        }
+        final contactSettings = autoReplySettings.forContact(trigger.conversationId);
+        final quietHours = QuietHours.parse(
+          enabled: contactSettings.quietHoursEnabled,
+          start: contactSettings.quietHoursStart,
+          end: contactSettings.quietHoursEnd,
+        );
+        if (quietHours.contains(now) && !trigger.allowNight) {
+          wake(quietHours.nextEnd(now));
+          continue;
+        }
+        if (trigger.shouldFire(now, allowNightOverride: false)) {
+          final reason = await _checkShouldExpire(trigger, activeChatId);
+          if (reason != null) {
+            await _expireUnderClaim(trigger, reason, now);
+          } else {
+            await _handleTrigger(trigger.id, now);
+          }
+          if (_isInFlight(trigger.id, DateTime.now())) {
+            wake(_inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease));
+          } else {
+            final latest = state.valueOrNull?.where((t) => t.id == trigger.id).firstOrNull;
+            if (latest != null && latest.isActive) {
+              final claim = await _claimStore.stateOf(trigger.id, now: now);
+              if (claim is AutoReplyClaimHeld) {
+                wake(claim.leaseEndsAt);
+              } else if (claim is AutoReplyClaimDelivered) {
+                wake(claim.startedAt.add(AutoReplyClaimStore.lease));
+              } else {
+                wake(now.add(const Duration(minutes: 1)));
+              }
+            }
+          }
+        }
+      } catch (error) {
+        AppLogger.warning('AutoReplyTrigger', 'Trigger check failed',
+            metadata: {'triggerId': trigger.id, 'error': error.toString()});
+        wake(now.add(const Duration(minutes: 1)));
+      }
+    }
+    _ticker?.cancel();
+    _ticker = null;
+    if (!_disposed && nextWakeAt != null) {
+      final delay = nextWakeAt!.difference(DateTime.now());
+      _ticker = Timer(delay < const Duration(seconds: 1)
+          ? const Duration(seconds: 1) : delay,
+          () => unawaited(_pollDueTriggers()));
+    }
   }
 
   /// 检查触发器是否应该作废
@@ -705,134 +799,138 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     required String reason,
     required String? claimToken,
   }) async {
-    // 只清掉本次发送自己的记录；同一触发器可能已有新的发送在进行。
-    if (claimToken != null && _inFlight[triggerId]?.token == claimToken) {
-      _inFlight.remove(triggerId);
-    }
-    // 执行权已被另一方接管，那边负责收尾；生成超过租约后才返回的旧发送
-    // （空内容、异常等没经过 beginDelivery 的失败）同样不得改触发器。
-    // 先续租：续上了，一个租约内没人能接管，确认与写入之间不会被插队。
-    // 续不上而令牌仍是当前认领，说明本次已开始送达，这条认领永不再被接管。
-    if (reason == AutoReplyDispatchResult.supersededReason) return;
-    if (claimToken == null ||
-        !await _holdClaimForCompletion(triggerId, claimToken)) {
-      AppLogger.info('AutoReplyTrigger', 'Stale send completion ignored',
-          metadata: {'triggerId': triggerId, 'reason': reason});
-      return;
-    }
-    final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
-    final target = current.where((t) => t.id == triggerId).firstOrNull;
-    if (target == null) {
-      if (!success) {
-        await _claimStore.release(triggerId, claimToken);
+    try {
+      // 只清掉本次发送自己的记录；同一触发器可能已有新的发送在进行。
+      if (claimToken != null && _inFlight[triggerId]?.token == claimToken) {
+        _inFlight.remove(triggerId);
       }
-      return;
-    }
-
-    final now = DateTime.now();
-    List<AutoReplyTrigger> updated = current;
-
-    if (success) {
-      updated = await _update((stored) => stored.map((t) {
-        if (t.id != triggerId) return t;
-        return t.copyWith(
-          status: AutoReplyTriggerStatus.fired,
-          lastFiredAt: firedAt,
-          expireReason: null,
-        );
-      }).toList());
-      await _cancelBackgroundTaskByTriggerId(triggerId);
-      await _appendHistoryLog(
-        category: AutoReplyTriggerLogCategory.delivery,
-        event: 'send_succeeded',
-        message: '主动回复发送成功：${target.title}',
-        triggerId: target.id,
-        title: target.title,
-        conversationId: target.conversationId,
-        source: target.source,
-        success: true,
-        metadata: {
-          'firedAt': firedAt.toIso8601String(),
-          'reason': reason,
-        },
-      );
-    } else if (retryable) {
-      final retryAt = now.add(const Duration(minutes: 1));
-      var retried = false;
-      updated = await _update((stored) => stored.map((t) {
-        // 发送期间用户已暂停或作废（以存储为准）：只释放认领，保留用户的决定。
-        if (t.id != triggerId || !t.isActive) return t;
-        retried = true;
-        return t.copyWith(
-          status: AutoReplyTriggerStatus.pending,
-          nextFireAt: retryAt,
-          lastFiredAt: null,
-          expireReason: reason,
-        );
-      }).toList());
-      // 释放执行权认领，让重试可以重新认领
-      await _claimStore.release(triggerId, claimToken);
-      if (!retried) return;
-      final retryTrigger = updated.where((t) => t.id == triggerId).firstOrNull;
-      if (retryTrigger != null) {
-        await _scheduleBackgroundTaskForTrigger(retryTrigger);
+      // 执行权已被另一方接管，那边负责收尾；生成超过租约后才返回的旧发送
+      // （空内容、异常等没经过 beginDelivery 的失败）同样不得改触发器。
+      // 先续租：续上了，一个租约内没人能接管，确认与写入之间不会被插队。
+      // 续不上而令牌仍是当前认领，说明本次已开始送达，这条认领永不再被接管。
+      if (reason == AutoReplyDispatchResult.supersededReason) return;
+      if (claimToken == null ||
+          !await _holdClaimForCompletion(triggerId, claimToken)) {
+        AppLogger.info('AutoReplyTrigger', 'Stale send completion ignored',
+            metadata: {'triggerId': triggerId, 'reason': reason});
+        return;
       }
-      AppLogger.warning(
-          'AutoReplyTrigger', 'Trigger send failed, scheduled retry',
+      final current = state.valueOrNull ?? const <AutoReplyTrigger>[];
+      final target = current.where((t) => t.id == triggerId).firstOrNull;
+      if (target == null) {
+        if (!success) {
+          await _claimStore.release(triggerId, claimToken);
+        }
+        return;
+      }
+
+      final now = DateTime.now();
+      List<AutoReplyTrigger> updated = current;
+
+      if (success) {
+        updated = await _update((stored) => stored.map((t) {
+          if (t.id != triggerId) return t;
+          return t.copyWith(
+            status: AutoReplyTriggerStatus.fired,
+            lastFiredAt: firedAt,
+            expireReason: null,
+          );
+        }).toList());
+        await _cancelBackgroundTaskByTriggerId(triggerId);
+        await _appendHistoryLog(
+          category: AutoReplyTriggerLogCategory.delivery,
+          event: 'send_succeeded',
+          message: '主动回复发送成功：${target.title}',
+          triggerId: target.id,
+          title: target.title,
+          conversationId: target.conversationId,
+          source: target.source,
+          success: true,
           metadata: {
-            'triggerId': triggerId,
+            'firedAt': firedAt.toIso8601String(),
+            'reason': reason,
+          },
+        );
+      } else if (retryable) {
+        final retryAt = now.add(const Duration(minutes: 1));
+        var retried = false;
+        updated = await _update((stored) => stored.map((t) {
+          // 发送期间用户已暂停或作废（以存储为准）：只释放认领，保留用户的决定。
+          if (t.id != triggerId || !t.isActive) return t;
+          retried = true;
+          return t.copyWith(
+            status: AutoReplyTriggerStatus.pending,
+            nextFireAt: retryAt,
+            lastFiredAt: null,
+            expireReason: reason,
+          );
+        }).toList());
+        // 释放执行权认领，让重试可以重新认领
+        await _claimStore.release(triggerId, claimToken);
+        if (!retried) return;
+        final retryTrigger = updated.where((t) => t.id == triggerId).firstOrNull;
+        if (retryTrigger != null) {
+          await _scheduleBackgroundTaskForTrigger(retryTrigger);
+        }
+        AppLogger.warning(
+            'AutoReplyTrigger', 'Trigger send failed, scheduled retry',
+            metadata: {
+              'triggerId': triggerId,
+              'retryAt': retryAt.toIso8601String(),
+              'reason': reason,
+            });
+        await _appendHistoryLog(
+          category: AutoReplyTriggerLogCategory.delivery,
+          event: 'send_retry_scheduled',
+          message: '主动回复发送失败，1 分钟后重试：${target.title}',
+          triggerId: target.id,
+          title: target.title,
+          conversationId: target.conversationId,
+          source: target.source,
+          success: false,
+          level: AutoReplyTriggerLogLevel.warning,
+          metadata: {
             'retryAt': retryAt.toIso8601String(),
             'reason': reason,
-          });
-      await _appendHistoryLog(
-        category: AutoReplyTriggerLogCategory.delivery,
-        event: 'send_retry_scheduled',
-        message: '主动回复发送失败，1 分钟后重试：${target.title}',
-        triggerId: target.id,
-        title: target.title,
-        conversationId: target.conversationId,
-        source: target.source,
-        success: false,
-        level: AutoReplyTriggerLogLevel.warning,
-        metadata: {
-          'retryAt': retryAt.toIso8601String(),
-          'reason': reason,
-        },
-      );
-    } else {
-      updated = await _update((stored) => stored.map((t) {
-        if (t.id != triggerId) return t;
-        return t.copyWith(
-          status: AutoReplyTriggerStatus.expired,
-          lastFiredAt: now,
-          expireReason: reason,
+          },
         );
-      }).toList());
-      await _cancelBackgroundTaskByTriggerId(triggerId);
-      final expired = updated.where((t) => t.id == triggerId).firstOrNull;
-      if (expired != null) {
-        _emitEvent(AutoReplyTriggerEventType.expired, expired, reason: reason);
-      }
-      AppLogger.info(
-          'AutoReplyTrigger', 'Trigger expired after non-retryable send result',
+      } else {
+        updated = await _update((stored) => stored.map((t) {
+          if (t.id != triggerId) return t;
+          return t.copyWith(
+            status: AutoReplyTriggerStatus.expired,
+            lastFiredAt: now,
+            expireReason: reason,
+          );
+        }).toList());
+        await _cancelBackgroundTaskByTriggerId(triggerId);
+        final expired = updated.where((t) => t.id == triggerId).firstOrNull;
+        if (expired != null) {
+          _emitEvent(AutoReplyTriggerEventType.expired, expired, reason: reason);
+        }
+        AppLogger.info(
+            'AutoReplyTrigger', 'Trigger expired after non-retryable send result',
+            metadata: {
+              'triggerId': triggerId,
+              'reason': reason,
+            });
+        await _appendHistoryLog(
+          category: AutoReplyTriggerLogCategory.delivery,
+          event: 'send_failed_final',
+          message: '主动回复发送失败并作废：${target.title}',
+          triggerId: target.id,
+          title: target.title,
+          conversationId: target.conversationId,
+          source: target.source,
+          success: false,
+          level: AutoReplyTriggerLogLevel.error,
           metadata: {
-            'triggerId': triggerId,
             'reason': reason,
-          });
-      await _appendHistoryLog(
-        category: AutoReplyTriggerLogCategory.delivery,
-        event: 'send_failed_final',
-        message: '主动回复发送失败并作废：${target.title}',
-        triggerId: target.id,
-        title: target.title,
-        conversationId: target.conversationId,
-        source: target.source,
-        success: false,
-        level: AutoReplyTriggerLogLevel.error,
-        metadata: {
-          'reason': reason,
-        },
-      );
+          },
+        );
+      }
+    } finally {
+      _scheduleFromStored(state.valueOrNull);
     }
   }
 
@@ -969,6 +1067,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         final updated = change(await _storage.loadTriggers());
         await _storage.saveTriggers(updated);
         state = AsyncData(updated);
+        if (_activePoll == null) _scheduleFromStored(updated);
         return updated;
       });
 

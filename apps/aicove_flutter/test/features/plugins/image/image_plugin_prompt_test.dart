@@ -766,11 +766,11 @@ adult body, blonde hair
           (comicParams['v4_negative_prompt'] as Map)['caption'] as Map;
       expect(
         v4Caption['base_caption'],
-        'style-a, comic, 1girl, 2 panels, text, chinese text, wide shot, 横書き, 한국어\nText: 净善宫的夜里',
+        'style-a, comic, 1girl, 2 panels, text, chinese text, wide shot, 横書き, 한국어\nText: 净善宫的夜里\n\n又是这个梦……',
       );
       expect(
         (v4Caption['char_captions'] as List).single['char_caption'],
-        'girl, nahida_(genshin_impact), 縦書き\nText: 又是这个梦……',
+        'girl, nahida_(genshin_impact), 縦書き',
       );
       expect(
         (v4NegCaption['char_captions'] as List).single['char_caption'],

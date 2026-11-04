@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 import '../../../core/sync/cloud_setting_policy.dart';
 import '../data/cloud_document.dart';
 
@@ -75,7 +77,8 @@ class LanRevision {
     'deleted': deleted,
     'media_ids': mediaIds,
   };
-  late final String hash = cloudObjectId(canonicalJson(body));
+  late final List<int> _bodyBytes = utf8.encode(canonicalJson(body));
+  late final String hash = sha256.convert(_bodyBytes).toString();
   Map<String, dynamic> toJson() => {...body, 'hash': hash};
 
   factory LanRevision.fromJson(Map<String, dynamic> json) {
@@ -87,8 +90,7 @@ class LanRevision {
         json['vector'] is! Map ||
         json['payload'] is! Map ||
         json['deleted'] is! bool ||
-        json['media_ids'] is! List ||
-        utf8.encode(canonicalJson(json)).length > lanMaxDocumentBytes) {
+        json['media_ids'] is! List) {
       throw const LanSyncFailure('局域网数据格式无效或版本不兼容');
     }
     final vector = <String, int>{};
@@ -123,9 +125,40 @@ class LanRevision {
       mediaIds: media.cast<String>(),
     );
     if (json['hash'] != revision.hash) throw const LanSyncFailure('同步内容校验失败');
-    final times = revision.payload['setting_times'];
-    if (lanSettingKinds.contains(revision.kind)) {
-      if (revision.payload['setting_times_version'] != 1 ||
+    // Extra fields and duplicate media IDs remain part of the wire size.
+    final int? knownBytes =
+        json.length == 8 && media.length == revision.mediaIds.length
+        ? null
+        : utf8.encode(canonicalJson(json)).length;
+    revision.validate(knownDocumentBytes: knownBytes);
+    return revision;
+  }
+
+  void validate({int? knownDocumentBytes}) {
+    if (!lanKinds.contains(kind) ||
+        id.isEmpty ||
+        id.length > 200 ||
+        (knownDocumentBytes ?? _bodyBytes.length + 74) > lanMaxDocumentBytes) {
+      throw const LanSyncFailure('局域网数据格式无效或版本不兼容');
+    }
+    if (vector.isEmpty ||
+        vector.length > 64 ||
+        vector.entries.any(
+          (entry) =>
+              entry.key.isEmpty ||
+              entry.key.length > 100 ||
+              entry.value < 1 ||
+              entry.value > 9007199254740991,
+        )) {
+      throw const LanSyncFailure('设备修改记录无效');
+    }
+    if (mediaIds.length > 500 ||
+        mediaIds.any((id) => !RegExp(r'^[a-f0-9]{64}$').hasMatch(id))) {
+      throw const LanSyncFailure('附件身份无效');
+    }
+    final times = payload['setting_times'];
+    if (lanSettingKinds.contains(kind)) {
+      if (payload['setting_times_version'] != 1 ||
           times is! Map ||
           times.length > 1000) {
         throw const LanSyncFailure('设置缺少修改时间记录');
@@ -147,14 +180,12 @@ class LanRevision {
     // Device-local general fields are ignored on apply (keepLocalGeneralSettings),
     // not rejected: the local list grows over time, and revisions written
     // before a field became local must stay readable.
-    if (revision.kind == 'settings' &&
-        revision.payload['key'] == cloudUiModelsKey) {
-      final value = revision.payload['json_value'];
+    if (kind == 'settings' && payload['key'] == cloudUiModelsKey) {
+      final value = payload['json_value'];
       if (value is! String || jsonDecode(value) is! Map) {
         throw const LanSyncFailure('通用设置格式无效');
       }
     }
-    return revision;
   }
 }
 

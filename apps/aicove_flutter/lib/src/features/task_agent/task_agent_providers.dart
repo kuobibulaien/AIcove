@@ -6,6 +6,7 @@ import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
 import 'package:drift/drift.dart' show Variable;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/database/database_provider.dart';
 import '../../core/media/media_store.dart';
@@ -13,6 +14,7 @@ import '../../core/models/message_block.dart';
 import '../../core/storage/app_data_directory.dart';
 import '../../core/services/system_reminder_service.dart';
 import '../agent_plugins/plugin_runtime.dart';
+import '../agent_plugins/tool_policy.dart';
 import '../agent_plugins/plugin_request_context.dart';
 import '../agent_plugins/plugin_request_scope.dart';
 import '../auto_reply/data/proactive_owner_device.dart';
@@ -111,6 +113,8 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
     relay: (conversationId, receipt) => _relay(ref, conversationId, receipt),
     ownsConversation: (conversationId) async =>
         (await ProactiveOwnership.load()).owns(conversationId),
+    conversationBusy: (conversationId) =>
+        ref.read(conversationSendingProvider(conversationId)),
     deviceId: () => MediaStore.localDeviceId,
   );
 });
@@ -165,12 +169,28 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
     pluginEnabled: true,
     localIds: [for (final workspace in await store.list()) workspace.id],
   );
+  final prefs = await SharedPreferences.getInstance();
+  final home =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
   return TaskAgentCapabilities(
     tools: extension.tools,
     prompts: extension.prompts,
     toolOwners: extension.toolOwners,
     workspaces: WorkspaceToolset(
       store: store,
+      userSkillRoots: [
+        if (home != null && home.isNotEmpty) ...[
+          p.join(home, '.agents', 'skills'),
+          p.join(home, '.claude', 'skills'),
+        ],
+      ],
+      currentWorkspaceId: prefs.getString(
+        'workspace_current_${conversation.id}',
+      ),
+      currentLocalDirectory: prefs.getString(
+        'workspace_current_${conversation.id}_local',
+      ),
+      enableLocalFiles: true,
       enableScripts: true,
       enableShell: WorkspaceShell.available(platform: Platform.operatingSystem),
       workspaceIds: workspaceIds,
@@ -178,6 +198,15 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
       isCancelled: () => cancellation.isCancelled,
       onCreated: (workspace) =>
           _grantWorkspace(ref, task.conversationId, workspace),
+      shellEnvironment: () {
+        final settings = ref.read(appSettingsProvider).valueOrNull;
+        return settings == null
+            ? const <String, String>{}
+            : channelKeyEnvironment(settings);
+      },
+      runLocalWebApp: (root, page) async => (await ref.read(
+        webAppLauncherProvider.future,
+      )).openLocalDirectoryForAgent(root, page),
       runWebApp: (ws, path) async => (await ref.read(
         webAppLauncherProvider.future,
       )).openForAgent(ws, path),
@@ -574,7 +603,13 @@ final taskAgentSupervisorProvider = Provider<TaskAgentSupervisor>((ref) {
             ?.blocks ??
         const <MessageBlock>[],
   );
-  ref.onDispose(supervisor.stop);
+  final subscription = ref.read(conversationIdleEventsProvider).stream.listen(
+    (conversationId) => unawaited(supervisor.flushConversation(conversationId)),
+  );
+  ref.onDispose(() {
+    unawaited(subscription.cancel());
+    supervisor.stop();
+  });
   return supervisor;
 });
 

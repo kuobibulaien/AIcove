@@ -189,7 +189,10 @@ class ConversationExporter {
 
         // 构建会话 JSON
         conversations.add(filterTransferConversation(
-          _buildConversationJson(dbConv, fileMapping),
+          {..._buildConversationJson(dbConv, fileMapping),
+            if (scopes.contains(SyncScope.chatHistory))
+              'context_summaries': await _convRepo.getContextSummaries(convId),
+          },
           scopes,
         ));
 
@@ -449,6 +452,12 @@ class ConversationExporter {
       'self_address': dbConv.selfAddress,
       'address_user': dbConv.addressUser,
       'default_provider': dbConv.defaultProvider,
+      'session_provider': dbConv.sessionProvider,
+      'enabled_plugins': dbConv.enabledPlugins,
+      'recipe_id': dbConv.recipeId,
+      'thinking_levels': dbConv.thinkingLevels,
+      'chat_background_blur_sigma': dbConv.chatBackgroundBlurSigma,
+      'context_start_message_id': dbConv.contextStartMessageId,
       'created_at': _toEpochMillis(dbConv.createdAt),
       'updated_at': _toEpochMillis(dbConv.updatedAt),
       'is_pinned': dbConv.isPinned,

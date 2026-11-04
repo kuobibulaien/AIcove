@@ -45,13 +45,9 @@ class AnalyzerScheduler {
   final Set<String> _runningAnalysisConversationIds = <String>{};
   final Map<String, int> _analysisGenerations = {};
   final AutoReplyTriggerStorage _historyStorage = AutoReplyTriggerStorage();
-  Timer? _backgroundAnalysisTimer;
-  DateTime? _lastBackgroundAnalysisAt;
 
   static const Duration _defaultDelay = Duration(minutes: 5);
   static const Duration _immediateDelay = Duration(seconds: 1);
-  static const Duration _backgroundAnalysisDelay = Duration(seconds: 10);
-  static const Duration _backgroundAnalysisCooldown = Duration(minutes: 5);
 
   Future<void> _appendHistoryLog({
     required AutoReplyTriggerLogCategory category,
@@ -141,6 +137,9 @@ class AnalyzerScheduler {
     if (normalizedConversationId.isEmpty) return;
 
     await _initFuture;
+    await ProactiveOwnership.claim(normalizedConversationId);
+    await _ref.read(autoReplyTriggersProvider.future);
+    _ref.read(autoReplyTriggersProvider.notifier).reschedule();
     final conversation = _ref.read(
       resolvedConversationByIdProvider(normalizedConversationId),
     );
@@ -160,7 +159,6 @@ class AnalyzerScheduler {
       );
       return;
     }
-    await ProactiveOwnership.claim(normalizedConversationId);
     await _clearConversationAutoTriggers(
       normalizedConversationId,
       reason: 'user_new_message',
@@ -367,54 +365,18 @@ class AnalyzerScheduler {
   }
 
   void onAppBackground() {
-    final now = DateTime.now();
     _log('analyzer:background_keep_schedule', {
       'analysisTimers': _analysisTimers.length,
       'silentTimers': _silentTimers.length,
     }, level: 'DEBUG');
 
-    _scheduleBackgroundAnalysis(now);
   }
 
   Future<void> onAppResumed() async {
-    _backgroundAnalysisTimer?.cancel();
-    _backgroundAnalysisTimer = null;
     await _initFuture;
     await _ref.read(autoReplyTriggersProvider.future);
     await _ref.read(autoReplyTriggersProvider.notifier).reloadFromStorage();
     await refreshFromStorage();
-  }
-
-  void _scheduleBackgroundAnalysis(DateTime now) {
-    final conversationId = _ref.read(activeConversationIdProvider)?.trim();
-    if (conversationId == null || conversationId.isEmpty) {
-      return;
-    }
-
-    final lastRunAt = _lastBackgroundAnalysisAt;
-    if (lastRunAt != null &&
-        now.difference(lastRunAt) < _backgroundAnalysisCooldown) {
-      return;
-    }
-
-    _backgroundAnalysisTimer?.cancel();
-    _backgroundAnalysisTimer = Timer(_backgroundAnalysisDelay, () {
-      _backgroundAnalysisTimer = null;
-      _lastBackgroundAnalysisAt = DateTime.now();
-      unawaited(
-        _runAnalysis(conversationId: conversationId, reason: 'app_background'),
-      );
-    });
-
-    unawaited(
-      _appendHistoryLog(
-        category: AutoReplyTriggerLogCategory.wakeup,
-        event: 'background_analysis_scheduled',
-        message: '已安排后台主动回复分析',
-        conversationId: conversationId,
-        metadata: {'delayMs': _backgroundAnalysisDelay.inMilliseconds},
-      ),
-    );
   }
 
   Future<void> _runAnalysis({
@@ -581,8 +543,9 @@ class AnalyzerScheduler {
         return;
       }
 
-      if (!await _isAnalysisCurrent(conversationId, gen, lastUserMsg?.id))
+      if (!await _isAnalysisCurrent(conversationId, gen, lastUserMsg?.id)) {
         return;
+      }
       await _applyDecision(
         conversation: conversation,
         currentState: effectiveState,
@@ -885,8 +848,9 @@ class AnalyzerScheduler {
       if (trigger.conversationId != conversationId) continue;
       if (trigger.source != TriggerSource.aiScheduler) continue;
       if (reason == 'user_new_message' &&
-          trigger.priority == AutoReplyTriggerPriority.high)
+          trigger.priority == AutoReplyTriggerPriority.high) {
         continue;
+      }
       if (!trigger.isActive &&
           trigger.status != AutoReplyTriggerStatus.paused) {
         continue;
@@ -1086,8 +1050,6 @@ class AnalyzerScheduler {
   }
 
   void cancel() {
-    _backgroundAnalysisTimer?.cancel();
-    _backgroundAnalysisTimer = null;
     for (final timer in _analysisTimers.values) {
       timer.cancel();
     }

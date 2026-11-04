@@ -2,7 +2,7 @@
 // No DOM, remote loader, native modules or credentials are exposed.
 globalThis.console = Object.freeze({log(){}, info(){}, warn(){}, error(){}, debug(){}});
 globalThis.__spreset = (() => {
-  let config = {}, macros = {}, definitions = new Map();
+  let config = {}, macros = {}, definitions = new Map(), activeIds = [], stopStrings = [];
   let processor = null, output = '', raw = '', hold = '', state = {};
   let initialTools = [], currentTools = [], dynamicToolNames = new Set();
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -59,12 +59,35 @@ globalThis.__spreset = (() => {
     if (typeof changed !== 'string') throw Error('Merged post script must return text');
     return changed;
   }
+  function hyperProcess(content) {
+    for (const order of [1,2,3]) {
+      const pattern = new RegExp('<regex(?: +order *= *' + order + ')' + (order === 2 ? '?' : '') + '> *"(/?)(.*?)\\1(.*?)" *: *"(.*?)" *</regex>', 'gm');
+      for (const match of [...content.matchAll(pattern)]) {
+        try { content = content.replace(new RegExp(match[2],match[3]), JSON.parse('"'+match[4].replace(/\\?"/g,'\\"')+'"')); } catch (_) {}
+      }
+    }
+    return content.replace(/<regex(?: +order *= *\d)?>.*?<\/regex>/gm,'').replace(/\r\n|\r/g,'\n')
+      .replace(/\s*<\|curtail\|>\s*/g,'\n').replace(/\s*<\|join\|>\s*/g,'').replace(/\s*<\|space\|>\s*/g,' ')
+      .replace(/<\|(\\.*?)\|>/g,(m,p)=>{ try { return JSON.parse('"'+p+'"'); } catch (_) { return m; } });
+  }
+  function inject(messages) {
+    return messages.flatMap((m,i) => {
+      const id = m.identifier ?? m.__spresetIdentifier ?? (messages.length === activeIds.length ? activeIds[i] : null);
+      delete m.__spresetIdentifier;
+      const b = config.MessageInjections?.[id];
+      if (!b?.enabled) return [m];
+      if (b.reasoning != null && b.reasoning !== '') { m.reasoning = b.reasoning; m.reasoning_content = b.reasoning; }
+      if (b.reasoning_content != null) m.reasoning_content = b.reasoning_content;
+      if (b.signature) m.signature = b.signature;
+      const calls = b.tool_calls || b.toolCalls;
+      if (Array.isArray(calls) && calls.length) m.tool_calls = calls.map(c => c.function ? c : {id:c.id,type:'function',function:{name:c.name,arguments:typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments || {})},...(c.signature ? {signature:c.signature} : {})});
+      if (m.reasoning || m.reasoning_content || m.signature || m.tool_calls) m.role = 'assistant';
+      return [m,...(b.toolResults || []).map(r=>({role:'tool',tool_call_id:r.toolCallId || r.tool_call_id,content:typeof r.content === 'string' ? r.content : JSON.stringify(r.content ?? '')}))];
+    });
+  }
   async function squash(messages) {
     const s = config.ChatSquash || {};
     if (!s.enabled) return postScript(messages, true);
-    if (s.parse_clewd || s.re_split || s.separate_chat_history) {
-      throw Error('SPreset parse_clewd/re_split/separate_chat_history not supported');
-    }
     if (s.conditional_enabled) {
       const tag = String(s.conditional_tag || ''); let matched = false;
       const remove = value => {
@@ -76,7 +99,11 @@ globalThis.__spreset = (() => {
       for (const m of messages) m.content = remove(m.content);
       if (!matched) return messages;
     }
-    if (s.enable_stop_string) throw Error('SPreset merged stop strings not supported');
+    stopStrings = [];
+    if (s.enable_stop_string && s.stop_string) {
+      try { const value = JSON.parse(s.stop_string); stopStrings = Array.isArray(value) ? value : [String(value)]; }
+      catch (_) { stopStrings = [String(s.stop_string)]; }
+    }
     const affix = {
       user: [substitute(s.user_prefix), substitute(s.user_suffix)],
       assistant: [substitute(s.char_prefix), substitute(s.char_suffix)],
@@ -87,13 +114,39 @@ globalThis.__spreset = (() => {
     const flush = async () => {
       if (!buffer) return;
       if (previous) buffer += affix[previous][1];
-      result.push({role, content: await postScript(buffer, false)});
+      if (s.parse_clewd) buffer = hyperProcess(buffer);
+      buffer = await postScript(buffer, false);
+      if (s.re_split) {
+        let remaining = buffer, split = [];
+        while (remaining) {
+          const key = ['user','assistant','system'].find(k => affix[k][0] && remaining.startsWith(affix[k][0]));
+          if (!key) break;
+          remaining = remaining.slice(affix[key][0].length);
+          let end = remaining.length;
+          for (const [prefix] of Object.values(affix)) if (prefix) { const i = remaining.indexOf(prefix); if (i >= 0) end = Math.min(end,i); }
+          let part = remaining.slice(0,end);
+          if (affix[key][1] && part.endsWith(affix[key][1])) part = part.slice(0,-affix[key][1].length);
+          if (part.trim()) split.push({role:key,content:part.trim()});
+          remaining = remaining.slice(end);
+        }
+        if (split.length && !remaining) result.push(...split); else result.push({role,content:buffer});
+      } else result.push({role, content:buffer});
       buffer = ''; previous = '';
     };
     const separator = s.enable_squashed_separator && s.squashed_separator_string
       ? (s.squashed_separator_regex ? new RegExp(s.squashed_separator_string) : s.squashed_separator_string) : null;
-    for (const source of messages) {
-      const m = clone(source);
+    const marked = messages.some(m => Object.hasOwn(m,'__isHistory'));
+    const firstChat = messages.findIndex(m => m.role !== 'system');
+    let lastChat = messages.length - 1;
+    while (lastChat >= 0 && messages[lastChat].role === 'system') lastChat--;
+    for (let index = 0; index < messages.length; index++) {
+      const m = clone(messages[index]);
+      const history = marked ? m.__isHistory === true : index >= firstChat && index <= lastChat;
+      delete m.__isHistory;
+      if (s.separate_chat_history && !history) { await flush(); result.push(m); continue; }
+      if (s.parse_clewd && typeof m.content === 'string' && m.content.includes('<|no-trans|>')) {
+        await flush(); m.content = m.content.replace(/<\|no-trans\|>/g,''); result.push(m); continue;
+      }
       const native = !affix[m.role] || Object.keys(m).some(k => !['role','content'].includes(k) && m[k] != null)
         || (Array.isArray(m.content) && m.content.some(p => typeof p !== 'string' &&
           (!p || p.type !== 'text' || typeof p.text !== 'string' || Object.keys(p).some(k => !['type','text'].includes(k)))));
@@ -127,10 +180,23 @@ globalThis.__spreset = (() => {
   function forced(messages) {
     const p = config.ForcedPostProcessing || {};
     if (!p.enabled || !p.mode) return messages;
-    if (p.mode !== 'merge_tools') throw Error('Unsupported forced post-processing: '+p.mode);
+    if (p.mode === 'none') return messages;
+    const mode = p.mode === 'claude' ? 'merge' : p.mode;
+    if (!['merge','merge_tools','semi','semi_tools','strict','strict_tools','single'].includes(mode)) throw Error('Unsupported forced post-processing: '+p.mode);
+    const preserveTools = mode.endsWith('_tools');
     const result = [];
     for (const source of messages) {
       const m = clone(source); m.content ??= '';
+      if (!preserveTools && (m.role === 'tool' || m.tool_calls)) {
+        const pieces = [typeof m.content === 'string' ? m.content : JSON.stringify(m.content)];
+        if (m.tool_calls) pieces.push(JSON.stringify(m.tool_calls));
+        m.content = pieces.filter(Boolean).join('\n');
+        if (m.role === 'tool') m.role = 'user';
+        delete m.tool_calls; delete m.tool_call_id;
+      }
+      if ((mode.startsWith('semi') || mode.startsWith('strict')) && result.length && m.role === 'system') m.role = 'user';
+      if (mode.startsWith('strict') && m.role === 'assistant' && !result.some(x => x.role !== 'system')) result.push({role:'user',content:"Let's get started."});
+      if (mode === 'single') { m.role = 'user'; if (typeof m.content !== 'string') m.content = JSON.stringify(m.content); for (const key of Object.keys(m)) if (!['role','content'].includes(key)) delete m[key]; }
       if (m.name && typeof m.content === 'string') {
         const name = m.role === 'system'
           ? (m.name === 'example_user' ? macros.user : m.name === 'example_assistant' ? macros.char : '') : m.name;
@@ -144,6 +210,7 @@ globalThis.__spreset = (() => {
         last.content += '\n\n'+m.content;
       } else result.push(m);
     }
+    if (mode === 'single') return [{role:'user',content:result.map(m => m.content).filter(Boolean).join('\n\n')}];
     return result.length ? result : [{role:'user',content:"Let's get started."}];
   }
   function resetOutput(stream) {
@@ -169,11 +236,8 @@ globalThis.__spreset = (() => {
     async init(input) {
       config = input.config || {}; macros = input.macros || {}; definitions = new Map();
       dynamicToolNames = new Set();
-      if (config.MacroNest) throw Error('SPreset MacroNest not supported');
       const enabled = new Set(input.activeIds || []);
-      for (const [id,b] of Object.entries(config.MessageInjections || {})) {
-        if (enabled.has(id) && b.enabled) throw Error('Active SPreset MessageInjections require node-level host support');
-      }
+      activeIds = input.activeIds || [];
       for (const [id,b] of Object.entries(config.ToolBindings || {})) {
         if (!enabled.has(id) || !b.enabled || b.valid === false) continue;
         const d = await Function(String(b.code || ''))();
@@ -185,7 +249,8 @@ globalThis.__spreset = (() => {
       currentTools = clone(initialTools);
       return {tools:currentTools};
     },
-    async prepare(messages) { return finalRequest(validateMessages(forced(await squash(clone(messages))))); },
+    async prepare(messages) { return finalRequest(validateMessages(forced(await squash(inject(clone(messages)))))); },
+    stopStrings() { return stopStrings; },
     tools() { return currentTools; },
     async action({name,args}) {
       const d = definitions.get(name);

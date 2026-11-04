@@ -18,6 +18,7 @@ void main() {
     int? minDepth,
     int? maxDepth,
     List<String> trimStrings = const <String>[],
+    int substituteRegex = 0,
   }) {
     return SillyTavernRegexScript(
       id: id,
@@ -29,13 +30,26 @@ void main() {
       replaceString: replace,
       trimStrings: trimStrings,
       placements: placements,
-      substituteRegex: 0,
+      substituteRegex: substituteRegex,
       minDepth: minDepth,
       maxDepth: maxDepth,
       markdownOnly: markdownOnly,
       promptOnly: promptOnly,
     );
   }
+
+  test('substitutes raw and escaped macro values in patterns', () async {
+    for (final mode in [1, 2]) {
+      final result = await processor.applyToDisplayText(
+        text: mode == 1 ? 'axb' : 'a.b',
+        scripts: [script(id: 'macro', find: r'^{{char}}$', replace: 'matched',
+            placements: [2], substituteRegex: mode)],
+        authorized: true,
+        macroValues: {'char': 'a.b'},
+      );
+      expect(result.text, 'matched');
+    }
+  });
 
   test(
     'oversized replacement preserves prior result and runs later rules',

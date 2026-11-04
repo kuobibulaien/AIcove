@@ -1,4 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:aicove_flutter/src/features/auto_reply/data/analyzer_scheduler.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/proactive_owner_device.dart';
 
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
@@ -27,6 +31,17 @@ class _Conversations extends ConversationsNotifier {
       updatedAt: DateTime(2026),
     ),
   ];
+}
+
+class _FlakySettings extends AppSettingsNotifier {
+  static int attempts = 0;
+  @override
+  Future<AppSettings> build() async {
+    if (attempts++ == 0) throw StateError('settings temporarily unavailable');
+    return mapUiModelsToAppSettings(const {}).copyWith(
+      autoReplySettings: const AutoReplySettings(quietHoursEnabled: false),
+    );
+  }
 }
 
 class _Settings extends AppSettingsNotifier {
@@ -59,7 +74,7 @@ void main() {
   late StreamSubscription<AutoReplyTriggerEvent> subscription;
   late List<AutoReplyTriggerEvent> events;
 
-  Future<void> start(AutoReplySettings settings) async {
+  Future<void> start(AutoReplySettings settings, {bool flaky = false}) async {
     SharedPreferences.setMockInitialValues({});
     database = db.AppDatabase.forTesting(NativeDatabase.memory());
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -78,7 +93,7 @@ void main() {
       overrides: [
         databaseProvider.overrideWithValue(database),
         conversationsProvider.overrideWith(_Conversations.new),
-        appSettingsProvider.overrideWith(() => _Settings(
+        appSettingsProvider.overrideWith(() => flaky ? _FlakySettings() : _Settings(
           mapUiModelsToAppSettings(const {}).copyWith(autoReplySettings: settings),
         )),
       ],
@@ -105,6 +120,47 @@ void main() {
     await controller.pollDueTriggersForTest();
     await Future<void>.delayed(Duration.zero);
   }
+
+  test('poll retries after settings loading fails', () async {
+    _FlakySettings.attempts = 0;
+    await start(const AutoReplySettings(), flaky: true);
+    await AutoReplyTriggerStorage().saveTriggers([_trigger('retry-settings')]);
+    final controller = container.read(autoReplyTriggersProvider.notifier);
+    await controller.refresh();
+    await controller.pollDueTriggersForTest();
+    container.invalidate(appSettingsProvider);
+    await Future<void>.delayed(const Duration(milliseconds: 1600));
+    expect(events.where((e) => e.type == AutoReplyTriggerEventType.fired), hasLength(1));
+  });
+
+  test('taking ownership on a user message wakes a skipped trigger', () async {
+    await start(const AutoReplySettings(quietHoursEnabled: false));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('aicove.cloud.device_id', 'local');
+    await prefs.setString(proactiveOwnerDevicesKey, jsonEncode({
+      'c': {'device_id': 'other', 'at_ms': 1},
+    }));
+    await poll([_trigger('handoff')]);
+    expect(events, isEmpty);
+
+    await container.read(analyzerSchedulerProvider).handleUserMessageActivity(
+      conversationId: 'c', messageId: 'm', occurredAt: DateTime.now(),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(events.where((e) => e.type == AutoReplyTriggerEventType.fired),
+        hasLength(1));
+  });
+
+  test('a future trigger wakes without periodic polling', () async {
+    await start(const AutoReplySettings(quietHoursEnabled: false));
+    await poll([_trigger('future').copyWith(
+      nextFireAt: DateTime.now().add(const Duration(milliseconds: 200)),
+    )]);
+    expect(events, isEmpty);
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(events.where((e) => e.type == AutoReplyTriggerEventType.fired),
+        hasLength(1));
+  });
 
   test(
     'multiple due triggers in one tick all dispatch when not in quiet hours',

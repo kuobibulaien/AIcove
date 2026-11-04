@@ -39,6 +39,36 @@ class ConversationRepository {
         .getSingleOrNull();
   }
 
+  Future<List<Map<String, dynamic>>> getContextSummaries(String owner) async {
+    final rows = await _db.customSelect(
+      'SELECT * FROM context_summaries WHERE owner_id = ? ORDER BY created_at, rowid',
+      variables: [Variable(owner)],
+    ).get();
+    return rows.map((row) => Map<String, dynamic>.from(row.data)).toList();
+  }
+
+  Future<void> clearContextSummaries(String owner) => _db.customStatement(
+    'DELETE FROM context_summaries WHERE owner_id = ?', [owner]);
+
+  Future<void> saveContextSummary(Map<String, dynamic> row) async {
+    final existing = await _db.customSelect(
+      'SELECT owner_id FROM context_summaries WHERE id = ?',
+      variables: [Variable(row['id'] as String)],
+    ).getSingleOrNull();
+    if (existing != null && existing.read<String>('owner_id') != row['owner_id']) {
+      throw const FormatException('聊天摘要 ID 与其他角色冲突，已取消导入');
+    }
+    await _db.customStatement(
+    'INSERT OR REPLACE INTO context_summaries (id, owner_id, kind, boundary_id, topic_boundary, summary, source_ids, source_digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [for (final key in ['id', 'owner_id', 'kind', 'boundary_id', 'topic_boundary', 'summary', 'source_ids', 'source_digest', 'created_at']) row[key]],
+    );
+  }
+
+  Future<void> setContextBoundary(String owner, String? boundary) async {
+    await (_db.update(_db.conversations)..where((t) => t.id.equals(owner)))
+        .write(ConversationsCompanion(contextStartMessageId: Value(boundary)));
+  }
+
   /// 创建或更新会话
   Future<void> upsert(ConversationsCompanion data) async {
     await _db.into(_db.conversations).insertOnConflictUpdate(data);

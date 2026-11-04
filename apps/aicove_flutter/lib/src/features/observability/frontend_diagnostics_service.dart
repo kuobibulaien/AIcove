@@ -11,7 +11,7 @@ import 'frontend_diagnostics_port.dart';
 /// 复用应用日志存储，不另起数据库。采集不同步通知 UI、不依赖采集成功。
 class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
   FrontendDiagnosticsService({void Function(LogEntry)? sink})
-      : _sink = sink ?? AppLogger.add;
+    : _sink = sink ?? AppLogger.add;
 
   static final FrontendDiagnosticsService instance =
       FrontendDiagnosticsService();
@@ -34,23 +34,25 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
   }
 
   Map<String, Object?> get _envelope => {
-        'schemaVersion': 2,
-        'appRunId': appRunId,
-        'sequence': ++_eventSequence,
-        'monotonicUs': _runtimeClock.elapsedMicroseconds,
-        'pid': pid,
-        'isolateId': Isolate.current.hashCode,
-        'build': _identity,
-        'writerHealth': AppLogger.diagnosticHealth,
-      };
+    'schemaVersion': 2,
+    'appRunId': appRunId,
+    'sequence': ++_eventSequence,
+    'monotonicUs': _runtimeClock.elapsedMicroseconds,
+    'pid': pid,
+    'isolateId': Isolate.current.hashCode,
+    'build': _identity,
+    'writerHealth': AppLogger.diagnosticHealth,
+  };
   bool _scheduled = false;
   int _dropped = 0;
   @override
   bool enabled = true;
 
   @override
-  FrontendDiagnosticContext begin(FrontendStage stage,
-      {String? conversationId}) {
+  FrontendDiagnosticContext begin(
+    FrontendStage stage, {
+    String? conversationId,
+  }) {
     final context = FrontendDiagnosticContext(
       operationId: 'ui_${DateTime.now().microsecondsSinceEpoch}_${++_serial}',
       conversationId: conversationId,
@@ -66,8 +68,11 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
 
   @override
   FrontendDiagnosticContext child(
-      FrontendDiagnosticContext? parent, FrontendStage stage,
-      {String? conversationId, String? messageId}) {
+    FrontendDiagnosticContext? parent,
+    FrontendStage stage, {
+    String? conversationId,
+    String? messageId,
+  }) {
     final context = FrontendDiagnosticContext(
       operationId: 'ui_${DateTime.now().microsecondsSinceEpoch}_${++_serial}',
       parentOperationId: parent?.operationId,
@@ -75,27 +80,32 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
       turnId: parent?.turnId,
       traceId: parent?.traceId,
     );
-    record(context, stage,
-        messageId: messageId,
-        facts: const DiagnosticFacts(phase: DiagnosticPhase.start));
+    record(
+      context,
+      stage,
+      messageId: messageId,
+      facts: const DiagnosticFacts(phase: DiagnosticPhase.start),
+    );
     return context;
   }
 
   @override
-  FrontendDiagnosticContext linkTurn(
-      {required String conversationId,
-      required String turnId,
-      required String traceId}) {
+  FrontendDiagnosticContext linkTurn({
+    required String conversationId,
+    required String turnId,
+    required String traceId,
+  }) {
     final pending = _pendingSends.remove(conversationId);
     // 不把很久以前取消/未执行的操作误绑到下一轮。
-    final context = (pending != null && pending.elapsedMs < 30000
-            ? pending
-            : FrontendDiagnosticContext(
-                operationId:
-                    'ui_${DateTime.now().microsecondsSinceEpoch}_${++_serial}',
-                conversationId: conversationId,
-              ))
-        .linked(turnId, traceId);
+    final context =
+        (pending != null && pending.elapsedMs < 30000
+                ? pending
+                : FrontendDiagnosticContext(
+                    operationId:
+                        'ui_${DateTime.now().microsecondsSinceEpoch}_${++_serial}',
+                    conversationId: conversationId,
+                  ))
+            .linked(turnId, traceId);
     if (enabled) _put(_turns, turnId, context, 128);
     record(context, FrontendStage.turnLinked);
     return context;
@@ -171,6 +181,9 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
                 (entry.value is bool ||
                     (entry.value is num && (entry.value as num).isFinite)))
               entry.key: entry.value,
+          if (stage == FrontendStage.uiStall ||
+              stage == FrontendStage.slowFrame)
+            ..._jankAttribution(facts.state),
         },
       },
       'category': 'frontend',
@@ -191,20 +204,22 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
       _pending.removeFirst();
       _dropped++;
     }
-    _pending.add(LogEntry(
-      time: DateTime.now(),
-      level: stage.isError
-          ? LogLevel.error
-          : stage == FrontendStage.historyColdLoad &&
+    _pending.add(
+      LogEntry(
+        time: DateTime.now(),
+        level: stage.isError
+            ? LogLevel.error
+            : stage == FrontendStage.historyColdLoad &&
                   facts?.phase == DiagnosticPhase.end &&
                   context.elapsedMs >= 500
-              ? LogLevel.warning
-              : LogLevel.info,
-      source: 'FrontendDiagnostics',
-      message: stage.label,
-      traceId: context.traceId,
-      metadata: metadata,
-    ));
+            ? LogLevel.warning
+            : LogLevel.info,
+        source: 'FrontendDiagnostics',
+        message: stage.label,
+        traceId: context.traceId,
+        metadata: metadata,
+      ),
+    );
     if (_scheduled) return;
     _scheduled = true;
     scheduleMicrotask(_flush);
@@ -226,7 +241,8 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
       final count = _dropped;
       _dropped = 0;
       try {
-        _sink(LogEntry(
+        _sink(
+          LogEntry(
             time: DateTime.now(),
             level: LogLevel.warning,
             source: 'FrontendDiagnostics',
@@ -235,9 +251,13 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
               ..._envelope,
               'category': 'frontend',
               'event': 'diagnosticLoss',
-              'droppedCount': count
-            }));
-      } catch (_) {/* 日志故障不得再次触发异常采集，避免递归。 */}
+              'droppedCount': count,
+            },
+          ),
+        );
+      } catch (_) {
+        /* 日志故障不得再次触发异常采集，避免递归。 */
+      }
     }
   }
 
@@ -255,4 +275,28 @@ class FrontendDiagnosticsService implements FrontendDiagnosticsPort {
       map.remove(map.keys.first);
     }
   }
+}
+
+Map<String, Object?> _jankAttribution(Map<String, Object?> state) {
+  final name = RegExp(r'^[a-z][a-z0-9._-]{1,60}$');
+  final phases = state['activePhases'];
+  final spans = state['syncSpans'];
+  return {
+    if (phases is List)
+      'activePhases': phases
+          .whereType<String>()
+          .where(name.hasMatch)
+          .take(32)
+          .toList(),
+    if (spans is List)
+      'syncSpans': [
+        for (final span in spans.take(6))
+          if (span is Map &&
+              span['tag'] is String &&
+              name.hasMatch(span['tag'] as String) &&
+              span['ms'] is num &&
+              (span['ms'] as num).isFinite)
+            {'tag': span['tag'], 'ms': span['ms']},
+      ],
+  };
 }

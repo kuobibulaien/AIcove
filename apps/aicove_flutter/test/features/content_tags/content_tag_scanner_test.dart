@@ -41,12 +41,20 @@ void main() {
     expect((segments[2] as ContentTagText).text, 'b<ttstyle>c');
   });
 
-  test('pairs same-name nesting by depth and keeps other tags inside', () {
-    final segments =
-        _scanner().scan('<image>x<image>y</image><tts>v</tts></image>z');
-    final element = segments.first as ContentTagElement;
-    expect(element.inner, 'x<image>y</image><tts>v</tts>');
-    expect((segments.last as ContentTagText).text, 'z');
+  test('reanchors repeated openings and scans intervening tags', () {
+    final segments = _scanner().scan('前<image>x<tts>v</tts>y<image>z</image>后');
+    expect((segments[0] as ContentTagText).text, '前<image>x');
+    expect((segments[1] as ContentTagElement).spec.name, 'tts');
+    expect((segments[2] as ContentTagText).text, 'y');
+    expect((segments[3] as ContentTagElement).inner, 'z');
+    expect((segments[4] as ContentTagText).text, '后');
+  });
+
+  test('repeated unclosed opening preserves the preceding text', () {
+    final segments = _scanner().scan('前<image>中<image>尾');
+    expect((segments[0] as ContentTagText).text, '前<image>中');
+    expect((segments[1] as ContentTagElement).raw, '<image>尾');
+    expect((segments[1] as ContentTagElement).closed, isFalse);
   });
 
   test('marks unclosed elements, self-closing tags and orphan closes', () {

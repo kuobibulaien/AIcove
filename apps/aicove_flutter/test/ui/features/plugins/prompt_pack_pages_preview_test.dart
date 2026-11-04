@@ -13,7 +13,6 @@ import 'package:aicove_flutter/src/features/plugins/image/drawing_preset.dart';
 import 'package:aicove_flutter/src/features/plugins/image/drawing_preset_provider.dart';
 import 'package:aicove_flutter/src/features/plugins/image/image_config.dart';
 import 'package:aicove_flutter/src/features/plugins/prompts/prompt_pack.dart';
-import 'package:aicove_flutter/src/ui/features/plugins/pages/drawing_preset_editor_page.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/prompt_pack_pages.dart';
 import 'package:aicove_flutter/src/ui/features/plugins/pages/prompt_section_editor_page.dart';
 import 'package:aicove_flutter/src/ui/theme/tokens.dart';
@@ -158,65 +157,6 @@ void main() {
 
   for (final size in const [Size(400, 860), Size(1000, 860)]) {
     final tag = size.width.toInt();
-
-    testWidgets('drawing preset editor prompt group $tag', (tester) async {
-      await mount(tester, size, const DrawingPresetEditorPage(preset: _preset));
-      final group = find.text('提示词包');
-      await tester.scrollUntilVisible(
-        group,
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await Scrollable.ensureVisible(tester.element(group), alignment: 0.15);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('自动匹配 · NovelAI'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await shot(tester, 'drawing-editor-$tag');
-      await tester.tap(find.text('预览最终提示词'));
-      await tester.pumpAndSettle();
-      expect(find.text('最终提示词'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await shot(tester, 'preview-$tag');
-    });
-
-    testWidgets('ComfyUI preset recommends its pack and splits flows $tag', (
-      tester,
-    ) async {
-      await mount(tester, size, DrawingPresetEditorPage(preset: _comfyPreset));
-      final group = find.text('提示词包');
-      await tester.scrollUntilVisible(
-        group,
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await Scrollable.ensureVisible(tester.element(group), alignment: 0.1);
-      await tester.pumpAndSettle();
-      expect(find.text('当前模型推荐「ComfyUI 通用」'), findsOneWidget);
-      await tester.drag(find.byType(Scrollable).first, const Offset(0, -200));
-      await tester.pumpAndSettle();
-      // The fast flow lists only the <image> section.
-      await tester.tap(find.text('快速模式'));
-      await tester.pumpAndSettle();
-      expect(find.text('快速模式说明（NovelAI）'), findsOneWidget);
-      expect(find.text('工具说明'), findsNothing);
-      await shot(tester, 'comfy-bound-novelai-$tag');
-
-      await tester.tap(find.text('当前模型推荐「ComfyUI 通用」'));
-      await tester.pumpAndSettle();
-      expect(find.textContaining('自动匹配 · ComfyUI 通用'), findsOneWidget);
-      expect(find.text('当前模型推荐「ComfyUI 通用」'), findsNothing);
-      expect(find.text('快速模式说明（ComfyUI 通用）'), findsOneWidget);
-      await shot(tester, 'comfy-auto-fast-$tag');
-
-      await tester.tap(find.text('调用模式'));
-      await tester.pumpAndSettle();
-      expect(find.text('快速模式说明（ComfyUI 通用）'), findsNothing);
-      expect(find.text('工具说明'), findsOneWidget);
-      expect(find.text('提示词参数（ComfyUI 通用）'), findsOneWidget);
-      expect(find.text('参数'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await shot(tester, 'comfy-auto-call-$tag');
-    });
 
     testWidgets('pack list, pack and section editor $tag', (tester) async {
       await mount(tester, size, const PromptPackListPage(pluginId: 'tts'));

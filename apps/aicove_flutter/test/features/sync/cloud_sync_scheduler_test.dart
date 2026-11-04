@@ -62,6 +62,19 @@ void main() {
   CloudSyncScheduler make(Future<bool> Function() run) =>
       scheduler = CloudSyncScheduler(local, run, now: () => clock);
 
+  testWidgets('foreground resumes a paused scheduler and checks once', (tester) async {
+    var calls = 0;
+    make(() async { calls++; return true; }).start(immediate: false);
+    scheduler!.foreground(false);
+    await tester.pump(const Duration(minutes: 30));
+    expect(calls, 0);
+    scheduler!.foreground(true);
+    await tester.pump();
+    await tester.pump();
+    expect(calls, 1);
+    scheduler!.close();
+  });
+
   test(
     'first launch runs one round, then waits for the daily interval',
     () async {

@@ -27,6 +27,7 @@ import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_pr
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset.dart';
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_variable_store.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
+import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/proactive_reply_generator.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/domain/persona_prompt_codec.dart';
@@ -1035,6 +1036,7 @@ void main() {
     );
     final conv = Conversation(
       id: 'conv_draw_tool_prompt',
+      agentMode: RoleAgentMode.agent,
       title: 'Chat',
       displayName: 'Chat',
       addressUser: '宝贝',
@@ -1203,6 +1205,7 @@ void main() {
     final service = container.read(chatSendServiceProvider);
     final now = DateTime(2026, 9, 6);
     Conversation role(String id) => Conversation(id: id, title: id, displayName: id,
+      agentMode: RoleAgentMode.agent,
       personaPrompt: PersonaPromptCodec.compose(userPrompt: id, drawingPresetId: id),
       enabledPlugins: const ['image'], createdAt: now, updatedAt: now, messages: const []);
     final history = [Message(id: 'user', role: 'user', content: '画图', createdAt: now)];
@@ -1240,6 +1243,7 @@ void main() {
     final now = DateTime(2026, 10, 19);
     final request = await container.read(chatSendServiceProvider).prepareApiConfig(
       conv: Conversation(id: 'r', title: 'r', displayName: 'r',
+        agentMode: RoleAgentMode.agent,
         personaPrompt: PersonaPromptCodec.compose(userPrompt: 'r', drawingPresetId: 'p'),
         enabledPlugins: const ['image'], createdAt: now, updatedAt: now, messages: const []),
       history: [Message(id: 'u', role: 'user', content: '画图', createdAt: now)],
@@ -1973,6 +1977,7 @@ void main() {
     );
     final conv = Conversation(
       id: 'conv_trigger_role_separation',
+      agentMode: RoleAgentMode.agent,
       title: 'Chat',
       displayName: 'Chat',
       personaPrompt: PersonaPromptCodec.compose(

@@ -14,21 +14,63 @@ abstract final class MangaPromptSanitizer {
         (RegExp(r'\b1girl\b', caseSensitive: false).hasMatch(prompt) && RegExp(r'\b1boy\b', caseSensitive: false).hasMatch(prompt));
   }
 
-  static String cleanTags(String input, Set<String> remove) => input.split(RegExp(r'[,，\n]+')).map((tag) => tag.trim()).where((tag) {
-    var normalized = tag.toLowerCase().trim();
-    while (true) {
-      final previous = normalized;
-      normalized = normalized.replaceFirst(RegExp(r'^[-+]?\d*\.?\d+\s*::\s*'), '').replaceFirst(RegExp(r'\s*::$'), '').trim();
-      if (normalized.length >= 2 &&
-          ((normalized.startsWith('(') && normalized.endsWith(')')) ||
-           (normalized.startsWith('{') && normalized.endsWith('}')) ||
-           (normalized.startsWith('[') && normalized.endsWith(']')))) {
-        normalized = normalized.substring(1, normalized.length - 1).trim();
+  static String cleanTags(String input, Set<String> remove) {
+    bool keep(String tag) {
+      var normalized = tag.toLowerCase().trim();
+      while (true) {
+        final previous = normalized;
+        normalized = normalized
+            .replaceFirst(RegExp(r'^[-+]?\d*\.?\d*\s*::\s*'), '')
+            .replaceFirst(RegExp(r'\s*::$'), '').trim();
+        if (normalized.length >= 2 &&
+            ((normalized.startsWith('(') && normalized.endsWith(')')) ||
+             (normalized.startsWith('{') && normalized.endsWith('}')) ||
+             (normalized.startsWith('[') && normalized.endsWith(']')))) {
+          normalized = normalized.substring(1, normalized.length - 1).trim();
+        }
+        if (normalized == previous) break;
       }
-      if (normalized == previous) break;
+      return normalized.isNotEmpty && !remove.contains(normalized);
     }
-    return tag.isNotEmpty && !remove.contains(normalized);
-  }).join(', ');
+    final output = <String>[];
+    final block = <String>[];
+    String? weight;
+    for (final part in input.split(RegExp(r'[,，\n]+'))) {
+      var tag = part.trim();
+      if (tag.isEmpty) continue;
+      if (weight == null) {
+        final start = RegExp(r'^([-+]?\d*\.?\d+\s*::)\s*').firstMatch(tag);
+        if (start != null) {
+          weight = start.group(1)!;
+          tag = tag.substring(start.end).trim();
+        } else if (tag.startsWith('::')) {
+          tag = tag.substring(2).trim();
+          if (tag.endsWith('::')) tag = tag.substring(0, tag.length - 2).trim();
+        }
+      }
+      if (weight != null) {
+        final closed = tag.endsWith('::');
+        if (closed) tag = tag.substring(0, tag.length - 2).trim();
+        if (keep(tag)) block.add(tag);
+        if (closed) {
+          if (block.isNotEmpty) {
+            block[0] = '$weight${block[0]}';
+            block[block.length - 1] = '${block.last}::';
+            output.addAll(block);
+          }
+          block.clear();
+          weight = null;
+        }
+      } else if (keep(tag)) {
+        output.add(tag);
+      }
+    }
+    if (weight != null && block.isNotEmpty) {
+      block[0] = '$weight${block[0]}';
+      output.addAll(block);
+    }
+    return output.join(', ');
+  }
 
   static String positive(String prefix, String prompt) => cleanTags(prefix, {'no text', if (isMultiple(prompt)) 'solo'});
   static String negative(String value) => cleanTags(value, {'text', 'comic', 'screentone', 'halftone', 'multiple views', 'speech bubble'});

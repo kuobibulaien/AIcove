@@ -53,8 +53,8 @@ class WorkspaceStore {
     Directory root, {
     Duration staleAfter = const Duration(seconds: 30),
     DateTime Function()? clock,
-    int quotaBytes = WorkspaceLimits.quotaBytes,
-    int historyBytes = WorkspaceLimits.historyBytes,
+    int quotaBytes = 0,
+    int historyBytes = 0,
   }) async {
     await root.create(recursive: true);
     final index = WorkspaceIndex(File(p.join(root.path, '.index.sqlite')));
@@ -153,14 +153,23 @@ class WorkspaceStore {
 
   /// A real local source for package import, after the caller checks its grant.
   /// Virtual mounts, links and paths outside this workspace are never sources.
-  Future<FileSystemEntity> packageImportSource(String workspaceId, String path) async {
-    if (await get(workspaceId) == null) throw const WorkspaceException.notFound('工作区不存在');
+  Future<FileSystemEntity> packageImportSource(
+    String workspaceId,
+    String path,
+  ) async {
+    if (await get(workspaceId) == null)
+      throw const WorkspaceException.notFound('工作区不存在');
     final normalized = WorkspacePathRules.normalizeDirectory(path);
     if (normalized.isNotEmpty && _mount(workspaceId, normalized) != null) {
       throw const WorkspaceException.invalidPath('只能从本地工作区目录导入');
     }
-    await _checkAncestors(workspaceId, normalized.isEmpty ? '__source' : '$normalized/__source');
-    final source = normalized.isEmpty ? directoryOf(workspaceId).path : _fileAt(workspaceId, normalized).path;
+    await _checkAncestors(
+      workspaceId,
+      normalized.isEmpty ? '__source' : '$normalized/__source',
+    );
+    final source = normalized.isEmpty
+        ? directoryOf(workspaceId).path
+        : _fileAt(workspaceId, normalized).path;
     final type = await FileSystemEntity.type(source, followLinks: false);
     if (type == FileSystemEntityType.directory) return Directory(source);
     if (type == FileSystemEntityType.file) return File(source);
@@ -359,13 +368,6 @@ class WorkspaceStore {
     if (type != FileSystemEntityType.file) {
       throw WorkspaceException.notFound('文件不存在：$normalized');
     }
-    // Commands may create files beyond the ordinary store write limit.
-    // Full reads keep that same bound; readRange remains available for chunks.
-    if (await file.length() > WorkspaceLimits.maxFileBytes) {
-      throw const WorkspaceException.limit(
-        '文件超过 ${WorkspaceLimits.maxFileBytes >> 20} MiB 上限',
-      );
-    }
     final bytes = await file.readAsBytes();
     return (bytes, _hash(bytes));
   }
@@ -441,11 +443,6 @@ class WorkspaceStore {
     bool allowHost = false,
   }) async {
     final data = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
-    if (data.length > WorkspaceLimits.maxFileBytes) {
-      throw const WorkspaceException.limit(
-        '文件超过 ${WorkspaceLimits.maxFileBytes >> 20} MiB 上限',
-      );
-    }
     final op = await _commit(
       workspaceId: workspaceId,
       kind: WorkspaceOpKind.write,
@@ -625,7 +622,7 @@ class WorkspaceStore {
       await _checkLayout(workspaceId, path);
     }
 
-    if (kind == WorkspaceOpKind.write) {
+    if (kind == WorkspaceOpKind.write && quotaBytes > 0) {
       final used = await _usedBytes(workspaceId);
       final oldSize = before.isEmpty
           ? 0
@@ -1107,7 +1104,7 @@ class WorkspaceStore {
   }
 
   /// Drops history older than 30 days, then the oldest history beyond
-  /// 1 GiB, then content no remaining history refers to. Runs with an undo
+  /// the configured capacity, then content no remaining history refers to. Runs with an undo
   /// in progress keep their history.
   Future<void> prune() async {
     const protectedRuns =
@@ -1123,7 +1120,7 @@ class WorkspaceStore {
         [cutoff],
       ),
     );
-    while (await _historyBytes() > historyBytes) {
+    while (historyBytes > 0 && await _historyBytes() > historyBytes) {
       final oldest = await index.fetch(
         "SELECT run_id FROM ops WHERE phase<>'pending' "
         "AND before_hash<>'' AND run_id NOT IN ($protectedRuns) "
@@ -1171,7 +1168,7 @@ class WorkspaceStore {
     final file = _blobFile(hash);
     if (known.isNotEmpty && await file.exists()) return;
     final size = await _fileAt(workspaceId, path).length();
-    if (await _historyBytesIn() + size > historyBytes) {
+    if (historyBytes > 0 && await _historyBytesIn() + size > historyBytes) {
       throw const WorkspaceException.limit('修改历史已满，请先在空间页清理历史');
     }
     await file.parent.create(recursive: true);

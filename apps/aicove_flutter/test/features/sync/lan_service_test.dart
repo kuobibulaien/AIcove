@@ -48,6 +48,8 @@ class LanCountingRepository extends LanRepository {
   Completer<void>? pauseRecent, recentEntered;
   Completer<void>? pauseLastCapture, lastCaptureEntered;
   int? pauseCaptureNumber;
+  int? simulateRecentOverflowOnCapture;
+  bool simulateRecentOverflow = false;
   Completer<void>? pauseConflicts, conflictsEntered;
   Object? conflictFailure;
   Completer<void>? pauseReceive, receiveEntered;
@@ -94,6 +96,9 @@ class LanCountingRepository extends LanRepository {
   Future<void> capture({bool scanExternal = true}) async {
     captures++;
     await super.capture(scanExternal: scanExternal);
+    if (captures == simulateRecentOverflowOnCapture) {
+      simulateRecentOverflow = true;
+    }
     if (captures == pauseCaptureNumber) {
       lastCaptureEntered?.complete();
       await pauseLastCapture?.future;
@@ -116,6 +121,14 @@ class LanCountingRepository extends LanRepository {
     }
     final result = await super.recentChanges();
     recentReads++;
+    if (simulateRecentOverflow) {
+      return {
+        ...result,
+        'revision': 1000,
+        'evicted_revision': 500,
+        'token': '${result['run']}:1000',
+      };
+    }
     return result;
   }
 }
@@ -178,6 +191,57 @@ class LanTestDiscovery implements LanDiscovery, LanDiscoveryLifecycle {
 }
 
 void main() {
+  test('small and multibyte encrypted payloads round trip', () async {
+    final key = await LanCrypto.randomKey();
+    for (final value in [
+      {
+        'revision': {'text': 'small'},
+      },
+      {'text': '汉' * 6000},
+      {'text': '\n' * 8200},
+    ]) {
+      final envelope = await LanCrypto.seal(
+        key,
+        value,
+        from: 'a',
+        to: 'b',
+        requestId: 'request',
+      );
+      expect(
+        await LanCrypto.open(
+          key,
+          envelope,
+          from: 'a',
+          to: 'b',
+          requestId: 'request',
+        ),
+        value,
+      );
+    }
+  });
+
+  test('large encrypted messages round trip through the isolate', () async {
+    final key = await LanCrypto.randomKey();
+    final value = {
+      'revision': {'text': '大' * 40000},
+    };
+    final envelope = await LanCrypto.seal(
+      key,
+      value,
+      from: 'a',
+      to: 'b',
+      requestId: 'request',
+    );
+    final decoded = await LanCrypto.open(
+      key,
+      envelope,
+      from: 'a',
+      to: 'b',
+      requestId: 'request',
+    );
+    expect(decoded, value);
+  });
+
   late Directory root;
   late LanTestDevice a, b;
   late LanService sa, sb;
@@ -490,6 +554,33 @@ void main() {
         isTrue,
       );
       expect(sa.state.progressLabel, isNull);
+    },
+  );
+
+  test(
+    'full manifest pagination polls recent at most every ten quiet pages',
+    () async {
+      await seedLan(a);
+      for (var i = 0; i < 24; i++) {
+        await a.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+          ['page-$i', 'role', 'assistant', 'page', i + 2],
+        );
+      }
+      await automaticA();
+      await pair();
+      await settle();
+      final local = a.repo as LanCountingRepository;
+      final remote = b.repo as LanCountingRepository;
+      local.manifestPageSize = 1;
+      remote.manifestPageSize = 1;
+      final localReads = local.recentReads, remoteReads = remote.recentReads;
+      final localPages = local.manifests, remotePages = remote.manifests;
+      await sa.synchronize();
+      expect(local.manifests - localPages, greaterThanOrEqualTo(25));
+      expect(remote.manifests - remotePages, greaterThanOrEqualTo(25));
+      expect(local.recentReads - localReads, lessThanOrEqualTo(8));
+      expect(remote.recentReads - remoteReads, lessThanOrEqualTo(4));
     },
   );
 
@@ -1657,6 +1748,117 @@ void main() {
   );
 
   test(
+    'full reconciliation acknowledges the post-capture local watermark',
+    () async {
+      await seedLan(a);
+      await automaticA();
+      await pair();
+      await settle();
+      final local = a.repo as LanCountingRepository;
+      final remote = b.repo as LanCountingRepository;
+      // Model an overflow between the initial recent snapshot and the final
+      // capture, without changing the independent remote continuity guard.
+      local.simulateRecentOverflowOnCapture = local.captures + 1;
+      await sa.synchronize();
+      expect(local.simulateRecentOverflow, isTrue);
+      final localPages = local.manifests, remotePages = remote.manifests;
+      final captures = local.captures;
+      notifyExternalSyncChange('direct.model');
+      await waitFor(() => local.captures > captures);
+      await settle();
+      expect(local.manifests, localPages);
+      expect(remote.manifests, remotePages);
+    },
+  );
+
+  test(
+    'recent eviction after baseline falls back to full reconciliation',
+    () async {
+      await seedLan(a);
+      await automaticA();
+      await pair();
+      await settle();
+      final local = a.repo as LanCountingRepository;
+      final remote = b.repo as LanCountingRepository;
+      final beforeLocal = local.manifests, beforeRemote = remote.manifests;
+      await a.local.db.transaction(() async {
+        for (var i = 0; i < LanRepository.recentLimit + 1; i++) {
+          await a.local.execute(
+            'INSERT INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)',
+            ['overflow-$i', 'role', 'assistant', 'entry', i + 10],
+          );
+        }
+      });
+      await a.repo.capture(scanExternal: false);
+      expect(
+        (await a.repo.recentChanges())['evicted_revision'],
+        greaterThan(0),
+      );
+      await a.local.db.customUpdate(
+        'UPDATE messages SET content=? WHERE id=?',
+        variables: const [Variable('overflow wake'), Variable('message')],
+        updates: {a.local.db.messages},
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (DateTime.now().isBefore(deadline) &&
+          local.manifests == beforeLocal) {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
+      await settle();
+      expect(local.manifests, greaterThan(beforeLocal));
+      expect(remote.manifests, greaterThan(beforeRemote));
+    },
+  );
+
+  test(
+    'automatic edits use recent fast path; manual sync reconciles',
+    () async {
+      await seedLan(a);
+      await automaticA();
+      await pair();
+      await settle();
+      final local = a.repo as LanCountingRepository;
+      final remote = b.repo as LanCountingRepository;
+      final localBefore = local.manifests, remoteBefore = remote.manifests;
+      await a.local.db.customUpdate(
+        'UPDATE messages SET content=? WHERE id=?',
+        variables: const [Variable('fast lane'), Variable('message')],
+        updates: {a.local.db.messages},
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 8));
+      while (DateTime.now().isBefore(deadline)) {
+        final doc = await b.local.read('messages', 'message');
+        if (doc?.payload['row']['content'] == 'fast lane') break;
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
+      await settle();
+      expect(
+        (await b.local.read('messages', 'message'))!.payload['row']['content'],
+        'fast lane',
+      );
+      expect(local.manifests, localBefore);
+      expect(remote.manifests, remoteBefore);
+      await saveCloudPreference(
+        a.local.preferences,
+        'direct.model',
+        'fast-model',
+      );
+      final settingDeadline = DateTime.now().add(const Duration(seconds: 8));
+      while (DateTime.now().isBefore(settingDeadline) &&
+          b.local.preferences.getString('direct.model') != 'fast-model') {
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      }
+      await settle();
+      expect(b.local.preferences.getString('direct.model'), 'fast-model');
+      expect(local.manifests, localBefore);
+      expect(remote.manifests, remoteBefore);
+      await sa.synchronize();
+      expect(local.manifests, greaterThan(localBefore));
+      expect(remote.manifests, greaterThan(remoteBefore));
+    },
+  );
+
+  test(
     'automatic LAN sync wakes on a committed edit without manual synchronize',
     () async {
       await seedLan(a);
@@ -1897,21 +2099,55 @@ void main() {
       expect(await File(destination).exists(), false);
     },
   );
-  test('soft-deleted and replaced messages receive identities without files over HTTP', () async {
-    await seedLan(a);
-    final file = File('${root.path}/historical.wav')..writeAsBytesSync([1, 2, 3, 4]);
-    final record = await a.media.register(file.path, createdAtMs: 1, mimeType: 'audio/wav');
-    for (final replaced in [false, true]) {
-      await a.local.execute('INSERT INTO messages(id,conversation_id,role,content,created_at,raw_payload,deleted_at,replaced_by) VALUES(?,?,?,?,?,?,?,?)',
-        ['history-$replaced', 'role', 'assistant', '', 1, jsonEncode({'audioUrl': record.asset.reference}), replaced ? null : 2, replaced ? 'message' : null]);
-    }
-    await pair();
-    expect(await b.media.load(record.asset.id), isNotNull);
-    expect(await sb.media.counts(), (0, 0));
-    expect(await File(await b.media.originalDestination(record.asset.id)).exists(), isFalse);
-    expect((await b.local.read('messages', 'history-false'))!.payload['row']['deleted_at'], 2);
-    expect((await b.local.read('messages', 'history-true'))!.payload['row']['replaced_by'], 'message');
-  });
+  test(
+    'soft-deleted and replaced messages receive identities without files over HTTP',
+    () async {
+      await seedLan(a);
+      final file = File('${root.path}/historical.wav')
+        ..writeAsBytesSync([1, 2, 3, 4]);
+      final record = await a.media.register(
+        file.path,
+        createdAtMs: 1,
+        mimeType: 'audio/wav',
+      );
+      for (final replaced in [false, true]) {
+        await a.local.execute(
+          'INSERT INTO messages(id,conversation_id,role,content,created_at,raw_payload,deleted_at,replaced_by) VALUES(?,?,?,?,?,?,?,?)',
+          [
+            'history-$replaced',
+            'role',
+            'assistant',
+            '',
+            1,
+            jsonEncode({'audioUrl': record.asset.reference}),
+            replaced ? null : 2,
+            replaced ? 'message' : null,
+          ],
+        );
+      }
+      await pair();
+      expect(await b.media.load(record.asset.id), isNotNull);
+      expect(await sb.media.counts(), (0, 0));
+      expect(
+        await File(await b.media.originalDestination(record.asset.id)).exists(),
+        isFalse,
+      );
+      expect(
+        (await b.local.read(
+          'messages',
+          'history-false',
+        ))!.payload['row']['deleted_at'],
+        2,
+      );
+      expect(
+        (await b.local.read(
+          'messages',
+          'history-true',
+        ))!.payload['row']['replaced_by'],
+        'message',
+      );
+    },
+  );
   test(
     'chunk transfer resumes persisted partial after disconnect and skips existing files',
     () async {

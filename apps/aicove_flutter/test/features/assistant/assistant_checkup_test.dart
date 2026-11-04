@@ -50,13 +50,19 @@ void main() {
         deepSeek(), // enabled, no key
       ], 'deepseek:deepseek-flash'),
       roles: () async => [
-        _role('drawer', plugins: const ['image', 'tts'], recipeId: preset.id),
+        _role(
+          'drawer',
+          plugins: const ['image', 'tts'],
+          recipeId: preset.id,
+          mode: RoleAgentMode.agent,
+        ),
         _role(
           'agent',
           plugins: const ['image'],
           recipeId: preset.id,
           mode: RoleAgentMode.tool,
         ),
+        _role('chat', plugins: const ['image'], recipeId: preset.id),
         _role('lost', recipeId: 'st_preset_bbbbbbbbbbbbbbbbbbbbbbbb'),
         _role('bare', plugins: const []),
         _role('secret', recipeId: 'gone', hidden: true),
@@ -86,6 +92,10 @@ void main() {
       findings.where((f) => f.roleId == 'agent' && f.text.contains('关闭了函数调用')),
       isEmpty,
     );
+    expect(
+      findings.where((f) => f.roleId == 'chat' && f.text.contains('关闭了函数调用')),
+      isEmpty,
+    );
     expect(checked, ['drawer', 'lost']);
   });
 
@@ -107,7 +117,7 @@ void main() {
         settings: () async =>
             settingsWith([deepSeek()], 'deepseek:deepseek-flash'),
         roles: () async => [
-          _role('drawer', plugins: const ['image']),
+          _role('drawer', plugins: const ['image'], mode: RoleAgentMode.agent),
         ],
         presets: () async => [preset],
         defaultPresetId: () async => defaultId,

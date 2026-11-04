@@ -29,6 +29,7 @@ import '../../../core/models/message_block.dart';
 import '../../../core/api/providers/provider_adapter.dart'
     show ToolCall, ToolResult;
 import 'chat_types.dart';
+import 'chat_reply_display_transform.dart';
 
 /// 多模态片段类型（供 ChatTtsHandler 使用）
 enum MultimodalSegmentType { text, tts, sticker, image }
@@ -395,6 +396,21 @@ class ChatMessageProcessor {
     required List<ToolCall> toolCalls,
     required List<ToolResult> rawToolResults,
   }) {
+    final replies = stitchReplyRoundTags([for (final round in rounds) round.replyText]);
+    final raw = stitchReplyRoundTags([for (final round in rounds) round.rawText ?? round.replyText]);
+    final processed = stitchReplyRoundTags([for (final round in rounds) round.processedText]);
+    rounds = [
+      for (final (index, round) in rounds.indexed)
+        ReplyRound(
+          replyText: replies[index],
+          rawText: round.rawText == null ? null : raw[index],
+          processedText: processed[index],
+          pluginEvents: round.pluginEvents,
+          pluginContents: round.pluginContents,
+          reasoning: round.reasoning,
+          toolCallIds: round.toolCallIds,
+        ),
+    ];
     final claimed = {for (final round in rounds) ...round.toolCallIds};
     final messages = <Message>[];
     for (final (index, round) in rounds.indexed) {
@@ -1019,10 +1035,7 @@ class ChatMessageProcessor {
     final kept = StringBuffer();
     final visibleText = StickerTag.removeFrom(
       firstPartyContentTagScanner,
-      text.replaceAll(
-        RegExp(r'<image>\s*\{[^<]*\}\s*</image>', caseSensitive: false),
-        '',
-      ),
+      text,
     );
     for (final segment in firstPartyContentTagScanner.scan(visibleText)) {
       if (TtsParser.isSpeechElement(segment)) {

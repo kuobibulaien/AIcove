@@ -31,7 +31,7 @@ EXPORT void *aqjs_create(void) {
   Sandbox *s = calloc(1, sizeof(*s)); if (!s) return NULL;
   s->runtime = JS_NewRuntime(); if (!s->runtime) { free(s); return NULL; }
   JS_SetMemoryLimit(s->runtime, 64u * 1024u * 1024u);
-  JS_SetMaxStackSize(s->runtime, 512u * 1024u);
+  JS_SetMaxStackSize(s->runtime, 2u * 1024u * 1024u);
   s->deadline = clock_ms() + 1000;
   JS_SetInterruptHandler(s->runtime, interrupt, s);
   s->context = JS_NewContext(s->runtime);

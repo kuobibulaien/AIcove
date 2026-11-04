@@ -28,13 +28,15 @@ class TaskRunningBar extends ConsumerStatefulWidget {
   ConsumerState<TaskRunningBar> createState() => _TaskRunningBarState();
 }
 
-class _TaskRunningBarState extends ConsumerState<TaskRunningBar> {
+class _TaskRunningBarState extends ConsumerState<TaskRunningBar>
+    with WidgetsBindingObserver {
   Timer? _timer;
   bool _settled = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _syncTimer(tickerEnabled: true);
   }
 
@@ -54,7 +56,7 @@ class _TaskRunningBarState extends ConsumerState<TaskRunningBar> {
   }
 
   void _syncTimer({required bool tickerEnabled}) {
-    if (!tickerEnabled || _settled) {
+    if (!tickerEnabled || !_isForeground || _settled) {
       _timer?.cancel();
       _timer = null;
       return;
@@ -62,8 +64,25 @@ class _TaskRunningBarState extends ConsumerState<TaskRunningBar> {
     _timer ??= Timer.periodic(_pollInterval, (_) => _poll());
   }
 
+  /// Polling only makes sense while the app is visible; `null` means the
+  /// binding has not reported a state yet, which is treated as foreground.
+  bool get _isForeground => switch (WidgetsBinding.instance.lifecycleState) {
+    null || AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+    AppLifecycleState.hidden ||
+    AppLifecycleState.paused ||
+    AppLifecycleState.detached => false,
+  };
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _syncTimer(tickerEnabled: TickerMode.valuesOf(context).enabled);
+    // Catch up at once on return instead of waiting for the next tick.
+    if (state == AppLifecycleState.resumed && !_settled) _poll();
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }

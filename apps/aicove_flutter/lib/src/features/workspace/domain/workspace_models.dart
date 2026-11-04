@@ -1,6 +1,6 @@
 /// Limits from plan §3 that W1 enforces.
 abstract final class WorkspaceLimits {
-  static const maxWriteBytes = 1 << 20;
+  static const maxWriteBytes = 8 << 20;
   static const maxFileBytes = 32 << 20;
   static const maxReadBytes = 50 << 10;
   static const maxReadLines = 2000;

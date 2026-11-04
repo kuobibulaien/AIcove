@@ -2,8 +2,10 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:aicove_quickjs/aicove_quickjs.dart';
 
+import 'silly_tavern_macro_evaluator.dart';
 import 'silly_tavern_preset.dart';
 import 'silly_tavern_world_book.dart';
 
@@ -47,6 +49,9 @@ class SillyTavernRegexProcessor {
     required List<Map<String, dynamic>> messages,
     required List<SillyTavernRegexScript> scripts,
     required bool authorized,
+    Map<String, String>? macroValues,
+    Map<String, String>? variables,
+    Map<String, Object?>? messageVariables,
   }) async {
     final copied = messages
         .map((message) => _copyMessage(message))
@@ -113,7 +118,7 @@ class SillyTavernRegexProcessor {
         });
       }
     }
-    final execution = await _execute(items, scripts);
+    final execution = await _execute(items, scripts, macroValues, variables, messageVariables);
     _applyWorkerItems(copied, execution.items);
     return SillyTavernRegexMessagesResult(
       messages: List.unmodifiable(copied),
@@ -127,6 +132,9 @@ class SillyTavernRegexProcessor {
     required TavernWorldScanResult scan,
     required List<SillyTavernRegexScript> scripts,
     required bool authorized,
+    Map<String, String>? macroValues,
+    Map<String, String>? variables,
+    Map<String, Object?>? messageVariables,
   }) async {
     if (!authorized || scripts.isEmpty || scan.injections.isEmpty) return scan;
     final execution = await _execute([
@@ -138,7 +146,7 @@ class SillyTavernRegexProcessor {
           'depth': entry.position == 4 ? entry.depth : -1,
           'modes': const ['prompt'],
         },
-    ], scripts);
+    ], scripts, macroValues, variables, messageVariables);
     final transformed = {
       for (final item in execution.items) item['key']: item['text'] as String,
     };
@@ -156,6 +164,9 @@ class SillyTavernRegexProcessor {
     required String text,
     required List<SillyTavernRegexScript> scripts,
     required bool authorized,
+    Map<String, String>? macroValues,
+    Map<String, String>? variables,
+    Map<String, Object?>? messageVariables,
     int depth = 0,
   }) async {
     if (scripts.isEmpty) {
@@ -185,7 +196,7 @@ class SillyTavernRegexProcessor {
         'depth': depth,
         'modes': const <String>['raw', 'markdown'],
       },
-    ], scripts);
+    ], scripts, macroValues, variables, messageVariables);
     final rendered = execution.items.isEmpty
         ? text
         : execution.items.first['text']?.toString() ?? text;
@@ -270,6 +281,9 @@ class SillyTavernRegexProcessor {
   Future<_RegexWorkerResult> _execute(
     List<Map<String, dynamic>> items,
     List<SillyTavernRegexScript> scripts,
+    Map<String, String>? macroValues,
+    Map<String, String>? variables,
+    Map<String, Object?>? messageVariables,
   ) async {
     if (items.isEmpty) {
       return const _RegexWorkerResult(
@@ -278,18 +292,38 @@ class SillyTavernRegexProcessor {
         warnings: <String>[],
       );
     }
+    final macroWarnings = <String>[];
+    final random = math.Random();
+    final workerScripts = scripts.map((script) {
+      final json = script.toWorkerJson();
+      if (script.substituteRegex == 1 || script.substituteRegex == 2) {
+        json['findRegex'] = const SillyTavernMacroEvaluator().evaluate(
+          json['findRegex'] as String,
+          promptId: 'regex',
+          values: macroValues ?? const {},
+          variables: variables ?? <String, String>{},
+          messageVariables: messageVariables,
+          randomIndexPicker: random.nextInt,
+          warnings: macroWarnings,
+          escapeMacroValues: script.substituteRegex == 2,
+        ).text;
+      }
+      return json;
+    }).toList();
     QuickJsSession? session;
     try {
       session = await QuickJsSession.open();
-      return _RegexWorkerResult.fromJson(
+      final result = _RegexWorkerResult.fromJson(
         await _runRegexBatch(session, {
           'items': items,
-          'scripts': scripts.map((script) => script.toWorkerJson()).toList(),
+          'scripts': workerScripts,
           'maxInputCharacters': maxInputCharacters,
           'maxPatternCharacters': maxPatternCharacters,
           'maxReplacementCharacters': maxReplacementCharacters,
         }),
       );
+      return _RegexWorkerResult(items: result.items, traces: result.traces,
+          warnings: [...macroWarnings, ...result.warnings]);
     } on TimeoutException {
       return _RegexWorkerResult(
         items: items,
@@ -538,9 +572,6 @@ const _jsReplace = r'''function(input) {
   }
   if (script['disabled'] == true) {
     return (run: false, trace: true, reason: 'disabled');
-  }
-  if ((script['substituteRegex'] as int? ?? 0) != 0) {
-    return (run: false, trace: true, reason: 'substitute_regex_unsupported');
   }
   final minDepth = script['minDepth'] as int?;
   if (depth >= 0 && minDepth != null && minDepth >= -1 && depth < minDepth) {

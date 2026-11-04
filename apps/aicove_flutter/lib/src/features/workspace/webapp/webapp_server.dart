@@ -52,6 +52,7 @@ class WebAppServer {
       47842,
     ],
     DateTime Function()? clock,
+    this.idleTimeout = const Duration(minutes: 2),
     this.shimSource,
     this.aiChat,
     Future<void> Function(bool)? setWebAppActive,
@@ -72,6 +73,8 @@ class WebAppServer {
   final Directory dataDir;
   final List<int> candidatePorts;
   final DateTime Function() _clock;
+  final Duration idleTimeout;
+  bool _closing = false;
   final Future<void> Function(bool) _setWebAppActive;
   final String? shimSource;
 
@@ -96,6 +99,7 @@ class WebAppServer {
 
   /// Concurrent opens share one bind; a changed-port notice is consumed once.
   Future<WebAppStartResult> start() async {
+    _closing = false;
     if (_servers.isNotEmpty) {
       return WebAppStartResult(port: port, portChanged: false);
     }
@@ -168,9 +172,6 @@ class WebAppServer {
       for (final server in _servers) {
         server.listen((request) => unawaited(_handle(request)));
       }
-      _idleTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-        unawaited(checkIdle());
-      });
       return WebAppStartResult(
         port: port,
         portChanged: previous != null && previous != port,
@@ -184,19 +185,38 @@ class WebAppServer {
   /// Also called before handing control to the browser, while Android is foreground.
   Future<void> activate() {
     _lastRequest = _clock();
+    _scheduleIdle(idleTimeout);
     return _activity(true);
+  }
+
+  void _scheduleIdle(Duration delay) {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(delay, () => unawaited(checkIdle()));
   }
 
   Future<void> checkIdle() async {
     final last = _lastRequest;
-    if (last != null &&
-        _clock().difference(last) >= const Duration(minutes: 2)) {
-      await _activity(false);
+    if (last == null) {
+      _idleTimer?.cancel();
+      _idleTimer = null;
+      return;
     }
+    final elapsed = _clock().difference(last);
+    if (elapsed < idleTimeout) {
+      _scheduleIdle(idleTimeout - elapsed);
+      return;
+    }
+    _idleTimer?.cancel();
+    _idleTimer = null;
+    await _activity(false);
   }
 
   Future<void> _activity(bool desired) {
     final pending = _activityQueue.then((_) async {
+      if (!desired && !_closing && _lastRequest != null &&
+          _clock().difference(_lastRequest!) < idleTimeout) {
+        return;
+      }
       if (_active == desired) return;
       try {
         await _setWebAppActive(desired);
@@ -210,6 +230,7 @@ class WebAppServer {
   }
 
   Future<void> close() async {
+    _closing = true;
     if (_starting != null) await _starting;
     _idleTimer?.cancel();
     for (final server in _servers) {
@@ -252,6 +273,41 @@ class WebAppServer {
     _headers(response);
     try {
       final host = request.headers.value('host') ?? '';
+      if ({
+        'localhost',
+        '127.0.0.1',
+        'localhost:$port',
+        '127.0.0.1:$port',
+      }.contains(host)) {
+        if (request.method != 'GET' && request.method != 'HEAD') {
+          throw const _HttpError(403);
+        }
+        final segments = request.uri.pathSegments;
+        final pathWorkspace = segments.length >= 2 && segments[0] == '__ws'
+            ? segments[1]
+            : null;
+        final requested = pathWorkspace ?? request.uri.queryParameters['__ws'];
+        if (requested == null || requested.isEmpty) throw const _HttpError(403);
+        final label = requested.toLowerCase();
+        if (!_allowed.containsKey(label)) {
+          throw const _HttpError(404);
+        }
+        final path = pathWorkspace == null
+            ? request.uri.path
+            : '/${segments.skip(2).map(Uri.encodeComponent).join('/')}';
+        final query = Map<String, String>.of(request.uri.queryParameters)
+          ..remove('__ws');
+        final target = Uri(
+          scheme: 'http',
+          host: '$label.localhost',
+          port: port,
+          path: path,
+          queryParameters: query.isEmpty ? null : query,
+        );
+        response.statusCode = HttpStatus.found;
+        response.headers.set(HttpHeaders.locationHeader, target.toString());
+        return;
+      }
       final suffix = '.localhost:$port';
       if (!host.endsWith(suffix)) throw const _HttpError(403);
       final label = host.substring(0, host.length - suffix.length);
@@ -260,9 +316,6 @@ class WebAppServer {
       if (ws == null ||
           (!_local.containsKey(ws) && await store.get(ws) == null)) {
         throw const _HttpError(404);
-      }
-      if (request.headers.value('service-worker')?.toLowerCase() == 'script') {
-        throw const _HttpError(403);
       }
       final api = request.uri.path.startsWith('/__aicove/');
       if (request.method != 'GET' &&
@@ -276,6 +329,7 @@ class WebAppServer {
         throw const _HttpError(403);
       }
       _lastRequest = _clock();
+      _scheduleIdle(idleTimeout);
       unawaited(_activity(true));
       if (api) {
         await _api(request, ws);

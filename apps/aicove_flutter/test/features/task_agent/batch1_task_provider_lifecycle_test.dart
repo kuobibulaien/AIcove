@@ -250,6 +250,8 @@ void main() {
               createdAt: 0,
             ),
           );
+      // Same order as the real publish: anchor written, then outbox cleared.
+      await store.markReceiptWritten('t', recorded.block.receiptId);
     }
     return recorded;
   }

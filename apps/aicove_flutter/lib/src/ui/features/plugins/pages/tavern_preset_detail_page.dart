@@ -282,7 +282,6 @@ class _TavernPresetDetailPageState
         context,
         '${where.isEmpty ? '未指定位置' : where} · $phase',
         warnings: [
-          if (script.substituteRegex != 0) '用到正则宏替换，暂不支持，不会运行',
           if (hidden) '换出的网页显示不了，显示时直接隐藏' else if (superseded) '已交给「标签」显示，不再运行',
         ],
       ),

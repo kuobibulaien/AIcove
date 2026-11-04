@@ -778,18 +778,11 @@ void main() {
     32 * 1024 * 1024,
     32 * 1024 * 1024 + 1,
   ]) {
-    test('full read of externally produced file boundary $size', () async {
+    test('full read of externally produced file has no size cap $size', () async {
       final handle = await file('large').open(mode: FileMode.write);
       await handle.truncate(size);
       await handle.close();
-      if (size <= 32 * 1024 * 1024) {
-        expect((await store.read(ws, 'large')).$1.length, size);
-      } else {
-        await expectLater(
-          store.read(ws, 'large'),
-          throwsA(isA<WorkspaceException>()),
-        );
-      }
+      expect((await store.read(ws, 'large')).$1.length, size);
       expect(
         (await store.readRange(ws, 'large', offset: 0, length: 1)).length,
         1,

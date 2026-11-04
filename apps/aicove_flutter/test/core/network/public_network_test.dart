@@ -121,13 +121,8 @@ void main() {
     8 * 1024 * 1024,
     8 * 1024 * 1024 + 1,
   ]) {
-    test('fetch decoded response byte boundary $size', () async {
-      final future = network.fetch(url('bytes/$size'));
-      if (size <= PublicNetwork.maxResponseBytes) {
-        expect((await future).bytes.length, size);
-      } else {
-        await expectLater(future, throwsStateError);
-      }
+    test('fetch has no default response size cap $size', () async {
+      expect((await network.fetch(url('bytes/$size'))).bytes.length, size);
     });
   }
   for (final seconds in [29, 30, 31]) {

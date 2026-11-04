@@ -321,12 +321,14 @@ void main() {
         'parts': [
           {
             'functionResponse': {
+              'id': 'c',
               'name': 'read',
               'response': {'result': ''},
             },
           },
           {
             'functionResponse': {
+              'id': 'e',
               'name': 'fail',
               'response': {'result': 'failure'},
             },

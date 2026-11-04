@@ -394,7 +394,7 @@ void main() {
     expect((out.structured as Map)['notice'], contains('已不可用，已切回默认空间'));
   });
 
-  test('local capability is opt-in, and internal limits remain', () async {
+  test('local capability is opt-in', () async {
     tools = WorkspaceToolset(
       store: store,
       workspaceIds: {'aicove'},
@@ -408,13 +408,6 @@ void main() {
       (await call('write', {
         'path': '${project.path}/no',
         'content': 'x',
-      })).isError,
-      true,
-    );
-    expect(
-      (await call('write', {
-        'path': 'too-big',
-        'content': 'x' * ((1 << 20) + 1),
       })).isError,
       true,
     );

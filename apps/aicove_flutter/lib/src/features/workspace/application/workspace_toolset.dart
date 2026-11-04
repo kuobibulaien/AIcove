@@ -538,10 +538,7 @@ class WorkspaceToolset {
           'type': 'string',
           'description': 'glob 模式下为路径通配符（如 **/*.md），grep 模式下为正则表达式',
         },
-        'glob': {
-          'type': 'string',
-          'description': 'grep 模式下只搜索匹配该通配符的文件',
-        },
+        'glob': {'type': 'string', 'description': 'grep 模式下只搜索匹配该通配符的文件'},
         'include_ignored': {
           'type': 'boolean',
           'description': '是否包含默认忽略的目录（如 .git、node_modules、build）',
@@ -1120,9 +1117,6 @@ class WorkspaceToolset {
     final access = target.access, path = target.path;
     access.checkWritable(path);
     final bytes = utf8.encode(_string(args, 'content'));
-    if (!access.isLocal && bytes.length > WorkspaceLimits.maxWriteBytes) {
-      throw const WorkspaceException.limit('单次写入不能超过 1 MiB');
-    }
     final expected =
         _optionalString(args, 'expected_revision') ??
         await access.revision(path);
@@ -1228,9 +1222,6 @@ class WorkspaceToolset {
       ...(bom ? [239, 187, 191] : <int>[]),
       ...utf8.encode(updated),
     ];
-    if (!access.isLocal && encoded.length > WorkspaceLimits.maxWriteBytes) {
-      throw const WorkspaceException.limit('编辑后的文件超过 1 MiB');
-    }
     _beforeCommit();
     final file = await access.write(path, encoded, expectedRevision: expected);
     if (!access.isLocal) _record(access.workspaceId!, file.path);
@@ -1348,10 +1339,6 @@ class WorkspaceToolset {
       skipped: skipped,
     )) {
       if (filter != null && !filter.hasMatch(file.path)) continue;
-      if (!access.isLocal && file.size > WorkspaceLimits.maxFileBytes) {
-        skipped.add('${file.path}: 超过内部空间 32 MiB 读取上限');
-        continue;
-      }
       var index = -1;
       try {
         await for (final line

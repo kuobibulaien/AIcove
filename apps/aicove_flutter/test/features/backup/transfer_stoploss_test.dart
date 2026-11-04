@@ -12,6 +12,7 @@ import 'package:aicove_flutter/src/core/database/converters/database_converters.
 import 'package:aicove_flutter/src/core/models/message_block.dart' as domain;
 import 'package:aicove_flutter/src/features/chat/services/chat_frontend_message_projection_service.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_importer.dart';
+import 'package:aicove_flutter/src/features/backup/data/transfer_safety.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_exporter.dart';
 import 'package:aicove_flutter/src/features/backup/models/export_format.dart';
 
@@ -23,6 +24,16 @@ const supported = [
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('invalid extended settings and summaries are rejected by scope', () {
+    for (final entry in <Map<String, dynamic>>[
+      {'session_provider': 1}, {'enabled_plugins': '[1]'},
+      {'thinking_levels': '[]'}, {'chat_background_blur_sigma': 'bad'},
+      {'context_start_message_id': 4}, {'context_summaries': [{}]},
+    ]) {
+      expect(() => validateTransferConversation(entry, {SyncScope.characterSettings, SyncScope.chatHistory}), throwsFormatException);
+      expect(() => validateTransferConversation(entry, {SyncScope.characterCards}), returnsNormally);
+    }
+  });
   late Directory root;
   late AppDatabase db;
   late ConversationImporter importer;

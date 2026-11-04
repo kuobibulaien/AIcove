@@ -36,6 +36,7 @@ class PresetTagMapping {
     required this.rules,
     required this.supersededScriptIds,
     this.hiddenScriptIds = const {},
+    this.inlineReplacements = const {},
     this.candidates = const [],
   });
 
@@ -55,6 +56,9 @@ class PresetTagMapping {
   /// 显示时把匹配内容换成空，而不是露出占位符。
   final Set<String> hiddenScriptIds;
 
+  /// 行内 HTML 美化转换为可直接显示的文本模板。
+  final Map<String, String> inlineReplacements;
+
   /// 本轮显示用的呈现映射：内置常用名打底，预设推断与用户覆盖优先。
   /// 写入助手 rawPayload 作为显示快照。
   TagPresentationMap get presentationMap => {
@@ -66,12 +70,14 @@ class PresetTagMapping {
   List<SillyTavernRegexScript> displayScripts(
     List<SillyTavernRegexScript> scripts,
   ) =>
-      supersededScriptIds.isEmpty
+      supersededScriptIds.isEmpty && inlineReplacements.isEmpty
           ? scripts
           : [
               for (final script in scripts)
                 if (hiddenScriptIds.contains(script.id))
                   script.withReplacement('')
+                else if (inlineReplacements.containsKey(script.id))
+                  script.withReplacement(inlineReplacements[script.id]!)
                 else if (!supersededScriptIds.contains(script.id))
                   script,
             ];
@@ -153,6 +159,32 @@ final RegExp _htmlOutputPattern = RegExp(
   caseSensitive: false,
 );
 
+/// 只用行内标签的 HTML 美化：转成纯文本模板。按 HTML 空白语义丢弃模板
+/// 原有换行，`<br>` 才换行；含块级或交互结构时返回 null。
+String? _inlineTextReplacement(String replacement) {
+  if (_htmlFencePattern.hasMatch(replacement)) return null;
+  final tags = _htmlTagPattern.allMatches(replacement);
+  if (tags.any((m) => !_inlineHtmlTags.contains(m.group(1)!.toLowerCase()))) {
+    return null;
+  }
+  return replacement
+      .replaceAll(_styleElementPattern, '')
+      .replaceAll(RegExp(r'[\r\n]+'), '')
+      .replaceAll(RegExp(r'<br\b[^>]*>', caseSensitive: false), '\n')
+      .replaceAll(_htmlTagPattern, '');
+}
+
+final RegExp _htmlFencePattern = RegExp(r'```\s*html\b', caseSensitive: false);
+final RegExp _htmlTagPattern = RegExp(r'<\s*/?\s*([a-zA-Z][\w-]*)\b[^>]*>');
+final RegExp _styleElementPattern = RegExp(
+  r'<style\b[^>]*>[\s\S]*?</style\s*>',
+  caseSensitive: false,
+);
+const Set<String> _inlineHtmlTags = {
+  'span', 'style', 'br', 'b', 'i', 'em', 'strong', 'font', 'ruby', 'rt',
+  'small', 'sup', 'sub', 'u',
+};
+
 /// 替换结果引用了匹配原文（`$1`、`$&`、`$<名>`、`{{match}}`）。
 final RegExp _captureReferencePattern = RegExp(
   r'\$(?:\d|&|<)|\{\{\s*match\s*\}\}',
@@ -173,7 +205,6 @@ final RegExp _summaryPattern = RegExp(
   r'<summary[^>]*>([\s\S]*?)</summary>',
   caseSensitive: false,
 );
-final RegExp _markupPattern = RegExp(r'<[^>]*>');
 
 /// 从预设的显示正则推断语义标签映射（ADR0046）。
 ///
@@ -185,6 +216,8 @@ PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
   final rules = <String, PresetTagRule>{};
   final superseded = <String>{};
   final hidden = <String>{};
+  final inlineReplacements = <String, String>{};
+  final inlineNames = <String>{};
 
   void put(
     String name,
@@ -217,6 +250,12 @@ PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
     final replacement = script.replaceString;
     if (replacement.trim().isEmpty) continue;
     if (!_htmlOutputPattern.hasMatch(replacement)) continue;
+    final inline = _inlineTextReplacement(replacement);
+    if (inline != null) {
+      inlineReplacements[script.id] = inline;
+      inlineNames.addAll(names);
+      continue;
+    }
     superseded.add(script.id);
     if (_isPlaceholderWebpage(script)) {
       hidden.add(script.id);
@@ -240,6 +279,7 @@ PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
   // 提示词里明确的输出指令（“正文要用<game></game>包上”）补足没有正则的标签。
   final candidates = <String>{};
   for (final declared in _promptOutputTags(preset)) {
+    if (inlineNames.contains(declared.name)) continue;
     if (rules.containsKey(declared.name)) continue;
     final display = declared.display;
     if (display == null) {
@@ -280,6 +320,7 @@ PresetTagMapping inferPresetTagMapping(SillyTavernPreset preset) {
     rules: sorted,
     supersededScriptIds: superseded,
     hiddenScriptIds: hidden,
+    inlineReplacements: inlineReplacements,
     candidates: (candidates..removeAll(rules.keys)).toList()..sort(),
   );
 }
@@ -439,7 +480,13 @@ List<_TagToken> _tagTokens(String variant) {
     final isRegexSyntax = i > 1 && variant.startsWith('(?', i - 2);
     i++;
     var closing = false;
-    if (variant.startsWith(r'\/', i)) {
+    if (variant.startsWith(r'(\/)', i)) {
+      closing = true;
+      i += 4;
+    } else if (variant.startsWith('(/)', i)) {
+      closing = true;
+      i += 3;
+    } else if (variant.startsWith(r'\/', i)) {
       closing = true;
       i += 2;
     } else if (variant.startsWith('/', i)) {
@@ -542,7 +589,7 @@ final List<RegExp> _outputObjectPatterns = [
   ),
 ];
 final RegExp _bodyWord = RegExp(r'正文|小说|主体|故事内容|剧情内容');
-final RegExp _foldWord = RegExp(r'摘要|总结|思考|思维|推演|状态|小剧场|记录|备注|后话');
+final RegExp _foldWord = RegExp(r'摘要|总结|思考|思维|推演|状态|小剧场|记录|备注|后话|折叠|心声|内心话');
 final RegExp _optionsWord = RegExp(r'选项|分支|行动选择|choices?|options?',
     caseSensitive: false);
 
@@ -625,14 +672,5 @@ final RegExp _optionsNameHint = RegExp(r'option|branch|choice|选项|分支');
 String? _summaryTitle(String replacement) {
   final match = _summaryPattern.firstMatch(replacement);
   if (match == null) return null;
-  final text = match
-      .group(1)!
-      .replaceAll(_markupPattern, '')
-      .replaceAll(RegExp(r'\$\d+|\{\{[^}]*\}\}'), '')
-      // 只留文字，去掉装饰符号
-      .replaceAll(RegExp(r'[^\p{L}\p{N}\s·]', unicode: true), ' ')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
-  if (text.isEmpty || text.length > 24) return null;
-  return text;
+  return extractSummaryTitle(match.group(1)!);
 }

@@ -77,13 +77,18 @@ class McpStdioClient implements McpClientPort {
         env['HOME'] ?? env['USERPROFILE'],
       );
       final cwd = rawCwd.isEmpty ? null : Directory(rawCwd).absolute.path;
-      final executable = resolveMcpExecutable(connector.command, env, cwd: cwd);
-      final process = await Process.start(
-        executable,
+      final launch = resolveMcpStdioLaunch(
+        connector.command,
         connector.args,
+        env,
+        cwd: cwd,
+      );
+      final process = await Process.start(
+        launch.command,
+        launch.args,
         workingDirectory: cwd,
         environment: env,
-        runInShell: false,
+        runInShell: launch.runInShell,
       );
       _process = process;
       unawaited(

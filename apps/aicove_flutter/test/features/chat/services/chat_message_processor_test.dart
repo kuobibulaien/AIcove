@@ -2,10 +2,27 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_message_processor.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin.dart';
 import 'package:aicove_flutter/src/features/plugins/domain/plugin_content.dart';
 
 void main() {
+  test('historical round projection joins a broken tag without leaking raw text', () {
+    final result = chatMessageProcessor.buildAssistantMessages(
+      replyText: '', processedText: '', pluginEvents: const [],
+      replyRounds: const [
+        ReplyRound(replyText: '前<comic_plan>角色', rawText: '原文<comic_plan>角色', processedText: '前<comic_plan>角色'),
+        ReplyRound(replyText: '续</comic_plan>后', rawText: '续</comic_plan>原文', processedText: '续</comic_plan>后'),
+      ],
+    );
+    final text = result.messages.map((message) => message.displayText).join('');
+    expect(text, contains('<comic_plan>角色续</comic_plan>'));
+    expect(text, isNot(contains('原文')));
+  });
+  test('unclosed inline image remains text before a closed image', () {
+    expect(chatMessageProcessor.stripPluginTags('正文<image>{"id":3'), '正文<image>{"id":3');
+    expect(chatMessageProcessor.stripPluginTags('前<image>正文<image>{"id":3}</image>后'), '前<image>正文后');
+  });
   test('正文兜底去掉表情标签，保留成对标签内文与换行', () {
     expect(
       chatMessageProcessor.stripPluginTags(

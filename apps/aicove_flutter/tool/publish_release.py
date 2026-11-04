@@ -47,7 +47,7 @@ PRIVATE_FIXTURE_DIRS = (
     f'{APP_REL}/test/fixtures/preset_tags',
     'test/fixtures/preset_tags',
 )
-PRIVATE_FIXTURE_REF = re.compile(r'fixtures/preset_runtime|fixtures/preset_tags|kemini_fixture')
+PRIVATE_FIXTURE_REF = re.compile(r'fixtures/preset_runtime|fixtures/preset_tags|kemini_fixture|opusdocs')
 MACHO_MAGIC = {b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe',
                b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca', b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca'}
 

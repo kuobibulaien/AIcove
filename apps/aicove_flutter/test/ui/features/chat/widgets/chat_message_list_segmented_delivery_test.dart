@@ -184,7 +184,21 @@ void main() {
         expect(fixture.deltaCount, 15);
         await tester.runAsync(fixture.finish);
         await _settle(tester);
-        expect(fixture.bubbles.length, 15, reason: '真实 finalize 不得重复或吞掉分段');
+        // ADR0115 §9: finalize writes one projected reply; the list splits it.
+        expect(
+          fixture.bubbles.single.displayText,
+          [
+            '第一段正文已经生成完成。',
+            for (var segment = 2; segment <= 9; segment++)
+              '第$segment段正文实时分成新的独立气泡。',
+            '松手后生成仍继续追加新的消息气泡。',
+            '回底动画期间新增的分段也不能抢占手指。',
+            for (var segment = 12; segment <= 15; segment++)
+              '回底后第$segment段继续正常分成新气泡。',
+          ].join(),
+          reason: '真实 finalize 不得重复或吞掉分段',
+        );
+        expect(find.text('回底后第15段继续正常分成新气泡。'), findsOneWidget);
         expect(fixture.timeline.value.any((m) => m.displayText == '生成中...'),
             isFalse);
         expect(tester.takeException(), isNull);

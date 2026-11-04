@@ -30,7 +30,7 @@ class _MacroReplacement {
 /// the value with `getvar`.
 class SillyTavernMacroEvaluator {
   static const int maxPasses = 256;
-  static const int maxExpandedCharacters = 2 * 1024 * 1024;
+  static const int maxEvaluations = 50000;
 
   const SillyTavernMacroEvaluator();
 
@@ -42,18 +42,46 @@ class SillyTavernMacroEvaluator {
     required SillyTavernRandomIndexPicker randomIndexPicker,
     required List<String> warnings,
     Map<String, Object?>? messageVariables,
+    bool escapeMacroValues = false,
+    bool recursive = true,
   }) {
     final applied = <String>{};
     final unknown = <String>{};
     var output = source;
+    var evaluations = 0;
     final innermostMacro = RegExp(r'\{\{([^{}]*)\}\}');
 
-    for (var pass = 0; pass < maxPasses; pass++) {
-      final matches = innermostMacro.allMatches(output).toList(growable: false);
-      if (matches.isEmpty) break;
-
+    for (var pass = 0; pass < (recursive ? maxPasses : 1); pass++) {
+      final buffer = StringBuffer();
       var handled = false;
-      for (final match in matches) {
+      var cursor = 0;
+      var depthCursor = 0;
+      var depth = 0;
+      var evaluationLimitReached = false;
+      var pending = output;
+
+      while (true) {
+        final matches = innermostMacro.allMatches(pending, cursor);
+        if (matches.isEmpty) break;
+        final match = matches.first;
+        while (depthCursor < match.start) {
+          if (pending.startsWith('{{', depthCursor)) {
+            depth++;
+            depthCursor += 2;
+          } else if (pending.startsWith('}}', depthCursor)) {
+            if (depth > 0) depth--;
+            depthCursor += 2;
+          } else {
+            depthCursor++;
+          }
+        }
+        buffer.write(pending.substring(cursor, match.start));
+        cursor = match.start;
+        if (evaluations >= maxEvaluations) {
+          evaluationLimitReached = true;
+          break;
+        }
+        evaluations++;
         final rawMacro = match.group(0) ?? '';
         final body = (match.group(1) ?? '').trim();
         final replacement = _evaluateMacro(
@@ -68,21 +96,43 @@ class SillyTavernMacroEvaluator {
           unknown: unknown,
           messageVariables: messageVariables,
         );
-        if (!replacement.handled) continue;
-        output =
-            '${output.substring(0, match.start)}'
-            '${replacement.text}'
-            '${output.substring(match.end)}';
-        handled = true;
+        cursor = match.end;
+        depthCursor = match.end;
+        if (replacement.handled) handled = true;
+        if (recursive && !escapeMacroValues && replacement.handled && depth == 0 &&
+            (replacement.text.contains('{') || replacement.text.contains('}'))) {
+          // Rescan only the replacement and unprocessed suffix, preserving
+          // document order without spending another nesting pass.
+          pending = replacement.text + pending.substring(cursor);
+          cursor = 0;
+          depthCursor = 0;
+          continue;
+        }
+        buffer.write(replacement.handled && escapeMacroValues
+            ? RegExp.escape(replacement.text)
+            : replacement.text);
+        if (recursive && replacement.handled && depth > 0) break;
+      }
+      buffer.write(pending.substring(cursor));
+      output = buffer.toString();
+      if (evaluationLimitReached) {
+        warnings.add('$promptId 宏求值超过 $maxEvaluations 次，已停止继续展开');
         break;
       }
       if (!handled) break;
-      if (output.length > maxExpandedCharacters) {
-        warnings.add('$promptId 宏展开超过 2 MB，已停止继续求值');
-        output = output.substring(0, maxExpandedCharacters);
-        break;
-      }
-      if (pass == maxPasses - 1 && innermostMacro.hasMatch(output)) {
+      if (pass == maxPasses - 1 &&
+          innermostMacro.allMatches(output).any((match) => _evaluateMacro(
+                (match.group(1) ?? '').trim(),
+                rawMacro: match.group(0) ?? '',
+                promptId: promptId,
+                values: values,
+                variables: Map.of(variables),
+                randomIndexPicker: (_) => 0,
+                warnings: [],
+                applied: {},
+                unknown: {},
+                messageVariables: messageVariables,
+              ).handled)) {
         warnings.add('$promptId 宏求值超过 $maxPasses 轮，已停止继续展开');
       }
     }
@@ -117,6 +167,30 @@ class SillyTavernMacroEvaluator {
       return const _MacroReplacement('', handled: true);
     }
 
+    final roll = RegExp(r'^roll(?:\s+|::?)(.+)$', caseSensitive: false)
+        .firstMatch(body);
+    if (roll != null) {
+      final dice = RegExp(r'^(?:(\d*)d)?(\d+)(?:\s*([+-])\s*(\d+))?$',
+              caseSensitive: false)
+          .firstMatch(roll[1]!.trim());
+      if (dice != null) {
+        final count = dice[1] == null
+            ? 1
+            : int.tryParse(dice[1]!.isEmpty ? '1' : dice[1]!);
+        final sides = int.tryParse(dice[2]!);
+        final adjustment = int.tryParse(dice[4] ?? '0');
+        if (count != null && count > 0 &&
+            sides != null && sides > 0 && adjustment != null) {
+          var total = dice[3] == '-' ? -adjustment : adjustment;
+          for (var i = 0; i < count; i++) {
+            total += randomIndexPicker(sides) + 1;
+          }
+          applied.add('roll');
+          return _MacroReplacement('$total', handled: true);
+        }
+      }
+    }
+
     final parts = body.split('::');
     final name = parts.first.trim().toLowerCase();
     final directValue = values[name];
@@ -126,6 +200,23 @@ class SillyTavernMacroEvaluator {
     }
 
     switch (name) {
+      case 'incvar':
+      case 'decvar':
+      case 'addvar':
+        if (parts.length == (name == 'addvar' ? 3 : 2) &&
+            parts[1].trim().isNotEmpty) {
+          final key = parts[1].trim();
+          final current = num.tryParse(variables[key] ?? '0');
+          final delta = name == 'addvar'
+              ? num.tryParse(parts[2].trim())
+              : (name == 'incvar' ? 1 : -1);
+          if (current != null && delta != null) {
+            variables[key] = '${current + delta}';
+            applied.add(name);
+            return const _MacroReplacement('', handled: true);
+          }
+        }
+        return _MacroReplacement(rawMacro, handled: false);
       case 'original':
         if (values.containsKey('original')) {
           applied.add(name);

@@ -157,7 +157,7 @@ class AssistantCheckup {
       }
       if (preset != null) {
         if (preset.functionCalling == false &&
-            role.effectiveAgentMode != RoleAgentMode.tool) {
+            role.effectiveAgentMode == RoleAgentMode.agent) {
           final blocked = [
             for (final entry in _toolPlugins.entries)
               if (uses(entry.key)) entry.value,

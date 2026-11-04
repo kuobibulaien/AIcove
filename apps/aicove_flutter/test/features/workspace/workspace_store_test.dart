@@ -45,8 +45,8 @@ void main() {
 
   Future<WorkspaceStore> open({
     Duration staleAfter = const Duration(seconds: 30),
-    int quotaBytes = WorkspaceLimits.quotaBytes,
-    int historyBytes = WorkspaceLimits.historyBytes,
+    int quotaBytes = 0,
+    int historyBytes = 0,
   }) async {
     final store = await WorkspaceStore.open(
       root,
@@ -209,27 +209,24 @@ void main() {
       }
     });
 
-    test('file size limit: below, at and over', () async {
-      final store = await open();
-      final ws = (await store.create(name: 'w')).id;
-      for (final (size, ok) in [
-        (WorkspaceLimits.maxFileBytes - 1, true),
-        (WorkspaceLimits.maxFileBytes, true),
-        (WorkspaceLimits.maxFileBytes + 1, false),
-      ]) {
-        final write = store.write(
+    test(
+      'default workspace reads and writes beyond the former file limit',
+      () async {
+        final store = await open();
+        final ws = (await store.create(name: 'w')).id;
+        final bytes = Uint8List(WorkspaceLimits.maxFileBytes + 1)..last = 7;
+        final file = await store.write(ws, 'big', bytes, runId: 'r');
+        final (read, _) = await store.read(ws, 'big');
+        expect(read, bytes);
+        await store.write(
           ws,
-          'big-$size',
-          List.filled(size, 0),
+          'big',
+          [1],
+          expectedRevision: file.revision,
           runId: 'r',
         );
-        if (ok) {
-          await write;
-        } else {
-          await expectLater(write, throwsA(_code('limit')));
-        }
-      }
-    });
+      },
+    );
 
     test('quota: below, at and over', () async {
       final store = await open(quotaBytes: 1000);
