@@ -369,7 +369,7 @@ void _runAll(RunnerFactory createRunner) {
   for (final provider in ['openai', 'gemini']) {
     for (final stream in [false, true]) {
       test(
-        '$provider stream=$stream decodes original Kemini transport',
+        '$provider stream=$stream decodes preset-owned fetch transport',
         () => verify(provider, stream: stream),
       );
       test(

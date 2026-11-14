@@ -13,6 +13,9 @@
 /// - 2026-01-28: 使用 deliverSegmentedMessages 统一消息交付，移除占位符机制
 library;
 
+import '../../core/sync/conversation_ownership.dart';
+import '../observability/model_request_ledger.dart';
+import 'domain/model_request_error_report.dart';
 import '../conversation_state/domain/mvu_content.dart';
 import '../plugins/tts/voice_request.dart';
 
@@ -50,7 +53,6 @@ import 'services/chat_tts_handler.dart';
 import 'domain/message.dart';
 import 'domain/chat_display_policy.dart';
 import 'domain/conversation.dart';
-import 'domain/role_agent_mode.dart';
 import 'domain/quoted_reply.dart';
 import 'domain/tool_call_label.dart';
 import '../../core/api/providers/provider_adapter.dart'
@@ -923,6 +925,7 @@ Message buildUserStickerMessage(Sticker sticker) {
 }
 
 class _GenerationTask {
+  final DateTime startedAt = DateTime.now();
   final int id;
   final String convId;
   final String? userMsgId;

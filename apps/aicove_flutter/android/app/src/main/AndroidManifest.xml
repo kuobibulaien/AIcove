@@ -85,8 +85,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".ProactiveAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
         <!-- 角色来电通知的「接听」「拒绝」按钮（方案 12 §4.8）。 -->
         <receiver
             android:exported="false"

@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-
 const MethodChannel _keepAliveChannel = MethodChannel(
   'com.example.aicove_flutter/keep_alive',
 );
@@ -96,6 +95,75 @@ class AndroidGenerationKeepAliveLease {
 }
 
 class AndroidKeepAliveManager {
+  static Future<void> Function(String slot)? _proactiveAlarmHandler;
+  static Future<void> _alarmCallbackQueue = Future<void>.value();
+
+  static void setProactiveAlarmHandler(
+    Future<void> Function(String slot)? handler,
+  ) {
+    _proactiveAlarmHandler = handler;
+    if (!isSupported) return;
+    _keepAliveChannel.setMethodCallHandler((call) async {
+      if (call.method != 'onProactiveAlarmFired') {
+        throw MissingPluginException('Unknown keep-alive callback');
+      }
+      final slot = (call.arguments as Map?)?['slot'];
+      final current = _proactiveAlarmHandler;
+      if (current == null) {
+        throw MissingPluginException('Proactive alarm handler is not ready');
+      }
+      if (slot != 'analyzer' && slot != 'trigger') {
+        throw PlatformException(code: 'invalid_alarm_slot');
+      }
+      final run = _alarmCallbackQueue.then((_) => current(slot as String));
+      _alarmCallbackQueue = run.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      );
+      await run;
+    });
+  }
+
+  static Future<void> scheduleProactiveAlarm({
+    required String slot,
+    required DateTime fireAt,
+    required bool exact,
+  }) => _invokeAlarmMethod('scheduleProactiveAlarm', {
+    'slot': slot,
+    'fireAtMillis': fireAt.millisecondsSinceEpoch,
+    'exact': exact,
+  });
+
+  static Future<void> cancelProactiveAlarm(String slot) =>
+      _invokeAlarmMethod('cancelProactiveAlarm', {'slot': slot});
+
+  static Future<List<String>> consumePendingAlarmSlots() async {
+    if (!isSupported) return const [];
+    try {
+      return await _keepAliveChannel.invokeListMethod<String>(
+            'consumePendingAlarmSlots',
+          ) ??
+          const [];
+    } on MissingPluginException {
+      return const [];
+    }
+  }
+
+  static Future<void> completeHeadlessAlarmRun() =>
+      _invokeAlarmMethod('completeHeadlessAlarmRun');
+
+  static Future<void> _invokeAlarmMethod(
+    String method, [
+    Map<String, Object>? arguments,
+  ]) async {
+    if (!isSupported) return;
+    try {
+      await _keepAliveChannel.invokeMethod<void>(method, arguments);
+    } on MissingPluginException {
+      // Offline tests and older hosts do not expose alarm scheduling.
+    }
+  }
+
   static int _nextGenerationLeaseId = 0;
   static final Set<int> _activeGenerationLeaseIds = <int>{};
 

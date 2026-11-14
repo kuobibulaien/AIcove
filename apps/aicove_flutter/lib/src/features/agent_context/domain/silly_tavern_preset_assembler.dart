@@ -53,6 +53,9 @@ class SillyTavernAssemblyEntry {
   final bool isHistory;
   final bool protectedFromTruncation;
   final bool hasDrawingPrompt;
+  // Retain original entries so late trimming can restore the host postlude
+  // before applying the preset's system-message squashing again.
+  final List<SillyTavernAssemblyEntry> _unsquashedEntries;
 
   const SillyTavernAssemblyEntry({
     required this.message,
@@ -61,6 +64,16 @@ class SillyTavernAssemblyEntry {
     required this.isHistory,
     required this.protectedFromTruncation,
     this.hasDrawingPrompt = false,
+  }) : _unsquashedEntries = const [];
+
+  const SillyTavernAssemblyEntry._squashed(
+    this._unsquashedEntries, {
+    required this.message,
+    required this.source,
+    required this.label,
+    required this.isHistory,
+    required this.protectedFromTruncation,
+    required this.hasDrawingPrompt,
   });
 
   Map<String, dynamic> toTraceJson(int order) => <String, dynamic>{
@@ -102,6 +115,13 @@ class SillyTavernAssemblyResult {
   });
 
   int get droppedHistoryCount => originalHistoryCount - keptHistoryCount;
+
+  /// Internal preset-host input; the script runtime removes the provenance
+  /// marker before returning messages for the provider.
+  List<Map<String, dynamic>> get scriptMessages => [
+    for (final entry in entries)
+      {...entry.message, '__isHistory': entry.isHistory},
+  ];
 
   List<Map<String, dynamic>> get traceEntries => <Map<String, dynamic>>[
     for (var index = 0; index < entries.length; index++)
@@ -329,11 +349,9 @@ class SillyTavernPresetAssembler {
     final historyBlock = _buildHistoryBlock(
       historyMessages: historyMessages,
       injections: injections,
-      runtimeSystemContent: context.runtimeSystemContent,
     );
     final assembled = <SillyTavernAssemblyEntry>[];
     var historyIncluded = false;
-    var runtimeIncluded = false;
     for (final prompt in orderedPrompts) {
       if (prompt.identifier == 'chatHistory') {
         if (historyIncluded) {
@@ -341,7 +359,6 @@ class SillyTavernPresetAssembler {
           continue;
         }
         historyIncluded = true;
-        runtimeIncluded = context.runtimeSystemContent.trim().isNotEmpty;
         assembled.addAll(historyBlock);
         continue;
       }
@@ -395,7 +412,7 @@ class SillyTavernPresetAssembler {
 
     _applyAttachments(assembled, attachments, warnings);
 
-    if (!runtimeIncluded && context.runtimeSystemContent.trim().isNotEmpty) {
+    if (context.runtimeSystemContent.trim().isNotEmpty) {
       assembled.add(
         SillyTavernAssemblyEntry(
           message: <String, dynamic>{
@@ -416,9 +433,10 @@ class SillyTavernPresetAssembler {
     ) {
       assembled.add(
         SillyTavernAssemblyEntry(
-          message: Map<String, dynamic>.from(
-            context.protectedRuntimeMessages[index],
-          ),
+          message: {
+            ...context.protectedRuntimeMessages[index],
+            'role': 'system',
+          },
           source: 'runtime.message.$index',
           label: 'AIcove 运行时消息',
           isHistory: false,
@@ -427,9 +445,7 @@ class SillyTavernPresetAssembler {
       );
     }
 
-    var messagesBeforePrefill = preset.squashSystemMessages
-        ? _squashConsecutiveSystemEntries(assembled)
-        : assembled;
+    var messagesBeforePrefill = assembled;
     final prefillResult = _macroEvaluator.evaluate(
       preset.assistantPrefill,
       promptId: 'assistant_prefill',
@@ -457,33 +473,38 @@ class SillyTavernPresetAssembler {
       placeholder: drawingPlaceholder,
       content: drawingPromptContent,
     );
-    final withDrawingFallback = _applyDrawingPromptFallback(
+    final withFallback = _applyDrawingPromptFallback(
       restored,
       drawingFallbackContent,
-      squashSystemMessages: preset.squashSystemMessages,
+      squashSystemMessages: false,
     );
     final trimmed = !truncateHistory
-        ? withDrawingFallback
+        ? withFallback
         : _truncatePreservingOrder(
-            withDrawingFallback,
+            withFallback,
             maxContextTokens: maxContextTokens,
             reserveTokens: reserveTokens,
             warnings: warnings,
+            squashSystemMessages: preset.squashSystemMessages,
           );
     final restoredFallback = _applyDrawingPromptFallback(
       trimmed,
       drawingFallbackContent,
-      squashSystemMessages: preset.squashSystemMessages,
+      squashSystemMessages: false,
     );
-    final completed = truncateHistory && !identical(restoredFallback, trimmed)
+    final recovered = truncateHistory && !identical(restoredFallback, trimmed)
         ? _truncatePreservingOrder(
             restoredFallback,
             maxContextTokens: maxContextTokens,
             reserveTokens: reserveTokens,
             warnings: warnings,
+            squashSystemMessages: preset.squashSystemMessages,
           )
         : restoredFallback;
-    final keptHistoryCount = completed.where((entry) => entry.isHistory).length;
+    final completed = preset.squashSystemMessages
+        ? _squashConsecutiveSystemEntries(recovered)
+        : recovered;
+    final keptHistoryCount = recovered.where((entry) => entry.isHistory).length;
     return SillyTavernAssemblyResult(
       messages: List.unmodifiable(
         completed
@@ -523,18 +544,19 @@ class SillyTavernPresetAssembler {
       warnings.add('预设最大输出超过预设上下文上限，已按预设上下文的一半保留输入预算');
     }
     final trimmed = _truncatePreservingOrder(
-      result.entries,
+      _unsquashEntries(result.entries),
       maxContextTokens: inputBudget,
       reserveTokens: 0,
       warnings: warnings,
       estimateTokens: estimateTokens,
+      squashSystemMessages: result.squashSystemMessages,
     );
     final restoredFallback = _applyDrawingPromptFallback(
       trimmed,
       result.drawingPromptFallbackContent,
-      squashSystemMessages: result.squashSystemMessages,
+      squashSystemMessages: false,
     );
-    final entries = identical(restoredFallback, trimmed)
+    final recovered = identical(restoredFallback, trimmed)
         ? trimmed
         : _truncatePreservingOrder(
             restoredFallback,
@@ -542,7 +564,28 @@ class SillyTavernPresetAssembler {
             reserveTokens: 0,
             warnings: warnings,
             estimateTokens: estimateTokens,
+            squashSystemMessages: result.squashSystemMessages,
           );
+    final entries = result.squashSystemMessages
+        ? _squashConsecutiveSystemEntries(recovered)
+        : recovered;
+    // The backend identifies omitted messages by entry identity. Keep unchanged
+    // merged entries stable after expanding and re-squashing their children.
+    for (var index = 0; index < entries.length; index++) {
+      final children = entries[index]._unsquashedEntries;
+      if (children.isEmpty) continue;
+      for (final original in result.entries) {
+        final originals = original._unsquashedEntries;
+        if (children.length == originals.length &&
+            List.generate(
+              children.length,
+              (i) => i,
+            ).every((i) => identical(children[i], originals[i]))) {
+          entries[index] = original;
+          break;
+        }
+      }
+    }
     return SillyTavernAssemblyResult(
       messages: List.unmodifiable(
         entries.map((e) => Map<String, dynamic>.from(e.message)),
@@ -550,7 +593,7 @@ class SillyTavernPresetAssembler {
       entries: List.unmodifiable(entries),
       warnings: List.unmodifiable(_deduplicate(warnings)),
       originalHistoryCount: result.originalHistoryCount,
-      keptHistoryCount: entries.where((e) => e.isHistory).length,
+      keptHistoryCount: recovered.where((e) => e.isHistory).length,
       historyIncluded: result.historyIncluded,
       variables: result.variables,
       appliedMacros: result.appliedMacros,
@@ -633,17 +676,15 @@ class SillyTavernPresetAssembler {
     final runtimeIndex = result.indexWhere(
       (entry) => entry.source.contains('runtime.system'),
     );
-    final firstRuntimeOrHistory = result.indexWhere(
+    final firstRuntimeMessageOrPrefill = result.indexWhere(
       (entry) =>
-          entry.isHistory ||
-          entry.source.startsWith('preset.injection.') ||
           entry.source.startsWith('runtime.message.') ||
           entry.source.contains('preset.assistantPrefill'),
     );
     final insertAt = runtimeIndex >= 0
         ? runtimeIndex + 1
-        : firstRuntimeOrHistory >= 0
-        ? firstRuntimeOrHistory
+        : firstRuntimeMessageOrPrefill >= 0
+        ? firstRuntimeMessageOrPrefill
         : result.length;
     result.insert(
       insertAt,
@@ -740,24 +781,8 @@ class SillyTavernPresetAssembler {
   List<SillyTavernAssemblyEntry> _buildHistoryBlock({
     required List<Map<String, dynamic>> historyMessages,
     required List<_ResolvedInjection> injections,
-    required String runtimeSystemContent,
   }) {
     final entries = <SillyTavernAssemblyEntry>[];
-    if (runtimeSystemContent.trim().isNotEmpty) {
-      entries.add(
-        SillyTavernAssemblyEntry(
-          message: <String, dynamic>{
-            'role': 'system',
-            'content': runtimeSystemContent.trim(),
-          },
-          source: 'runtime.system',
-          label: 'AIcove 运行时规则',
-          isHistory: false,
-          protectedFromTruncation: true,
-        ),
-      );
-    }
-
     final injectionsByPosition = <int, List<_ResolvedInjection>>{};
     for (final injection in injections) {
       final position = (historyMessages.length - injection.depth).clamp(
@@ -1045,6 +1070,16 @@ class SillyTavernPresetAssembler {
     ].join('\n\n');
   }
 
+  List<SillyTavernAssemblyEntry> _unsquashEntries(
+    List<SillyTavernAssemblyEntry> entries,
+  ) => [
+    for (final entry in entries)
+      if (entry._unsquashedEntries.isEmpty)
+        entry
+      else
+        ...entry._unsquashedEntries,
+  ];
+
   List<SillyTavernAssemblyEntry> _squashConsecutiveSystemEntries(
     List<SillyTavernAssemblyEntry> source,
   ) {
@@ -1064,7 +1099,8 @@ class SillyTavernPresetAssembler {
             previous.message['content']?.toString() ?? '',
             entry.message['content']?.toString() ?? '',
           ].where((value) => value.isNotEmpty).join('\n');
-          squashed[squashed.length - 1] = SillyTavernAssemblyEntry(
+          squashed[squashed.length - 1] = SillyTavernAssemblyEntry._squashed(
+            _unsquashEntries([previous, entry]),
             message: mergedMessage,
             source: '${previous.source}+${entry.source}',
             label: '${previous.label} + ${entry.label}',
@@ -1152,14 +1188,20 @@ class SillyTavernPresetAssembler {
     required int reserveTokens,
     required List<String> warnings,
     int Function(List<Map<String, dynamic>>)? estimateTokens,
+    bool squashSystemMessages = false,
   }) {
     final availableTokens = maxContextTokens - reserveTokens;
     if (source.isEmpty || availableTokens <= 0) return List.of(source);
     final kept = List<SillyTavernAssemblyEntry>.of(source);
-    int estimate(List<SillyTavernAssemblyEntry> entries) =>
-        estimateTokens == null
-        ? _estimateEntries(entries)
-        : estimateTokens(entries.map((e) => e.message).toList());
+    int estimate(List<SillyTavernAssemblyEntry> entries) {
+      final projected = squashSystemMessages
+          ? _squashConsecutiveSystemEntries(entries)
+          : entries;
+      return estimateTokens == null
+          ? _estimateEntries(projected)
+          : estimateTokens(projected.map((e) => e.message).toList());
+    }
+
     var usedTokens = estimate(kept);
     SillyTavernAssemblyEntry? latestUser;
     for (final entry in kept.reversed) {

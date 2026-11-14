@@ -38,6 +38,13 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       _holdListForHistoryPagingEmptyTimeline = false;
       _heldTimelineMessagesForLayout = const <Message>[];
       _hasHydratedInitialListItems = false;
+      final nextHiddenPieces = ref
+              .read(conversationHiddenPieceIdsProvider(widget.conversationId))
+              .valueOrNull ??
+          const <String>{};
+      _hiddenPieceIds = nextHiddenPieces;
+      _hiddenPieceSignature = _signHiddenPieces(nextHiddenPieces);
+      _cachedHiddenPieceSignature = null;
       _showHistoryLoadingOverlay =
           widget.isLoadingMore && widget.hasMoreMessages;
       _historyLoadingOverlayShownAt =
@@ -296,7 +303,7 @@ extension _ChatMessageListTimelineX on _ChatMessageListState {
       return 'message:${item.message.id}';
     }
     if (item is ChatChunkedMessageItem) {
-      return 'chunk:${item.originalMessage.id}:${item.chunkIndex}';
+      return 'chunk:${item.pieceId}';
     }
     if (item is ChatTimeDividerItem) {
       return 'time:${item.time.millisecondsSinceEpoch}';

@@ -6,6 +6,7 @@ import '../../features/plugins/domain/handlers/tool_output.dart';
 const toolStepMarker = '_aicove_tool_step';
 const toolImageSource = '_aicove_image_source';
 const toolImageInfo = '_aicove_image_info';
+const presetHistoryMarker = '__isHistory';
 
 Map<String, dynamic> toolImagePart(
   ToolImage image, {
@@ -108,7 +109,12 @@ abstract final class ToolMedia {
       return <String, dynamic>{
         for (final e in value.entries)
           if (!strip ||
-              ![toolStepMarker, toolImageSource, toolImageInfo].contains(e.key))
+              ![
+                toolStepMarker,
+                toolImageSource,
+                toolImageInfo,
+                presetHistoryMarker,
+              ].contains(e.key))
             e.key.toString(): _walk(e.value, image, strip: strip),
       };
     }
@@ -202,8 +208,46 @@ class PresetImageReferences {
   Object? hide(Object? value) => ToolMedia._walk(value, (image) {
     final id = '__aicove_image_ref_${_nonce}_${_images.length}__';
     _images[id] = image;
-    return {'type': 'text', 'text': id};
+    return {
+      'type': 'image_url',
+      'image_url': {'url': id},
+    };
   });
+
+  /// Text-only callbacks may replace messages without copying media parts.
+  /// Keep request-owned media outside that lossy projection.
+  List<Map<String, dynamic>> preserveImages(
+    List<Map<String, dynamic>> messages,
+  ) {
+    if (_images.isEmpty) return messages;
+    final serialized = jsonEncode(messages);
+    final missing = _images.keys
+        .where((id) => !serialized.contains(id))
+        .toList();
+    if (missing.isEmpty) return messages;
+    final result = [
+      for (final message in messages) Map<String, dynamic>.from(message),
+    ];
+    var index = result.lastIndexWhere((message) => message['role'] == 'user');
+    if (index < 0) {
+      result.add({'role': 'user', 'content': <Object?>[]});
+      index = result.length - 1;
+    }
+    final content = result[index]['content'];
+    result[index]['content'] = [
+      if (content is List)
+        ...content
+      else if (content is String && content.isNotEmpty)
+        {'type': 'text', 'text': content},
+      for (final id in missing)
+        {
+          'type': 'image_url',
+          'image_url': {'url': id},
+        },
+    ];
+    return result;
+  }
+
   Object? restore(Object? value) {
     if (value is String) {
       if (!_images.keys.any(value.contains)) return value;
@@ -227,6 +271,11 @@ class PresetImageReferences {
     }
     if (value is List) return [for (final v in value) ..._restoredPart(v)];
     if (value is Map) {
+      final imageUrl = value['image_url'];
+      if (value['type'] == 'image_url' && imageUrl is Map) {
+        final image = _images[imageUrl['url']];
+        if (image != null) return Map<String, dynamic>.from(image);
+      }
       if (value['type'] == 'text' && value['text'] is String) {
         final restored = restore(value['text']);
         if (restored is List) return restored;

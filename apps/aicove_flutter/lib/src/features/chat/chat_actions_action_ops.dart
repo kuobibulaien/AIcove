@@ -320,6 +320,20 @@ extension ChatActionsActionOps on ChatActions {
                 const DiagnosticFacts(reason: DiagnosticReason.unknownMessage));
         return;
       }
+      await ConversationOwnership.claim(convId);
+      if (!_isGenerationCurrent(convId, runId)) return;
+      try {
+        final remoteRuns = await ModelRequestLedger.instance
+            .activeRemoteRunsForConversation(convId);
+        _ref.read(conversationRemoteRunningNoticeProvider(convId).notifier).state =
+            remoteRuns.isEmpty
+                ? null
+                : '另一台设备（${remoteRuns.first.deviceName}）正在生成回复，已继续在本机发送';
+      } catch (error) {
+        AppLogger.warning('ModelRequestLedger', '读取模型请求记录失败',
+            metadata: {'error': '$error'});
+      }
+      if (!_isGenerationCurrent(convId, runId)) return;
       final lookupMs = readClock.elapsedMilliseconds - historyReadMs;
       final userText = _resolveUserMessageApiText(userMsg);
       final task = _activeGenerations[convId] = _GenerationTask(
@@ -638,38 +652,74 @@ extension ChatActionsActionOps on ChatActions {
     return null;
   }
 
-  /// 删除单条消息（仅前端隐藏，不改数据库真相源）
+  /// 删除主体最后一个可见投影时，连同其 raw 历史一起删除。
   Future<void> deleteMessage(String messageId) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null) return;
     final convId = conv.id;
     if (_removeStagedMessages(convId, {messageId}).isNotEmpty) return;
-    final quoted = _ref.read(quotedMessageProvider);
-    final quotedNotifier = _ref.read(quotedMessageProvider.notifier);
-    final actionMessage = await _resolveFrontendActionMessage(
-      convId: convId,
-      messageId: messageId,
-    );
-    if (actionMessage == null) return;
-
-    // 如果当前引用的是被删除消息，一并清空引用态
-    final deleteId = actionMessage.id;
-    final deleteSourceId = actionMessage.sourceMessageId?.trim();
-    if (quoted?.id == messageId ||
-        quoted?.id == deleteId ||
-        (deleteSourceId != null &&
-            deleteSourceId.isNotEmpty &&
-            quoted?.id == deleteSourceId)) {
-      quotedNotifier.state = null;
+    final store = _ref.read(chatHistoryStoreProvider);
+    final actions = _ref.read(chatPageConversationActionsProvider);
+    final parentId = ChatTimelinePieceId.parentMessageIdOf(messageId);
+    if (ChatTimelinePieceId.isPieceId(messageId)) {
+      if (parentId == null) return;
+      final parent = await store.loadFrontendMessageById(
+        parentId,
+        conversationId: convId,
+      );
+      if (parent == null) return;
+      await actions.executeDeletePlan(
+        convId,
+        ChatTimelineDeletePlan(pieceIdsToHide: [messageId]),
+      );
+      return;
     }
 
-    await _ref.read(chatHistoryStoreProvider).hideMessagesInFrontendTimeline(
+    final message = await store.loadFrontendMessageById(
+      messageId,
+      conversationId: convId,
+    );
+    if (message == null) return;
+    final rawId = message.sourceMessageIdOrSelf;
+    final cache = _ref.read(conversationTimelineCacheProvider);
+    final sameSourceVisible = (await store.loadCachedTimelineMessages(convId))
+        .where(
+          (other) =>
+              other.sourceMessageIdOrSelf == rawId &&
+              !cache.isMessageHidden(convId, other),
+        )
+        .toList();
+    final hasBody = sameSourceVisible.any(_hasTimelineMessageBody);
+    final hasRemaining = sameSourceVisible.any(
+      (other) =>
+          other.id != message.id &&
+          (!hasBody || _hasTimelineMessageBody(other)),
+    );
+    final deleteRaw = messageId == rawId || !hasRemaining;
+    await actions.executeDeletePlan(
       convId,
-      [deleteId],
+      deleteRaw
+          ? ChatTimelineDeletePlan(rawMessageIdsToDelete: [rawId])
+          : ChatTimelineDeletePlan(projectedMessageIdsToHide: [message.id]),
     );
   }
 
-  /// 暂存消息只撤回本地队列，正式消息沿用单条删除的前端隐藏语义。
+  bool _hasTimelineMessageBody(Message message) {
+    final blocks = message.blocks;
+    if (blocks == null || blocks.isEmpty) {
+      return message.content.trim().isNotEmpty;
+    }
+    return blocks.any(
+      (block) =>
+          (block is TextBlock && block.content.trim().isNotEmpty) ||
+          block is ImageBlock ||
+          block is AudioBlock ||
+          block is EmojiBlock ||
+          block is FileBlock,
+    );
+  }
+
+  /// 逐条更新可见投影，确保批量删除最后一个主体气泡时同步删除 raw。
   Future<void> deleteMessages(List<String> messageIds) async {
     final conv = _ref.read(activeConversationProvider);
     if (conv == null || messageIds.isEmpty) return;

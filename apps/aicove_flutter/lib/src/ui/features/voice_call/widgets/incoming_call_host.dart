@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/auto_reply/data/incoming_call.dart';
 import '../../../../features/chat/domain/conversation.dart';
-import '../../../../features/settings/app_settings.dart';
 import '../../../../features/voice_call/application/active_voice_call.dart';
 import '../../../shared/widgets/index.dart';
 import '../../chat/widgets/chat_wallpaper_background.dart';
@@ -126,10 +125,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen>
   @override
   Widget build(BuildContext context) {
     final conv = widget.conversation;
-    final fallback = resolveChatBackgroundColor(
-      context,
-      ref.watch(appSettingsProvider).valueOrNull?.lightChatBackground,
-    );
+    final fallback = resolveChatBackgroundColor(context);
     return Material(
       color: Colors.black,
       child: Stack(

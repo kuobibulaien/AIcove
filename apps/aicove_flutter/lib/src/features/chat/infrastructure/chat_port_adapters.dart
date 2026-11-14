@@ -90,15 +90,24 @@ class ChatHistoryStoreAdapter implements ChatHistoryPort, ChatEditPort {
   }
 
   @override
+  Future<void> executeTimelineDeletePlan(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  ) =>
+      _historyStore.executeTimelineDeletePlan(conversationId, plan);
+
+  @override
   Future<void> softDeleteMessages(
     String conversationId,
     List<String> messageIds, {
     bool clearContextStartIfDeleted = false,
+    bool shiftContextStartIfDeleted = false,
   }) {
     return _historyStore.softDeleteMessages(
       conversationId,
       messageIds,
       clearContextStartIfDeleted: clearContextStartIfDeleted,
+      shiftContextStartIfDeleted: shiftContextStartIfDeleted,
     );
   }
 

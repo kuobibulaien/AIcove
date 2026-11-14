@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:aicove_flutter/src/features/backup/backup_providers.dart';
 import 'package:aicove_flutter/src/features/backup/data/conversation_exporter.dart';
 import 'package:aicove_flutter/src/features/backup/models/export_format.dart';
@@ -13,7 +17,12 @@ import 'package:aicove_flutter/src/ui/features/character/pages/contact_edit_page
 import 'package:aicove_flutter/src/ui/features/character/pages/role_extra_prompt_page.dart';
 import 'package:aicove_flutter/src/ui/features/character/services/contact_edit_snapshot_store.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_app_bar.dart';
+import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
+import 'package:aicove_flutter/src/ui/theme/skins/moetalk_skin.dart';
+import 'package:aicove_flutter/src/ui/theme/tokens.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -414,56 +423,233 @@ void main() {
     expect(saved.drawingPromptPackId, 'builtin.image.novelai_manga');
   });
 
-  for (final (mode, label, style) in [
-    (RoleAgentMode.chat, '纯聊天', ChatDisplayStyle.bubble),
-    (RoleAgentMode.tool, '工具', ChatDisplayStyle.document),
-    (RoleAgentMode.agent, '智能体', ChatDisplayStyle.bubble),
-  ]) {
-    testWidgets('以$label模式创建角色默认用${style.name}样式', (tester) async {
-      final draft = buildConversation().copyWith(id: 'new_conv');
-      final router = GoRouter(
-        routes: [
-          GoRoute(
-            path: '/',
-            builder: (_, _) =>
-                ContactEditPage(conversation: draft, editMode: EditMode.create),
-          ),
-          GoRoute(path: '/chat/:id', builder: (_, _) => const Text('chat')),
-        ],
-      );
-      addTearDown(router.dispose);
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            conversationsProvider.overrideWith(() => _Roles(draft)),
-            presetRecipeListProvider.overrideWith(
-              (ref) async => const <PresetRecipeSummary>[],
-            ),
-          ],
-          child: MaterialApp.router(routerConfig: router),
+  testWidgets('创建角色已移除三档模式开关且默认使用气泡样式', (tester) async {
+    final draft = buildConversation().copyWith(id: 'new_conv');
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (_, _) =>
+              ContactEditPage(conversation: draft, editMode: EditMode.create),
         ),
-      );
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pumpAndSettle();
+        GoRoute(path: '/chat/:id', builder: (_, _) => const Text('chat')),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          conversationsProvider.overrideWith(() => _Roles(draft)),
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[],
+          ),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
 
-      if (mode != RoleAgentMode.chat) {
-        await tester.ensureVisible(find.text(label));
-        await tester.tap(find.text(label));
-        await tester.pumpAndSettle();
+    expect(find.text('角色模式'), findsNothing);
+    expect(find.text('纯聊天'), findsNothing);
+    expect(find.text('智能体'), findsNothing);
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ContactEditPage)),
+    );
+    await tester.tap(find.byTooltip('创建角色'));
+    await tester.pumpAndSettle();
+    final created = container
+        .read(conversationsProvider)
+        .requireValue
+        .firstWhere((c) => c.id == 'created');
+    expect(created.hasAssistantCapability, isFalse);
+    expect(created.chatDisplayStyle, ChatDisplayStyle.bubble);
+  });
+
+  testWidgets('插件列表支持软件管理开关与旧工具角色延续', (tester) async {
+    final legacy = buildConversation().copyWith(
+      agentMode: RoleAgentMode.tool,
+      enabledPlugins: const ['memory'],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          conversationsProvider.overrideWith(() => _Roles(legacy)),
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[],
+          ),
+        ],
+        child: MaterialApp(
+          home: ContactEditPage(
+            conversation: legacy,
+            initialSnapshot: ContactEditSnapshot.fromConversation(legacy),
+            editMode: EditMode.editConversation,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('enabled-plugin-aicove_assistant')),
+      findsOneWidget,
+    );
+    expect(find.text('软件管理'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const ValueKey('manage-plugins')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('manage-plugins')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('all-plugins-aicove_assistant')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('all-plugins-aicove_assistant')),
+    );
+    await tester.pumpAndSettle();
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('all-plugins-aicove_assistant'))),
+    ).pop();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(ContactEditPage)),
+    );
+    final updated = container.read(conversationsProvider).requireValue.single;
+    expect(updated.hasAssistantCapability, isFalse);
+  });
+
+  testWidgets('AIcove酱 的软件管理显示始终开启且管理弹窗不可关闭', (tester) async {
+    final assistant = buildConversation().copyWith(id: kAicoveAssistantId);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          conversationsProvider.overrideWith(() => _Roles(assistant)),
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[],
+          ),
+        ],
+        child: MaterialApp(
+          home: ContactEditPage(
+            conversation: assistant,
+            initialSnapshot: ContactEditSnapshot.fromConversation(assistant),
+            editMode: EditMode.editConversation,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('软件管理'), findsOneWidget);
+    expect(find.text('始终开启'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const ValueKey('manage-plugins')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('manage-plugins')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('all-plugins-aicove_assistant')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('all-plugins-aicove_assistant')),
+    );
+    await tester.pumpAndSettle();
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey('all-plugins-aicove_assistant'))),
+    ).pop();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('enabled-plugin-aicove_assistant')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('源码渲染预览：统一路由角色编辑页（Mac 窄屏）', (tester) async {
+    const capture = bool.fromEnvironment('WRITE_UNIFIED_ROUTER_PREVIEW');
+    if (!capture) return;
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.runAsync(() async {
+      final font = File('/System/Library/Fonts/STHeiti Medium.ttc');
+      if (await font.exists()) {
+        await (FontLoader('ReleasePreview')
+              ..addFont(font.readAsBytes().then(ByteData.sublistView)))
+            .load();
       }
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(ContactEditPage)),
-      );
-      await tester.tap(find.byTooltip('创建角色'));
-      await tester.pumpAndSettle();
-      final created = container
-          .read(conversationsProvider)
-          .requireValue
-          .firstWhere((c) => c.id == 'created');
-      expect(created.effectiveAgentMode, mode);
-      expect(created.chatDisplayStyle, style);
+      await (FontLoader('packages/lucide_icons/Lucide')
+            ..addFont(rootBundle.load('packages/lucide_icons/assets/lucide.ttf')))
+          .load();
+      final sdk = Platform.environment['FLUTTER_ROOT'];
+      if (sdk != null) {
+        final icons = File(
+          '$sdk/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+        );
+        if (await icons.exists()) {
+          await (FontLoader('MaterialIcons')
+                ..addFont(icons.readAsBytes().then(ByteData.sublistView)))
+              .load();
+        }
+      }
     });
-  }
+
+    final conv = buildConversation().copyWith(
+      displayName: '漫画家',
+      description: '专职分镜与连载的漫画导演，可读其他角色故事继续画',
+      enabledPlugins: const ['tts', 'image', 'memory', 'aicove_assistant'],
+    );
+    final boundary = GlobalKey();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          conversationsProvider.overrideWith(() => _Roles(conv)),
+          presetRecipeListProvider.overrideWith(
+            (ref) async => const <PresetRecipeSummary>[],
+          ),
+        ],
+        child: SkinScope(
+          skin: const MoeTalkSkin(),
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              fontFamily: 'ReleasePreview',
+              extensions: [MoeColors.light()],
+            ),
+            home: RepaintBoundary(
+              key: boundary,
+              child: ContactEditPage(
+                conversation: conv,
+                initialSnapshot: ContactEditSnapshot.fromConversation(conv),
+                editMode: EditMode.editConversation,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.runAsync(() async {
+      final rb =
+          boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final image = await rb.toImage(pixelRatio: 2);
+      try {
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        const outPath = String.fromEnvironment(
+          'UNIFIED_ROUTER_PREVIEW_PATH',
+          defaultValue: '../../scratch/unified_router_role_edit_preview.png',
+        );
+        final file = File(outPath);
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes!.buffer.asUint8List());
+      } finally {
+        image.dispose();
+      }
+    });
+  });
 }
 
 Finder _headerNameField() => find.descendant(

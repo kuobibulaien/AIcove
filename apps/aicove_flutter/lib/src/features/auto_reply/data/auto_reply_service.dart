@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/services/android_keep_alive_manager.dart';
 import '../../chat/conversation_providers.dart';
+import '../../settings/app_settings.dart';
 import 'analyzer_scheduler.dart';
 import 'auto_reply_dispatch_service.dart';
 import 'background_message_reprocessor.dart';
@@ -83,6 +84,25 @@ class AutoReplyService {
       },
     );
     _listenToEvents();
+    AndroidKeepAliveManager.setProactiveAlarmHandler((slot) async {
+      await _ref.read(conversationsProvider.future);
+      await _ref.read(autoReplyTriggersProvider.future);
+      if (slot == 'analyzer') {
+        await _ref.read(analyzerSchedulerProvider).onNativeAlarmFired();
+      } else if (slot == 'trigger') {
+        await _eventQueue.drain();
+        await _ref
+            .read(autoReplyTriggersProvider.notifier)
+            .pollDueTriggersForAlarm();
+        await _eventQueue.drain();
+      }
+    });
+    _ref.listen(
+      appSettingsProvider.select(
+        (settings) => settings.valueOrNull?.autoReplySettings,
+      ),
+      (_, __) => unawaited(_refreshAlarmSchedules()),
+    );
     _ref.listen(conversationsProvider, (previous, next) {
       final before = {
         for (final conversation in previous?.valueOrNull ?? const [])
@@ -129,7 +149,22 @@ class AutoReplyService {
         .listen(_eventQueue.add);
   }
 
+  Future<void> _refreshAlarmSchedules() async {
+    try {
+      await _ref.read(analyzerSchedulerProvider).refreshFromStorage();
+      await _ref.read(autoReplyTriggersProvider.future);
+      await _ref.read(autoReplyTriggersProvider.notifier).reloadFromStorage();
+    } catch (error) {
+      AppLogger.warning(
+        'AutoReplyService',
+        'Failed to refresh proactive alarm schedules',
+        metadata: {'error': error.toString()},
+      );
+    }
+  }
+
   void dispose() {
+    AndroidKeepAliveManager.setProactiveAlarmHandler(null);
     _subscription?.cancel();
     _subscription = null;
   }

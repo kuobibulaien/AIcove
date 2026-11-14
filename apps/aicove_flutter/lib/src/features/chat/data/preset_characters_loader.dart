@@ -20,6 +20,12 @@ class PresetCharactersLoader {
     String personaPrompt = '',
   }) {
     final now = DateTime.now();
+    final legacyMode = RoleAgentMode.fromValue(json['agentMode'] as String?);
+    final plugins = {
+      ...(json['enabledPlugins'] as List?)?.cast<String>() ??
+          kDefaultRolePluginIds,
+      if (legacyMode == RoleAgentMode.tool) 'aicove_assistant',
+    }.toList();
     return Conversation(
       id: json['id'] as String,
       title: json['displayName'] as String,
@@ -29,12 +35,8 @@ class PresetCharactersLoader {
       avatarUrl: json['avatarUrl'] as String?,
       voiceFile: json['voiceFile'] as String?,
       personaPrompt: personaPrompt,
-      agentMode:
-          RoleAgentMode.fromValue(json['agentMode'] as String?) ??
-          RoleAgentMode.chat,
-      enabledPlugins:
-          (json['enabledPlugins'] as List?)?.cast<String>() ??
-          kDefaultRolePluginIds,
+      agentMode: legacyMode,
+      enabledPlugins: plugins,
       chatDisplayStyle: ChatDisplayStyle.fromValue(
         json['chatDisplayStyle'] as String?,
       ),

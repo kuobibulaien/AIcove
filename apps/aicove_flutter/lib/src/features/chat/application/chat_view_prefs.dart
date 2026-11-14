@@ -11,6 +11,7 @@ class ChatViewPrefs {
     this.imagePreviewScale = 1.0,
     this.expandAudioText = true,
     this.hideUserAvatar = true,
+    this.singleAvatarPerTurn = false,
   });
 
   /// 联系人自己的值优先，其次全局值，都没有用默认值。
@@ -25,6 +26,7 @@ class ChatViewPrefs {
         conversation?.expandAudioText ?? settings?.expandAudioText ?? true,
     hideUserAvatar:
         conversation?.hideUserAvatar ?? settings?.hideUserAvatar ?? true,
+    singleAvatarPerTurn: settings?.singleAvatarPerTurn ?? false,
   );
 
   /// 所在聊天的偏好：有 [ChatViewScope] 用它，否则（导出图、备份预览等）
@@ -40,21 +42,27 @@ class ChatViewPrefs {
   final double imagePreviewScale;
   final bool expandAudioText;
   final bool hideUserAvatar;
+  final bool singleAvatarPerTurn;
 
   @override
   bool operator ==(Object other) =>
       other is ChatViewPrefs &&
       other.imagePreviewScale == imagePreviewScale &&
       other.expandAudioText == expandAudioText &&
-      other.hideUserAvatar == hideUserAvatar;
+      other.hideUserAvatar == hideUserAvatar &&
+      other.singleAvatarPerTurn == singleAvatarPerTurn;
 
   @override
-  int get hashCode =>
-      Object.hash(imagePreviewScale, expandAudioText, hideUserAvatar);
+  int get hashCode => Object.hash(
+    imagePreviewScale,
+    expandAudioText,
+    hideUserAvatar,
+    singleAvatarPerTurn,
+  );
 }
 
 /// 把一个联系人已经算好的 [ChatViewPrefs] 交给下面的消息气泡。由手里有会话的
-/// 页面提供，气泡不必为读三个字段去监听整个会话列表。
+/// 页面提供，气泡不必为读取显示偏好去监听整个会话列表。
 class ChatViewScope extends InheritedWidget {
   const ChatViewScope({super.key, required this.prefs, required super.child});
 

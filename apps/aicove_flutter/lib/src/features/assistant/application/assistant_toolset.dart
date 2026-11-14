@@ -308,8 +308,7 @@ class AssistantToolset {
             entry.key: entry.value.name,
         },
       if (role.sessionProvider != null) 'model_override': role.sessionProvider,
-      // chat：只派活；tool：完整 Agent 直接用插件（ADR0097）。AIcove酱恒为 tool。
-      'agent_mode': role.effectiveAgentMode.name,
+      'has_assistant_capability': role.hasAssistantCapability,
       'has_avatar': (role.avatarUrl ?? role.characterImage) != null,
       'chat_view': {
         // What the user picked for this chat; `follow` means none.

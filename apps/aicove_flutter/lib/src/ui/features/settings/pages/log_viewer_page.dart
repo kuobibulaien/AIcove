@@ -12,6 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../../core/api_logger.dart' show ApiLogEntry, ApiLogger;
 import '../../../../core/app_logger.dart';
+import '../../../../core/media/media_store.dart';
+import '../../../../features/observability/model_request_ledger.dart';
 import '../../../../features/observability/trace_models.dart';
 import '../../../../features/observability/frontend_diagnostics_provider.dart';
 import '../../../../features/observability/trace_query_service.dart';
@@ -172,16 +174,35 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   Map<String, dynamic>? _selectedTracePayload;
   bool _tracePayloadLoading = false;
   int _tracePayloadToken = 0;
+  String? _localDeviceId;
 
   @override
   void initState() {
     super.initState();
+    _loadLocalDeviceId();
     _loadHideBeforeTime();
     _loadLevelFilter();
     _loadTypeFilter();
     _loadTraceEvents();
     TraceStore.instance.entries.addListener(_onTraceEntriesChanged);
     _scheduleScrollToBottom();
+  }
+
+  Future<void> _loadLocalDeviceId() async {
+    try {
+      final id = await MediaStore.localDeviceId;
+      if (mounted) {
+        setState(() => _localDeviceId = id);
+      }
+    } catch (_) {
+      // 测试或异常环境下跳过按本机过滤。
+    }
+  }
+
+  List<ModelRunRecord> _filterRemoteRuns(List<ModelRunRecord> runs) {
+    final localId = _localDeviceId;
+    if (localId == null || localId.isEmpty) return const [];
+    return runs.where((run) => run.deviceId != localId).toList(growable: false);
   }
 
   Future<void> _loadHideBeforeTime() async {
@@ -555,6 +576,9 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   }
 
   Widget _buildBody() {
+    final remoteRuns = _filterRemoteRuns(
+      ref.watch(modelRunsProvider).valueOrNull ?? const <ModelRunRecord>[],
+    );
     return Column(
       children: [
         _buildFilterBar(),
@@ -568,7 +592,7 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
                   if (_typeFilter == LogTypeFilter.conversation) {
                     return _buildTraceConversationView();
                   }
-                  return _buildUnifiedList(apiLogs, systemLogs);
+                  return _buildUnifiedList(apiLogs, systemLogs, remoteRuns);
                 },
               );
             },
@@ -599,10 +623,12 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   Widget _buildUnifiedList(
     List<ApiLogEntry> apiLogs,
     List<LogEntry> systemLogs,
+    List<ModelRunRecord> remoteRuns,
   ) {
     final entries = buildUnifiedEntries(
       apiLogs,
       systemLogs,
+      remoteModelRuns: remoteRuns,
       hideBeforeTime: _hideBeforeTime,
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,
@@ -720,10 +746,15 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
     });
   }
 
+  List<ModelRunRecord> _currentRemoteRuns() => _filterRemoteRuns(
+        ref.read(modelRunsProvider).valueOrNull ?? const <ModelRunRecord>[],
+      );
+
   void _selectAll() {
     final entries = buildUnifiedEntries(
       ApiLogger.entries.value,
       AppLogger.entries.value,
+      remoteModelRuns: _currentRemoteRuns(),
       hideBeforeTime: _hideBeforeTime,
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,
@@ -749,6 +780,7 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
     final entries = buildUnifiedEntries(
       ApiLogger.entries.value,
       AppLogger.entries.value,
+      remoteModelRuns: _currentRemoteRuns(),
       hideBeforeTime: _hideBeforeTime,
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,
@@ -781,6 +813,7 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
     var entries = buildUnifiedEntries(
       ApiLogger.entries.value,
       AppLogger.entries.value,
+      remoteModelRuns: _currentRemoteRuns(),
       hideBeforeTime: _hideBeforeTime,
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,

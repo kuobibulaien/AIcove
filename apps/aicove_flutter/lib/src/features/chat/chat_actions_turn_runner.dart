@@ -101,6 +101,12 @@ extension ChatActionsTurnRunner on ChatActions {
       if (finishOnFailure) await _finishGeneration(convId, runId);
       rethrow;
     }
+    try {
+      final remoteRuns = await ModelRequestLedger.instance.activeRemoteRunsForConversation(convId);
+      _ref.read(conversationRemoteRunningNoticeProvider(convId).notifier).state = remoteRuns.isEmpty ? null : '另一台设备（${remoteRuns.first.deviceName}）正在生成回复，已继续在本机发送';
+    } catch (error) {
+      AppLogger.warning('ModelRequestLedger', '读取模型请求记录失败', metadata: {'error': '$error'});
+    }
     onUserCommitted?.call(userMsg);
     if (edit != null) {
       try {
@@ -242,7 +248,10 @@ extension ChatActionsTurnRunner on ChatActions {
                 streamDelivery?.setTransportStreaming(
                   config.presetScript?.hasContentTransport ?? false,
                 );
-                return execute(config);
+                return execute(config.copyWith(
+                  onTransportStreamingChanged: (enabled) =>
+                      streamDelivery?.setTransportStreaming(enabled),
+                ));
               },
               settings: settings,
             ),

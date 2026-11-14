@@ -207,10 +207,8 @@ python3 tool/collect_diagnostics.py --from-dir "$HOME/Library/Containers/com.exa
 | Claude Code | `.mcp.json`、`.claude/settings.json` | 已仅启用项目 `dart` 服务；新机器仍遵守客户端的工作区信任机制 |
 | Pi | `.mcp.json`、`.pi/settings.json`、`.pi/mcp.json` | 项目声明 `pi-mcp-adapter`，Pi 专属覆盖启用直接工具；已有会话用 `/reload`。本机复用已安装的 adapter 2.31.0，未改全局 `parallel-search` |
 | Gemini CLI | `.gemini/settings.json` | 项目级 `mcpServers`，重新加载 MCP 或会话后使用 |
-| Cursor | `.cursor/mcp.json` | 从根目录打开项目，加载工作区 MCP |
 | VS Code／Copilot | `.vscode/mcp.json` | 从根目录打开项目，通过 `MCP: List Servers` 查看／启动 |
 | Antigravity CLI | `.agents/mcp_config.json` | 使用官方项目 MCP 配置入口 |
-| OpenCode | `opencode.json` | 项目级 local MCP，已启用 |
 
 支持 stdio MCP 的其它 harness 可导入根 `.mcp.json`，或将 `bash /当前仓库/apps/aicove_flutter/tool/dart_mcp_server` 配成项目工具。没有原生 MCP、忽略项目配置或通过 Host 注入独立配置的 harness，使用下面的命令行客户端；不能把写入一个配置文件描述成任意宿主都已自动加载。
 
@@ -343,8 +341,8 @@ flutter test --no-pub test/core/database/chat_entry_indexes_test.dart test/featu
 源码可以公开，隐私不能公开。公开仓库：GitHub `kuobibulaien/AIcove`；本地仓库不设 remote，禁止直接 push。
 
 ```bash
-python3 apps/aicove_flutter/tool/publish_release.py 0.1.0-test.5          # 停在发布前
-python3 apps/aicove_flutter/tool/publish_release.py 0.1.0-test.5 --notes <说明文件> --publish
+python3 apps/aicove_flutter/tool/publish_release.py 0.5.1          # 停在发布前
+python3 apps/aicove_flutter/tool/publish_release.py 0.5.1 --notes <说明文件> --publish
 ```
 
 - 脚本在 `/private/tmp/aicove-release-<版本>/` 隔离目录里依次完成：`git archive`、删除第三方预设原件及引用它们的测试、脱敏（本机用户名、git 邮箱、`/home/` 路径、设备序列号；额外的私密词放在 `~/.config/aicove/release_private.json`，不入库）、隐私扫描、同步公开仓库、卫生测试。为什么必须在隔离目录构建，见[经验教训「公开安装包不能在本机仓库路径下构建」](../../../docs/项目记忆/经验教训.md)。

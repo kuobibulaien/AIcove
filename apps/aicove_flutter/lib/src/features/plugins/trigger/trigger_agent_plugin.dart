@@ -18,6 +18,7 @@ AicovePlugin triggerAgentPlugin(TriggerPlugin registered) => AicovePlugin(
             registered,
             conversationId: inputs.conversationId ?? '',
             pluginPrompts: inputs.pluginPrompts,
+            supportsToolCalling: inputs.supportsToolCalling,
           ),
         );
         registrar.add(
@@ -35,10 +36,12 @@ class TriggerRequestScope extends PluginRequestScope {
     this.plugin, {
     String? conversationId,
     this.pluginPrompts,
+    this.supportsToolCalling = true,
   })
       : conversationId = conversationId?.trim() ?? '';
 
   final TriggerPlugin plugin;
+  final bool supportsToolCalling;
   final PluginPrompts? pluginPrompts;
   final String conversationId;
 
@@ -52,7 +55,9 @@ class TriggerRequestScope extends PluginRequestScope {
   bool get active => plugin.enabledForConversation(conversationId);
 
   @override
-  List<AITool> tools() => plugin.getTools(
+  List<AITool> tools() => !active || !supportsToolCalling
+      ? const []
+      : plugin.getTools(
         conversationId: conversationId,
         prompts: pluginPrompts,
       );

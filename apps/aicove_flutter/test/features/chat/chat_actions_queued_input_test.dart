@@ -378,12 +378,14 @@ void main() {
   group('聊天模式', () {
     setUp(() => setUpFixture(RoleAgentMode.chat));
 
-    test('运行中也不接受插话或排队', () async {
+    test('运行中同样接受插话，并在工具结束后按角色回复', () async {
       final send = actions().send('找文件');
       await secondEntered.future.timeout(const Duration(seconds: 10));
-      expect(actions().queueWhileRunning('插一句', steer: true), isFalse);
+      expect(actions().queueWhileRunning('插一句', steer: true), isTrue);
       releaseSecond.complete();
       await send;
+      await waitForReply('收到：插一句');
+      expect(requests['找文件'], 2);
     });
   });
 }

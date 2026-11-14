@@ -58,3 +58,10 @@ final conversationHasMoreProvider =
         orElse: () => true,
       );
 });
+
+final conversationHiddenPieceIdsProvider =
+    StreamProvider.autoDispose.family<Set<String>, String>(
+  (ref, conversationId) => ref
+      .watch(conversationTimelineCacheProvider)
+      .watchHiddenPieceIds(conversationId),
+);

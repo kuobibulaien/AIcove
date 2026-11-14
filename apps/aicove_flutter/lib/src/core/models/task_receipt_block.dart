@@ -30,6 +30,9 @@ abstract final class TaskReceiptLimits {
   static const fieldBytes = 2048;
   static const artifacts = 20;
   static const blockBytes = 8192;
+  static const detailChars = 16000;
+  static const detailBytes = 49152;
+  static const detailBlockBytes = 57344;
 }
 
 class TaskReceiptBlock extends TextBlock {
@@ -42,6 +45,7 @@ class TaskReceiptBlock extends TextBlock {
     required this.receiptStatus,
     required this.summary,
     required this.question,
+    required this.detail,
     required this.artifacts,
     required this.executorDevice,
     required this.sideEffectUncertain,
@@ -67,6 +71,7 @@ class TaskReceiptBlock extends TextBlock {
     required TaskReceiptStatus receiptStatus,
     String summary = '',
     String? question,
+    String? detail,
     List<TaskArtifact> artifacts = const [],
     required String executorDevice,
     bool sideEffectUncertain = false,
@@ -74,7 +79,11 @@ class TaskReceiptBlock extends TextBlock {
   }) {
     var truncated = false;
     String cut(String text, int chars) {
-      final result = _truncate(text.trim(), chars, TaskReceiptLimits.fieldBytes);
+      final result = _truncate(
+        text.trim(),
+        chars,
+        TaskReceiptLimits.fieldBytes,
+      );
       if (result != text.trim()) truncated = true;
       return result;
     }
@@ -88,6 +97,15 @@ class TaskReceiptBlock extends TextBlock {
     var shortQuestion = question == null
         ? null
         : cut(question, TaskReceiptLimits.questionChars);
+    final cleanDetail = detail?.trim();
+    var shortDetail = cleanDetail == null || cleanDetail.isEmpty
+        ? null
+        : _truncate(
+            cleanDetail,
+            TaskReceiptLimits.detailChars,
+            TaskReceiptLimits.detailBytes,
+          );
+    if (shortDetail != null && shortDetail != cleanDetail) truncated = true;
     TaskReceiptBlock build() => TaskReceiptBlock._(
       id: id,
       messageId: messageId,
@@ -96,6 +114,7 @@ class TaskReceiptBlock extends TextBlock {
       receiptStatus: receiptStatus,
       summary: shortSummary,
       question: shortQuestion,
+      detail: shortDetail,
       artifacts: kept,
       executorDevice: executorDevice,
       sideEffectUncertain: sideEffectUncertain,
@@ -104,9 +123,14 @@ class TaskReceiptBlock extends TextBlock {
     );
 
     var block = build();
-    while (block.byteSize > TaskReceiptLimits.blockBytes) {
+    while (block.byteSize >
+        (shortDetail == null
+            ? TaskReceiptLimits.blockBytes
+            : TaskReceiptLimits.detailBlockBytes)) {
       truncated = true;
-      if (kept.isNotEmpty) {
+      if (shortDetail != null && shortDetail.isNotEmpty) {
+        shortDetail = _truncate(shortDetail, shortDetail.length ~/ 2, 1 << 30);
+      } else if (kept.isNotEmpty) {
         kept = kept.sublist(0, kept.length ~/ 2);
       } else if ((shortQuestion?.length ?? 0) > 0) {
         shortQuestion = _truncate(
@@ -115,7 +139,11 @@ class TaskReceiptBlock extends TextBlock {
           1 << 30,
         );
       } else if (shortSummary.isNotEmpty) {
-        shortSummary = _truncate(shortSummary, shortSummary.length ~/ 2, 1 << 30);
+        shortSummary = _truncate(
+          shortSummary,
+          shortSummary.length ~/ 2,
+          1 << 30,
+        );
       } else {
         break;
       }
@@ -131,6 +159,10 @@ class TaskReceiptBlock extends TextBlock {
   final TaskReceiptStatus receiptStatus;
   final String summary;
   final String? question;
+  final String? detail;
+  String get expandedContent => (detail == null || detail!.isEmpty)
+      ? content
+      : '$content\n\n## 提取素材\n$detail';
   final List<TaskArtifact> artifacts;
   final String executorDevice;
 
@@ -180,9 +212,13 @@ class TaskReceiptBlock extends TextBlock {
       receiptStatus: _statusOf(record['status']),
       summary: record['summary'] as String? ?? '',
       question: record['question'] as String?,
+      detail: (record['detail'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : record['detail'] as String?,
       artifacts: [
         for (final item in record['artifacts'] as List? ?? const [])
-          if (item is Map) TaskArtifact.fromJson(Map<String, dynamic>.from(item)),
+          if (item is Map)
+            TaskArtifact.fromJson(Map<String, dynamic>.from(item)),
       ],
       executorDevice: record['executor_device'] as String? ?? '',
       sideEffectUncertain: record['side_effect_uncertain'] == true,
@@ -225,6 +261,7 @@ class TaskReceiptBlock extends TextBlock {
       'status': statusName(receiptStatus),
       'summary': summary,
       if (question != null) 'question': question,
+      if (detail != null && detail!.isNotEmpty) 'detail': detail,
       if (artifacts.isNotEmpty)
         'artifacts': [for (final item in artifacts) item.toJson()],
       'executor_device': executorDevice,

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import '../../../core/utils/message_formatter.dart';
 import '../../settings/app_settings.dart';
@@ -331,12 +332,20 @@ String? _hexColor(String value) {
   return RegExp(r'^[0-9A-F]{6}$').hasMatch(hex) ? hex : null;
 }
 
-/// A custom color also switches the skin, so undo puts the skin and both
+String _colorHex(Color color) => color
+    .toARGB32()
+    .toRadixString(16)
+    .padLeft(8, '0')
+    .substring(2)
+    .toUpperCase();
+
+/// A custom color also switches the skin, so undo puts the skin and its
 /// colors back together.
 Map<String, Object?> _skinState(AppSettings s) => {
   'skin': s.interfaceSkin.value,
   'accent': s.accentColor,
-  'chat_background': s.chatBackgroundColor.value,
+  // Left out while unset, so records from before the dark color still match.
+  if (s.darkAccentColorHex != null) 'dark_accent': s.darkAccentColorHex,
 };
 
 Future<void> _restoreSkin(
@@ -350,9 +359,7 @@ Future<void> _restoreSkin(
         InterfaceSkin.tryParse(record['skin'] as String?) ??
         InterfaceSkin.custom,
     accentColor: record['accent'] as String,
-    chatBackground: ChatBackgroundColor.fromValue(
-      record['chat_background'] as String?,
-    ),
+    darkAccentColor: record['dark_accent'] as String?,
   );
 }
 
@@ -465,10 +472,10 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'appearance.skin',
-    label: '界面皮肤',
-    page: '设置 · 通用 · 外观',
+    label: '主题色',
+    page: '设置 · 通用 · 外观 · 主题色',
     type: 'enum',
-    options: {for (final skin in InterfaceSkin.presets) skin.value: skin.label},
+    options: {for (final skin in InterfaceSkin.values) skin.value: skin.label},
     read: (s) => s.interfaceSkin.value,
     write: (n, v, _) =>
         n.setInterfaceSkin(InterfaceSkin.tryParse(v! as String)!),
@@ -476,7 +483,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'appearance.text_scale',
     label: '文字大小',
-    page: '设置 · 通用 · 显示',
+    page: '设置 · 通用 · 聊天界面 · 大小',
     type: 'number',
     min: kMinTextScaleFactor,
     max: kMaxTextScaleFactor,
@@ -486,7 +493,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'appearance.ui_scale',
     label: '界面缩放',
-    page: '设置 · 通用 · 显示',
+    page: '设置 · 通用 · 聊天界面 · 大小',
     type: 'number',
     min: kMinUiScaleFactor,
     max: kMaxUiScaleFactor,
@@ -496,7 +503,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.display_style',
     label: '新会话默认样式',
-    page: '设置 · 通用 · 新会话默认',
+    page: '设置 · 通用 · 聊天界面 · 样式',
     type: 'enum',
     options: const {'bubble': '气泡', 'document': '文档'},
     read: (s) => s.chatDisplayStyle.name,
@@ -530,7 +537,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.bubble_show_thinking',
     label: '气泡模式显示思维链',
-    page: '聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
+    page: '设置 · 通用 · 聊天界面 · 其他；聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
     type: 'bool',
     read: (s) => s.bubbleShowThinking,
     write: (n, v, _) => n.setBubbleShowThinking(v! as bool),
@@ -538,7 +545,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.document_show_thinking',
     label: '文档模式显示思维链',
-    page: '聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
+    page: '设置 · 通用 · 聊天界面 · 其他；聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
     type: 'bool',
     read: (s) => s.documentShowThinking,
     write: (n, v, _) => n.setDocumentShowThinking(v! as bool),
@@ -546,7 +553,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.document_show_tool_calls',
     label: '文档模式显示工具调用',
-    page: '聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
+    page: '设置 · 通用 · 聊天界面 · 样式 · 文档；聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
     type: 'bool',
     read: (s) => s.documentShowToolCalls,
     write: (n, v, _) => n.setDocumentShowToolCalls(v! as bool),
@@ -554,7 +561,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.message_chunking',
     label: '新会话默认消息分段',
-    page: '设置 · 通用 · 新会话默认',
+    page: '设置 · 通用 · 聊天界面 · 样式 · 气泡',
     type: 'bool',
     // The chat reads the format config; `message_chunking_enabled` is a
     // legacy field nothing splits by any more.
@@ -566,15 +573,23 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.hide_user_avatar',
     label: '新会话默认隐藏用户头像',
-    page: '设置 · 通用 · 新会话默认',
+    page: '设置 · 通用 · 聊天界面 · 其他',
     type: 'bool',
     read: (s) => s.hideUserAvatar,
     write: (n, v, _) => n.setHideUserAvatar(v! as bool),
   ),
   AssistantSetting(
+    key: 'chat.single_avatar_per_turn',
+    label: '单轮聊天只显示一次头像',
+    page: '设置 · 通用 · 聊天界面 · 其他；聊天页「更多 · 聊天界面 · 界面 · 更多选项」',
+    type: 'bool',
+    read: (s) => s.singleAvatarPerTurn,
+    write: (n, v, _) => n.setSingleAvatarPerTurn(v! as bool),
+  ),
+  AssistantSetting(
     key: 'chat.expand_audio_text',
     label: '新会话默认展开语音文字',
-    page: '设置 · 通用 · 新会话默认',
+    page: '设置 · 通用 · 聊天界面 · 其他',
     type: 'bool',
     read: (s) => s.expandAudioText,
     write: (n, v, _) => n.setExpandAudioText(v! as bool),
@@ -719,8 +734,8 @@ final List<AssistantSetting> kAssistantSettings = [
   ),
   AssistantSetting(
     key: 'appearance.accent_color',
-    label: '主题色（六位十六进制，如 FC96AA；改了会切到自定义皮肤）',
-    page: '设置 · 通用 · 高级 · 自定义皮肤',
+    label: '浅色模式主题色（六位十六进制，如 FC96AA；改了会切到自定义主题色）',
+    page: '设置 · 通用 · 外观 · 主题色 · 自定义',
     type: 'string',
     validate: (_, v) =>
         _hexColor(v! as String) == null ? '颜色要写成六位十六进制，如 FC96AA' : null,
@@ -735,29 +750,27 @@ final List<AssistantSetting> kAssistantSettings = [
     restore: _restoreSkin,
   ),
   AssistantSetting(
-    key: 'appearance.chat_background',
-    label: '聊天背景色（改了会切到自定义皮肤）',
-    page: '设置 · 通用 · 高级 · 自定义皮肤',
-    type: 'enum',
-    options: {
-      for (final color in ChatBackgroundColor.values) color.value: color.label,
-    },
-    read: (s) => s.chatBackgroundColor.value,
-    write: (n, v, _) => n.setCustomSkin(
-      chatBackground: ChatBackgroundColor.fromValue(v! as String),
-    ),
+    key: 'appearance.dark_accent_color',
+    label: '深色模式主题色（六位十六进制，如 D4AF37；改了会切到自定义主题色）',
+    page: '设置 · 通用 · 外观 · 主题色 · 自定义',
+    type: 'string',
+    validate: (_, v) =>
+        _hexColor(v! as String) == null ? '颜色要写成六位十六进制，如 D4AF37' : null,
+    read: (s) => _colorHex(s.copyWith(interfaceSkin: InterfaceSkin.custom).darkAccentColor),
+    write: (n, v, _) =>
+        n.setCustomSkin(darkAccentColor: _hexColor(v! as String)),
     stateOf: _skinState,
     nextState: (s, v) => {
       ..._skinState(s),
       'skin': InterfaceSkin.custom.value,
-      'chat_background': v,
+      'dark_accent': _hexColor(v! as String),
     },
     restore: _restoreSkin,
   ),
   AssistantSetting(
     key: 'chat.filter_punctuation',
     label: '省略句末标点（全局，分段后去掉每段末尾的标点）',
-    page: '设置「通用设置 · 消息分段」',
+    page: '设置「通用设置 · 聊天界面 · 样式 · 气泡」',
     type: 'bool',
     read: (s) => s.messageFormatConfig.filterPunctuation,
     write: (n, v, s) => n.updateMessageFormatConfig(
@@ -767,7 +780,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.filter_punctuations',
     label: '要省略的句末标点（空格分隔；「省略句末标点」开着才生效）',
-    page: '设置「通用设置 · 消息分段」',
+    page: '设置「通用设置 · 聊天界面 · 样式 · 气泡」',
     type: 'string',
     read: (s) => s.messageFormatConfig.filterPunctuations.join(' '),
     nextState: (_, v) =>
@@ -781,7 +794,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.chunk_punctuation_set',
     label: '分段标点方案（全局）',
-    page: '设置「通用设置 · 消息分段 · 分段标点」',
+    page: '设置「通用设置 · 聊天界面 · 样式 · 气泡 · 分段标点」',
     type: 'string',
     choicesOf: (s) => {
       for (final set in s.messageFormatConfig.chunkPunctuationSets)
@@ -807,7 +820,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'chat.chunk_punctuations',
     label: '当前分段标点方案里的标点（空格分隔；空字符串表示这套不按标点切）',
-    page: '设置「通用设置 · 消息分段 · 分段标点」',
+    page: '设置「通用设置 · 聊天界面 · 样式 · 气泡 · 分段标点」',
     type: 'string',
     read: (s) =>
         s.messageFormatConfig.activeChunkPunctuationSet?.punctuations.join(' '),
@@ -894,7 +907,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'window.close_behavior',
     label: '关闭窗口时（Windows）',
-    page: '设置 · 通用 · 高级',
+    page: '设置 · 通用 · 窗口',
     type: 'enum',
     options: {
       for (final behavior in WindowsCloseBehavior.values)
@@ -908,7 +921,7 @@ final List<AssistantSetting> kAssistantSettings = [
   AssistantSetting(
     key: 'window.controls_side',
     label: '窗口按钮位置（Windows）',
-    page: '设置 · 通用 · 高级',
+    page: '设置 · 通用 · 窗口',
     type: 'enum',
     options: {
       for (final side in WindowControlButtonSide.values) side.value: side.label,

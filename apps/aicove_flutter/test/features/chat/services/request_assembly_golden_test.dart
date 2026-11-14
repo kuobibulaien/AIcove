@@ -353,10 +353,16 @@ void main() {
             userText: '帮我画一只猫',
           );
 
+      if (const {'no_plugins', 'image_only', 'tts_enabled', 'mcp_not_enabled'}.contains(s.name)) {
+        expect(config.tools, isNull);
+        expect(config.boundTools, isEmpty);
+      }
+      if (s.name == 'all_plugins_fast') {
+        expect(config.boundTools!.map((tool) => tool.name).toSet(), {'reminder'});
+      }
       if (s.preset && !s.presetTools) {
-        final expectedTools = s.agentMode == RoleAgentMode.tool && s.tools;
-        expect(config.tools?.isNotEmpty ?? false, expectedTools);
-        expect((config.boundTools ?? []).any((t) => t.name == 'aicove_update_role'), expectedTools);
+        expect(config.tools, isNull);
+        expect(config.boundTools, isEmpty);
       }
       for (final tool in config.boundTools ?? []) {
         if (tool.name != 'draw_image') continue;
@@ -371,7 +377,7 @@ void main() {
       final actual =
           const JsonEncoder.withIndent('  ').convert(_snapshot(config));
       final file = File('${goldenDir.path}/${s.name}.json');
-      if (update) {
+      if (update && !{'no_plugins', 'image_only'}.contains(s.name)) {
         await file.create(recursive: true);
         await file.writeAsString('$actual\n');
       }

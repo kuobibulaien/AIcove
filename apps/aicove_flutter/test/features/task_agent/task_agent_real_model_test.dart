@@ -54,6 +54,7 @@ class _Port implements DelegateTaskPort {
     required String conversationId,
     required String instruction,
     required String? callKey,
+    bool readOnly = false,
   }) async {
     final task = await service.start(
       conversationId: conversationId,
@@ -156,7 +157,7 @@ void main() {
                 cancellation: cancellation,
               ),
         ),
-        capabilities: (_, _, _) async =>
+        capabilities: (_, _, _, {bool readOnly = false}) async =>
             TaskAgentCapabilities(tools: [weather]),
         writeReceipt: (receipt) async => receipts.add(receipt),
         relay: (_, _) async => true,

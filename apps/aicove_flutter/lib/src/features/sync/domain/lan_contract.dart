@@ -12,7 +12,28 @@ const lanKinds = {
   'messages',
   'settings',
   'plugin_presets',
+  ...lanContextMemoryKinds,
 };
+const lanContextMemoryKinds = {
+  'context_summaries',
+  'memory_items',
+  'memory_progress',
+};
+
+int compareLanManifestCursors(
+  String a,
+  String b, {
+  bool includeContextMemory = false,
+}) {
+  if (a.isEmpty || b.isEmpty) return a.compareTo(b);
+  if (includeContextMemory) {
+    final ap = a.startsWith('conversations/') ? 0 : 1;
+    final bp = b.startsWith('conversations/') ? 0 : 1;
+    if (ap != bp) return ap.compareTo(bp);
+  }
+  return a.compareTo(b);
+}
+
 const lanSettingKinds = {'conversations', 'providers', 'settings'};
 const lanMaxDocumentBytes = 4 * 1024 * 1024;
 
@@ -313,6 +334,42 @@ Map<String, dynamic>? _mergeSettings(
 /// Deterministic joins can be independently calculated by every peer.
 List<LanRevision> reduceLanHeads(Iterable<LanRevision> input) {
   var heads = {for (final r in input) r.hash: r}.values.toList();
+  if (heads.length > 1 &&
+      heads.every(
+        (r) =>
+            r.kind == 'memory_progress' &&
+            !r.deleted &&
+            r.key == heads.first.key &&
+            r.payload['row'] is Map,
+      )) {
+    int compare(LanRevision a, LanRevision b) {
+      final ar = a.payload['row'] as Map, br = b.payload['row'] as Map;
+      final generation = ((ar['generation'] as num?) ?? 0).compareTo(
+        (br['generation'] as num?) ?? 0,
+      );
+      if (generation != 0) return generation;
+      final until = ((ar['until_at'] as num?) ?? -1).compareTo(
+        (br['until_at'] as num?) ?? -1,
+      );
+      if (until != 0) return until;
+      final updated = ((ar['updated_at'] as num?) ?? 0).compareTo(
+        (br['updated_at'] as num?) ?? 0,
+      );
+      return updated != 0 ? updated : a.hash.compareTo(b.hash);
+    }
+
+    heads.sort(compare);
+    final chosen = heads.last;
+    return [
+      LanRevision(
+        kind: chosen.kind,
+        id: chosen.id,
+        vector: joinLanVectors(heads.map((r) => r.vector)),
+        payload: chosen.payload,
+        mediaIds: chosen.mediaIds,
+      ),
+    ];
+  }
   heads =
       heads
           .where(

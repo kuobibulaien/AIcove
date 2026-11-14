@@ -45,7 +45,7 @@ class Conversation {
   final bool isMuted;
   final bool notificationSound;
 
-  // Plugin settings: null means allow all
+  // Plugin settings: null allows ordinary built-ins, not software management.
   final List<String>? enabledPlugins;
 
   // SillyTavern preset recipe ID
@@ -82,10 +82,21 @@ class Conversation {
   // 角色工作模式（ADR0097）；null 为聊天模式，AIcove酱恒为工具模式
   final RoleAgentMode? agentMode;
 
-  /// 实际生效的工作模式：AIcove酱固定工具模式，其余角色没设过时为聊天模式。
+  /// 旧模式兼容读取：AIcove酱固定工具模式，其余角色没设过时为聊天模式。
+  /// 后端能力由插件决定，不再由此值控制。
   RoleAgentMode get effectiveAgentMode => id == kAicoveAssistantId
       ? RoleAgentMode.tool
       : agentMode ?? RoleAgentMode.chat;
+
+  /// Software management is opt-in; old tool roles retain their capability.
+  bool get hasAssistantCapability =>
+      id == kAicoveAssistantId ||
+      enabledPlugins?.contains('aicove_assistant') == true ||
+      agentMode == RoleAgentMode.tool;
+
+  bool isPluginEnabled(String pluginId) => pluginId.trim() == 'aicove_assistant'
+      ? hasAssistantCapability
+      : allowsPlugin(pluginId);
 
   // 上下文截断：新话题起始消息ID，此ID之后的消息才纳入AI上下文
   final String? contextStartMessageId;
@@ -140,6 +151,9 @@ class Conversation {
 
   bool allowsPlugin(String pluginId) {
     final normalizedPluginId = pluginId.trim();
+    if (normalizedPluginId == 'aicove_assistant') {
+      return hasAssistantCapability;
+    }
     if (normalizedPluginId.isEmpty) {
       return true;
     }
@@ -317,13 +331,16 @@ class Conversation {
       blurredBackground: blurredBackground == _sentinel
           ? this.blurredBackground
           : blurredBackground as String?,
-      selfAddress:
-          selfAddress == _sentinel ? this.selfAddress : selfAddress as String?,
-      addressUser:
-          addressUser == _sentinel ? this.addressUser : addressUser as String?,
+      selfAddress: selfAddress == _sentinel
+          ? this.selfAddress
+          : selfAddress as String?,
+      addressUser: addressUser == _sentinel
+          ? this.addressUser
+          : addressUser as String?,
       voiceFile: voiceFile == _sentinel ? this.voiceFile : voiceFile as String?,
-      description:
-          description == _sentinel ? this.description : description as String?,
+      description: description == _sentinel
+          ? this.description
+          : description as String?,
       personaPrompt: personaPrompt ?? this.personaPrompt,
       messages: messages ?? this.messages,
       createdAt: createdAt ?? this.createdAt,
@@ -356,8 +373,9 @@ class Conversation {
       hideUserAvatar: hideUserAvatar == _sentinel
           ? this.hideUserAvatar
           : hideUserAvatar as bool?,
-      chunkEnabled:
-          chunkEnabled == _sentinel ? this.chunkEnabled : chunkEnabled as bool?,
+      chunkEnabled: chunkEnabled == _sentinel
+          ? this.chunkEnabled
+          : chunkEnabled as bool?,
       filterPunctuation: filterPunctuation == _sentinel
           ? this.filterPunctuation
           : filterPunctuation as bool?,
@@ -370,8 +388,9 @@ class Conversation {
       contextStartMessageId: contextStartMessageId == _sentinel
           ? this.contextStartMessageId
           : contextStartMessageId as String?,
-      lastMessage:
-          lastMessage == _sentinel ? this.lastMessage : lastMessage as String?,
+      lastMessage: lastMessage == _sentinel
+          ? this.lastMessage
+          : lastMessage as String?,
       lastMessageTime: lastMessageTime == _sentinel
           ? this.lastMessageTime
           : lastMessageTime as DateTime?,

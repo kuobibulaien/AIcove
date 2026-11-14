@@ -119,6 +119,17 @@ class AgentTaskStore {
     [conversationId],
   );
 
+  /// Active work for foreground task controls, newest first.
+  Future<List<AgentTask>> activeByConversation(
+    String conversationId, {
+    int limit = 5,
+  }) => _many(
+    'SELECT * FROM agent_tasks WHERE conversation_id=? '
+    "AND status IN ('queued','running','needs_input') "
+    'ORDER BY created_at DESC LIMIT ?',
+    [conversationId, limit],
+  );
+
   /// Deleting a conversation stops work without producing another receipt.
   Future<void> abortForDeletedConversation(String conversationId) =>
       _db.transaction(() async {
@@ -171,6 +182,7 @@ class AgentTaskStore {
     required String executorDevice,
     String summary = '',
     String? question,
+    String? detail,
     List<TaskArtifact> artifacts = const [],
   }) => _db.transaction(() async {
     final task = await get(id);
@@ -185,6 +197,7 @@ class AgentTaskStore {
       receiptStatus: to.receiptStatus!,
       summary: summary,
       question: question,
+      detail: detail,
       artifacts: artifacts,
       executorDevice: executorDevice,
       // Only a stopped run leaves an outside effect in doubt (ADR0088 §4).

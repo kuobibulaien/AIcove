@@ -26,7 +26,8 @@ Agent 日常开发使用常驻调试会话与 Dart MCP，命令见 [DEVELOPMENT.
 - `lib/src/features/`：本地后端，一个业务一个目录
 - `lib/src/core/`：横切能力（供应商适配、数据库、网络、媒体、工具）
 - `assets/`：静态资源与默认提示词 JSON
-- `test/`、`integration_test/`、`test_contract/`：测试
+- `packages/`：本地包（Agent 内核、JS 运行底座、局域网发现补丁）
+- `test/`、`test_contract/`：测试
 - `tool/`：开发工具与说明（[DIAGNOSTICS.md](tool/DIAGNOSTICS.md)）
 - `third_party/`：本地补丁依赖
 

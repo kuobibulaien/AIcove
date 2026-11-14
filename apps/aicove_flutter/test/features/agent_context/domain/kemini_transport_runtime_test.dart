@@ -2,41 +2,29 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/preset_script_runtime.dart';
+import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_assembler.dart';
 import 'package:aicove_flutter/src/features/agent_context/infrastructure/quickjs_preset_runtime.dart';
 
 import '../../../support/transport_preset_fixture.dart';
 
+List<Map<String, dynamic>> _messages() => [
+  {'role': 'system', 'content': '<format>Reply in full.</format>'},
+  {'role': 'user', 'content': '去花园'},
+];
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('content transport registers despite function_calling=false', () async {
-      final preset = keminiPreset();
-      expect(preset.functionCalling, false);
-      final runtime = await QuickJsPresetRuntime.open(
-        PresetScriptSnapshot.fromPreset(
-          preset,
-          macros: {},
-          toolsAllowed: false,
-        )!,
-      );
-      addTearDown(runtime.close);
-      expect(runtime.tools, hasLength(1));
-      expect(
-        runtime.tools.single['function']['name'],
-        startsWith('emit_complete_response_'),
-      );
-      expect(runtime.businessTools, isEmpty);
-      expect(runtime.transportTools, hasLength(1));
-      expect(runtime.toolChoice, 'auto');
-    },
-  );
-
-  Future<QuickJsPresetRuntime> open({bool capable = true}) async {
+  Future<QuickJsPresetRuntime> open({
+    Map<String, dynamic>? source,
+    bool capable = true,
+    bool toolsAllowed = false,
+  }) async {
     final runtime = await QuickJsPresetRuntime.open(
       PresetScriptSnapshot.fromPreset(
-        keminiPreset(),
+        keminiPreset(source),
         macros: {},
-        toolsAllowed: false,
+        toolsAllowed: toolsAllowed,
         modelSupportsTools: capable,
       )!,
     );
@@ -45,254 +33,381 @@ void main() {
   }
 
   test(
-    'unsupported model has explicit diagnostic and unchanged request',
+    'executes the enabled original fetch wrapper, not script-name detection',
     () async {
-      final runtime = await open(capable: false);
-      expect(runtime.tools, isEmpty);
-      expect(runtime.toolChoice, isNull);
+      final source = keminiSource();
+      final script = source['extensions']['tavern_helper']['scripts'][0];
+      script['id'] = 'unrecognized-id';
+      script['name'] = 'Arbitrary script name';
+      final runtime = await open(source: source);
+      final input = _messages(), saved = jsonEncode(input);
+      final prepared = await runtime.prepare(input);
+      expect(runtime.businessTools, isEmpty);
       expect(
-        runtime.diagnostics,
-        contains('transport_skipped_model_without_tools'),
+        runtime.transportTools.single['function']['name'],
+        'emit_complete_response_fixture',
       );
-      final input = [
-        {'role': 'user', 'content': '去花园'},
-      ];
-      expect(await runtime.prepare(input), input);
-      await runtime.reset(false);
-      expect((await runtime.response('花开了。', [])).text, '花开了。');
-    },
-  );
-
-  Future<QuickJsPresetRuntime> openSource(Map<String, dynamic> source) async {
-    final runtime = await QuickJsPresetRuntime.open(
-      PresetScriptSnapshot.fromPreset(
-        keminiPreset(source),
-        macros: {},
-        toolsAllowed: false,
-      )!,
-    );
-    addTearDown(runtime.close);
-    return runtime;
-  }
-
-  test('updated companion source still registers host transport', () async {
-    final source = keminiSource();
-    source['extensions']['tavern_helper']['scripts'][0]['content'] +=
-        '\n// new version';
-    expect((await openSource(source)).transportTools, hasLength(1));
-  });
-
-  test('missing anchor appends control and permits send', () async {
-    final source = keminiSource();
-    source['extensions']['tavern_helper']['scripts'][0]['content'] =
-        'keminiCompanion';
-    final runtime = await openSource(source);
-    expect(runtime.diagnostics, contains('transport_anchor_missing'));
-    final input = [
-      {'role': 'user', 'content': '花园'},
-    ];
-    final prepared = await runtime.prepare(input);
-    expect(prepared.first, input.first);
-    expect(prepared.last['content'], contains('emit_complete_response_'));
-    expect(runtime.transportTools, hasLength(1));
-  });
-
-  test(
-    'unknown and malformed scripts degrade without a filename gate',
-    () async {
-      for (final scripts in [
-        [],
-        'invalid',
-        [
-          {
-            'id': '2c7d747c-22d4-4e8b-95f8-5620b552fe6e',
-            'enabled': true,
-            'content': null,
-          },
-        ],
-      ]) {
-        final source = keminiSource();
-        source['extensions']['tavern_helper']['scripts'] = scripts;
-        final runtime = await openSource(source);
-        expect(runtime.transportTools, isEmpty);
-        expect(
-          runtime.diagnostics,
-          contains(
-            anyOf('transport_unrecognized', 'transport_config_read_failed'),
-          ),
-        );
-        expect(
-          await runtime.prepare([
-            {'role': 'user', 'content': '花园'},
-          ]),
-          [
-            {'role': 'user', 'content': '花园'},
-          ],
-        );
-      }
-    },
-  );
-
-  test('multiple matches select first enabled script', () async {
-    final source = keminiSource();
-    final original = source['extensions']['tavern_helper']['scripts'][0] as Map;
-    source['extensions']['tavern_helper']['scripts'] = [
-      {...original, 'enabled': false},
-      {...original, 'content': 'keminiCompanion'},
-      original,
-    ];
-    final runtime = await openSource(source);
-    expect(runtime.transportTools, hasLength(1));
-    expect(runtime.diagnostics, contains('transport_anchor_missing'));
-  });
-
-  for (final scriptDisabled in [false, true]) {
-    test(
-      'explicit transport disable is respected (script=$scriptDisabled)',
-      () async {
-        final source = keminiSource();
-        final script = source['extensions']['tavern_helper']['scripts'][0];
-        if (scriptDisabled) {
-          script['enabled'] = false;
-        } else {
-          script['data'] = {
-            'keminiCompanion': {'antiTruncationEnabled': false},
-          };
-        }
-        final runtime = await QuickJsPresetRuntime.open(
-          PresetScriptSnapshot.fromPreset(
-            keminiPreset(source),
-            macros: {},
-            toolsAllowed: false,
-          )!,
-        );
-        addTearDown(runtime.close);
-        expect(runtime.transportTools, isEmpty);
-        expect(runtime.diagnostics, contains('transport_disabled'));
-      },
-    );
-  }
-
-  test(
-    'control is anchored on a deep copy and never accumulates on retry',
-    () async {
-      final runtime = await open();
-      final input = <Map<String, dynamic>>[
-        {'role': 'system', 'content': '<format>正文</format>'},
-        {
-          'role': 'user',
-          'content': [
-            {'type': 'text', 'text': '花园'},
-          ],
-        },
-      ];
-      final saved = jsonEncode(input);
-      final first = await runtime.prepare(input);
-      expect(first, hasLength(3));
-      expect(first.first['content'], contains('emit_complete_response_'));
-      expect(first[1]['content'], contains('<format>'));
-      expect(await runtime.prepare(input), first);
-      (first.last['content'] as List).first['text'] = 'changed';
+      expect(
+        prepared.last['content'],
+        contains('emit_complete_response_fixture'),
+      );
       expect(jsonEncode(input), saved);
+      expect(runtime.toolChoice, 'auto');
     },
   );
 
-  test(
-    'plain streaming, deduplication, empty IDs, and foreign tools stay separate',
-    () async {
-      final runtime = await open();
-      final name = runtime.transportTools.single['function']['name'];
-      await runtime.reset(true);
-      expect(await runtime.update('花开了。'), '花开了。');
-      final result = await runtime.response('花开了。', [
-        {
-          'id': '',
-          'name': name,
-          'arguments': {'content': '花开了。'},
-        },
-        {
-          'id': '',
-          'name': 'weather',
-          'arguments': {'city': '杭州'},
-        },
-        {
-          'id': 'foreign',
-          'name': 'emit_complete_response_other',
-          'arguments': {'content': '不要吞掉'},
-        },
-      ]);
-      expect(result.text, '花开了。');
-      expect(result.consumedIndexes, {0});
-      await runtime.reset(true);
-      expect(
-        (await runtime.response('普通正文更完整', [
-          {
-            'id': 'next',
-            'name': name,
-            'arguments': {'content': '短正文'},
-          },
-        ])).text,
-        '普通正文更完整',
-      );
-    },
-  );
+  test('unsupported model does not receive a wrapper-added tool', () async {
+    final runtime = await open(capable: false);
+    expect(await runtime.prepare(_messages()), _messages());
+    expect(runtime.tools, isEmpty);
+    expect((await runtime.response('花开了。', [])).text, '花开了。');
+  });
 
-  test(
-    'preview selects longest, prefers transport ties, and joins Unicode',
-    () async {
-      final runtime = await open();
-      final name = runtime.transportTools.single['function']['name'];
-      await runtime.reset(true);
-      Future<String> preview(String plain, String body) => runtime.update(
-        plain,
-        calls: [
-          {
-            'id': '',
-            'name': name,
-            'arguments': {'content': body},
-          },
-          {
-            'id': '',
-            'name': 'weather',
-            'arguments': {'content': 'never display business args'},
-          },
-        ],
-      );
-      expect(await preview('普通更长', '短'), '普通更长');
-      expect(await preview('普通', '传输'), '传输');
-      expect(await preview('', '花${String.fromCharCode(0xD83D)}'), '花');
-      expect(
-        await preview('', '花${String.fromCharCodes([0xD83D, 0xDE00])}'),
-        '花😀',
-      );
-    },
-  );
+  test('disabled script does not register or inject anything', () async {
+    final source = keminiSource();
+    source['extensions']['tavern_helper']['scripts'][0]['enabled'] = false;
+    final runtime = await open(source: source);
+    expect(await runtime.prepare(_messages()), _messages());
+    expect(runtime.tools, isEmpty);
+    expect((await runtime.response('plain', [])).text, 'plain');
+  });
 
-  for (final sample in <String, String>{
-    '{"content":"花开了': '花开了',
-    '{"content":"花\\n开\\u4e86\\': '花\n开了',
-    '{"content":"花\\uD83D': '花',
-    '{"content":"花\\uD83D\\uDE00': '花😀',
-    '{"other":"不得误取': '',
-    '{"meta":{"content":"不得误取"},"content":"花开了': '花开了',
-    '{"meta":{"content":"不得误取': '',
-  }.entries) {
+  for (final streaming in [false, true]) {
     test(
-      'truncated JSON recovers only arrived content: ${sample.key}',
+      'fetch unwrap stream=$streaming consumes only its precise tool identity',
       () async {
         final runtime = await open();
-        await runtime.reset(false);
-        final result = await runtime.response('', [
+        await runtime.prepare(_messages());
+        await runtime.reset(streaming);
+        const calls = <Map<String, dynamic>>[
           {
-            'id': 't',
-            'name': runtime.transportTools.single['function']['name'],
-            'arguments': {},
-            'rawArguments': sample.key,
+            'id': 'delivery',
+            'name': 'emit_complete_response_fixture',
+            'arguments': {'content': '花开了。'},
           },
-        ]);
-        expect(result.text, sample.value);
+          {
+            'id': 'business',
+            'name': 'weather',
+            'arguments': {'city': '杭州'},
+          },
+          {
+            'id': 'foreign',
+            'name': 'emit_complete_response_other',
+            'arguments': {'content': '别吞掉'},
+          },
+        ];
+        if (streaming) {
+          expect(await runtime.update('', calls: calls), '花开了。');
+        }
+        final result = await runtime.response('', calls);
+        expect(result.text, '花开了。');
+        expect(result.consumedIds, {'delivery'});
         expect(result.consumedIndexes, {0});
       },
     );
   }
+
+  test(
+    'structured argument snapshots hold trailing fields until final delivery',
+    () async {
+      final runtime = await open();
+      await runtime.prepare(_messages());
+      await runtime.reset(true);
+      final name = runtime.transportTools.single['function']['name'];
+      expect(
+        await runtime.update(
+          '',
+          calls: [
+            {
+              'id': 'out',
+              'name': name,
+              'arguments': {'content': 'a', 'done': false},
+            },
+          ],
+        ),
+        'a',
+      );
+      final calls = <Map<String, dynamic>>[
+        {
+          'id': 'out',
+          'name': name,
+          'arguments': {'content': 'ab', 'done': false},
+        },
+      ];
+      expect(await runtime.update('', calls: calls), 'ab');
+      final result = await runtime.response('', calls);
+      expect(result.text, 'ab');
+      expect(result.consumedIds, {'out'});
+      expect(result.consumedIndexes, {0});
+    },
+  );
+
+  test(
+    'growing leading metadata keeps the final argument object valid',
+    () async {
+      final runtime = await open();
+      await runtime.prepare(_messages());
+      await runtime.reset(true);
+      final name = runtime.transportTools.single['function']['name'];
+      await runtime.update(
+        '',
+        calls: [
+          {
+            'id': 'out',
+            'name': name,
+            'arguments': {'count': 1, 'content': 'a'},
+          },
+        ],
+      );
+      final calls = <Map<String, dynamic>>[
+        {
+          'id': 'out',
+          'name': name,
+          'arguments': {'count': 12, 'content': 'ab'},
+        },
+      ];
+      await runtime.update('', calls: calls);
+      final result = await runtime.response('', calls);
+      expect(result.text, 'ab');
+      expect(result.consumedIds, {'out'});
+      expect(result.consumedIndexes, {0});
+    },
+  );
+
+  for (final path in localTransportPresetPaths) {
+    final file = localTransportPreset(path);
+    test(
+      'local original scripts: $path',
+      () async {
+        final source =
+            jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+        final preset = keminiPreset(source);
+        final assembled = const SillyTavernPresetAssembler().assemble(
+          preset: preset,
+          historyMessages: [
+            {'role': 'user', 'content': '去花园'},
+            {'role': 'assistant', 'content': '旧故事'},
+            {'role': 'user', 'content': '继续'},
+          ],
+          context: const SillyTavernAssemblyContext(
+            characterName: '角色',
+            userName: '用户',
+            characterDescription: '设定',
+            scenario: '花园',
+          ),
+          maxContextTokens: 2000000,
+          reserveTokens: 2048,
+          randomIndexPicker: (_) => 0,
+        );
+        for (final capable in [true, false]) {
+          final runtime = await open(source: source, capable: capable);
+          final prepared = await runtime.prepare(assembled.scriptMessages);
+          expect(prepared, isNotEmpty);
+          expect(
+            runtime.diagnostics.where(
+              (d) => d.startsWith('custom_script_failed:'),
+            ),
+            isEmpty,
+            reason: '$path modelSupportsTools=$capable',
+          );
+          final fetchTransport = [
+            'Kemini_Dramatron_v3.1.json',
+            'kunlun_linux_1.6.json',
+          ].any(path.endsWith);
+          if (!capable ||
+              (!fetchTransport && preset.functionCalling == false)) {
+            expect(runtime.tools, isEmpty);
+          }
+          if (capable && fetchTransport) {
+            expect(preset.functionCalling, isFalse);
+            expect(runtime.transportTools, isNotEmpty, reason: path);
+            expect(
+              runtime.diagnostics,
+              isNot(contains('transport_skipped_model_without_tools')),
+            );
+            final definition = runtime.transportTools.first['function'] as Map;
+            final properties = definition['parameters']['properties'] as Map;
+            final key = [
+              'content',
+              'buffer_content',
+              'manuscript',
+              'display_stream',
+            ].firstWhere((key) => properties[key]?['type'] == 'string');
+            final result = await runtime.response('', [
+              {
+                'id': 'original-delivery',
+                'name': definition['name'],
+                'arguments': {key: '本轮正文'},
+              },
+            ]);
+            expect(result.text, contains('本轮正文'), reason: path);
+            expect(result.consumedIds, {'original-delivery'});
+            expect(result.consumedIndexes, {0});
+          } else {
+            final result = await runtime.response('本轮正文', []);
+            expect(result.text, contains('本轮正文'));
+          }
+          await runtime.close();
+        }
+        // Tavern-managed channels need the business toggle for this separate
+        // enabled-channel test. Fetch channels retain the export's saved toggle.
+        final activeSource =
+            jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
+        if (path.contains('我即浪潮') || path.contains('TRANS-AM')) {
+          activeSource['function_calling'] = true;
+        }
+        // This private manga export saves its independent transport switch off.
+        // Activate only that script setting for the enabled-channel regression.
+        if (path.endsWith('漫画v1.3.1.json')) {
+          final scripts =
+              activeSource['extensions']['tavern_helper']['scripts'] as List;
+          final transport = scripts.firstWhere(
+            (script) => script['name'] == '照本宣科',
+          );
+          expect(transport['data']['universalAntiTruncation'], isFalse);
+          transport['data']['universalAntiTruncation'] = true;
+        }
+        for (final streaming in [false, true]) {
+          final runtime = await open(source: activeSource, toolsAllowed: true);
+          await runtime.prepareWithTools(
+            assembled.scriptMessages,
+            tools: [
+              {
+                'type': 'function',
+                'function': {
+                  'name': 'weather',
+                  'parameters': {'type': 'object', 'properties': {}},
+                },
+              },
+            ],
+          );
+          expect(
+            runtime.diagnostics.where(
+              (d) => d.startsWith('custom_script_failed:'),
+            ),
+            isEmpty,
+            reason: '$path native stream=$streaming',
+          );
+          final deliveries = runtime.transportTools.where((schema) {
+            final properties =
+                schema['function']['parameters']['properties'] as Map? ?? {};
+            return [
+              'content',
+              'buffer_content',
+              'manuscript',
+              'display_stream',
+            ].any((key) => properties[key]?['type'] == 'string');
+          }).toList();
+          if (path.endsWith('漫画v1.3.1.json')) {
+            expect(deliveries, isNotEmpty);
+          }
+          await runtime.reset(streaming);
+          if (deliveries.isEmpty) {
+            expect((await runtime.response('本轮正文', [])).text, contains('本轮正文'));
+          } else {
+            final definition = deliveries.first['function'] as Map;
+            final properties = definition['parameters']['properties'] as Map;
+            final key = [
+              'content',
+              'buffer_content',
+              'manuscript',
+              'display_stream',
+            ].firstWhere((key) => properties[key]?['type'] == 'string');
+            final calls = <Map<String, dynamic>>[
+              {
+                'id': 'local-delivery',
+                'name': definition['name'],
+                'arguments': {key: '本轮正文'},
+              },
+              {'id': 'ordinary', 'name': 'weather', 'arguments': {}},
+            ];
+            if (streaming) await runtime.update('', calls: calls);
+            final result = await runtime.response('', calls);
+            expect(
+              result.text,
+              contains('本轮正文'),
+              reason: '$path stream=$streaming',
+            );
+            expect(result.consumedIds, {'local-delivery'});
+            expect(result.consumedIndexes, {0});
+          }
+          await runtime.close();
+        }
+      },
+      skip: file.existsSync() ? null : 'Private fixture unavailable',
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+  }
+
+  final transam = localTransportPreset('预设与正则/TRANS-AM-4A版-v1.0.4.8.json');
+  test(
+    'real TRANS-AM separates business decision from stealth content delivery',
+    () async {
+      final source =
+          jsonDecode(transam.readAsStringSync()) as Map<String, dynamic>;
+      for (final order in source['prompt_order'] as List) {
+        for (final entry in order['order'] as List) {
+          if ([
+            'ta-decision-tool',
+            'ta-random-reaction',
+            'ta-transport-tool',
+          ].contains(entry['identifier']))
+            entry['enabled'] = true;
+          if ([
+            'ta-ooc-review',
+            'ta-kunlun-transport',
+            'ta-transport-unicode',
+          ].contains(entry['identifier']))
+            entry['enabled'] = false;
+        }
+      }
+      final runtime = await QuickJsPresetRuntime.open(
+        PresetScriptSnapshot.fromPreset(
+          keminiPreset(source),
+          macros: {},
+          toolsAllowed: true,
+        )!,
+      );
+      addTearDown(runtime.close);
+      await runtime.prepare(_messages());
+      expect(
+        runtime.businessTools.map((t) => t['function']['name']),
+        contains('transam_decide'),
+      );
+      expect(
+        runtime.transportTools.map((t) => t['function']['name']),
+        contains('transam_content'),
+      );
+      final decision =
+          jsonDecode(
+                await runtime.action('transam_decide', {
+                  'npc': '角色',
+                  'focus': '是否进入花园',
+                  'options': [
+                    {
+                      'id': 'enter',
+                      'action': '进入',
+                      'support': '门已打开',
+                      'weight': 1,
+                    },
+                  ],
+                }),
+              )
+              as Map;
+      expect(decision['ok'], isTrue);
+      expect(decision['selected'], 'enter');
+      final result = await runtime.response('', [
+        {'id': 'decision', 'name': 'transam_decide', 'arguments': {}},
+        {
+          'id': 'delivery',
+          'name': 'transam_content',
+          'arguments': {'content': '本轮正文'},
+        },
+      ]);
+      expect(result.text, '本轮正文');
+      expect(result.consumedIds, {'delivery'});
+      expect(result.consumedIndexes, {1});
+    },
+    skip: transam.existsSync() ? null : 'Private fixture unavailable',
+  );
 }

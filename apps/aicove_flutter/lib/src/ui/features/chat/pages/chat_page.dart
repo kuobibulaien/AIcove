@@ -12,6 +12,7 @@ import '../../../shared/widgets/desktop_window_frame.dart';
 import '../../character/pages/contact_edit_page.dart';
 import '../../character/services/contact_edit_snapshot_store.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -25,6 +26,7 @@ import '../../../../features/chat/conversation_providers.dart'
         activeConversationIdProvider,
         activeConversationProvider,
         chatDisplayPolicyProvider,
+        conversationSnapshotByIdProvider,
         conversationsProvider,
         resolvedConversationByIdProvider;
 import '../../../../features/chat/conversation_timeline_providers.dart'
@@ -40,7 +42,6 @@ import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/domain/model_request_error_report.dart';
 import '../../../../features/chat/presentation/widgets/composer.dart';
-import '../../../../features/chat/domain/role_agent_mode.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/stickers/sticker_registry.dart';
 import '../../../../features/plugins/plugin_providers.dart'
@@ -212,6 +213,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   late final ChatViewportController _viewportController;
   Timer? _imagePrecacheTimer;
   Timer? _clearUnreadTimer;
+  late final AppLifecycleListener _lifecycle;
   Animation<double>? _entryRouteAnimation;
   String? _pendingUnreadConversationId;
   bool _imagePrecachePending = false;
@@ -252,6 +254,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void initState() {
     super.initState();
     _selection.addListener(_selectionChanged);
+    _lifecycle = AppLifecycleListener(onResume: _clearUnreadIfShown);
     _diagnostics = ref.read(frontendDiagnosticsProvider);
     if (widget.conversationId != null) {
       _diagnosticEntry = _diagnostics.begin(
@@ -273,6 +276,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _bindEntryRouteAnimation();
+    // Also runs when a route pushed over this page pops: counts that arrived
+    // while it was covered are read once the page shows again.
+    _clearUnreadIfShown();
     if (_shouldDeferEntrySideEffects) {
       return;
     }
@@ -380,6 +386,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _clearUnreadTimer = Timer(kChatPageUnreadClearDelay, () {
       if (!mounted ||
           _routeTransitionInProgress ||
+          !_isShownToUser ||
           _resolveCurrentConversationId() != conversationId) {
         return;
       }
@@ -390,6 +397,27 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             .clearUnread(conversationId),
       );
     });
+  }
+
+  /// Messages that arrive on their own (proactive replies) raise the unread
+  /// count; while this page shows that conversation in the foreground they
+  /// are read already. Counts that arrive while the app is away wait for it
+  /// to come back.
+  void _clearUnreadIfShown() {
+    if (!mounted) return;
+    final conversationId = _resolveCurrentConversationId();
+    if (conversationId == null) return;
+    final unread =
+        ref.read(conversationSnapshotByIdProvider(conversationId))?.unreadCount;
+    if (unread == null || unread <= 0 || !_isShownToUser) return;
+    _scheduleUnreadClear(conversationId);
+  }
+
+  /// This page is the top route and the app is in the foreground.
+  bool get _isShownToUser {
+    if (ModalRoute.of(context)?.isCurrent == false) return false;
+    final state = SchedulerBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
   }
 
   void _scheduleConversationActivation(String conversationId) {
@@ -650,6 +678,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _entryRouteAnimation?.removeStatusListener(_onEntryRouteStatus);
     _imagePrecacheTimer?.cancel();
     _clearUnreadTimer?.cancel();
+    _lifecycle.dispose();
     _selection.removeListener(_selectionChanged);
     _selection.dispose();
     _viewportController.dispose();
@@ -724,8 +753,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final currentConversationId = conv?.id ?? targetId;
     _bindFailoverPresenter(currentConversationId);
     final isAssistant = conv?.id == kAicoveAssistantId;
-    // Approvals, cards and the undo bar serve every tool-mode role (ADR0111).
-    final isAgent = conv?.effectiveAgentMode == RoleAgentMode.tool;
+    // Approvals, cards and the undo bar serve every role with software management.
+    final isAgent = conv?.hasAssistantCapability == true;
     final assistantScript =
         isAssistant && ref.watch(assistantScriptActiveProvider);
     // Loaded ahead so the「更多」menu shows the current choice.
@@ -798,17 +827,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         callHere != null && conv != null && !windowCall && !callHere.minimized;
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
     final chatStatus = ref.watch(chatStatusProvider);
-    // 字段级订阅：页面只关心聊天背景色，设置里其他字段变化不再重建整页
-    final chatBackgroundColorSetting = deferEntryShell
-        ? null
-        : ref.watch(
-            appSettingsProvider.select(
-              (settings) => settings.valueOrNull?.lightChatBackground,
-            ),
-          );
     final colors = context.moeColors;
 
     if (currentConversationId != null) {
+      ref.listen<int>(
+        conversationSnapshotByIdProvider(
+          currentConversationId,
+        ).select((c) => c?.unreadCount ?? 0),
+        (_, next) {
+          if (next > 0) _clearUnreadIfShown();
+        },
+      );
+
       // 只处理本页会话的模型切换确认；请求在别处结束时关掉还开着的弹框。
       ref.listen<ModelFailoverPromptRequest?>(
         modelFailoverPromptForProvider(currentConversationId),
@@ -837,12 +867,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           );
         }
       });
+
+      // 另一台设备正在生成当前会话回复时，给一句轻提示，不阻断本机发送。
+      ref.listen<String?>(
+        conversationRemoteRunningNoticeProvider(currentConversationId),
+        (prev, next) {
+          if (next != null && next.isNotEmpty && mounted) {
+            MoeToast.info(context, next);
+            ref
+                .read(
+                  conversationRemoteRunningNoticeProvider(
+                    currentConversationId,
+                  ).notifier,
+                )
+                .state = null;
+          }
+        },
+      );
     }
 
-    final chatBgColor = resolveChatBackgroundColor(
-      context,
-      chatBackgroundColorSetting,
-    );
+    final chatBgColor = resolveChatBackgroundColor(context);
     final textScaler = MediaQuery.textScalerOf(context);
     final toolbarHeight = MoeChatHeader.heightFor(textScaler);
     final listTopSpacing =

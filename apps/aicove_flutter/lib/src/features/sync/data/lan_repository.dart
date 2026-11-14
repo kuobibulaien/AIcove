@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../../../core/app_logger.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
+import '../../../core/sync/cloud_tracking.dart';
 import '../../observability/frame_jank_recorder.dart';
 import '../domain/lan_contract.dart';
 import 'cloud_document.dart';
@@ -101,15 +102,25 @@ class LanRepository {
         if (entry.$1 == 'messages') entry.$2,
     ];
     if (keys.isEmpty) return '';
+    final owners = <String>{};
+    for (final entry in _recent.values) {
+      if (!lanContextMemoryKinds.contains(entry.$1)) continue;
+      final doc = await local.read(entry.$1, entry.$2, includeRelated: false);
+      final owner = (doc?.payload['row'] as Map?)?['owner_id'];
+      if (owner is String) owners.add(owner);
+    }
+    final ownerClause = owners.isEmpty
+        ? ''
+        : "OR (e.kind='conversations' AND e.entity_id IN (${List.filled(owners.length, '?').join(',')}))";
     final parentClause = messageIds.isEmpty
         ? ''
         : "OR (e.kind='conversations' AND e.entity_id IN (SELECT conversation_id FROM messages WHERE id IN (${List.filled(messageIds.length, '?').join(',')})))";
     final rows = await local.rows(
       '''SELECT e.kind,e.entity_id,e.heads_json,m.status,m.conversation_id
       FROM lan_entities e LEFT JOIN messages m ON e.kind='messages' AND m.id=e.entity_id
-      WHERE e.kind||'/'||e.entity_id IN (${List.filled(keys.length, '?').join(',')}) $parentClause
+      WHERE e.kind||'/'||e.entity_id IN (${List.filled(keys.length, '?').join(',')}) $parentClause $ownerClause
       ORDER BY e.kind,e.entity_id''',
-      [...keys, ...messageIds],
+      [...keys, ...messageIds, ...owners],
     );
     return canonicalJson(rows);
   }
@@ -134,6 +145,19 @@ class LanRepository {
 
   /// A bounded acceleration lane backed by the existing dirty journal. Full
   /// manifests remain the recovery path after eviction or process restart.
+  Future<Map<String, dynamic>> recentChangesForPeer({
+    required bool includeContextMemory,
+  }) async {
+    final page = await recentChanges();
+    if (includeContextMemory) return page;
+    return {
+      ...page,
+      'items': (page['items'] as List)
+          .where((item) => !lanContextMemoryKinds.contains(item['kind']))
+          .toList(),
+    };
+  }
+
   Future<Map<String, dynamic>> recentChanges() => _phase(
     'lan.recent',
     () => _serial(() async {
@@ -149,10 +173,12 @@ class LanRepository {
         final kind = row['kind'] as String, id = row['entity_id'] as String;
         final clock = Stopwatch()..start();
         try {
-          if (kind == 'messages') {
+          if (kind == 'messages' || lanContextMemoryKinds.contains(kind)) {
             final message = await local.read(kind, id, includeRelated: false);
             final convId =
-                (message?.payload['row'] as Map?)?['conversation_id'];
+                (message?.payload['row'] as Map?)?[kind == 'messages'
+                    ? 'conversation_id'
+                    : 'owner_id'];
             if (convId is String) {
               await _capture(kind: 'conversations', id: convId, seed: false);
             }
@@ -213,13 +239,19 @@ class LanRepository {
       // Parent entities precede new messages even if they were captured long ago.
       final parents = <String>{};
       for (final item in List.of(items)) {
-        if (item['kind'] != 'messages') continue;
+        final kind = item['kind'] as String;
+        if (kind != 'messages' && !lanContextMemoryKinds.contains(kind)) {
+          continue;
+        }
         final doc = await local.read(
-          'messages',
+          kind,
           item['entity_id'] as String,
           includeRelated: false,
         );
-        final convId = (doc?.payload['row'] as Map?)?['conversation_id'];
+        final convId =
+            (doc?.payload['row'] as Map?)?[kind == 'messages'
+                ? 'conversation_id'
+                : 'owner_id'];
         if (convId is String) parents.add(convId);
       }
       for (final id in parents) {
@@ -315,12 +347,15 @@ class LanRepository {
       // Revision zero is a baseline candidate, not a real write. INSERT OR
       // IGNORE preserves preexisting WorkManager dirties; tracking triggers
       // promote any subsequent edit to revision >= 1. No schema change.
-      for (final kind in ['conversations', 'providers', 'messages']) {
+      for (final entry in cloudTables.entries.where(
+        (e) => !cloudMessageChildren.containsKey(e.key),
+      )) {
+        final kind = entry.key, key = entry.value;
         await local.execute(
           '''INSERT OR IGNORE INTO lan_dirty(kind,entity_id,revision)
-          SELECT ?,c.id,0 FROM "$kind" c
+          SELECT ?,c."$key",0 FROM "$kind" c
           WHERE NOT EXISTS (SELECT 1 FROM lan_entities e
-            WHERE e.kind=? AND e.entity_id=c.id)''',
+            WHERE e.kind=? AND e.entity_id=c."$key")''',
           [kind, kind],
         );
       }
@@ -388,7 +423,7 @@ class LanRepository {
             WHERE NOT EXISTS (
               SELECT 1 FROM messages m WHERE d.kind='messages'
               AND m.id=d.entity_id AND m.status='sending'
-            ) ORDER BY d.kind,d.entity_id LIMIT 500''',
+            ) ORDER BY CASE WHEN d.kind='conversations' THEN 0 ELSE 1 END,d.kind,d.entity_id LIMIT 500''',
           );
     for (final item in dirty) {
       var applied = false;
@@ -642,11 +677,14 @@ class LanRepository {
     () => local.db.transaction(() async {
       // External settings/files have owners outside SQLite; their histories
       // stay intact because this transaction cannot prove their absence.
-      for (final kind in ['conversations', 'providers', 'messages']) {
+      for (final entry in cloudTables.entries.where(
+        (e) => !cloudMessageChildren.containsKey(e.key),
+      )) {
+        final kind = entry.key, key = entry.value;
         await local.execute(
           '''DELETE FROM lan_revisions AS r
           WHERE r.kind=?
-          AND NOT EXISTS (SELECT 1 FROM "$kind" c WHERE c.id=r.entity_id)
+          AND NOT EXISTS (SELECT 1 FROM "$kind" c WHERE c."$key"=r.entity_id)
           AND NOT EXISTS (SELECT 1 FROM lan_entities e
             WHERE e.kind=r.kind AND e.entity_id=r.entity_id)
           AND NOT EXISTS (SELECT 1 FROM lan_entities e,json_each(e.heads_json) h
@@ -1042,22 +1080,51 @@ class LanRepository {
     }
   }
 
-  Future<Map<String, dynamic>> manifest({
+  static final Object _manifestCapability = Object();
+
+  Future<Map<String, dynamic>> manifest({String after = '', int limit = 100}) =>
+      _manifest(
+        after: after,
+        limit: limit,
+        includeContextMemory: Zone.current[_manifestCapability] == true,
+      );
+
+  Future<Map<String, dynamic>> manifestForPeer({
     String after = '',
     int limit = 100,
+    required bool includeContextMemory,
+  }) => runZoned(
+    () => manifest(after: after, limit: limit),
+    zoneValues: {_manifestCapability: includeContextMemory},
+  );
+
+  Future<Map<String, dynamic>> _manifest({
+    required String after,
+    required int limit,
+    required bool includeContextMemory,
   }) => _phase(
     'lan.manifest',
     () => _serial(() async {
       if (limit < 1 || limit > 200 || after.length > 400) {
         throw const LanSyncFailure('摘要分页参数无效');
       }
+      final excluded = includeContextMemory
+          ? ''
+          : "AND e.kind NOT IN ('context_summaries','memory_items','memory_progress')";
+      final afterKind = after.isEmpty ? '' : after.split('/').first;
+      final afterRank = afterKind == 'conversations' ? 0 : 1;
       final rows = await local.rows(
-        // Read raw JSON so corrupt head lists/documents are isolated per entity,
-        // rather than aborting the entire page inside SQLite JSON functions.
-        r"""SELECT e.kind,e.entity_id,e.heads_json
-      FROM lan_entities e WHERE e.kind||'/'||e.entity_id>?
-      ORDER BY e.kind,e.entity_id LIMIT ?""",
-        [after, limit + 1],
+        includeContextMemory
+            ? "SELECT e.kind,e.entity_id,e.heads_json FROM lan_entities e WHERE (CASE WHEN e.kind='conversations' THEN 0 ELSE 1 END > ? OR (CASE WHEN e.kind='conversations' THEN 0 ELSE 1 END = ? AND e.kind||'/'||e.entity_id > ?)) ORDER BY CASE WHEN e.kind='conversations' THEN 0 ELSE 1 END,e.kind,e.entity_id LIMIT ?"
+            : "SELECT e.kind,e.entity_id,e.heads_json FROM lan_entities e WHERE e.kind||'/'||e.entity_id>? $excluded ORDER BY e.kind,e.entity_id LIMIT ?",
+        includeContextMemory
+            ? [
+                after.isEmpty ? -1 : afterRank,
+                after.isEmpty ? -1 : afterRank,
+                after,
+                limit + 1,
+              ]
+            : [after, limit + 1],
       );
       final selected = rows.take(limit).toList();
       final hashes = <String>{};
@@ -1094,7 +1161,7 @@ class LanRepository {
       }
       final total = after.isEmpty
           ? (await local.rows(
-                  'SELECT COUNT(*) AS n FROM lan_entities',
+                  "SELECT COUNT(*) AS n FROM lan_entities e WHERE 1=1 $excluded",
                 )).single['n']
                 as int
           : null;

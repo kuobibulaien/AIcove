@@ -549,7 +549,6 @@ extension _ContactEditPageSections on _ContactEditPageState {
       result.personaPrompt,
       plugins,
       result.recipeId ?? '',
-      result.agentMode?.name ?? '',
       _wallpaperStyle?.toJson(),
       '${result.clearAvatarUrl}',
       '${result.clearCharacterImage}',

@@ -48,6 +48,29 @@ class SyncTest(unittest.TestCase):
         with self.sessions() as db:
             return SyncEngine(db, 1, self.vault).pull(self.epoch, cursor, limit, through)
 
+    def test_context_and_memory_kinds_round_trip(self):
+        kinds = ('context_summaries', 'memory_items', 'memory_progress')
+        self.assertTrue(set(kinds).issubset(self.status()['kinds']))
+        mutations = [Mutation(op_id=kind, kind=kind, entity_id='role',
+                              base_version=0, payload={'row': {'owner_id': 'role'}})
+                     for kind in kinds]
+        result = self.push(mutations)
+        self.assertTrue(all(item['status'] == 'applied' for item in result['results']))
+        self.assertEqual({item['kind'] for item in self.pull()['changes']}, set(kinds))
+
+    def test_context_memory_read_page_includes_parent_dependency(self):
+        kinds = ('context_summaries', 'memory_items', 'memory_progress')
+        self.push([Mutation(op_id=kind, kind=kind, entity_id=kind,
+                            base_version=0, payload={'row': {'owner_id': 'role'}})
+                   for kind in kinds])
+        self.push([Mutation(op_id='parent', kind='conversations', entity_id='role',
+                            base_version=0, payload={'row': {'id': 'role'}})])
+        with self.sessions() as db:
+            service = SyncEngine(db, 1, self.vault)
+            page = service.read_page(self.epoch, after=0, limit=1, stage='delta')
+        self.assertEqual(page['documents'][0]['kind'], 'context_summaries')
+        self.assertIn('conversations', {item['kind'] for item in page['dependencies']})
+
     def test_same_timestamp_pagination_and_original_history_time(self):
         self.push([self.put(str(i), op=str(i), created_at=123, raw_payload='original') for i in range(100)])
         self.push([self.put('100', op='100', created_at=123)])

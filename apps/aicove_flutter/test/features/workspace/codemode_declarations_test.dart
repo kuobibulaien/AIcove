@@ -33,6 +33,8 @@ void main() {
         'aicove_role_context',
         'web_search',
         'draw_image',
+        'ask_user',
+        'submit_reference_material',
       ];
       final tools = assembleCodemodeTools([
         ...direct.map(tool),

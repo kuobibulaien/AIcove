@@ -25,7 +25,12 @@ class _Roles implements AssistantRoleStore {
   @override
   Future<void> edit(String roleId, Map<String, Object?> fields) async {
     final plugins = fields[RoleField.enabledPlugins] as List?;
-    role = role.copyWith(enabledPlugins: plugins?.cast<String>());
+    role = role.copyWith(
+      enabledPlugins: plugins?.cast<String>(),
+      agentMode: fields.containsKey(RoleField.agentMode)
+          ? RoleAgentMode.fromValue(fields[RoleField.agentMode] as String?)
+          : role.agentMode,
+    );
   }
 
   @override
@@ -164,12 +169,42 @@ void main() {
       expect(
         (await nahida()).enabledPlugins,
         unorderedEquals([
-          ...kAssistantRolePlugins.keys,
+          ...kAssistantRolePlugins.keys.where((id) => id != 'aicove_assistant'),
           TimeAwarenessRoleOptions.noCurrentTimeId,
         ]),
       );
       await journal.undo((await journal.recent()).single.id);
       expect((await nahida()).enabledPlugins, isNull);
+    },
+  );
+
+  test(
+    'legacy tool capability can be disabled and undo restores null defaults',
+    () async {
+      store.role = store.role.copyWith(agentMode: RoleAgentMode.tool);
+      expect(store.role.hasAssistantCapability, isTrue);
+      final result = await setPlugins({'plugins': <String>[]});
+      expect(result['ok'], isTrue);
+      expect(store.role.agentMode, isNull);
+      expect(store.role.enabledPlugins, isEmpty);
+      expect(store.role.hasAssistantCapability, isFalse);
+      await journal.undo((await journal.recent()).single.id);
+      expect(store.role.agentMode, RoleAgentMode.tool);
+      expect(store.role.enabledPlugins, isNull);
+      expect(store.role.isPluginEnabled('image'), isTrue);
+      expect(store.role.hasAssistantCapability, isTrue);
+    },
+  );
+
+  test(
+    'time-only edit preserves legacy capability explicitly and clears legacy mode',
+    () async {
+      store.role = store.role.copyWith(agentMode: RoleAgentMode.tool);
+      final result = await setPlugins({'current_time': false});
+      expect(result['ok'], isTrue);
+      expect(store.role.agentMode, isNull);
+      expect(store.role.enabledPlugins, contains('aicove_assistant'));
+      expect(store.role.hasAssistantCapability, isTrue);
     },
   );
 
@@ -187,7 +222,7 @@ void main() {
     expect(
       (await nahida()).enabledPlugins,
       unorderedEquals([
-        ...kAssistantRolePlugins.keys,
+        ...kAssistantRolePlugins.keys.where((id) => id != 'aicove_assistant'),
         'workspace:example',
         TimeAwarenessRoleOptions.noCurrentTimeId,
       ]),
@@ -273,6 +308,32 @@ void main() {
       expect(result['error'], 'invalid');
       expect(result['message'], contains('角色的插件刚刚有变化'));
       expect(await journal.recent(), isEmpty);
+    },
+  );
+
+  test(
+    'role schemas replace retired modes with software-management plugins',
+    () {
+      for (final name in [
+        AssistantWriteTools.createRole,
+        AssistantWriteTools.updateRole,
+      ]) {
+        final tool = writes.tools().singleWhere((tool) => tool.name == name);
+        final properties = tool.parameterSchema['properties'] as Map;
+        expect(
+          writes.riskOf(name, {
+            'enabled_plugins': [' web_search '],
+          }),
+          AssistantRisk.major,
+        );
+        expect(properties, isNot(contains('agent_mode')));
+        expect(properties['enabled_plugins']['type'], 'array');
+        expect(
+          properties['enabled_plugins']['description'],
+          contains('aicove_assistant=软件管理'),
+        );
+      }
+      expect(kAssistantRolePlugins['aicove_assistant'], '软件管理');
     },
   );
 

@@ -109,11 +109,14 @@ aicove/
 │   ├── lib/src/features/          #   本地后端：一个业务一个目录
 │   │   ├── chat/                  #     application/（UseCase、Port）· domain/ · data/ · infrastructure/ · presentation/（聊天专用组件）· chat_actions.dart（发送主链路）
 │   │   ├── agent_context/         #     Agent 契约与装配（domain/agent_runtime_contracts.dart）
-│   │   ├── plugins/               #     插件：tts/ · image/ · sticker/ · memory/ · trigger/ · time_awareness/
-│   │   ├── memory/ auto_reply/ backup/ sync/ settings/ observability/ …
+│   │   ├── agent_plugins/         #     内核 v2 插件宿主（PluginRuntime、请求 scope）
+│   │   ├── plugins/               #     插件：tts/ · image/ · sticker/ · memory/ · trigger/ · time_awareness/ · web_search/ · mcp/ · tavern_compat/ · packages/
+│   │   ├── workspace/ task_agent/ assistant/ voice_call/   # 空间与工具层 · 杂活 Agent · AIcove酱 · 语音通话
+│   │   ├── memory/ context/ auto_reply/ backup/ sync/ settings/ observability/ …
 │   ├── lib/src/core/              #   横切能力：api/（供应商适配）· database/（Drift）· network/ · media/ · models/ · utils/ · config.dart
+│   ├── packages/                  #   本地包：aicove_agent_kernel（Agent 内核）· aicove_quickjs（JS 运行底座）· bonsoir_darwin（局域网发现的本地补丁）
 │   ├── assets/                    #   静态资源、默认提示词 JSON
-│   ├── test/ integration_test/ test_contract/
+│   ├── test/ test_contract/
 │   ├── tool/                      #   开发工具（见 tool/DIAGNOSTICS.md）
 │   │   ├── flutterw               #     项目 Flutter SDK 入口，所有 flutter 命令经它执行
 │   │   ├── mac_debug_session.py   #     Mac 持续调试会话：start / reload / restart / status / wait / stop
@@ -124,6 +127,8 @@ aicove/
 │   ├── android/ ios/ macos/ windows/ linux/   # 平台工程
 │   └── third_party/               #   本地补丁依赖（lucide_icons）
 ├── cloud_backend/                 # 云端（只维护 sync_v3/，启动方式见其 README）
+├── website/ website-deploy/       # 官网页面与部署脚本
+├── design/                        # 宣传素材的生图与配乐任务书
 ├── opusdocs/ scratch/             # 历史资料与临时产物，不作为规范
 ```
 

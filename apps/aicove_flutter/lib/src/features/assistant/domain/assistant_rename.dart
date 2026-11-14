@@ -4,7 +4,6 @@ import 'package:crypto/crypto.dart';
 
 import '../../chat/domain/conversation.dart';
 import '../../chat/domain/persona_prompt_codec.dart';
-import '../../chat/domain/role_agent_mode.dart';
 
 const kMangakaPresetId = 'preset_mangaka';
 
@@ -118,7 +117,8 @@ Conversation? updatedMangakaPersona(Conversation current, Conversation preset) {
   final parts = PersonaPromptCodec.parse(current.personaPrompt);
   final shipped = PersonaPromptCodec.parse(preset.personaPrompt);
   final currentUser = parts.userPrompt.replaceAll('\r\n', '\n').trim();
-  final legacy = currentUser.startsWith('# Role: 漫画家（专属分镜导演 & 连载画师）') &&
+  final legacy =
+      currentUser.startsWith('# Role: 漫画家（专属分镜导演 & 连载画师）') &&
       currentUser.contains('每個 `@character` 段必须写出当前镜头可见的完整外貌与衣着') &&
       sha256.convert(utf8.encode(currentUser)).toString() ==
           'd900517d2f26b6ef604429b18e779733bd3e4506d5e14d0de451731f7b5e3469';
@@ -137,10 +137,6 @@ Conversation? updatedMangakaPersona(Conversation current, Conversation preset) {
       drawingArtistPresetName: parts.drawingArtistPresetName,
       drawingPresetId: parts.drawingPresetId,
     ),
-    agentMode:
-        current.agentMode == null || current.agentMode == RoleAgentMode.chat
-        ? RoleAgentMode.tool
-        : current.agentMode,
     updatedAt: DateTime.now(),
   );
 }

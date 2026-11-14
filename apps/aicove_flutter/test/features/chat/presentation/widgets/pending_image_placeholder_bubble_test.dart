@@ -131,6 +131,7 @@ void main() {
       final pendingMessage = Message.fromBlocks(
         id: 'msg_img_1',
         role: 'assistant',
+        status: 'sending',
         blocks: [
           ImageBlock(
             id: 'msg_img_1__b0_image',

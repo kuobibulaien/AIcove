@@ -10,9 +10,11 @@ class MoeBubbleStyle {
 
   static const double defaultFontSize = 15.0;
   static const double textHeight = 1.42;
+  // 单行文字行高按整像素排版为 21（15 × 1.42 = 21.3），加上下各 8.5 正好 38，
+  // 与聊天头像同高。
   static const EdgeInsets padding = EdgeInsets.symmetric(
     horizontal: 10,
-    vertical: 7,
+    vertical: 8.5,
   );
 }
 

@@ -117,7 +117,13 @@ void main() {
     expect(settings().globalWallpaper, GlobalWallpaper.none);
     expect(settings().globalWallpaperStyles.containsKey('a'), isFalse);
     expect(first.existsSync(), isFalse);
-    expect(find.text('自定义'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('global-wallpaper-custom-b')),
+        matching: find.text('自定义'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }

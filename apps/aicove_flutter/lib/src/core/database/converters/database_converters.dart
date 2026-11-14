@@ -59,7 +59,10 @@ class ConversationConverter {
       contextStartMessageId: Value(c.contextStartMessageId),
       lastMessage: Value(c.lastMessage),
       lastMessageTime: Value(c.lastMessageTime?.millisecondsSinceEpoch),
-      unreadCount: Value(c.unreadCount),
+      // The database owns the count (ConversationRepository.incrementUnread /
+      // clearUnread); writing a row back from memory must not undo a count
+      // that arrived after that copy was read.
+      unreadCount: const Value.absent(),
       createdAt: Value(c.createdAt.millisecondsSinceEpoch),
       updatedAt: Value(c.updatedAt.millisecondsSinceEpoch),
     );

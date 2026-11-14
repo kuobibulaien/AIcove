@@ -120,8 +120,8 @@ class WallpaperSampleMessages extends StatelessWidget {
               avatarUrl: _samples[i].role == 'user' ? null : avatar,
               displayName: conversation?.displayName ?? '',
               showName: false,
-              // 同一发送方连续消息只在最后一条显示头像与尾角。
-              showAvatar: _isLastOfRun(i),
+              // 同一发送方连续消息只在最后一条显示尾角；开启单轮仅首条头像时按首条显示。
+              showAvatar: _isFirstOfRun(i),
               showCorner: _isLastOfRun(i),
               documentStyle: documentStyle,
             ),
@@ -129,6 +129,9 @@ class WallpaperSampleMessages extends StatelessWidget {
       ],
     );
   }
+
+  static bool _isFirstOfRun(int index) =>
+      index == 0 || _samples[index - 1].role != _samples[index].role;
 
   static bool _isLastOfRun(int index) =>
       index == _samples.length - 1 ||

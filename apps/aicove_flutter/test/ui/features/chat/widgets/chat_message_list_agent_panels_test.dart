@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
-import 'package:aicove_flutter/src/features/chat/domain/role_agent_mode.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_viewport_controller.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/ui_blocks/moe_ui_block_scope.dart';
@@ -23,7 +22,7 @@ class _Paths extends PathProviderPlatform {
   Future<String?> getApplicationDocumentsPath() async => path;
 }
 
-/// ADR0111: the chat page turns quick panels on for tool-mode chats.
+/// ADR0111 / ADR0124: the chat page turns quick panels on for software-management chats.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final originalPaths = PathProviderPlatform.instance;
@@ -37,8 +36,9 @@ void main() {
     await directory.delete(recursive: true);
   });
 
-  for (final mode in [RoleAgentMode.tool, RoleAgentMode.chat]) {
-    testWidgets('quick panels in ${mode.name} mode', (tester) async {
+  for (final hasAssistant in [true, false]) {
+    final label = hasAssistant ? 'assistant' : 'chat';
+    testWidgets('quick panels with $label capability', (tester) async {
       tester.view.devicePixelRatio = 1;
       tester.view.physicalSize = const Size(390, 560);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -58,7 +58,11 @@ void main() {
                   '```',
             ),
           ],
-          decorate: (c) => c.copyWith(agentMode: mode),
+          decorate: (c) => c.copyWith(
+            enabledPlugins: hasAssistant
+                ? const <String>['aicove_assistant']
+                : const <String>[],
+          ),
         ),
       ))!;
       final viewport = ChatViewportController();
@@ -88,7 +92,7 @@ void main() {
                     displayName: '小帮手',
                     viewportController: viewport,
                     hasMoreMessages: false,
-                    quickPanels: mode == RoleAgentMode.tool,
+                    quickPanels: hasAssistant,
                   ),
                 ),
               ),
@@ -103,15 +107,15 @@ void main() {
       final scope = tester.widget<MoeUiBlockScope>(
         find.byType(MoeUiBlockScope),
       );
-      expect(scope.actions, mode == RoleAgentMode.tool ? isNotNull : isNull);
+      expect(scope.actions, hasAssistant ? isNotNull : isNull);
       expect(
         find.textContaining('只在 Agent 模式的聊天里能用'),
-        mode == RoleAgentMode.tool ? findsNothing : findsOneWidget,
+        hasAssistant ? findsNothing : findsOneWidget,
       );
       await saveReleaseSourcePreview(
         tester,
         boundary,
-        'agent-panels-${mode.name}',
+        'agent-panels-$label',
       );
     });
   }

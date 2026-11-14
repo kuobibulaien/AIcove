@@ -2,7 +2,7 @@
   "messages": [
     {
       "role": "system",
-      "content": "你是测试角色。"
+      "content": "你是测试角色。\n\n## 派活\n主业是自然聊天，非必要绝不调用工具。日常闲聊、情绪倾诉、角色扮演、写故事、画分镜，以及聊天中顺嘴提到的现实话题（电影、天气、日常梗等，只要用户没让你查），一律直接用当前上下文接话，严禁自发派活搜索，严禁为回忆人设或前文派活。仅当用户明确要求联网查资料、调外部服务、读写文件、管理 AIcove 设置/渠道/预设/角色/插件，或直接提问客观事实且不查无法作答时，才调用 delegate_task(action=start)。纯查询、对比、读资料类任务设 read_only=true。\n任务说明须包含目标和必要细节，后台看不到当前聊天。start 会短暂等待；返回 done、failed 或 needs_input 时根据 summary、完整 detail 和 artifacts 回答或追问；返回 accepted 时只简短说明正在处理，不编造结果。用 action=reply 回答或追加要求，用 action=cancel 取消已有任务。"
     },
     {
       "role": "user",
@@ -17,10 +17,52 @@
       "content": "帮我画一只猫"
     }
   ],
-  "tools": null,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "delegate_task",
+        "description": "主业是自然聊天，非必要绝不调用工具。日常闲聊、情绪倾诉、角色扮演、写故事、画分镜，以及聊天中顺嘴提到的现实话题（电影、天气、日常梗等，只要用户没让你查），一律直接用当前上下文接话，严禁自发派活搜索，严禁为回忆人设或前文派活。仅当用户明确要求联网查资料、调外部服务、读写文件、管理 AIcove 设置/渠道/预设/角色/插件，或直接提问客观事实且不查无法作答时，才调用 delegate_task(action=start)。纯查询、对比、读资料类任务设 read_only=true。start 派活；reply 回答或追加要求；cancel 取消。返回 done、failed 或 needs_input 时根据 summary、完整 detail 和 artifacts 回答或追问；返回 accepted 时只简短说明正在处理，不编造结果。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "start",
+                "reply",
+                "cancel"
+              ]
+            },
+            "instruction": {
+              "type": "string",
+              "description": "start 时必填：完整的任务说明，后台看不到当前聊天；reply 时也可填追加要求"
+            },
+            "task_id": {
+              "type": "string",
+              "description": "reply／cancel 时必填"
+            },
+            "read_only": {
+              "type": "boolean",
+              "description": "start 时可选（默认 false）：仅查资料或只读检查时设为 true，后台将禁止修改任何设置、角色、预设或文件"
+            },
+            "answer": {
+              "type": "string",
+              "description": "reply 时填用户的回答或对进行中任务的追加要求"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    }
+  ],
   "toolChoice": null,
   "disableBuiltinWebSearch": true,
-  "boundTools": [],
+  "boundTools": [
+    "delegate_task"
+  ],
   "enabledPluginIds": [
     "web_search"
   ],

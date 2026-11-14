@@ -164,6 +164,120 @@ void main() {
         (r) => r.id == 'preset_nahida',
       );
 
+  Future<Map<String, dynamic>> runWrite(
+    String name,
+    Map<String, dynamic> args,
+  ) async =>
+      jsonDecode(
+            (await writes
+                .tools()
+                .singleWhere((tool) => tool.name == name)
+                .handler(args))!,
+          )
+          as Map<String, dynamic>;
+
+  test('all enables ordinary built-ins without software management', () async {
+    final store = container.read(assistantRoleStoreProvider);
+    await store.edit('preset_nahida', {
+      RoleField.enabledPlugins: ['web_search'],
+    });
+    final result = await runWrite(AssistantWriteTools.setRolePlugins, {
+      'role_id': 'preset_nahida',
+      'all': true,
+    });
+    expect(result['ok'], isTrue, reason: '$result');
+    expect(
+      (await nahida()).enabledPlugins,
+      unorderedEquals(
+        kAssistantRolePlugins.keys.where((id) => id != 'aicove_assistant'),
+      ),
+    );
+    expect((await nahida()).hasAssistantCapability, isFalse);
+  });
+
+  for (final tool in [
+    AssistantWriteTools.createRole,
+    AssistantWriteTools.updateRole,
+    AssistantWriteTools.setRolePlugins,
+  ]) {
+    test('$tool rates newly granted software management as major', () async {
+      final store = container.read(assistantRoleStoreProvider);
+      await store.edit('preset_nahida', {RoleField.enabledPlugins: <String>[]});
+      final args = <String, dynamic>{
+        'role_id': 'preset_nahida',
+        if (tool == AssistantWriteTools.createRole) ...{
+          'name': 'New role',
+          'persona_prompt': 'Test persona',
+        },
+        (tool == AssistantWriteTools.setRolePlugins
+            ? 'plugins'
+            : RoleField.enabledPlugins): [
+          'aicove_assistant',
+        ],
+      };
+      expect((await nahida()).hasAssistantCapability, isFalse);
+      expect(writes.riskOf(tool, args), AssistantRisk.major);
+      if (tool != AssistantWriteTools.createRole) {
+        await store.edit('preset_nahida', {
+          RoleField.enabledPlugins: ['aicove_assistant'],
+        });
+        expect(
+          writes.riskOf(tool, args),
+          tool == AssistantWriteTools.updateRole
+              ? AssistantRisk.review
+              : AssistantRisk.reversible,
+        );
+      }
+    });
+  }
+
+  test(
+    'all preserves existing management only without an explicit list',
+    () async {
+      final store = container.read(assistantRoleStoreProvider);
+      for (final plugins in [
+        null,
+        <String>[],
+        ['aicove_assistant'],
+      ]) {
+        await store.edit('preset_nahida', {
+          RoleField.enabledPlugins: ['web_search', 'aicove_assistant'],
+        });
+        final result = await runWrite(AssistantWriteTools.setRolePlugins, {
+          'role_id': 'preset_nahida',
+          'all': true,
+          if (plugins != null) 'plugins': plugins,
+        });
+        expect(result['ok'], isTrue, reason: '$result');
+        expect(
+          (await nahida()).enabledPlugins!.contains('aicove_assistant'),
+          plugins == null || plugins.contains('aicove_assistant'),
+        );
+      }
+    },
+  );
+
+  for (final tool in [
+    AssistantWriteTools.updateRole,
+    AssistantWriteTools.setRolePlugins,
+  ]) {
+    test('$tool keeps the built-in assistant management plugin', () async {
+      final result = await runWrite(tool, {
+        'role_id': kAicoveAssistantId,
+        (tool == AssistantWriteTools.setRolePlugins
+                ? 'plugins'
+                : RoleField.enabledPlugins):
+            <String>[],
+      });
+      expect(result['ok'], isTrue, reason: '$result');
+      final assistant =
+          (await container.read(assistantRoleStoreProvider).load()).singleWhere(
+            (role) => role.id == kAicoveAssistantId,
+          );
+      expect(assistant.enabledPlugins, contains('aicove_assistant'));
+    });
+  }
+
   test(
     'prompt fragments replace precisely, preserve other parts and undo',
     () async {

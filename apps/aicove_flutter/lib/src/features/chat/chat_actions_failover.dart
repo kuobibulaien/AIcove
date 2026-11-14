@@ -7,13 +7,23 @@ extension ChatActionsFailover on ChatActions {
     required String nextModel,
     required AppSettings settings,
     required Object error,
+    DateTime? roundStartedAt,
     KernelCancellation? cancellation,
-  }) {
+  }) async {
+    var detail = error.toString();
+    try {
+      final runs = await ModelRequestLedger.instance.forConversation(convId);
+      if (runs.isNotEmpty) detail += '\n\n${ModelRequestErrorReport.formatModelRuns(runs)}';
+    } catch (ledgerError) {
+      AppLogger.warning('ModelRequestLedger', '读取模型请求记录失败', metadata: {'error': '$ledgerError'});
+    }
     return _ref.read(modelFailoverPromptProvider.notifier).request(
           conversationId: convId,
           failedModelName: settings.getModelDisplayName(failedModel),
           nextModelName: settings.getModelDisplayName(nextModel),
           errorMessage: error.toString(),
+          errorDetail: detail,
+          roundStartedAt: roundStartedAt,
           cancellation: cancellation,
         );
   }
@@ -32,7 +42,9 @@ extension ChatActionsFailover on ChatActions {
     final generation = _activeGenerations[convId];
     final cancellation = generation?.cancellation;
     final progress = generation?.toolProgress;
+    var modelAttempt = 0;
     Future<ApiCallResult> executeControlled(ApiConfig config) async {
+      modelAttempt++;
       cancellation?.throwIfCancelled();
       final calls = <int, String>{};
       // 无前台 generation 的即时主动回复也有独立的执行作用域。
@@ -42,7 +54,7 @@ extension ChatActionsFailover on ChatActions {
       }
       final attempt = progress?.beginAttempt();
       try {
-        final result = await execute(config.copyWith(
+        final result = await ModelRunScope(purpose: ModelRunScope.current?.purpose ?? (generation == null ? 'proactive_reply' : 'chat'), conversationId: convId, turnId: generation?.userMsgId, attempt: modelAttempt).run(() => execute(config.copyWith(
           cancellation: cancellation,
           onModelRetry: (attempt, maxRetries, delay) {
             if (generation != null && _isGenerationCurrent(convId, generation.id)) {
@@ -78,7 +90,7 @@ extension ChatActionsFailover on ChatActions {
                         : Future<void>.value(),
                   );
                 },
-        ));
+        )));
         return result;
       } finally {
         // 超时、异常、模型切换也不等待工具迟到的 finally。
@@ -140,6 +152,7 @@ extension ChatActionsFailover on ChatActions {
             nextModel: nextModel,
             settings: settings,
             error: e,
+            roundStartedAt: generation?.startedAt,
             cancellation: cancellation,
           );
           if (decision == ModelFailoverDecision.retryCurrent) {

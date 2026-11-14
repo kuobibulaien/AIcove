@@ -8,10 +8,20 @@ import '../../settings/app_settings.dart';
 import '../domain/chat_context_preview.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/chat_timeline_deletion.dart';
 import '../services/chat_types.dart'
     show ApiCallResult, ApiConfig, AssistantMessageBuildResult;
 
+export '../domain/chat_timeline_deletion.dart';
+export 'chat_page_conversation_actions.dart'
+    show chatPageConversationActionsProvider;
+
 abstract interface class ChatHistoryPort {
+  Future<void> executeTimelineDeletePlan(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  );
+
   Future<List<Message>> loadRawMessages(String conversationId);
 
   /// Restore interrupted user sends before opening a conversation timeline.
@@ -42,6 +52,7 @@ abstract interface class ChatHistoryPort {
     String conversationId,
     List<String> messageIds, {
     bool clearContextStartIfDeleted = false,
+    bool shiftContextStartIfDeleted = false,
   });
 
   Future<void> truncateFromMessage({

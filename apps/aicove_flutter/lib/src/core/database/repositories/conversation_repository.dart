@@ -112,6 +112,14 @@ class ConversationRepository {
     ));
   }
 
+  /// An assistant message arrived on its own (proactive delivery). Counted in
+  /// SQL so a stale in-memory copy cannot lose a concurrent increment.
+  Future<void> incrementUnread(String id) => _db.customUpdate(
+        'UPDATE conversations SET unread_count = unread_count + 1 WHERE id = ?',
+        variables: [Variable.withString(id)],
+        updates: {_db.conversations},
+      );
+
   /// 清除未读计数
   Future<void> clearUnread(String id) async {
     await (_db.update(_db.conversations)..where((t) => t.id.equals(id)))

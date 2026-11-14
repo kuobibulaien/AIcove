@@ -63,10 +63,12 @@ class _FakeRunner extends TaskAgentRunner {
   Future<TaskRunOutcome> run({
     required String taskId,
     required String runId,
+    String? conversationId,
     required String transcript,
     required TaskAgentCapabilities capabilities,
     required TaskAgentPreset preset,
     required KernelCancellation cancellation,
+    bool readOnly = false,
     AgentToolPolicy? toolPolicy,
     List<Map<String, dynamic>>? contextMessages,
     void Function()? onExternalStart,
@@ -138,7 +140,8 @@ void main() {
       store: store,
       process: TaskProcessRecord(dir),
       runner: runner,
-      capabilities: (_, _, _) async => const TaskAgentCapabilities(),
+      capabilities: (_, _, _, {bool readOnly = false}) async =>
+          const TaskAgentCapabilities(),
       writeReceipt: (receipt) async {
         if (writeFails) throw StateError('disk full');
         written.add(receipt);
@@ -160,42 +163,106 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  test('busy conversation retains receipts until flushed, including recovery', () async {
+  test('inline receipt settles without duplicate relay', () async {
     busy = true;
-    runner.scripts.add((_, _, _) async => _done('完成'));
-    await service.start(conversationId: 'c1', instruction: '查');
+    final gate = Completer<TaskRunOutcome>();
+    runner.scripts.add((_, _, _) => gate.future);
+    final task = await service.start(conversationId: 'c1', instruction: '查');
+    final waiting = service.waitForReceipt(
+      task.id,
+      timeout: const Duration(seconds: 1),
+    );
+    gate.complete(_done('完成'));
+    expect((await waiting)?.summary, '完成');
     await service.idle();
-    await service.recover();
+    await service.settleInlineDeliveries('c1', isRelayed: (_) async => true);
+    busy = false;
     await service.flushConversation('c1');
     expect(written, isEmpty);
     expect(relayed, isEmpty);
-    expect(await store.unwrittenReceipts(), hasLength(1));
-    busy = false;
-    await service.flushConversation('other');
-    expect(written, isEmpty);
-    await service.flushConversation('c1');
-    expect(written, hasLength(1));
-    expect(relayed, hasLength(1));
-    expect(await store.unwrittenReceipts(), isEmpty);
   });
 
-  test('written pending receipt waits while the conversation is busy', () async {
-    owns = false;
-    runner.scripts.add((_, _, _) async => _done('完成'));
-    await service.start(conversationId: 'c1', instruction: '查');
-    await service.idle();
-    expect(written, hasLength(1));
-    expect(await store.unwrittenReceipts(), isEmpty);
-    owns = true;
+  test('failed inline response falls back to asynchronous relay', () async {
     busy = true;
-    await service.deliverPending();
-    expect(relayed, isEmpty);
-    expect(await store.pendingDeliveries(), hasLength(1));
+    final gate = Completer<TaskRunOutcome>();
+    runner.scripts.add((_, _, _) => gate.future);
+    final task = await service.start(conversationId: 'c1', instruction: '查');
+    final waiting = service.waitForReceipt(
+      task.id,
+      timeout: const Duration(seconds: 1),
+    );
+    gate.complete(_done('完成'));
+    expect(await waiting, isNotNull);
+    await service.idle();
+    await service.settleInlineDeliveries('c1', isRelayed: (_) async => false);
     busy = false;
     await service.flushConversation('c1');
+    expect(written, hasLength(1));
     expect(relayed, hasLength(1));
-    expect(await store.pendingDeliveries(), isEmpty);
   });
+
+  test('timeout leaves slow receipt for asynchronous relay', () async {
+    busy = true;
+    final gate = Completer<TaskRunOutcome>();
+    runner.scripts.add((_, _, _) => gate.future);
+    final task = await service.start(conversationId: 'c1', instruction: '查');
+    expect(
+      await service.waitForReceipt(
+        task.id,
+        timeout: const Duration(milliseconds: 20),
+      ),
+      isNull,
+    );
+    gate.complete(_done('完成'));
+    await service.idle();
+    busy = false;
+    await service.flushConversation('c1');
+    expect(written, hasLength(1));
+    expect(relayed, hasLength(1));
+  });
+
+  test(
+    'busy conversation retains receipts until flushed, including recovery',
+    () async {
+      busy = true;
+      runner.scripts.add((_, _, _) async => _done('完成'));
+      await service.start(conversationId: 'c1', instruction: '查');
+      await service.idle();
+      await service.recover();
+      await service.flushConversation('c1');
+      expect(written, isEmpty);
+      expect(relayed, isEmpty);
+      expect(await store.unwrittenReceipts(), hasLength(1));
+      busy = false;
+      await service.flushConversation('other');
+      expect(written, isEmpty);
+      await service.flushConversation('c1');
+      expect(written, hasLength(1));
+      expect(relayed, hasLength(1));
+      expect(await store.unwrittenReceipts(), isEmpty);
+    },
+  );
+
+  test(
+    'written pending receipt waits while the conversation is busy',
+    () async {
+      owns = false;
+      runner.scripts.add((_, _, _) async => _done('完成'));
+      await service.start(conversationId: 'c1', instruction: '查');
+      await service.idle();
+      expect(written, hasLength(1));
+      expect(await store.unwrittenReceipts(), isEmpty);
+      owns = true;
+      busy = true;
+      await service.deliverPending();
+      expect(relayed, isEmpty);
+      expect(await store.pendingDeliveries(), hasLength(1));
+      busy = false;
+      await service.flushConversation('c1');
+      expect(relayed, hasLength(1));
+      expect(await store.pendingDeliveries(), isEmpty);
+    },
+  );
 
   test('a task runs, writes its receipt and relays it once', () async {
     runner.scripts.add((_, _, _) async => _done('上海今天晴'));
@@ -347,7 +414,8 @@ void main() {
         store: store,
         process: TaskProcessRecord(dir),
         runner: runner,
-        capabilities: (_, _, _) async => const TaskAgentCapabilities(),
+        capabilities: (_, _, _, {bool readOnly = false}) async =>
+            const TaskAgentCapabilities(),
         writeReceipt: (receipt) async => written.add(receipt),
         relay: (_, receipt) async {
           relayed.add(receipt.receiptId);
@@ -415,24 +483,27 @@ void main() {
       );
     });
 
-    test('stop during recovery defers scanning until foreground resumes', () async {
-      final pending = Completer<TaskAgentService>();
-      final scanner = _CountingScanner(database);
-      final delayed = TaskAgentSupervisor(
-        service: pending.future,
-        scanner: scanner,
-        loadBlocks: (_) async => [],
-      );
-      final starting = delayed.start();
-      delayed.stop();
-      pending.complete(service);
-      await starting;
-      expect(scanner.scans, 0);
-      delayed.foreground(true);
-      await scanner.scanned.future.timeout(const Duration(seconds: 2));
-      expect(scanner.scans, 1);
-      delayed.stop();
-    });
+    test(
+      'stop during recovery defers scanning until foreground resumes',
+      () async {
+        final pending = Completer<TaskAgentService>();
+        final scanner = _CountingScanner(database);
+        final delayed = TaskAgentSupervisor(
+          service: pending.future,
+          scanner: scanner,
+          loadBlocks: (_) async => [],
+        );
+        final starting = delayed.start();
+        delayed.stop();
+        pending.complete(service);
+        await starting;
+        expect(scanner.scans, 0);
+        delayed.foreground(true);
+        await scanner.scanned.future.timeout(const Duration(seconds: 2));
+        expect(scanner.scans, 1);
+        delayed.stop();
+      },
+    );
 
     test('a synced receipt gets a delivery and is relayed once', () async {
       final receipt = TaskReceiptBlock(

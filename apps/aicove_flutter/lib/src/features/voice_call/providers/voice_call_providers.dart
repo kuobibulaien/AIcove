@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
 import '../../background_agent/background_agent_service.dart';
+import '../../auto_reply/data/analyzer_scheduler.dart';
 import '../../chat/domain/conversation.dart';
 import '../../chat/id_gen.dart';
 import '../../chat/services/api_runner.dart';
@@ -52,13 +53,18 @@ final callRecordStoreProvider = Provider<CallRecordStorePort>(
 final voiceCallArchiverProvider = Provider<VoiceCallArchiver>(
   (ref) => VoiceCallArchiver(
     newId: genId,
-    appendBubble: (conversationId, bubble) => ref
-        .read(chatHistoryStoreProvider)
-        .appendUserMessage(
-          conversationId: conversationId,
-          message: bubble,
-          displayText: bubble.displayText,
-        ),
+    appendBubble: (conversationId, bubble) async {
+      await ref.read(chatHistoryStoreProvider).appendUserMessage(
+        conversationId: conversationId,
+        message: bubble,
+        displayText: bubble.displayText,
+      );
+      await ref.read(analyzerSchedulerProvider).handleUserMessageActivity(
+        conversationId: conversationId,
+        messageId: bubble.id,
+        occurredAt: bubble.createdAt,
+      );
+    },
     summarize: (conversationId, turns) async {
       final settings = await ref.read(appSettingsProvider.future);
       return VoiceCallSummarizer(

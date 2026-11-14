@@ -39,7 +39,6 @@ import '../../../../features/chat/application/contact_edit_role_actions.dart';
 
 import '../widgets/role_prompt_section.dart';
 import 'role_extra_prompt_page.dart';
-import '../widgets/character_agent_mode_section.dart';
 import '../widgets/character_plugins_section.dart';
 import '../widgets/character_text_editor_sheet.dart';
 import '../widgets/tavern_greeting_picker_sheet.dart';
@@ -122,7 +121,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   List<String> _cardGreetings = const [];
   int _greetingIndex = 0;
   late Set<String> _selectedPluginIds;
-  late RoleAgentMode _agentMode;
   String? _boundVoiceId;
   String? _selectedRecipeId;
   String? _scheduledBlurSource;
@@ -180,7 +178,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       text: conv.chatBackgroundImage ?? '',
     );
     _wallpaperStyle = chatWallpaperOwnStyleOf(conv);
-    _agentMode = conv.effectiveAgentMode;
 
     final allPluginIds = conversationScopedChatPluginItems
         .map((e) => e.id)
@@ -189,11 +186,15 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       // 新建角色默认只开记忆和时间感知，其余在「管理插件」中逐项开启
       _selectedPluginIds = {...kDefaultRolePluginIds};
     } else if (conv.enabledPlugins == null) {
-      _selectedPluginIds = {...allPluginIds};
+      _selectedPluginIds = {
+        ...allPluginIds,
+        if (conv.hasAssistantCapability) 'aicove_assistant',
+      };
     } else {
       _selectedPluginIds = {
         for (final id in conv.enabledPlugins!)
           if (allPluginIds.contains(id) ||
+              id == 'aicove_assistant' ||
               McpToolNaming.isConnectorPluginId(id) ||
               AicovePackage.isPackagePluginId(id) ||
               // 本机没有的工作区也保留授权（ADR0087 第 1 条）
@@ -201,6 +202,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
               StickerPackGrants.isGrantId(id) ||
               TimeAwarenessRoleOptions.isOptionId(id))
             id,
+        if (conv.hasAssistantCapability) 'aicove_assistant',
       };
     }
 
@@ -444,20 +446,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
               ),
             ),
 
-            // 角色模式（ADR0097）
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: CharacterAgentModeSection(
-                mode: _agentMode,
-                locked: _agentModeLocked,
-                onChanged: (mode) {
-                  setState(() => _agentMode = mode);
-                  _scheduleAutoSave();
-                },
-              ),
-            ),
-
             if (widget.editMode == EditMode.create) ...[
               const SizedBox(height: 16),
               Padding(
@@ -531,8 +519,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
   // ==================== 保存逻辑 ====================
 
   bool get _isAssistant => widget.conversation.id == kAicoveAssistantId;
-
-  bool get _agentModeLocked => _isAssistant;
 
   /// [mergeExtraPrompt]: fold the extra prompt into the editable persona when
   /// copying a role whose base prompt is read-only (AIcove酱).
@@ -610,8 +596,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
       clearDescription: description == null,
       clearEnabledPlugins: enabledPlugins == null,
       clearRecipeId: recipeId == null && widget.conversation.recipeId != null,
-      // AIcove酱的模式固定，不随保存写入
-      agentMode: _agentModeLocked ? null : _agentMode,
     );
   }
 
@@ -678,7 +662,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
           clearEnabledPlugins: result.clearEnabledPlugins,
           recipeId: result.recipeId,
           clearRecipeId: result.clearRecipeId,
-          agentMode: result.agentMode,
         );
   }
 
@@ -715,7 +698,6 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
             applyEdit: (id) => _applyResult(id, result),
             displayName: result.displayName,
             recipeId: result.recipeId,
-            agentMode: result.agentMode,
             isActive: () => mounted,
             card: _importedCard,
             greeting: greeting,
@@ -743,7 +725,7 @@ class _ContactEditPageState extends ConsumerState<ContactEditPage>
     final notifier = ref.read(conversationsProvider.notifier);
     final id = await ref
         .read(contactEditRoleActionsProvider)
-        .createConversation(result.agentMode);
+        .createConversation();
     await _applyResult(id, result);
     await notifier.updateConversationSettings(id, isFavorite: true);
 

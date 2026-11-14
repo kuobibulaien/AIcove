@@ -361,6 +361,12 @@ class _MemoryChatHistoryPort implements ChatHistoryPort {
   final List<Message> _messages;
 
   @override
+  Future<void> executeTimelineDeletePlan(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  ) => throw UnimplementedError('Timeline deletion requires the real store');
+
+  @override
   Future<void> recoverInterruptedUserMessages(
     String conversationId, {
     required bool Function(String messageId) isActiveSend,
@@ -408,6 +414,7 @@ class _MemoryChatHistoryPort implements ChatHistoryPort {
     String conversationId,
     List<String> messageIds, {
     bool clearContextStartIfDeleted = false,
+    bool shiftContextStartIfDeleted = false,
   }) async {
     _messages.removeWhere((message) => messageIds.contains(message.id));
   }
@@ -446,6 +453,12 @@ class _EditMessageFastPathHistoryPort implements ChatHistoryPort {
   Future<void> Function()? onTruncateFromMessage;
 
   @override
+  Future<void> executeTimelineDeletePlan(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  ) => throw UnimplementedError('Timeline deletion requires the real store');
+
+  @override
   Future<void> recoverInterruptedUserMessages(
     String conversationId, {
     required bool Function(String messageId) isActiveSend,
@@ -481,6 +494,7 @@ class _EditMessageFastPathHistoryPort implements ChatHistoryPort {
     String conversationId,
     List<String> messageIds, {
     bool clearContextStartIfDeleted = false,
+    bool shiftContextStartIfDeleted = false,
   }) async {}
 
   @override
@@ -3531,7 +3545,7 @@ void main() {
     expect(persistedAi!.deletedAt, isNull);
   });
 
-  test('deleteMessage 仅隐藏前端消息并清理引用态', () async {
+  test('deleteMessage 真删 raw 消息、消息块并清理引用态', () async {
     final now = DateTime.now();
     final userMsg = Message(
       id: 'msg_user',
@@ -3592,28 +3606,26 @@ void main() {
 
     await actions.deleteMessage(aiMsg.id);
 
-    final visibleWindow =
-        await container.read(conversationMessageWindowProvider(conv.id).future);
+    final visibleWindow = await container.read(
+      conversationMessageWindowProvider(conv.id).future,
+    );
     expect(visibleWindow.messages.map((message) => message.id), [userMsg.id]);
     expect(container.read(quotedMessageProvider), isNull);
 
     final canonicalMessages = await container
         .read(chatHistoryStoreProvider)
         .loadCanonicalContextMessages(conv.id);
-    expect(
-      canonicalMessages.map((message) => message.id),
-      [userMsg.id, aiMsg.id],
-    );
+    expect(canonicalMessages.map((message) => message.id), [userMsg.id]);
 
     await container
         .read(conversationTimelineCacheProvider)
         .reloadConversationFromRawStore(conv.id);
-    final visibleAfterReload =
-        await container.read(conversationMessageWindowProvider(conv.id).future);
-    expect(
-      visibleAfterReload.messages.map((message) => message.id),
-      [userMsg.id],
+    final visibleAfterReload = await container.read(
+      conversationMessageWindowProvider(conv.id).future,
     );
+    expect(visibleAfterReload.messages.map((message) => message.id), [
+      userMsg.id,
+    ]);
 
     final repo = container.read(messageRepositoryProvider);
     final blockRepo = container.read(messageBlockRepositoryProvider);
@@ -3622,140 +3634,200 @@ void main() {
     final deletedBlocks = await blockRepo.getByMessage(aiMsg.id);
     final remainedBlocks = await blockRepo.getByMessage(userMsg.id);
     expect(deleted, isNotNull);
-    expect(deleted!.deletedAt, isNull);
+    expect(deleted!.deletedAt, isNotNull);
     expect(remained, isNotNull);
     expect(remained!.deletedAt, isNull);
-    expect(deletedBlocks.length, 1);
+    expect(deletedBlocks, isEmpty);
     expect(remainedBlocks.length, 1);
 
     final deletedBlockRaw = await blockRepo.getById('blk_ai_1');
     final remainedBlockRaw = await blockRepo.getById('blk_user_1');
     expect(deletedBlockRaw, isNotNull);
-    expect(deletedBlockRaw!.deletedAt, isNull);
+    expect(deletedBlockRaw!.deletedAt, isNotNull);
     expect(remainedBlockRaw, isNotNull);
     expect(remainedBlockRaw!.deletedAt, isNull);
   });
 
-  test('deleteMessage 删除 AI 单个气泡时只隐藏该气泡，不改同源 raw 语义', () async {
-    final now = DateTime.now();
-    final userMsg = Message(
-      id: 'msg_user_proj',
-      role: 'user',
-      content: '帮我拆成两句',
-      createdAt: now.subtract(const Duration(minutes: 1)),
-      status: 'sent',
-    );
-    final assistantBuild = _buildTestAssistantBuildResult(
-      messages: [
-        Message.text(
-          id: 'msg_ai_seg_1',
-          role: 'assistant',
-          content: '第一句',
+  for (final (withProcess, onlyProcess) in [
+    (false, false),
+    (true, false),
+    (false, true),
+  ]) {
+    test(
+      onlyProcess
+          ? 'deleteMessage 无主体投影时只在最后一个投影删除后真删 raw'
+          : withProcess
+          ? 'deleteMessage 纯工具与思考投影不阻止最后主体气泡真删 raw'
+          : 'deleteMessage 先隐藏单个气泡，删除最后主体气泡时真删 raw',
+      () async {
+        final now = DateTime.now();
+        final userMsg = Message(
+          id: 'msg_user_proj',
+          role: 'user',
+          content: '帮我拆成两句',
+          createdAt: now.subtract(const Duration(minutes: 1)),
+          status: 'sent',
+        );
+        final assistantBuild = _buildTestAssistantBuildResult(
+          messages: [
+            Message(
+              id: 'msg_ai_seg_1',
+              role: 'assistant',
+              content: onlyProcess ? '' : '第一句',
+              blocks: onlyProcess
+                  ? [ThinkingBlock(messageId: 'msg_ai_seg_1', content: '思考')]
+                  : null,
+              createdAt: now,
+              status: 'sent',
+            ),
+            Message(
+              id: 'msg_ai_seg_2',
+              role: 'assistant',
+              content: onlyProcess ? '' : '第二句',
+              blocks: onlyProcess
+                  ? [ToolBlock(messageId: 'msg_ai_seg_2', toolName: 'search')]
+                  : null,
+              createdAt: now.add(const Duration(seconds: 1)),
+              status: 'sent',
+            ),
+            if (withProcess)
+              Message(
+                id: 'msg_ai_process',
+                role: 'assistant',
+                content: '',
+                blocks: [
+                  ThinkingBlock(messageId: 'msg_ai_process', content: '思考'),
+                  ToolBlock(messageId: 'msg_ai_process', toolName: 'search'),
+                ],
+                createdAt: now.add(const Duration(seconds: 2)),
+                status: 'sent',
+              ),
+          ],
+          lastMessageText: '第二句',
+        );
+        final baseRawAiMsg = assistantBuild.rawMessage!;
+        final rawAiMsg = baseRawAiMsg.copyWith(
+          rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
+            baseRawAiMsg.rawPayload,
+            assistantBuild.messages,
+          ),
+        );
+        final conv = Conversation(
+          id: 'conv_delete_projected_${withProcess}_$onlyProcess',
+          title: 'DeleteProjected',
+          displayName: 'DeleteProjected',
           createdAt: now,
-          status: 'sent',
-        ),
-        Message.text(
-          id: 'msg_ai_seg_2',
-          role: 'assistant',
-          content: '第二句',
-          createdAt: now.add(const Duration(seconds: 1)),
-          status: 'sent',
-        ),
-      ],
-      lastMessageText: '第二句',
+          updatedAt: now,
+          messages: [userMsg, rawAiMsg],
+          lastMessage: rawAiMsg.displayText,
+          lastMessageTime: rawAiMsg.createdAt,
+        );
+
+        final db = AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(db.close);
+        await _insertConversation(db, conv);
+        await _insertMessage(db, conv.id, userMsg);
+        await _insertMessage(db, conv.id, rawAiMsg);
+        await _insertTextBlock(db, userMsg.id, 'blk_user_proj_1');
+
+        final container = ProviderContainer(
+          overrides: [
+            databaseProvider.overrideWithValue(db),
+            conversationsProvider.overrideWith(
+              () => _FakeConversationsNotifier([conv]),
+            ),
+            activeConversationProvider.overrideWith((ref) {
+              final list = ref.watch(conversationsProvider).valueOrNull;
+              if (list == null || list.isEmpty) return null;
+              return list.first;
+            }),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        await container.read(conversationsProvider.future);
+        final actions = container.read(chatActionsProvider);
+
+        container
+            .read(quotedMessageProvider.notifier)
+            .state = const QuotedMessage(
+          id: 'msg_ai_seg_1',
+          content: '第一句',
+          isUser: false,
+        );
+
+        await actions.deleteMessage('msg_ai_seg_1');
+
+        final visibleWindow = await container.read(
+          conversationMessageWindowProvider(conv.id).future,
+        );
+        expect(visibleWindow.messages.map((message) => message.id), [
+          userMsg.id,
+          'msg_ai_seg_2',
+          if (withProcess) 'msg_ai_process',
+        ]);
+        expect(container.read(quotedMessageProvider), isNull);
+
+        final canonicalMessages = await container
+            .read(chatHistoryStoreProvider)
+            .loadCanonicalContextMessages(conv.id);
+        expect(canonicalMessages.map((message) => message.id), [
+          userMsg.id,
+          rawAiMsg.id,
+        ]);
+
+        await container
+            .read(conversationTimelineCacheProvider)
+            .reloadConversationFromRawStore(conv.id);
+        final visibleAfterReload = await container.read(
+          conversationMessageWindowProvider(conv.id).future,
+        );
+        expect(visibleAfterReload.messages.map((message) => message.id), [
+          userMsg.id,
+          'msg_ai_seg_2',
+          if (withProcess) 'msg_ai_process',
+        ]);
+
+        final repo = container.read(messageRepositoryProvider);
+        final persistedRawAi = await repo.getById(rawAiMsg.id);
+        expect(persistedRawAi, isNotNull);
+        expect(persistedRawAi!.deletedAt, isNull);
+        expect(persistedRawAi.rawPayload, isNotNull);
+
+        final persistedPayload =
+            jsonDecode(persistedRawAi.rawPayload!) as Map<String, dynamic>;
+        final persistedProjected = ChatMessageProjectionCodec.projectedMessages(
+          persistedPayload,
+        );
+        expect(persistedProjected.map((message) => message.id), [
+          'msg_ai_seg_1',
+          'msg_ai_seg_2',
+          if (withProcess) 'msg_ai_process',
+        ]);
+
+        container.read(quotedMessageProvider.notifier).state = QuotedMessage(
+          id: rawAiMsg.id,
+          content: '原始回复',
+          isUser: false,
+        );
+        await actions.deleteMessage('msg_ai_seg_2');
+
+        expect(container.read(quotedMessageProvider), isNull);
+        final finalCanonical = await container
+            .read(chatHistoryStoreProvider)
+            .loadCanonicalContextMessages(conv.id);
+        expect(finalCanonical.map((message) => message.id), [userMsg.id]);
+        expect((await repo.getById(rawAiMsg.id))!.deletedAt, isNotNull);
+        await container
+            .read(conversationTimelineCacheProvider)
+            .reloadConversationFromRawStore(conv.id);
+        final finalWindow = await container.read(
+          conversationMessageWindowProvider(conv.id).future,
+        );
+        expect(finalWindow.messages.map((message) => message.id), [userMsg.id]);
+      },
     );
-    final baseRawAiMsg = assistantBuild.rawMessage!;
-    final rawAiMsg = baseRawAiMsg.copyWith(
-      rawPayload: ChatMessageProjectionCodec.copyWithProjectedMessages(
-        baseRawAiMsg.rawPayload,
-        assistantBuild.messages,
-      ),
-    );
-    final conv = Conversation(
-      id: 'conv_delete_projected',
-      title: 'DeleteProjected',
-      displayName: 'DeleteProjected',
-      createdAt: now,
-      updatedAt: now,
-      messages: [userMsg, rawAiMsg],
-      lastMessage: rawAiMsg.displayText,
-      lastMessageTime: rawAiMsg.createdAt,
-    );
-
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
-    await _insertConversation(db, conv);
-    await _insertMessage(db, conv.id, userMsg);
-    await _insertMessage(db, conv.id, rawAiMsg);
-    await _insertTextBlock(db, userMsg.id, 'blk_user_proj_1');
-
-    final container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(db),
-        conversationsProvider.overrideWith(
-          () => _FakeConversationsNotifier([conv]),
-        ),
-        activeConversationProvider.overrideWith((ref) {
-          final list = ref.watch(conversationsProvider).valueOrNull;
-          if (list == null || list.isEmpty) return null;
-          return list.first;
-        }),
-      ],
-    );
-    addTearDown(container.dispose);
-
-    await container.read(conversationsProvider.future);
-    final actions = container.read(chatActionsProvider);
-
-    container.read(quotedMessageProvider.notifier).state = const QuotedMessage(
-      id: 'msg_ai_seg_1',
-      content: '第一句',
-      isUser: false,
-    );
-
-    await actions.deleteMessage('msg_ai_seg_1');
-
-    final visibleWindow =
-        await container.read(conversationMessageWindowProvider(conv.id).future);
-    expect(
-      visibleWindow.messages.map((message) => message.id),
-      [userMsg.id, 'msg_ai_seg_2'],
-    );
-    expect(container.read(quotedMessageProvider), isNull);
-
-    final canonicalMessages = await container
-        .read(chatHistoryStoreProvider)
-        .loadCanonicalContextMessages(conv.id);
-    expect(
-      canonicalMessages.map((message) => message.id),
-      [userMsg.id, rawAiMsg.id],
-    );
-
-    await container
-        .read(conversationTimelineCacheProvider)
-        .reloadConversationFromRawStore(conv.id);
-    final visibleAfterReload =
-        await container.read(conversationMessageWindowProvider(conv.id).future);
-    expect(
-      visibleAfterReload.messages.map((message) => message.id),
-      [userMsg.id, 'msg_ai_seg_2'],
-    );
-
-    final repo = container.read(messageRepositoryProvider);
-    final persistedRawAi = await repo.getById(rawAiMsg.id);
-    expect(persistedRawAi, isNotNull);
-    expect(persistedRawAi!.deletedAt, isNull);
-    expect(persistedRawAi.rawPayload, isNotNull);
-
-    final persistedPayload =
-        jsonDecode(persistedRawAi.rawPayload!) as Map<String, dynamic>;
-    final persistedProjected =
-        ChatMessageProjectionCodec.projectedMessages(persistedPayload);
-    expect(
-      persistedProjected.map((message) => message.id),
-      ['msg_ai_seg_1', 'msg_ai_seg_2'],
-    );
-  });
+  }
 
   for (final sticker in [false, true]) {
     test(sticker ? '失败表情回填入口仍经 retry 流式重发' : 'retry 会使用流式参数调用 API', () async {

@@ -439,6 +439,10 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
     String? sessionProvider,
     bool clearSessionProvider = false,
   }) async {
+    // Explicit plugin selection replaces the legacy software-management flag.
+    // An explicit compatibility-mode restore (undo/import) still takes priority.
+    final clearLegacyMode = clearAgentMode ||
+        (agentMode == null && (enabledPlugins != null || clearEnabledPlugins));
     final currentList = state.value ?? const <Conversation>[];
     Conversation? current;
     for (final conversation in currentList) {
@@ -491,7 +495,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
           ? null
           : (enabledPlugins ?? current.enabledPlugins),
       recipeId: clearRecipeId ? null : (recipeId ?? current.recipeId),
-      agentMode: clearAgentMode ? null : (agentMode ?? current.agentMode),
+      agentMode: clearLegacyMode ? null : (agentMode ?? current.agentMode),
       sessionProvider: clearSessionProvider
           ? null
           : (sessionProvider ?? current.sessionProvider),
@@ -528,7 +532,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
                   ? null
                   : (enabledPlugins ?? c.enabledPlugins),
               recipeId: clearRecipeId ? null : (recipeId ?? c.recipeId),
-              agentMode: clearAgentMode ? null : (agentMode ?? c.agentMode),
+              agentMode: clearLegacyMode ? null : (agentMode ?? c.agentMode),
               sessionProvider: clearSessionProvider
                   ? null
                   : (sessionProvider ?? c.sessionProvider),
@@ -683,6 +687,7 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
 
     // (注释已丢失)
     await msgRepo.softDeleteByConversation(id, now, purgeAt);
+    await ref.read(conversationRepositoryProvider).clearUnread(id);
     await ref.read(analyzerSchedulerProvider).onConversationCleared(id);
     // 摘要与自动整理的记忆都来自这些原文，随之清空；用户锁定的记忆保留。
     await ref.read(contextSummaryStoreProvider).clear(id);

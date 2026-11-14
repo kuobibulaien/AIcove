@@ -118,7 +118,8 @@ void main() {
               required cancellation,
             }) => throw UnimplementedError(),
       ),
-      capabilities: (_, _, _) async => const TaskAgentCapabilities(),
+      capabilities: (_, _, _, {bool readOnly = false}) async =>
+          const TaskAgentCapabilities(),
       writeReceipt: (_) async {},
       relay: (_, _) async => true,
       findReceipt: (_) async => null,

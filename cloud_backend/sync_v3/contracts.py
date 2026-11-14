@@ -8,7 +8,7 @@ KINDS = {
     'conversations', 'messages', 'message_blocks', 'message_projection_mappings',
     'providers', 'memories', 'summarization_records', 'memory_tombstones',
     'diaries', 'topic_handoffs', 'settings', 'plugin_presets', 'contact_memory',
-    'media_assets',
+    'media_assets', 'context_summaries', 'memory_items', 'memory_progress',
 }
 PROTOCOL_VERSION = 3
 PAYLOAD_VERSION = 1

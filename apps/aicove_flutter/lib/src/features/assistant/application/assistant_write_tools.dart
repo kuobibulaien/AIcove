@@ -16,6 +16,7 @@ import 'assistant_review.dart';
 
 /// Standard plugins; explicit extensions are loaded separately at call time.
 const kAssistantRolePlugins = <String, String>{
+  'aicove_assistant': '软件管理',
   'memory': '记忆库',
   'trigger': '主动回复',
   'sticker': '表情包',
@@ -25,9 +26,9 @@ const kAssistantRolePlugins = <String, String>{
   'web_search': '联网搜索',
 };
 
-/// Plugins that send chat content to a service the role did not use before;
+/// Plugins granting external data access or local software management;
 /// turning one on is a major decision.
-const _externalPlugins = {'web_search'};
+const _majorPlugins = {'web_search', 'aicove_assistant'};
 
 /// Role storage the write tools go through: the same domain service as the
 /// role edit page.
@@ -40,7 +41,7 @@ abstract interface class AssistantRoleStore {
   Future<List<Conversation>> load();
 
   /// Writes the given [RoleField] keys of [roleId]; a null value clears an
-  /// optional field, and for `enabled_plugins` means every plugin.
+  /// optional field, and for `enabled_plugins` means all ordinary built-ins.
   Future<void> edit(String roleId, Map<String, Object?> fields);
 
   /// Creates an empty role and returns its id.
@@ -287,10 +288,18 @@ class AssistantWriteTools {
           _ => AssistantRisk.review,
         }
       : switch (toolName) {
-          updateRole ||
-          createRole ||
-          bindPreset ||
-          authorizeRegex => AssistantRisk.review,
+          updateRole || createRole =>
+            (_ids(args[RoleField.enabledPlugins]).contains('web_search') ||
+                    (_ids(args[RoleField.enabledPlugins]).contains(
+                          'aicove_assistant',
+                        ) &&
+                        (toolName == createRole ||
+                            _visible(roles.snapshot(), args['role_id'])
+                                    ?.hasAssistantCapability !=
+                                true)))
+                ? AssistantRisk.major
+                : AssistantRisk.review,
+          bindPreset || authorizeRegex => AssistantRisk.review,
           togglePresetItem => AssistantRisk.reversible,
           setRolePlugins => _pluginRisk(args),
           _ => null,
@@ -320,10 +329,13 @@ class AssistantWriteTools {
     Conversation role,
     Map<String, dynamic> args,
   ) {
-    final before = _effectivePlugins(role.enabledPlugins);
+    final before = {
+      ..._effectivePlugins(role.enabledPlugins),
+      if (role.hasAssistantCapability) 'aicove_assistant',
+    };
     final after = _effectivePlugins(_requestedPlugins(role, args));
     final added = after.difference(before);
-    return added.any((id) => _externalPlugins.contains(id) || _isExtension(id))
+    return added.any((id) => _majorPlugins.contains(id) || _isExtension(id))
         ? AssistantRisk.major
         : AssistantRisk.reversible;
   }
@@ -399,7 +411,7 @@ class AssistantWriteTools {
         RoleField.drawingPromptPackId: _string('角色生图提示词包 id，空字符串清空'),
         RoleField.selfAddress: _string('角色的自称'),
         RoleField.addressUser: _string('角色对用户的称呼'),
-        RoleField.agentMode: _modeSchema,
+        RoleField.enabledPlugins: _pluginsSchema,
         RoleField.modelOverride: _modelSchema,
       },
       ['role_id'],
@@ -408,7 +420,7 @@ class AssistantWriteTools {
     _tool(
       createRole,
       '新建一个角色卡，默认开启记忆库和时间感知；更多插件用 aicove_set_role_plugins 开启。'
-      'agent_mode 默认 chat；tool 默认文档样式，chat 默认气泡样式。'
+      'enabled_plugins 可选择插件，aicove_assistant 表示软件管理；默认气泡样式。'
       '默认直接生效，用户可以撤销（撤销会把它移进回收站）。',
       {
         'name': _string('名字'),
@@ -418,7 +430,7 @@ class AssistantWriteTools {
         RoleField.drawingPromptPackId: _string('角色生图提示词包 id，空字符串清空'),
         RoleField.selfAddress: _string('角色的自称'),
         RoleField.addressUser: _string('角色对用户的称呼'),
-        RoleField.agentMode: _modeSchema,
+        RoleField.enabledPlugins: _pluginsSchema,
         RoleField.modelOverride: _modelSchema,
       },
       ['name', RoleField.personaPrompt],
@@ -497,11 +509,11 @@ class AssistantWriteTools {
     ),
   ];
 
-  static const _modeSchema = {
-    'type': 'string',
-    'enum': ['chat', 'tool', 'agent'],
+  static const _pluginsSchema = {
+    'type': 'array',
+    'items': {'type': 'string'},
     'description':
-        '工作模式：chat 聊天（不带工具）／tool 工具（单层 Agent）／agent 智能体（前台路由＋后台子 Agent）',
+        '完整内置插件 id 列表；aicove_assistant=软件管理，[] 关闭插件；扩展用 aicove_set_role_plugins',
   };
   static const _modelSchema = {
     'type': 'string',
@@ -601,6 +613,20 @@ class AssistantWriteTools {
     bool Function(Conversation current)? guard,
     String? changeDescription,
   }) async {
+    if (role.id == kAicoveAssistantId &&
+        fields.containsKey(RoleField.enabledPlugins)) {
+      fields = {
+        ...fields,
+        RoleField.enabledPlugins: {
+          ..._effectivePlugins(fields[RoleField.enabledPlugins] as List<String>?),
+          'aicove_assistant',
+        }.toList(),
+      };
+    }
+    if (fields.containsKey(RoleField.enabledPlugins) &&
+        !fields.containsKey(RoleField.agentMode)) {
+      fields = {...fields, RoleField.agentMode: null};
+    }
     final changed = {
       for (final MapEntry(:key, :value) in fields.entries)
         if (!RoleField.same(RoleField.read(role, key), value)) key: value,
@@ -749,7 +775,9 @@ class AssistantWriteTools {
       throw _Invalid(_descriptionNotSaved);
     }
     for (final key in RoleField.labels.keys) {
-      if (args.containsKey(key) && args[key] is! String) {
+      if (key != RoleField.enabledPlugins &&
+          args.containsKey(key) &&
+          args[key] is! String) {
         throw _Invalid('${RoleField.labels[key]}应为文本');
       }
     }
@@ -791,7 +819,7 @@ class AssistantWriteTools {
           _optionalText(args[key]) ??
           (throw _Invalid('${RoleField.labels[key]}不能为空'));
     }
-    fields.addAll(_modeAndModel(args, roleId: role.id));
+    fields.addAll(_roleOptions(args));
     if (fields.isEmpty) throw _Invalid('没有要改的字段');
     return _editRole(
       updateRole,
@@ -829,11 +857,8 @@ class AssistantWriteTools {
     final prompt =
         _optionalText(args[RoleField.personaPrompt]) ??
         (throw _Invalid('人设提示词不能为空'));
-    final options = _modeAndModel(args);
-    final mode =
-        RoleAgentMode.fromValue(options[RoleField.agentMode] as String?) ??
-        RoleAgentMode.chat;
-    final id = await roles.create(mode: mode);
+    final options = _roleOptions(args);
+    final id = await roles.create();
     await roles.edit(id, {
       RoleField.displayName: name,
       RoleField.personaPrompt: prompt,
@@ -886,20 +911,24 @@ class AssistantWriteTools {
     };
   }
 
-  static Map<String, Object?> _modeAndModel(
-    Map<String, dynamic> args, {
-    String? roleId,
-  }) {
+  static Map<String, Object?> _roleOptions(Map<String, dynamic> args) {
     final fields = <String, Object?>{};
     if (args.containsKey(RoleField.agentMode)) {
-      final mode = args[RoleField.agentMode];
-      if (mode != 'chat' && mode != 'tool' && mode != 'agent') {
-        throw _Invalid('agent_mode 应为 chat、tool 或 agent');
+      throw _Invalid(
+        'agent_mode 已停用，请用 enabled_plugins 中的 aicove_assistant 开关软件管理',
+      );
+    }
+    if (args.containsKey(RoleField.enabledPlugins)) {
+      final plugins = args[RoleField.enabledPlugins];
+      if (plugins is! List ||
+          plugins.any((id) => id is! String || id.trim().isEmpty)) {
+        throw _Invalid('enabled_plugins 应为插件 id 列表');
       }
-      if (roleId == kAicoveAssistantId && mode != 'tool') {
-        throw _Invalid('AIcove酱恒为 tool 模式，不能改为 $mode');
+      final selected = plugins.cast<String>().map((id) => id.trim()).toSet();
+      if (selected.any((id) => !kAssistantRolePlugins.containsKey(id))) {
+        throw _Invalid('enabled_plugins 仅接受内置插件；扩展请用 aicove_set_role_plugins');
       }
-      fields[RoleField.agentMode] = mode;
+      fields[RoleField.enabledPlugins] = selected.toList();
     }
     if (args.containsKey(RoleField.modelOverride)) {
       final value = args[RoleField.modelOverride];
@@ -925,8 +954,11 @@ class AssistantWriteTools {
   static bool _isExtension(String id) =>
       id.startsWith('pkg:') || id.startsWith('mcp:');
 
-  static Set<String> _effectivePlugins(List<String>? enabled) =>
-      enabled == null ? kAssistantRolePlugins.keys.toSet() : enabled.toSet();
+  static Set<String> _effectivePlugins(List<String>? enabled) => enabled == null
+      ? kAssistantRolePlugins.keys
+            .where((id) => id != 'aicove_assistant')
+            .toSet()
+      : enabled.toSet();
 
   /// Legacy standard-only calls retain extensions; explicit lists replace
   /// them. Unmanaged ids (notably workspace grants) always survive.
@@ -935,7 +967,10 @@ class AssistantWriteTools {
     Map<String, dynamic> args,
   ) {
     final wanted = _ids(args['plugins']).toSet();
-    final before = _effectivePlugins(role.enabledPlugins);
+    final before = {
+      ..._effectivePlugins(role.enabledPlugins),
+      if (role.hasAssistantCapability) 'aicove_assistant',
+    };
     final replaceExtensions =
         args.containsKey('extensions') ||
         wanted.any(_isExtension) ||
@@ -946,12 +981,16 @@ class AssistantWriteTools {
         ? wanted.where(_isExtension)
         : before.where(_isExtension);
     final standard = args['all'] == true
-        ? kAssistantRolePlugins.keys
+        ? kAssistantRolePlugins.keys.where((id) => id != 'aicove_assistant')
         : (args.containsKey('plugins') ? wanted : before).where(
             kAssistantRolePlugins.containsKey,
           );
     var result = <String>{
-      ...standard,
+      ...standard.where((id) => id != 'aicove_assistant'),
+      if (wanted.contains('aicove_assistant') ||
+          (!args.containsKey('plugins') && before.contains('aicove_assistant')) ||
+          role.id == kAicoveAssistantId)
+        'aicove_assistant',
       ...extensions,
       ...before.where(
         (id) => !kAssistantRolePlugins.containsKey(id) && !_isExtension(id),
@@ -960,10 +999,8 @@ class AssistantWriteTools {
     if (args['current_time'] case final bool currentTime) {
       result = TimeAwarenessRoleOptions.withCurrentTime(result, currentTime);
     }
-    // Preserve the edit page's null representation for all standard plugins.
-    return args['all'] == true && result.length == kAssistantRolePlugins.length
-        ? null
-        : result.toList();
+    // Software management requires an explicit list, never a null default.
+    return result.toList();
   }
 
   Future<Map<String, Object?>> _setRolePlugins(

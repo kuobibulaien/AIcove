@@ -1,3 +1,4 @@
+import 'model_request_ledger.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -45,7 +46,11 @@ class DiagnosticAccessService implements DiagnosticAccessPort {
     try {
       if (_bundleBuilder != null) return await _bundleBuilder();
       final path = '${(await appDataDirectory()).path}/logs';
-      return await Isolate.run(() => createDiagnosticBundle(path));
+      final bytes = await Isolate.run(() => createDiagnosticBundle(path));
+      final bundle = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      final runs = await ModelRequestLedger.instance.all();
+      bundle['modelRuns'] = {for (final status in const ['running', 'succeeded', 'failed', 'cancelled']) status: runs.where((r) => r.status == status).length};
+      return Uint8List.fromList(utf8.encode(jsonEncode(bundle)));
     } finally {
       _busy = false;
     }

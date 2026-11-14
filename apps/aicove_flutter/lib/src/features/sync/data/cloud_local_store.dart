@@ -16,6 +16,7 @@ import '../../../core/sync/cloud_setting_policy.dart';
 import 'cloud_document.dart';
 import 'cloud_media_codec.dart';
 import 'device_names.dart';
+import '../../memory/utils/lexical_tokenizer_zh.dart';
 
 /// Files and preferences retain their existing owners. Their last synchronized
 /// value is compared before every remote write, so an offline edit is queued.
@@ -98,9 +99,11 @@ class CloudLocalStore {
         [id],
       );
       if (result.isEmpty) return null;
+      final row = Map<String, dynamic>.of(result.single);
+      if (kind == 'memory_items') row['embedding'] = null;
       return CloudLocalDocument(kind, id, {
         'client_schema': kCloudRowSchema,
-        'row': result.single,
+        'row': row,
       });
     }
     final entries = await external();
@@ -852,77 +855,127 @@ class CloudLocalStore {
   ) async {
     // 退役类型：不写本地（ADR0038）。
     if (retiredCloudKinds.contains(kind)) return;
-    if (!deleted)
+    if (!deleted) {
       payload = CloudMediaCodec.normalizeMessagePayload(kind, payload);
+    }
     if (cloudTables.containsKey(kind)) {
-      final key = cloudTables[kind]!;
-      final row = Map<String, dynamic>.from(payload['row'] as Map);
-      await validateRowPayload(kind, id, payload);
-      final snapshot =
-          kind == 'messages' && payload.containsKey('message_snapshot_version');
-      if (snapshot) {
-        if (payload['message_snapshot_version'] != 1) {
-          throw const CloudSyncFailure('消息快照版本较新，请更新应用');
+      return db.transaction(() async {
+        final key = cloudTables[kind]!;
+        final rawRow = payload['row'];
+        if (!deleted || rawRow is Map) {
+          await validateRowPayload(kind, id, payload);
         }
-        for (final child in cloudMessageChildren.entries) {
-          final children = payload[child.key];
-          if (children is! List) throw const CloudSyncFailure('消息快照缺少显示结构');
-          final ids = <String>{};
-          for (final item in children) {
-            if (item is! Map ||
-                item[child.value] != id ||
-                item['id'] is! String ||
-                !ids.add(item['id'] as String)) {
-              throw const CloudSyncFailure('消息快照的所属关系无效');
-            }
-            final existing = await rows(
-              'SELECT ${child.value} AS owner FROM ${child.key} WHERE id=?',
-              [item['id']],
-            );
-            if (existing.isNotEmpty && existing.single['owner'] != id) {
-              throw const CloudSyncFailure('消息快照不能覆盖其他消息的数据');
-            }
-          }
-          if (deleted) {
-            await execute('DELETE FROM ${child.key} WHERE ${child.value}=?', [
-              id,
-            ]);
+        final row = rawRow is Map
+            ? Map<String, dynamic>.from(rawRow)
+            : <String, dynamic>{};
+        if (!deleted &&
+            const {
+              'context_summaries',
+              'memory_items',
+              'memory_progress',
+            }.contains(kind)) {
+          final owner = row['owner_id'];
+          if (owner is! String ||
+              (await rows('SELECT 1 FROM conversations WHERE id=?', [
+                owner,
+              ])).isEmpty) {
+            throw const CloudSyncFailure('同步数据缺少所属会话，请稍后重试');
           }
         }
-      }
-      if (deleted) {
-        await execute('DELETE FROM "$kind" WHERE "$key"=?', [id]);
-      } else {
-        final names = row.keys.toList();
-        final updates = names
-            .where((name) => name != key)
-            .map((name) => '"$name"=excluded."$name"')
-            .join(',');
-        await execute(
-          'INSERT INTO "$kind" (${names.map((name) => '"$name"').join(',')}) VALUES(${names.map((_) => '?').join(',')}) ON CONFLICT("$key") DO UPDATE SET $updates',
-          row.values.toList(),
-        );
-      }
-      db.markTablesUpdated(
-        db.allTables.where((table) => table.actualTableName == kind).toSet(),
-      );
-      if (snapshot && !deleted) {
-        for (final child in cloudMessageChildren.entries) {
-          final children = (payload[child.key] as List).cast<Map>();
-          await execute(
-            'DELETE FROM ${child.key} WHERE ${child.value}=? AND id NOT IN (SELECT value FROM json_each(?))',
-            [id, jsonEncode(children.map((row) => row['id']).toList())],
+        if (kind == 'memory_items') {
+          final old = await rows(
+            'SELECT owner_id FROM memory_items WHERE id=?',
+            [id],
           );
-          for (final item in children) {
-            await apply(child.key, item['id'] as String, {
-              'client_schema': payload['client_schema'],
-              'row': Map<String, dynamic>.from(item),
-            }, false);
+          if (old.isNotEmpty) {
+            await execute(
+              'DELETE FROM memory_items_fts WHERE item_id=? AND owner_id=?',
+              [id, old.single['owner_id']],
+            );
+          }
+          if (!deleted) {
+            await execute(
+              'DELETE FROM memory_items_fts WHERE item_id=? AND owner_id=?',
+              [id, row['owner_id']],
+            );
+            await execute(
+              'INSERT INTO memory_items_fts(item_id,owner_id,tokens) VALUES(?,?,?)',
+              [
+                id,
+                row['owner_id'],
+                LexicalTokenizerZh.tokenizeForFts(
+                  '${row['title']}\n${row['content']}',
+                ),
+              ],
+            );
           }
         }
-      }
-      await rememberSettingTimes(kind, id, payload);
-      return;
+        final snapshot =
+            kind == 'messages' &&
+            payload.containsKey('message_snapshot_version');
+        if (snapshot) {
+          if (payload['message_snapshot_version'] != 1) {
+            throw const CloudSyncFailure('消息快照版本较新，请更新应用');
+          }
+          for (final child in cloudMessageChildren.entries) {
+            final children = payload[child.key];
+            if (children is! List) throw const CloudSyncFailure('消息快照缺少显示结构');
+            final ids = <String>{};
+            for (final item in children) {
+              if (item is! Map ||
+                  item[child.value] != id ||
+                  item['id'] is! String ||
+                  !ids.add(item['id'] as String)) {
+                throw const CloudSyncFailure('消息快照的所属关系无效');
+              }
+              final existing = await rows(
+                'SELECT ${child.value} AS owner FROM ${child.key} WHERE id=?',
+                [item['id']],
+              );
+              if (existing.isNotEmpty && existing.single['owner'] != id) {
+                throw const CloudSyncFailure('消息快照不能覆盖其他消息的数据');
+              }
+            }
+            if (deleted) {
+              await execute('DELETE FROM ${child.key} WHERE ${child.value}=?', [
+                id,
+              ]);
+            }
+          }
+        }
+        if (deleted) {
+          await execute('DELETE FROM "$kind" WHERE "$key"=?', [id]);
+        } else {
+          final names = row.keys.toList();
+          final updates = names
+              .where((name) => name != key)
+              .map((name) => '"$name"=excluded."$name"')
+              .join(',');
+          await execute(
+            'INSERT INTO "$kind" (${names.map((name) => '"$name"').join(',')}) VALUES(${names.map((_) => '?').join(',')}) ON CONFLICT("$key") DO UPDATE SET $updates',
+            row.values.toList(),
+          );
+        }
+        db.markTablesUpdated(
+          db.allTables.where((table) => table.actualTableName == kind).toSet(),
+        );
+        if (snapshot && !deleted) {
+          for (final child in cloudMessageChildren.entries) {
+            final children = (payload[child.key] as List).cast<Map>();
+            await execute(
+              'DELETE FROM ${child.key} WHERE ${child.value}=? AND id NOT IN (SELECT value FROM json_each(?))',
+              [id, jsonEncode(children.map((row) => row['id']).toList())],
+            );
+            for (final item in children) {
+              await apply(child.key, item['id'] as String, {
+                'client_schema': payload['client_schema'],
+                'row': Map<String, dynamic>.from(item),
+              }, false);
+            }
+          }
+        }
+        await rememberSettingTimes(kind, id, payload);
+      });
     }
     if (payload['storage'] == 'preference') {
       await cloudLocalWrite(() async {
@@ -968,6 +1021,11 @@ class CloudLocalStore {
         await rememberSettingTimes(kind, id, payload);
       });
       return;
+    }
+    if (payload['storage'] != 'file' ||
+        payload['root'] is! String ||
+        payload['path'] is! String) {
+      throw const CloudSyncFailure('云端包含无法识别的数据类型，请更新应用');
     }
     final rootName = payload['root'] as String;
     final relative = payload['path'] as String;

@@ -4,15 +4,11 @@ import '../../../../features/chat/domain/conversation.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 
-/// 聊天区底色：深色固定；浅色未自定义（或白色）时用默认聊天底色。
-Color resolveChatBackgroundColor(BuildContext context, Color? lightSetting) {
-  if (Theme.of(context).brightness == Brightness.dark) {
-    return telegramChatBackgroundDark;
-  }
-  return lightSetting == null || lightSetting == Colors.white
-      ? telegramChatBackground
-      : lightSetting;
-}
+/// 聊天区底色：按深浅色取默认聊天底色。
+Color resolveChatBackgroundColor(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark
+    ? telegramChatBackgroundDark
+    : telegramChatBackground;
 
 /// 非 data URI 的壁纸／图片地址转图片源；data URI 由调用方先行解码。
 ImageProvider? chatImageProviderFor(String url) {
@@ -24,7 +20,8 @@ ImageProvider? chatImageProviderFor(String url) {
 /// 角色壁纸的调节：遮罩、模糊与宽窄屏截取，未设置的取聊天默认值。
 WallpaperStyle chatWallpaperStyleOf(Conversation? conversation) =>
     WallpaperStyle(
-      mask: conversation?.chatBackgroundMaskOpacity ?? kDefaultChatWallpaperMask,
+      mask:
+          conversation?.chatBackgroundMaskOpacity ?? kDefaultChatWallpaperMask,
       blur: conversation?.chatBackgroundBlurSigma ?? kDefaultChatWallpaperBlur,
     ).withEncodedFraming(conversation?.chatBackgroundFraming);
 
@@ -47,7 +44,8 @@ WallpaperStyle resolveChatWallpaperStyle(
 ) {
   final own = chatWallpaperOwnStyleOf(conversation);
   if (own != null) return own;
-  final hasImage = conversation?.chatBackgroundImage?.trim().isNotEmpty ?? false;
+  final hasImage =
+      conversation?.chatBackgroundImage?.trim().isNotEmpty ?? false;
   return hasImage
       ? kDefaultChatWallpaperStyle
       : MoeWallpaperTheme.maybeOf(context)?.style ?? const WallpaperStyle();

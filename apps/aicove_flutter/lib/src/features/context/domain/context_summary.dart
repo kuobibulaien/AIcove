@@ -168,6 +168,12 @@ abstract interface class ContextSummaryStorePort {
   Future<void> clear(String ownerId);
 }
 
+/// Storage for derived call briefs, independent of compression history.
+abstract interface class VoiceBriefStorePort {
+  Future<String?> loadVoiceBrief(ContextSnapshot snapshot);
+  Future<void> saveVoiceBrief(ContextSnapshot snapshot, String summary);
+}
+
 /// 摘要管理独立于发送端口，避免要求现有只读适配器实现管理操作。
 abstract interface class ContextSummaryManagementStorePort {
   Future<List<ContextSummaryHistoryEntry>> listHistory(String ownerId);

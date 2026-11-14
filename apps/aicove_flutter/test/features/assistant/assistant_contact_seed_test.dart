@@ -36,13 +36,26 @@ void main() {
     return c;
   }
 
+  test('legacy tool preset materializes software management without losing defaults', () {
+    final role = PresetCharactersLoader.fromJson({
+      'id': 'legacy', 'displayName': 'Legacy', 'agentMode': 'tool',
+    });
+    expect(role.enabledPlugins, ['memory', 'time_awareness', 'aicove_assistant']);
+    expect(role.hasAssistantCapability, isTrue);
+    final ordinary = PresetCharactersLoader.fromJson({'id': 'ordinary', 'displayName': 'Ordinary'});
+    expect(ordinary.agentMode, isNull);
+    expect(ordinary.enabledPlugins, ['memory', 'time_awareness']);
+    expect(ordinary.hasAssistantCapability, isFalse);
+  });
+
   test('Mangaka is seeded once with a persisted greeting', () async {
     final c = container();
     final list = await c.read(conversationsProvider.future);
     final role = list.firstWhere((r) => r.id == kMangakaPresetId);
-    expect(role.agentMode, RoleAgentMode.tool);
+    expect(role.agentMode, isNull);
+    expect(role.hasAssistantCapability, isTrue);
     expect(role.chatDisplayStyle, ChatDisplayStyle.document);
-    expect(role.enabledPlugins, ['memory', 'time_awareness', 'image']);
+    expect(role.enabledPlugins, ['memory', 'time_awareness', 'image', 'aicove_assistant']);
     expect(role.personaPrompt, isNotEmpty);
     final repo = c.read(messageRepositoryProvider);
     final greeting = await repo.getByConversation(kMangakaPresetId);
@@ -307,7 +320,7 @@ void main() {
       PersonaPromptCodec.parse(preset.personaPrompt).userPrompt,
     );
     expect(updated.recipeId, 'my-recipe');
-    expect(updated.agentMode, RoleAgentMode.tool);
+    expect(updated.agentMode, RoleAgentMode.chat);
     expect(parts.extraPrompt, 'my extra');
     expect(parts.customDrawingPrompt, 'my drawing');
     expect(parts.drawingPresetId, 'my-preset');

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../shared/widgets/index.dart';
+import '../../../../features/chat/presentation/widgets/message_bubble.dart';
 import '../../../theme/tokens.dart';
 import 'chat_message_selection.dart';
 
@@ -198,7 +199,17 @@ class _ChatSelectableMessageState extends State<ChatSelectableMessage> {
                   region._selectAt(details.globalPosition),
               onLongPressEnd: (_) => region._end(),
               onLongPressCancel: region._end,
-              child: IgnorePointer(child: widget.child),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minHeight: MessageBubble.avatarSize,
+                ),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: 1.0,
+                  heightFactor: 1.0,
+                  child: IgnorePointer(child: widget.child),
+                ),
+              ),
             ),
             Positioned(
               left: 0,
@@ -215,11 +226,11 @@ class _ChatSelectableMessageState extends State<ChatSelectableMessage> {
                 onVerticalDragEnd: (_) => region._end(),
                 onVerticalDragCancel: region._end,
                 child: SizedBox(
-                  width: 42,
+                  width: MessageBubble.avatarSize,
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: SizedBox(
-                      height: 42,
+                      height: MessageBubble.avatarSize,
                       child: IgnorePointer(
                         child: MoeCheckbox(
                           value: selected,

@@ -1,7 +1,5 @@
 import 'dart:convert';
-import 'kemini_transport_config.dart';
 import 'silly_tavern_preset.dart';
-import 'wave_transport_config.dart';
 
 /// JSON snapshot: no open runtime or callbacks survive a generation.
 class PresetScriptSnapshot {
@@ -16,26 +14,54 @@ class PresetScriptSnapshot {
     this.callerToolChoice,
   });
 
-  /// Request-local display policy; never changes the user's chunking setting.
+  /// Normalized input for both imported presets and historical JSON callers.
+  Map<String, dynamic> get rawJson {
+    final input = Map<String, dynamic>.from(jsonDecode(json) as Map);
+    if (!input.containsKey('scripts')) {
+      input['scripts'] = _enabledScripts(input['extensions']);
+    }
+    final preset = Map<String, dynamic>.from(
+      input['preset'] as Map? ?? const {},
+    );
+    final functionCalling =
+        input['functionCalling'] ?? preset['function_calling'] ?? true;
+    input['functionCalling'] = functionCalling;
+    input['preset'] = {...preset, 'function_calling': functionCalling};
+    return input;
+  }
+
+  /// Conservative initial display policy, refined by the prepared runtime.
   bool get hasContentTransport {
     if (!modelSupportsTools) return false;
     try {
-      final snapshot = jsonDecode(json);
-      final transport = snapshot is Map ? snapshot['transport'] : null;
-      if (transport is Map && transport['protocol'] == 'wave_context_v1') {
-        return transport['enabled'] == true && transport['delivery'] == true;
-      }
-      return transport is Map &&
-          const {
-            'content_tool_v1',
-            'ate_buffer_v1',
-          }.contains(transport['protocol']) &&
-          transport['enabled'] == true &&
-          (transport['protocol'] != 'ate_buffer_v1' ||
-              transport['mode'] != 'NONE');
+      final scripts = rawJson['scripts'];
+      return scripts is List && scripts.isNotEmpty;
     } catch (_) {
       return false;
     }
+  }
+
+  static List<Map<String, dynamic>> _enabledScripts(dynamic extensions) {
+    final rawHelper = extensions is Map ? extensions['tavern_helper'] : null;
+    final helper = rawHelper is List
+        ? Map.fromEntries(
+            rawHelper
+                .whereType<List>()
+                .where((pair) => pair.length == 2)
+                .map((pair) => MapEntry(pair[0], pair[1])),
+          )
+        : rawHelper;
+    final scripts = helper is Map ? helper['scripts'] : null;
+    if (scripts is! List) return [];
+    return [
+      for (final script in scripts.whereType<Map>())
+        if (script['enabled'] != false &&
+            script['id'] != 'f0801c1a-3b0f-4e1c-82b6-f0f8990fbde6' &&
+            script['content'] is String &&
+            !(script['content'] as String).contains('regex_bind/inject.js') &&
+            (script['content'] as String).trim().isNotEmpty)
+          Map<String, dynamic>.from(script),
+    ];
   }
 
   static PresetScriptSnapshot? fromPreset(
@@ -50,15 +76,17 @@ class PresetScriptSnapshot {
     final extensions = body['extensions'] ?? root['extensions'];
     final config = extensions is Map ? extensions['SPreset'] : null;
     final extensionMap = extensions is Map ? extensions : const {};
-    // A recognized Wave context owns its markers, including when disabled;
-    // otherwise a simultaneous Kemini match could rewrite the wrong protocol.
-    final transport =
-        WaveTransportConfig.read(extensionMap) ??
-        KeminiTransportConfig.read(extensionMap);
     return PresetScriptSnapshot(
       jsonEncode({
         'config': config is Map ? config : <String, dynamic>{},
-        'transport': transport,
+        'scripts': _enabledScripts(extensionMap),
+        'functionCalling': preset.functionCalling ?? true,
+        'preset': {
+          'function_calling': preset.functionCalling ?? true,
+          'squash_system_messages': preset.squashSystemMessages,
+          'custom_prompt_post_processing':
+              (body['custom_prompt_post_processing'] ?? '').toString(),
+        },
         'macros': macros,
         'extensions': extensionMap,
         'presetName': preset.name,

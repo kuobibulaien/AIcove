@@ -1,3 +1,4 @@
+import '../../observability/model_request_ledger.dart';
 import 'dart:async';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
@@ -175,11 +176,11 @@ WebAppAiChat createWebAppAiChat({
     );
     ApiCallResult result;
     try {
-      result = await executeWithProviderKeyFailureRecording(
+      result = await const ModelRunScope(purpose: 'webapp').run(() => executeWithProviderKeyFailureRecording(
         config: config,
         recorder: keyFailureRecorder,
         execute: () => execute(config: config),
-      ).timeout(timeout);
+      )).timeout(timeout);
     } on TimeoutException {
       cancellation.cancel();
       throw WebAppAiException(

@@ -13,6 +13,7 @@ class ChatReplyActionBar extends StatefulWidget {
     required this.onCopy,
     required this.onQuote,
     this.onRetry,
+    this.onDelete,
   });
 
   final String timeLabel;
@@ -29,6 +30,9 @@ class ChatReplyActionBar extends StatefulWidget {
 
   /// Null hides the retry button (e.g. a character greeting).
   final VoidCallback? onRetry;
+
+  /// Null hides the delete button.
+  final VoidCallback? onDelete;
 
   @override
   State<ChatReplyActionBar> createState() => _ChatReplyActionBarState();
@@ -73,6 +77,8 @@ class _ChatReplyActionBarState extends State<ChatReplyActionBar> {
               button(Icons.format_quote_rounded, '引用', widget.onQuote),
               if (widget.onRetry != null)
                 button(Icons.refresh_rounded, '重试', widget.onRetry!),
+              if (widget.onDelete != null)
+                button(Icons.delete_outline_rounded, '删除', widget.onDelete!),
               const SizedBox(width: 6),
               Text(
                 widget.timeLabel,

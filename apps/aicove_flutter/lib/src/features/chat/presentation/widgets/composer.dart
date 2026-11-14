@@ -30,7 +30,6 @@ import '../../application/conversation_model.dart';
 import '../../chat_layer_providers.dart';
 import '../../conversation_providers.dart';
 import '../../domain/conversation.dart';
-import '../../domain/role_agent_mode.dart';
 import '../../domain/quoted_reply.dart';
 import '../../../stickers/sticker_registry.dart';
 import 'composer_model_picker_sheet.dart';
@@ -52,6 +51,9 @@ export '../../application/composer_draft_store.dart'
 
 part 'composer_view_parts.dart';
 part 'composer_action_parts.dart';
+
+/// 输入框占位提示文字的不透明度（在 colors.muted 基础上进一步弱化，提高透明度）。
+const double _kComposerHintAlpha = 0.55;
 
 /// 自定义底部面板类型
 enum ComposerPanelType { none, keyboard, more, sticker }
@@ -551,17 +553,12 @@ class _ComposerState extends ConsumerState<Composer> {
     _armKeyboardGuard();
   }
 
-  /// Agent 会话（ADR0112）：运行中的输入可以插话或排到这轮做完后。
-  bool get _isAgentChat =>
-      ref.read(activeConversationProvider)?.effectiveAgentMode ==
-      RoleAgentMode.tool;
-
-  /// Agent 会话的桌面按键，对照 Pi：Enter 发送／运行中插话，Option(Alt)+Enter
+  /// 桌面按键（对照 Pi）：Enter 发送／运行中插话，Option(Alt)+Enter
   /// 运行中排到做完后，Shift+Enter 换行，Option(Alt)+↑ 把排队的话放回输入框。
-  /// 输入法组字中不拦截。聊天模式保持原样。
+  /// 输入法组字中不拦截。
   KeyEventResult _onDesktopInputKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent ||
-        !_isAgentChat ||
+        ref.read(activeConversationProvider) == null ||
         _ctrl.value.composing.isValid) {
       return KeyEventResult.ignored;
     }
@@ -794,7 +791,7 @@ class ComposerIdlePreview extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 16,
                     height: 1.4,
-                    color: colors.muted,
+                    color: colors.muted.withValues(alpha: _kComposerHintAlpha),
                   ),
                 ),
               ),

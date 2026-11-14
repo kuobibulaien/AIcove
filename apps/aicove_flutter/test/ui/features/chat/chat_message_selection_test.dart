@@ -2,6 +2,7 @@ import 'package:aicove_flutter/src/features/chat/services/chat_frontend_message_
 import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/ui/shared/widgets/moe_floating_surface.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
+import 'package:aicove_flutter/src/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_list_items.dart';
 import 'package:aicove_flutter/src/ui/features/chat/widgets/chat_message_selection.dart';
@@ -232,7 +233,7 @@ void main() {
           find.byKey(ValueKey('message_bubble_$id')),
         );
         expect(bubble, originalRects[id], reason: '进入多选不改变消息位置或尺寸');
-        expect(control.width, 42);
+        expect(control.width, MessageBubble.avatarSize);
         expect(control.right, lessThanOrEqualTo(bubble.left - 8));
       }
       final start = tester.getCenter(

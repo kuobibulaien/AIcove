@@ -2,7 +2,7 @@
   "messages": [
     {
       "role": "system",
-      "content": "你是测试角色。\n\n你可以在回复中使用表情包来增加趣味性。\n使用方法：在合适的地方写 <sticker tag=\"标签\"/>，标签从下面的列表里选，必须是自闭合写法。\n\n可用的表情包标签：兴奋、再见、加油、发呆、喜欢、大哭、大笑、失落、夸夸、嫌弃、安慰、害怕、害羞、尴尬、庆祝、开心、得意、忙碌、思考、怨念、感动、打招呼、抱抱、拒绝、摸鱼、撒娇、收到、无奈、无语、早安、晚安、期待、求助、点赞、生气、疑惑、着急、等待、紧张、累了、调皮、谢谢、赞、道歉、鄙视、难过、震惊、饿了\n\n示例：\n- 晚安呀~ <sticker tag=\"晚安\"/>\n- 太感谢你了！<sticker tag=\"谢谢\"/>\n- 好累啊 <sticker tag=\"摸鱼\"/>\n\n注意：\n- 不要用方括号，也不要写成成对标签（如 <sticker tag=\"晚安\">晚安</sticker>）\n- 不要每句话都用表情包，克制使用，每轮回复最多使用一次或者不使用\n- 表情包放在句尾效果更自然\n- 同义词会自动匹配（如\"睡觉\"会匹配到\"晚安\"组的表情包）\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。\n\n## 派活\n角色设定、世界观与历史对话已在当前上下文中，日常聊天、角色扮演、写故事或画分镜严禁调用 delegate_task。\n你工具列表里有的工具直接用，不用派活。仅当用户明确要求联网查现实信息、调用外部服务或读写工作区文件时，才调用 delegate_task（action=start）交给后台助手去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n收到「杂活回执」之前，只能说在处理，绝不能编造结果。回执里有问题时，用你的口吻转问用户；用户回答后用 action=reply 把回答交回去。用户说不用了，用 action=cancel 取消。"
+      "content": "你是测试角色。\n\n你可以在回复中使用表情包来增加趣味性。\n使用方法：在合适的地方写 <sticker tag=\"标签\"/>，标签从下面的列表里选，必须是自闭合写法。\n\n可用的表情包标签：兴奋、再见、加油、发呆、喜欢、大哭、大笑、失落、夸夸、嫌弃、安慰、害怕、害羞、尴尬、庆祝、开心、得意、忙碌、思考、怨念、感动、打招呼、抱抱、拒绝、摸鱼、撒娇、收到、无奈、无语、早安、晚安、期待、求助、点赞、生气、疑惑、着急、等待、紧张、累了、调皮、谢谢、赞、道歉、鄙视、难过、震惊、饿了\n\n示例：\n- 晚安呀~ <sticker tag=\"晚安\"/>\n- 太感谢你了！<sticker tag=\"谢谢\"/>\n- 好累啊 <sticker tag=\"摸鱼\"/>\n\n注意：\n- 不要用方括号，也不要写成成对标签（如 <sticker tag=\"晚安\">晚安</sticker>）\n- 不要每句话都用表情包，克制使用，每轮回复最多使用一次或者不使用\n- 表情包放在句尾效果更自然\n- 同义词会自动匹配（如\"睡觉\"会匹配到\"晚安\"组的表情包）\n\n<system-reminder> 里是应用附上的背景说明，不是对方说的话。心里有数就好，别照着念，也别提到它。\n\n时间感知插件会通过 <system-reminder> 向模型补充时间上下文：\n- 当前时间提醒按模板 \"当前时间: {datetime}\" 生成，其中 {datetime} 会替换为设备本地时间。\n- 如果 <system-reminder> 中出现“用户上一次发消息的时间为...”，表示上一条真实用户消息的发送时间。\n\n请将这些内容视为客观时间事实，自行判断当前与历史对话的时序关系，不要原样复述。"
     },
     {
       "role": "user",
@@ -25,94 +25,51 @@
     {
       "type": "function",
       "function": {
-        "name": "create_reminder",
-        "description": "创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。\n使用场景：\n- \"明天早上8点叫我起床\"\n- \"2小时后提醒我喝水\"\n- \"下午3点提醒我开会\"\n\n不要在用户没有明确要求时调用此工具。",
+        "name": "reminder",
+        "description": "管理当前会话的提醒。仅在用户明确要求设置、查询或取消提醒时调用；不要因为闲聊中提到时间就自动设置提醒。\naction=create：创建提醒，必须提供 title 和 time，可用 prompt 指定触发时要说什么。\naction=list：查询提醒；提供非空 query 时搜索，否则列出提醒，可用 include_completed 和 limit 控制结果。\naction=delete：取消提醒，优先提供 id，不知道 id 时提供 query。",
         "parameters": {
           "type": "object",
           "properties": {
+            "action": {
+              "type": "string",
+              "description": "提醒操作：create 创建，list 查询，delete 取消",
+              "enum": [
+                "create",
+                "list",
+                "delete"
+              ]
+            },
             "title": {
               "type": "string",
-              "description": "提醒的标题或描述，简洁说明这个提醒是做什么的"
+              "description": "提醒标题；create 时必填"
             },
             "time": {
               "type": "string",
-              "description": "触发时间。支持格式：ISO 8601（2026-01-27T08:00:00）或简单时间（08:00，会自动判断今天/明天）"
+              "description": "触发时间；create 时必填，支持 ISO 8601 或 HH:mm（自动判断今天/明天）"
             },
             "prompt": {
               "type": "string",
               "description": "触发时的指导提示，告诉你到时候该说什么"
-            }
-          },
-          "required": [
-            "title",
-            "time"
-          ]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "delete_reminder",
-        "description": "删除一个已存在的提醒。当用户要求取消、删除某个提醒时调用。\n使用场景：\n- \"取消明天的闹钟\"\n- \"不用提醒我了\"\n- \"把那个提醒删掉\"\n\n参数规则：\n- 优先传 id（最准确）\n- 如果没有 id，请传 query（例如 \"明天早上叫我起床\" / \"起床闹钟\"），工具内部会 search\n",
-        "parameters": {
-          "type": "object",
-          "properties": {
+            },
             "id": {
               "type": "string",
-              "description": "要删除的提醒 ID（如果已知，优先提供）"
+              "description": "要取消的提醒 ID；delete 时优先提供"
             },
             "query": {
               "type": "string",
-              "description": "不知道 id 时使用：用一句话描述你要取消的提醒（例如\"明天早上叫我起床\"）"
-            }
-          }
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "list_reminders",
-        "description": "列出提醒列表（触发器列表）。当用户问“我有哪些提醒/闹钟/待办”时调用。\n返回 JSON 数组，包含每条提醒的 id/title/next_fire_at/status/priority 等。",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "include_completed": {
-              "type": "boolean",
-              "description": "是否包含已完成、已作废的提醒（默认 false）"
-            },
-            "limit": {
-              "type": "integer",
-              "description": "最多返回多少条（默认 20）"
-            }
-          }
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "search_reminders",
-        "description": "搜索提醒列表。适用于：用户说“把那个起床提醒删掉”“取消明天的闹钟”，但没有 id。\n返回 JSON 数组，包含候选提醒的 id/title/next_fire_at 等。",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "query": {
-              "type": "string",
-              "description": "搜索关键词：自然语言描述（例如\"起床\"\"明天早上8点\"\"开会提醒\"）"
+              "description": "提醒搜索关键词；list 时可选，delete 不知道 id 时提供"
             },
             "include_completed": {
               "type": "boolean",
-              "description": "是否包含已完成、已作废的提醒（默认 false）"
+              "description": "查询时是否包含已完成、已作废的提醒（默认 false）"
             },
             "limit": {
               "type": "integer",
-              "description": "最多返回多少条（默认 5）"
+              "description": "查询最多返回多少条（列表默认 20，搜索默认 5）"
             }
           },
           "required": [
-            "query"
+            "action"
           ]
         }
       }
@@ -155,104 +112,13 @@
           ]
         }
       }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "delegate_task",
-        "description": "仅在用户明确要求联网搜索现实信息、调用外部服务或读写工作区文件时，把任务交给后台助手（严禁用于查阅角色设定、前文剧情或角色扮演）。start 派活（写清楚要做什么）；reply 回答助手的提问；cancel 取消任务。只返回受理结果，不等任务完成；结果之后以「杂活回执」送达。",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "action": {
-              "type": "string",
-              "enum": [
-                "start",
-                "reply",
-                "cancel"
-              ]
-            },
-            "instruction": {
-              "type": "string",
-              "description": "start 时必填：完整的任务说明，包含需要的全部细节"
-            },
-            "task_id": {
-              "type": "string",
-              "description": "reply／cancel 时必填"
-            },
-            "answer": {
-              "type": "string",
-              "description": "reply 时必填：用户的回答"
-            }
-          },
-          "required": [
-            "action"
-          ]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "steer_task",
-        "description": "给已派出的任务追加要求或纠正方向，不新建任务。运行中会在下一模型轮接收；排队或等回答的任务下次执行时接收。不会代替回答提问，也不会重做已完成的操作。",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "task_id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "instruction": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "task_id",
-            "instruction"
-          ]
-        }
-      }
-    },
-    {
-      "type": "function",
-      "function": {
-        "name": "read_tool_result",
-        "description": "按完整工具结果的 reference 分页回读。offset 是从 0 起的字符偏移；limit 最多 8192。只能读取当前任务或会话保存的结果。",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "reference": {
-              "type": "string"
-            },
-            "offset": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "limit": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 8192
-            }
-          },
-          "required": [
-            "reference"
-          ]
-        }
-      }
     }
   ],
   "toolChoice": null,
   "disableBuiltinWebSearch": true,
   "boundTools": [
-    "create_reminder",
-    "delete_reminder",
-    "list_reminders",
-    "search_reminders",
-    "draw_image",
-    "delegate_task",
-    "steer_task"
+    "reminder",
+    "draw_image"
   ],
   "enabledPluginIds": null,
   "presetStreamResponse": null,

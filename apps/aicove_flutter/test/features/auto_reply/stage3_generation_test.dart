@@ -113,10 +113,12 @@ class _YieldAwareGenerator extends ProactiveReplyGenerator {
     required Conversation conversation,
     required String? reminder,
     DateTime? requestTime,
+    String? modelRef,
   }) async => (await super.prepare(
     conversation: conversation,
     reminder: reminder,
     requestTime: requestTime,
+    modelRef: modelRef,
   )).copyWith(onYieldReady: (_) => onReady());
 }
 

@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/database/database.dart' as db;
+import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/utils/token_estimator.dart';
 import '../../chat/domain/message.dart';
 import '../domain/memory_item.dart';
@@ -21,6 +22,15 @@ class SqliteMemoryStore implements MemoryStorePort {
   SqliteMemoryStore(this.database, {Uuid? uuid}) : _uuid = uuid ?? const Uuid();
   final db.AppDatabase database;
   final Uuid _uuid;
+
+  Future<T> _writeTransaction<T>(Future<T> Function() action) async {
+    final result = await database.transaction(action);
+    notifyExternalSyncChange();
+    return result;
+  }
+
+  Future<void> _writeStatement(String sql, List<Object?> args) =>
+      _writeTransaction(() => database.customStatement(sql, args));
 
   @override
   Future<List<MemoryItem>> list(String ownerId, {MemoryLayer? layer}) async {
@@ -59,7 +69,7 @@ class SqliteMemoryStore implements MemoryStorePort {
   }) async {
     final normalizedTitle = _checkTitle(title);
     final normalizedContent = _checkContent(content);
-    return database.transaction(() async {
+    return _writeTransaction(() async {
       final existing = id == null ? null : await get(ownerId, id);
       if (id != null && existing == null) {
         throw const MemoryException('这条记忆已不存在。');
@@ -94,14 +104,14 @@ class SqliteMemoryStore implements MemoryStorePort {
 
   @override
   Future<void> setLocked(String ownerId, String id, bool locked) =>
-      database.customStatement(
+      _writeStatement(
         'UPDATE memory_items SET locked = ? WHERE owner_id = ? AND id = ?',
         [locked ? 1 : 0, ownerId, id],
       );
 
   @override
   Future<void> deleteByUser(String ownerId, String id) =>
-      database.transaction(() => _delete(ownerId, id));
+      _writeTransaction(() => _delete(ownerId, id));
 
   @override
   Future<int?> applyAgentOps(
@@ -109,7 +119,7 @@ class SqliteMemoryStore implements MemoryStorePort {
     List<MemoryOp> ops, {
     required Message processedUntil,
     required int generation,
-  }) => database.transaction(() async {
+  }) => _writeTransaction(() async {
     if ((await progress(ownerId)).generation != generation) return null;
     final now = DateTime.now();
     var applied = 0;
@@ -227,30 +237,28 @@ ON CONFLICT(owner_id) DO UPDATE SET
   }
 
   @override
-  Future<void> setPaused(String ownerId, bool paused) =>
-      database.customStatement(
-        '''
+  Future<void> setPaused(String ownerId, bool paused) => _writeStatement(
+    '''
 INSERT INTO memory_progress(owner_id, paused, updated_at) VALUES (?, ?, ?)
 ON CONFLICT(owner_id) DO UPDATE SET paused = excluded.paused,
   updated_at = excluded.updated_at
 ''',
-        [ownerId, paused ? 1 : 0, DateTime.now().millisecondsSinceEpoch],
-      );
+    [ownerId, paused ? 1 : 0, DateTime.now().millisecondsSinceEpoch],
+  );
 
   @override
-  Future<void> recordError(String ownerId, String? error) =>
-      database.customStatement(
-        '''
+  Future<void> recordError(String ownerId, String? error) => _writeStatement(
+    '''
 INSERT INTO memory_progress(owner_id, last_error, updated_at) VALUES (?, ?, ?)
 ON CONFLICT(owner_id) DO UPDATE SET last_error = excluded.last_error,
   updated_at = excluded.updated_at
 ''',
-        [ownerId, error, DateTime.now().millisecondsSinceEpoch],
-      );
+    [ownerId, error, DateTime.now().millisecondsSinceEpoch],
+  );
 
   @override
   Future<void> resetForRebuild(String ownerId, Message until) =>
-      database.transaction(() async {
+      _writeTransaction(() async {
         await _deleteUnlocked(ownerId);
         await database.customStatement(
           '''
@@ -267,14 +275,14 @@ ON CONFLICT(owner_id) DO UPDATE SET until_at = NULL, until_id = NULL,
 
   @override
   Future<void> clearRebuildTarget(String ownerId, int generation) =>
-      database.customStatement(
+      _writeStatement(
         'UPDATE memory_progress SET rebuild_until_id = NULL '
         'WHERE owner_id = ? AND generation = ?',
         [ownerId, generation],
       );
 
   @override
-  Future<void> clearDerived(String ownerId) => database.transaction(() async {
+  Future<void> clearDerived(String ownerId) => _writeTransaction(() async {
     await _deleteUnlocked(ownerId);
     await database.customStatement(
       '''

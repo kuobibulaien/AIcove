@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
     show ReversibleChange, ToolEffect;
 
-import '../../../core/sync/cloud_setting_policy.dart'
-    show canonicalSettingJson;
+import '../../../core/sync/cloud_setting_policy.dart' show canonicalSettingJson;
 import '../../agent_plugins/file_change_journal.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../settings/app_settings.dart';
@@ -169,7 +168,10 @@ class AssistantSettingsTools {
     final problem = setting.check(settings, input);
     if (problem != null) return {'error': 'invalid', 'message': problem};
     final value = input.value;
-    final before = {'key': setting.key, 'value': setting.journalState(settings)};
+    final before = {
+      'key': setting.key,
+      'value': setting.journalState(settings),
+    };
     final after = {
       'key': setting.key,
       'value': setting.journalStateAfter(settings, value),
@@ -259,8 +261,17 @@ class AssistantInterfaceResetApplier extends CheckedChangeApplier {
     Map<String, Object?> state,
   ) => notifier().transaction(() => super.applyIfCurrent(expected, state));
 
+  /// An unset key matches a missing one, so records taken before a key was
+  /// added to [kInterfaceSettingKeys] still match.
   @override
   Future<bool> isCurrent(Map<String, Object?> state) async =>
-      canonicalSettingJson(await notifier().readInterfaceSettings()) ==
-      canonicalSettingJson(state);
+      canonicalSettingJson(
+        _withoutNulls(await notifier().readInterfaceSettings()),
+      ) ==
+      canonicalSettingJson(_withoutNulls(state));
+
+  static Map<String, Object?> _withoutNulls(Map<String, Object?> values) => {
+    for (final entry in values.entries)
+      if (entry.value != null) entry.key: entry.value,
+  };
 }

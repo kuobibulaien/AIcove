@@ -222,7 +222,7 @@ enum GlobalBackgroundColor {
   }
 }
 
-/// 聊天背景色选项（仅自定义皮肤使用）
+/// 旧版自定义皮肤的聊天背景色；已不再生效，只为读旧数据迁移皮肤保留。
 enum ChatBackgroundColor {
   /// 默认色 - 跟随全局背景色
   defaultColor('default', '默认', null),
@@ -251,8 +251,8 @@ enum ChatBackgroundColor {
 /// 暗色模式默认强调色：金属金，与纯黑背景对比约 10:1。
 const kDefaultDarkAccentColor = Color(0xFFD4AF37);
 
-/// 界面皮肤：内置的强调色＋聊天背景组合；[custom] 使用
-/// [AppSettings.accentColor] 与 [AppSettings.chatBackgroundColor]。
+/// 主题色：内置的浅色／暗色强调色组合；[custom] 使用 [AppSettings.accentColor]
+/// 与 [AppSettings.darkAccentColorHex]。
 enum InterfaceSkin {
   classic(
     'classic',
@@ -260,25 +260,11 @@ enum InterfaceSkin {
     lightAccent: Color(0xFFFC96AA),
     darkAccent: kDefaultDarkAccentColor,
   ),
-  momotalk(
-    'momotalk',
-    'Momotalk',
-    lightAccent: Color(0xFFFC96AA),
-    darkAccent: kDefaultDarkAccentColor,
-    chatBackground: Color(0xFFF3F6F8),
-  ),
   sky(
     'sky',
     '晴空',
     lightAccent: Color(0xFF3390EC),
     darkAccent: Color(0xFF5AA9F0),
-  ),
-  warm(
-    'warm',
-    '暖笺',
-    lightAccent: Color(0xFFE8916B),
-    darkAccent: Color(0xFFE0A860),
-    chatBackground: Color(0xFFFFF7E1),
   ),
   custom('custom', '自定义');
 
@@ -287,7 +273,6 @@ enum InterfaceSkin {
     this.label, {
     this.lightAccent,
     this.darkAccent,
-    this.chatBackground,
   });
 
   final String value;
@@ -299,17 +284,12 @@ enum InterfaceSkin {
   /// 暗色强调色；null 仅用于 [custom]。
   final Color? darkAccent;
 
-  /// 浅色模式聊天背景；null 表示跟随全局背景色。
-  final Color? chatBackground;
-
-  /// 内置皮肤（不含自定义）。
-  static List<InterfaceSkin> get presets =>
-      values.where((skin) => skin != custom).toList(growable: false);
-
   static InterfaceSkin? tryParse(String? value) {
     for (final skin in values) {
       if (skin.value == value) return skin;
     }
+    // 已下架的皮肤：Momotalk 与默认同色，暖笺并入默认。
+    if (value == 'momotalk' || value == 'warm') return classic;
     return null;
   }
 }
@@ -1230,8 +1210,14 @@ class AppSettings {
   final bool isDarkMode;
   final bool useSystemTheme;
   final String accentColor;
+
+  /// 自定义皮肤的暗色强调色（六位十六进制）；null 表示由 [accentColor] 推算。
+  final String? darkAccentColorHex;
   final InterfaceSkin interfaceSkin;
   final bool hideUserAvatar;
+
+  /// 气泡模式下单轮连续消息是否只在首条显示一次头像。
+  final bool singleAvatarPerTurn;
 
   /// 语音消息气泡是否默认展开显示文字
   final bool expandAudioText;
@@ -1330,8 +1316,10 @@ class AppSettings {
     required this.isDarkMode,
     required this.useSystemTheme,
     required this.accentColor,
+    this.darkAccentColorHex,
     this.interfaceSkin = InterfaceSkin.classic,
     this.hideUserAvatar = true,
+    this.singleAvatarPerTurn = false,
     this.expandAudioText = true,
     this.glassEffectEnabled = true,
     this.glassBlurSigma = kDefaultGlassBlurSigma,
@@ -1359,18 +1347,15 @@ class AppSettings {
   Color get lightAccentColor =>
       interfaceSkin.lightAccent ?? _hexToColor(accentColor);
 
-  /// 暗色模式生效的强调色；自定义皮肤在浅色强调色基础上略降亮度。
+  /// 暗色模式生效的强调色；自定义皮肤没单独选时在浅色强调色基础上略降亮度。
   Color get darkAccentColor {
     final preset = interfaceSkin.darkAccent;
     if (preset != null) return preset;
+    final custom = darkAccentColorHex;
+    if (custom != null) return _hexToColor(custom);
     final hsl = HSLColor.fromColor(_hexToColor(accentColor));
     return hsl.withLightness((hsl.lightness * 0.9).clamp(0.0, 1.0)).toColor();
   }
-
-  /// 浅色模式聊天背景；null 表示跟随全局背景色。
-  Color? get lightChatBackground => interfaceSkin == InterfaceSkin.custom
-      ? chatBackgroundColor.color
-      : interfaceSkin.chatBackground;
 
   AppSettings copyWith({
     String? compactionModel,
@@ -1410,8 +1395,10 @@ class AppSettings {
     bool? isDarkMode,
     bool? useSystemTheme,
     String? accentColor,
+    String? darkAccentColorHex,
     InterfaceSkin? interfaceSkin,
     bool? hideUserAvatar,
+    bool? singleAvatarPerTurn,
     bool? expandAudioText,
     bool? glassEffectEnabled,
     double? glassBlurSigma,
@@ -1476,8 +1463,10 @@ class AppSettings {
     isDarkMode: isDarkMode ?? this.isDarkMode,
     useSystemTheme: useSystemTheme ?? this.useSystemTheme,
     accentColor: accentColor ?? this.accentColor,
+    darkAccentColorHex: darkAccentColorHex ?? this.darkAccentColorHex,
     interfaceSkin: interfaceSkin ?? this.interfaceSkin,
     hideUserAvatar: hideUserAvatar ?? this.hideUserAvatar,
+    singleAvatarPerTurn: singleAvatarPerTurn ?? this.singleAvatarPerTurn,
     expandAudioText: expandAudioText ?? this.expandAudioText,
     glassEffectEnabled: glassEffectEnabled ?? this.glassEffectEnabled,
     glassBlurSigma: glassBlurSigma ?? this.glassBlurSigma,

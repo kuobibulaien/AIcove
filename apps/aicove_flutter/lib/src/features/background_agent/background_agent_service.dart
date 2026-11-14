@@ -1,4 +1,5 @@
 library;
+import '../observability/model_request_ledger.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -209,7 +210,7 @@ class BackgroundAgentService {
         requestMessages: requestMessages,
         allowedTools: allowedTools,
       );
-      final result = await executeWithProviderKeyFailureRecording(
+      final result = await ModelRunScope(purpose: ModelRunScope.current?.purpose ?? (definition.id == 'local.memory_keeper' ? 'memory' : definition.id.startsWith('local.automatic_context') || definition.id.startsWith('local.topic_content_handoff') ? 'compaction' : definition.id == 'auto_reply_decision' ? 'proactive_plan' : definition.id == 'local.voice_call_summary' ? 'voice_summary' : 'background_agent'), conversationId: conversationId, turnId: sessionId).run(() => executeWithProviderKeyFailureRecording(
         config: config,
         recorder: keyFailureRecorder,
         execute: () => _executor(
@@ -217,7 +218,7 @@ class BackgroundAgentService {
           availableTools: allowedTools,
           sessionId: sessionId,
         ),
-      );
+      ));
       final finalReply = result.processedText.trim().isNotEmpty
           ? result.processedText
           : result.replyText;

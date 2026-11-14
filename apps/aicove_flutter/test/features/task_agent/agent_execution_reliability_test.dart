@@ -164,7 +164,8 @@ class Fixture {
     store: store,
     process: records,
     runner: runner,
-    capabilities: (_, _, _) async => TaskAgentCapabilities(tools: tools),
+    capabilities: (_, _, _, {bool readOnly = false}) async =>
+        TaskAgentCapabilities(tools: tools),
     writeReceipt: (receipt) async => receipts.add(receipt),
     relay: (_, _) async => true,
     findReceipt: (_) async => null,

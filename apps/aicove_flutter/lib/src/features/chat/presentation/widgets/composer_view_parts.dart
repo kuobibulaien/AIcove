@@ -86,7 +86,9 @@ extension _ComposerViewParts on _ComposerState {
                   showCursor: !_suppressKeyboard,
                   decoration: InputDecoration.collapsed(
                     hintText: _runningAgentHint ?? widget.hintText ?? '消息',
-                    hintStyle: TextStyle(color: colors.muted),
+                    hintStyle: TextStyle(
+                      color: colors.muted.withValues(alpha: _kComposerHintAlpha),
+                    ),
                   ).copyWith(visualDensity: VisualDensity.standard),
                   enabled: !widget.disabled,
                   onTap: () {
@@ -440,18 +442,12 @@ extension _ComposerViewParts on _ComposerState {
     );
   }
 
-  /// Agent 运行中的输入提示，告诉用户这时发出去的话会怎么处理。
+  /// 运行中的输入提示，告诉用户这时发出去的话会怎么处理。
   String? get _runningAgentHint {
-    final agentRunning =
-        ref.watch(sendingProvider) &&
-        ref.watch(
-          activeConversationProvider.select(
-            (conv) => conv?.effectiveAgentMode == RoleAgentMode.tool,
-          ),
-        );
+    final agentRunning = ref.watch(sendingProvider);
     if (!agentRunning) return null;
     return _supportsSoftKeyboardPanel
-        ? '发送＝插话，长按＝做完再发'
+        ? '长按发送按钮，排队发送'
         : '插话，或 $_altKeyLabel+Enter 做完再发';
   }
 
@@ -460,12 +456,7 @@ extension _ComposerViewParts on _ComposerState {
 
   Widget _buildSendButton() {
     final isGenerating = ref.watch(sendingProvider);
-    final isAgentChat = ref.watch(
-      activeConversationProvider.select(
-        (conv) => conv?.effectiveAgentMode == RoleAgentMode.tool,
-      ),
-    );
-    if (!isGenerating || !isAgentChat) {
+    if (!isGenerating) {
       return _buildPlainSendButton(isGenerating);
     }
     return ValueListenableBuilder<TextEditingValue>(

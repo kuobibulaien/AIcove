@@ -139,7 +139,8 @@ void main() {
       store: store,
       process: TaskProcessRecord(directory),
       runner: runner,
-      capabilities: (_, _, _) async => TaskAgentCapabilities(tools: [tool]),
+      capabilities: (_, _, _, {bool readOnly = false}) async =>
+          TaskAgentCapabilities(tools: [tool]),
       writeReceipt: (_) async {},
       relay: (_, _) async => true,
       findReceipt: (_) async => null,

@@ -262,6 +262,20 @@ extension _MessageBubbleMediaParts on MessageBubble {
             );
           },
         );
+      } else if (imgBlock.localPath?.startsWith('assets/') ?? false) {
+        // 内置资源图：设置页的示例对话用。
+        imageProvider = AssetImage(imgBlock.localPath!);
+        imageWidget = wrapPhoto(
+          Image(
+            image: ResizeImage.resizeIfNeeded(
+              photoDecodeWidth,
+              null,
+              imageProvider,
+            ),
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => placeholder(isError: true),
+          ),
+        );
       } else if (imgBlock.localPath != null && imgBlock.localPath!.isNotEmpty) {
         imageProvider = FileImage(File(imgBlock.localPath!));
         imageWidget = wrapPhoto(
@@ -317,14 +331,16 @@ extension _MessageBubbleMediaParts on MessageBubble {
         ? ImagePreviewItem(provider: imageProvider, heroTag: heroTag)
         : null;
     final canTriggerMediaMenu =
-        onMediaLongPress != null && block.status != BlockStatus.pending;
+        onMediaLongPress != null &&
+        (block.status != BlockStatus.pending || message.status != 'sending');
 
     final media = Builder(
       builder: (context) {
         return Listener(
-          onPointerDown: (_useDesktopContextMenu && canTriggerMediaMenu)
+          onPointerDown: canTriggerMediaMenu
               ? (event) {
-                  if ((event.buttons & kSecondaryMouseButton) != 0) {
+                  if (event.kind == PointerDeviceKind.mouse &&
+                      (event.buttons & kSecondaryMouseButton) != 0) {
                     final box = context.findRenderObject() as RenderBox?;
                     if (box != null) {
                       onMediaLongPress!(box, block, event.position);

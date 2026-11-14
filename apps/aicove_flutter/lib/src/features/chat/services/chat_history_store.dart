@@ -18,6 +18,7 @@ import '../../../core/models/block_status.dart';
 import '../../conversation_state/providers/conversation_state_providers.dart';
 import '../../plugins/domain/plugin_content.dart';
 import '../domain/message.dart';
+import '../domain/chat_timeline_deletion.dart';
 import '../domain/conversation_context_window.dart';
 import 'chat_frontend_message_projection_service.dart';
 import 'chat_message_projection_codec.dart';
@@ -1477,9 +1478,10 @@ class ChatHistoryStore {
 
   Future<void> hideMessagesInFrontendTimeline(
     String conversationId,
-    List<String> messageIds,
-  ) async {
-    if (messageIds.isEmpty) {
+    List<String> messageIds, {
+    List<String> pieceIds = const <String>[],
+  }) async {
+    if (messageIds.isEmpty && pieceIds.isEmpty) {
       return;
     }
 
@@ -1497,7 +1499,8 @@ class ChatHistoryStore {
       if (normalizedMessageId.isEmpty) {
         continue;
       }
-      final message = frontendMessagesById[normalizedMessageId] ??
+      final message =
+          frontendMessagesById[normalizedMessageId] ??
           await _loadBestEffortFrontendMessageById(
             normalizedMessageId,
             conversationId: conversationId,
@@ -1512,22 +1515,120 @@ class ChatHistoryStore {
       }
     }
 
-    if (hiddenRawMessageIds.isEmpty && hiddenProjectedMessageIds.isEmpty) {
+    if (hiddenRawMessageIds.isEmpty &&
+        hiddenProjectedMessageIds.isEmpty &&
+        pieceIds.isEmpty) {
       return;
     }
 
-    await _ref.read(conversationTimelineCacheProvider).hideMessages(
+    await _ref
+        .read(conversationTimelineCacheProvider)
+        .hideMessages(
           conversationId: conversationId,
           rawMessageIds: hiddenRawMessageIds.toList(growable: false),
-          projectedMessageIds:
-              hiddenProjectedMessageIds.toList(growable: false),
+          pieceIds: pieceIds,
+          projectedMessageIds: hiddenProjectedMessageIds.toList(
+            growable: false,
+          ),
         );
+  }
+
+  /// Resolve document-mode anchors against the complete canonical history.
+  Future<Set<String>> resolveTimelineDeleteRawMessageIds(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  ) async {
+    final ids = plan.rawMessageIdsToDelete.toSet();
+    if (plan.turnAnchorMessageIdsToDelete.isEmpty) return ids;
+    final allRaw = await loadAllRawMessages(conversationId);
+    for (final anchor in plan.turnAnchorMessageIdsToDelete) {
+      final rawId = await _timelineEntryRawMessageId(conversationId, anchor);
+      final index = allRaw.indexWhere((message) => message.id == rawId);
+      if (index < 0) continue;
+      ids.add(allRaw[index].id);
+      if (allRaw[index].role != 'assistant') continue;
+      var left = index;
+      var right = index;
+      while (left > 0 && allRaw[left - 1].role != 'user') {
+        left--;
+      }
+      while (right + 1 < allRaw.length && allRaw[right + 1].role != 'user') {
+        right++;
+      }
+      ids.addAll(allRaw.sublist(left, right + 1).map((message) => message.id));
+    }
+    return ids;
+  }
+
+  Future<String> _timelineEntryRawMessageId(
+    String conversationId,
+    String id,
+  ) async {
+    final parentId = ChatTimelinePieceId.parentMessageIdOf(id) ?? id;
+    final cached = await _ref
+        .read(conversationTimelineCacheProvider)
+        .findCachedMessageById(parentId, conversationId: conversationId);
+    if (cached != null) {
+      return ChatTimelinePieceId.rawMessageIdOf(
+        parentId,
+        explicitSourceId: cached.sourceMessageId,
+      );
+    }
+    final mapping = await _ref
+        .read(messageProjectionMappingRepositoryProvider)
+        .getByProjectedMessageId(parentId, conversationId: conversationId);
+    return ChatTimelinePieceId.rawMessageIdOf(
+      parentId,
+      explicitSourceId: mapping?.rawMessageId,
+    );
+  }
+
+  Future<void> executeTimelineDeletePlan(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  ) async {
+    final rawIds = await resolveTimelineDeleteRawMessageIds(
+      conversationId,
+      plan,
+    );
+    // Resolve aliases before soft deletion removes their projection mappings.
+    final projectedIds = <String>[];
+    final pieceIds = <String>[];
+    for (final id in plan.projectedMessageIdsToHide) {
+      if (!rawIds.contains(
+        await _timelineEntryRawMessageId(conversationId, id),
+      )) {
+        projectedIds.add(id);
+      }
+    }
+    for (final id in plan.pieceIdsToHide) {
+      if (!rawIds.contains(
+        await _timelineEntryRawMessageId(conversationId, id),
+      )) {
+        pieceIds.add(id);
+      }
+    }
+    if (rawIds.isNotEmpty) {
+      await softDeleteMessages(
+        conversationId,
+        rawIds.toList(),
+        shiftContextStartIfDeleted: true,
+      );
+    }
+    if (projectedIds.isNotEmpty || pieceIds.isNotEmpty) {
+      await hideMessagesInFrontendTimeline(
+        conversationId,
+        projectedIds,
+        pieceIds: pieceIds,
+      );
+    }
   }
 
   Future<void> softDeleteMessages(
     String conversationId,
     List<String> messageIds, {
     bool clearContextStartIfDeleted = false,
+    bool shiftContextStartIfDeleted = false,
   }) async {
     if (messageIds.isEmpty) return;
     final timelineCache = _ref.read(conversationTimelineCacheProvider);
@@ -1539,7 +1640,8 @@ class ChatHistoryStore {
     };
     final projectedMessages = <Message>[];
     for (final id in messageIds) {
-      final message = frontendMessagesById[id] ??
+      final message =
+          frontendMessagesById[id] ??
           await _loadBestEffortFrontendMessageById(
             id,
             conversationId: conversationId,
@@ -1597,7 +1699,13 @@ class ChatHistoryStore {
       final hiddenTextIds = [
         for (final message in projectedMessages)
           if (rawMessageIdsToResync.contains(message.sourceMessageId) &&
-              !(message.blocks?.any((block) => block is ImageBlock || block is AudioBlock || block is EmojiBlock) ?? false))
+              !(message.blocks?.any(
+                    (block) =>
+                        block is ImageBlock ||
+                        block is AudioBlock ||
+                        block is EmojiBlock,
+                  ) ??
+                  false))
             message.id,
       ];
       if (hiddenTextIds.isNotEmpty) {
@@ -1628,32 +1736,61 @@ class ChatHistoryStore {
     final now = DateTime.now().millisecondsSinceEpoch;
     final purgeAt = now + 30 * 24 * 60 * 60 * 1000;
 
-    final rawDeleteIdList = rawDeleteIds.toList(growable: false);
     await _db.transaction(() async {
+      final ownedRows =
+          await (_db.select(_db.messages)..where(
+                (t) =>
+                    t.conversationId.equals(conversationId) &
+                    t.id.isIn(rawDeleteIds) &
+                    t.deletedAt.isNull(),
+              ))
+              .get();
+      rawDeleteIds.retainAll(ownedRows.map((row) => row.id));
+      if (rawDeleteIds.isEmpty) return;
+      final conv = await convRepo.getById(conversationId);
+      if (conv != null &&
+          rawDeleteIds.contains(conv.contextStartMessageId) &&
+          (clearContextStartIfDeleted || shiftContextStartIfDeleted)) {
+        String? previousId;
+        if (!clearContextStartIfDeleted) {
+          final ordered =
+              await (_db.select(_db.messages)
+                    ..where((t) => t.conversationId.equals(conversationId))
+                    ..orderBy([
+                      (t) => OrderingTerm.asc(t.createdAt),
+                      (t) => OrderingTerm.asc(t.id),
+                    ]))
+                  .get();
+          for (final row in ordered) {
+            if (row.id == conv.contextStartMessageId) break;
+            if (row.deletedAt == null &&
+                row.replacedBy == null &&
+                !rawDeleteIds.contains(row.id)) {
+              previousId = row.id;
+            }
+          }
+        }
+        await (_db.update(
+          _db.conversations,
+        )..where((t) => t.id.equals(conversationId))).write(
+          db.ConversationsCompanion(contextStartMessageId: Value(previousId)),
+        );
+      }
+      final rawDeleteIdList = rawDeleteIds.toList(growable: false);
       await blockRepo.softDeleteByMessages(rawDeleteIdList, now);
       await msgRepo.softDeleteMany(rawDeleteIdList, now, purgeAt);
-      await mappingRepo.deleteByRawMessages(rawDeleteIdList);
-
-      if (clearContextStartIfDeleted) {
-        final conv = await convRepo.getById(conversationId);
-        if (conv != null &&
-            conv.contextStartMessageId != null &&
-            rawDeleteIds.contains(conv.contextStartMessageId)) {
-          await (_db.update(_db.conversations)
-                ..where((t) => t.id.equals(conversationId)))
-              .write(const db.ConversationsCompanion(
-            contextStartMessageId: Value(null),
-          ));
-        }
-      }
     });
-    await _refreshSummary(conversationId);
-
+    if (rawDeleteIds.isEmpty) return;
+    await timelineCache.clearHiddenEntriesForRawMessages(
+      conversationId: conversationId,
+      rawMessageIds: rawDeleteIds,
+    );
+    await mappingRepo.deleteByRawMessages(rawDeleteIds.toList(growable: false));
     await _removeMessagesFromShortWindowByRawIds(
       conversationId: conversationId,
       rawMessageIds: rawDeleteIds,
     );
-    await _refreshSummaryFromShortWindow(conversationId);
+    await _refreshSummary(conversationId);
   }
 
   Future<void> truncateFromMessage({

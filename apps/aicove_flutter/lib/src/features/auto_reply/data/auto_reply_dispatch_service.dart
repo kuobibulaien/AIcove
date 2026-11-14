@@ -1,7 +1,9 @@
+import '../../observability/model_request_ledger.dart';
 import 'package:drift/drift.dart' show BooleanExpressionOperators, OrderingTerm;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/services/android_keep_alive_manager.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/sync/cloud_local_write.dart';
@@ -166,6 +168,12 @@ class AutoReplyDispatchService {
       );
     }
 
+    if (claimToken != null &&
+        (!(await ProactiveOwnership.load()).owns(targetConversationId) ||
+            (await ModelRequestLedger.instance.activeRemoteRunsForConversation(targetConversationId)).isNotEmpty)) {
+      return const AutoReplyDispatchResult.superseded();
+    }
+
     final settings = await _ref.read(appSettingsProvider.future);
     if (trigger.source == TriggerSource.aiScheduler &&
         conversation.blocksPlugin(_triggerPluginId)) {
@@ -321,6 +329,11 @@ class AutoReplyDispatchService {
       if (invalidReason != null) {
         return AutoReplyDispatchResult.skipped(invalidReason!);
       }
+      // Same as the background isolate's delivery: every proactive message
+      // counts as unread; an open chat page that shows it clears the count.
+      await _ref
+          .read(conversationRepositoryProvider)
+          .incrementUnread(targetConversationId);
       AppLogger.info(
         'AutoReplyDispatchService',
         'Auto-reply delivered by background agent runtime',
@@ -550,7 +563,7 @@ class AutoReplyDispatchService {
         latest.conversationId != conversationId) {
       return 'trigger_no_longer_active';
     }
-    if (!(await ProactiveOwnership.load()).owns(conversationId)) {
+    if (!(await ProactiveOwnership.load()).owns(conversationId) || (await ModelRequestLedger.instance.activeRemoteRunsForConversation(conversationId)).isNotEmpty) {
       return AutoReplyDispatchResult.supersededReason;
     }
     final db = _ref.read(databaseProvider);
@@ -700,21 +713,55 @@ class AutoReplyDispatchService {
       },
     );
 
-    final replyText = await _ref
-        .read(proactiveReplyGeneratorProvider)
-        .generate(
+    AndroidGenerationKeepAliveLease? lease;
+    try {
+      lease = await AndroidKeepAliveManager.acquireGenerationLease();
+    } catch (e) {
+      AppLogger.warning(
+        'AutoReplyDispatchService',
+        'Failed to acquire generation keep-alive lease',
+        metadata: {
+          'triggerId': trigger.id,
+          'conversationId': conversation.id,
+          'error': e.toString(),
+        },
+      );
+    }
+    try {
+      final replyText = await ModelRunScope(
+        purpose: 'proactive_reply',
+        conversationId: conversation.id,
+        turnId: 'auto_reply_dispatch_${trigger.id}',
+      ).run(
+        () => _ref.read(proactiveReplyGeneratorProvider).generate(
           conversation: conversation,
           reminder: reminder,
           turnId: 'auto_reply_dispatch_${trigger.id}',
+        ),
+      );
+      await _appendHistoryLog(
+        event: 'runtime_generation_finished',
+        message: '聊天主链路已完成即时主动回复生成',
+        trigger: trigger,
+        category: AutoReplyTriggerLogCategory.agent,
+        success: true,
+        metadata: {'replyLength': replyText.length},
+      );
+      return replyText;
+    } finally {
+      try {
+        await lease?.release();
+      } catch (e) {
+        AppLogger.warning(
+          'AutoReplyDispatchService',
+          'Failed to release generation keep-alive lease',
+          metadata: {
+            'triggerId': trigger.id,
+            'conversationId': conversation.id,
+            'error': e.toString(),
+          },
         );
-    await _appendHistoryLog(
-      event: 'runtime_generation_finished',
-      message: '聊天主链路已完成即时主动回复生成',
-      trigger: trigger,
-      category: AutoReplyTriggerLogCategory.agent,
-      success: true,
-      metadata: {'replyLength': replyText.length},
-    );
-    return replyText;
+      }
+    }
   }
 }

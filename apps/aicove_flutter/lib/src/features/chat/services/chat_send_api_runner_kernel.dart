@@ -85,7 +85,8 @@ class KernelApiRunner implements ApiRunner {
                 config.presetScript!.json,
                 toolsAllowed: config.presetScript!.toolsAllowed,
                 modelSupportsTools: config.presetScript!.modelSupportsTools,
-                callerToolChoice: config.providerRequestOptions?.toolChoice ??
+                callerToolChoice:
+                    config.providerRequestOptions?.toolChoice ??
                     config.presetScript!.callerToolChoice,
               ),
             );
@@ -350,24 +351,32 @@ class _KernelRun
       }.where(_deferredTools.containsKey),
     );
     if (_deferredTools.isNotEmpty) {
-      final search = createToolSearch(handler: (args) async {
-        final query = (args['query'] as String).trim();
-        final matches = query.isEmpty ? <Map<String, dynamic>>[] : CodemodeSearch([
-          for (final tool in _deferredTools.values)
-            if (!_activatedTools.contains(tool.name)) tool,
-        ]).search(query, limit: args['limit'] as int? ?? 8);
-        final loaded = [for (final match in matches) match['name'] as String];
-        _activatedTools.addAll(loaded);
-        return jsonEncode({
-          'loaded': loaded,
-          'tools': [for (final name in loaded) {
-            'name': name,
-            'description': _deferredTools[name]!.description,
-          }],
-        });
-      });
+      final search = createToolSearch(
+        handler: (args) async {
+          final query = (args['query'] as String).trim();
+          final matches = query.isEmpty
+              ? <Map<String, dynamic>>[]
+              : CodemodeSearch([
+                  for (final tool in _deferredTools.values)
+                    if (!_activatedTools.contains(tool.name)) tool,
+                ]).search(query, limit: args['limit'] as int? ?? 8);
+          final loaded = [for (final match in matches) match['name'] as String];
+          _activatedTools.addAll(loaded);
+          return jsonEncode({
+            'loaded': loaded,
+            'tools': [
+              for (final name in loaded)
+                {
+                  'name': name,
+                  'description': _deferredTools[name]!.description,
+                },
+            ],
+          });
+        },
+      );
       availableTools = [...?availableTools, search];
-      if (!toolNames.contains(toolSearchName)) _baseRequestTools.add(search.toOpenAISchema());
+      if (!toolNames.contains(toolSearchName))
+        _baseRequestTools.add(search.toOpenAISchema());
     }
     this.availableTools = availableTools;
     _syncPresetTools();
@@ -431,8 +440,9 @@ class _KernelRun
     return choice == null
         ? config.providerRequestOptions
         : (config.providerRequestOptions ?? const ProviderChatRequestOptions())
-            .copyWith(toolChoice: choice);
+              .copyWith(toolChoice: choice);
   }
+
   final TraceLogger? _trace;
   final void Function(String toolName)? onToolExecuting;
   final void Function(String delta)? onStreamTextDelta;
@@ -472,7 +482,15 @@ class _KernelRun
 
   final preToolNarrativeTexts = <String>[];
   final toolRoundDrafts =
-      <({String rawText, String narrative, String displayText, String reasoning, List<String> toolCallIds})>[];
+      <
+        ({
+          String rawText,
+          String narrative,
+          String displayText,
+          String reasoning,
+          List<String> toolCallIds,
+        })
+      >[];
   var pendingStableReviewImages = <PluginImageContent>[];
   var executedAnyTool = false;
   var lastRoundIndex = 1;
@@ -584,15 +602,14 @@ class _KernelRun
     final preset = presetRuntime;
     if (preset == null) return messages;
     final prepared = preset is PresetToolAwareRuntime
-        ? await (preset as PresetToolAwareRuntime).prepareWithTools(messages, tools: [
-            ..._baseRequestTools,
-            // Wave's no-op tool is recreated from the current round, not an
-            // independent collision with its own previous-round schema.
-            if (preset is! QuickJsPresetRuntime || !preset.isWaveTransport)
-              ..._presetRequestTools,
-            for (final name in _activatedTools)
-              _deferredTools[name]!.toOpenAISchema(),
-          ])
+        ? await (preset as PresetToolAwareRuntime).prepareWithTools(
+            messages,
+            tools: [
+              ..._baseRequestTools,
+                for (final name in _activatedTools)
+                _deferredTools[name]!.toOpenAISchema(),
+            ],
+          )
         : await preset.prepare(messages);
     _syncPresetTools();
     return prepared;
@@ -658,9 +675,7 @@ class _KernelRun
       onStreamingFallback?.call();
       current = await config.runtimeContext!.prepare(current, force: true);
       final budgeted = ToolMedia.wire(current, strip: false);
-      final request = ToolMedia.wire(
-        await _preparePresetMessages(budgeted),
-      );
+      final request = ToolMedia.wire(await _preparePresetMessages(budgeted));
       _recordPresetRequestState();
       _transportSnapshot = null;
       _transportPreviewFingerprint = '';
@@ -676,9 +691,7 @@ class _KernelRun
     current = await resolveModelMedia(current);
     current = await config.runtimeContext?.prepare(current) ?? current;
     final budgeted = ToolMedia.wire(current, strip: false);
-    final request = ToolMedia.wire(
-      await _preparePresetMessages(budgeted),
-    );
+    final request = ToolMedia.wire(await _preparePresetMessages(budgeted));
     _recordPresetRequestState();
     _resetRoundOutputState();
     runningLength = current.length;
@@ -755,6 +768,9 @@ class _KernelRun
             config.requestInputTokenLimit!) {
       throw StateError('上下文超限：预设处理后的消息与工具定义超过本轮预算');
     }
+    config.onTransportStreamingChanged?.call(
+      preset?.transportTools.isNotEmpty ?? false,
+    );
     await preset?.reset(shouldAttemptStreaming);
 
     Future<SendMessageRichResult> sendRichNonStream() => agent.sendMessageRich(
@@ -1009,7 +1025,8 @@ class _KernelRun
     kernel.TurnContext ctx, {
     bool Function()? active,
   }) async {
-    if (toolCall.name == 'draw_image' && toolCall.arguments['prompt'] is String) {
+    if (toolCall.name == 'draw_image' &&
+        toolCall.arguments['prompt'] is String) {
       final prompt = toolCall.arguments['prompt'] as String;
       final expanded = expandComicPlanVariablesInPrompt(
         prompt,
@@ -1054,7 +1071,11 @@ class _KernelRun
           ctx.cancellation.isCancelled || !(active?.call() ?? true),
       stateOwner: config.toolResultOwner ?? sessionId,
       scriptTools: ScriptToolAccess(
-        List.unmodifiable((availableTools ?? const <AITool>[]).where((tool) => tool.name != toolSearchName)),
+        List.unmodifiable(
+          (availableTools ?? const <AITool>[]).where(
+            (tool) => tool.name != toolSearchName,
+          ),
+        ),
         (name, args, valid) => _scriptTool(
           name,
           args,

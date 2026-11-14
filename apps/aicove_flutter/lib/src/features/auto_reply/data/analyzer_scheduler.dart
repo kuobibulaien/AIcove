@@ -10,13 +10,19 @@ library;
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/services/android_keep_alive_manager.dart';
 import '../../../core/sync/cloud_local_write.dart';
+import '../../chat/chat_providers.dart';
 import '../../chat/conversation_providers.dart';
+import '../../observability/model_request_ledger.dart';
 import '../../chat/domain/conversation.dart';
 import '../../chat/services/chat_history_store.dart';
+import '../../settings/app_settings.dart';
+import 'auto_reply_claim_store.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_controller.dart';
 import 'auto_reply_trigger_storage.dart';
@@ -26,12 +32,20 @@ import 'conversation_proactive_state_storage.dart';
 import 'proactive_message_pregenerator.dart';
 import '../domain/proactive_action.dart' show ProactiveDraft;
 import 'proactive_owner_device.dart';
+import 'proactive_planner.dart';
 
 class AnalyzerScheduler {
   static const String _triggerPluginId = 'trigger';
 
   AnalyzerScheduler(this._ref) {
     _initFuture = _initialize();
+    final idleSubscription = _ref
+        .read(conversationIdleEventsProvider)
+        .stream
+        .listen(
+          (conversationId) => unawaited(_onConversationIdle(conversationId)),
+        );
+    _ref.onDispose(() => unawaited(idleSubscription.cancel()));
   }
 
   final Ref _ref;
@@ -43,8 +57,18 @@ class AnalyzerScheduler {
   final Map<String, Timer> _analysisTimers = <String, Timer>{};
   final Map<String, Timer> _silentTimers = <String, Timer>{};
   final Set<String> _runningAnalysisConversationIds = <String>{};
+  final Map<String, Future<void>> _analysisRuns = {};
   final Map<String, int> _analysisGenerations = {};
   final AutoReplyTriggerStorage _historyStorage = AutoReplyTriggerStorage();
+  Future<void> _stateWrites = Future<void>.value();
+  Future<void> _nativeAlarmQueue = Future<void>.value();
+  int _stateRevision = 0;
+  int _refreshRevision = 0;
+  int _nativeAlarmRevision = 0;
+  bool _nativeAlarmEnabled = true;
+  bool _disposed = false;
+  bool _nativeAlarmsOnly = false;
+  bool _nativeAlarmRunning = false;
 
   static const Duration _defaultDelay = Duration(minutes: 5);
   static const Duration _immediateDelay = Duration(seconds: 1);
@@ -79,17 +103,50 @@ class AnalyzerScheduler {
     );
   }
 
+  Future<void> _onConversationIdle(String conversationId) async {
+    await _initFuture;
+    final state = _states[conversationId];
+    if (state == null ||
+        state.mode != ConversationProactiveMode.active ||
+        state.hasPendingAutoTrigger ||
+        _ref.read(conversationSendingProvider(conversationId))) {
+      return;
+    }
+    final conversation = _ref.read(
+      resolvedConversationByIdProvider(conversationId),
+    );
+    if (conversation == null ||
+        !_isSupervisorEnabledForConversation(conversation) ||
+        !await _ownsConversation(conversationId)) {
+      return;
+    }
+    scheduleAnalysis(conversationId: conversationId, delay: _defaultDelay);
+  }
+
   Future<void> _initialize() async {
     _storage = ConversationProactiveStateStorage();
     await refreshFromStorage();
   }
 
   Future<void> refreshFromStorage() async {
+    if (_disposed) return;
+    final refreshRevision = ++_refreshRevision;
+    await _stateWrites;
+    final stateRevision = _stateRevision;
+    await (await SharedPreferences.getInstance()).reload();
     final loaded = await _storage.loadStates();
+    if (_disposed ||
+        stateRevision != _stateRevision ||
+        refreshRevision != _refreshRevision) {
+      return;
+    }
     _states
       ..clear()
       ..addAll(loaded);
+    _stateRevision++;
+    _nativeAlarmEnabled = true;
     await _restoreTimers();
+    await _syncNativeAnalyzerAlarm();
   }
 
   Future<void> onConversationCleared(String conversationId) async {
@@ -120,7 +177,8 @@ class AnalyzerScheduler {
     await cloudLocalWrite(() async {
       _cancelTimers(conversationId);
       _states.remove(conversationId);
-      await _storage.saveStates(_states);
+      await _persistStates();
+      await _syncNativeAnalyzerAlarm();
       await _ref.read(autoReplyTriggersProvider.future);
       await _ref
           .read(autoReplyTriggersProvider.notifier)
@@ -369,7 +427,7 @@ class AnalyzerScheduler {
       'analysisTimers': _analysisTimers.length,
       'silentTimers': _silentTimers.length,
     }, level: 'DEBUG');
-
+    unawaited(_syncNativeAnalyzerAlarm());
   }
 
   Future<void> onAppResumed() async {
@@ -379,7 +437,106 @@ class AnalyzerScheduler {
     await refreshFromStorage();
   }
 
+  /// The native receiver keeps its wake lease until analysis and drafting end.
+  Future<void> onNativeAlarmFired() async {
+    _nativeAlarmRunning = true;
+    _stopLocalTimers();
+    try {
+      await _initFuture;
+      for (final running in _analysisRuns.values.toList()) {
+        await running;
+      }
+      await (await SharedPreferences.getInstance()).reload();
+      await _ref.read(appSettingsProvider.notifier).refresh();
+      await refreshFromStorage();
+      final settings = (await _ref.read(
+        appSettingsProvider.future,
+      )).autoReplySettings;
+      final ownership = await ProactiveOwnership.load();
+      for (final stored in _states.values.toList()) {
+        final state = _states[stored.conversationId];
+        if (state == null || !ownership.owns(state.conversationId)) continue;
+        final due = _analysisDueAt(state);
+        if (due == null ||
+            due.isAfter(DateTime.now().add(const Duration(seconds: 2)))) {
+          continue;
+        }
+        final conversation = _ref.read(
+          resolvedConversationByIdProvider(state.conversationId),
+        );
+        if (conversation == null ||
+            !_isSupervisorEnabledForConversation(conversation)) {
+          continue;
+        }
+        final contact = settings.forContact(state.conversationId);
+        final quiet = QuietHours.parse(
+          enabled: contact.quietHoursEnabled,
+          start: contact.quietHoursStart,
+          end: contact.quietHoursEnd,
+        );
+        if (quiet.contains(DateTime.now())) continue;
+        _cancelTimers(state.conversationId);
+        await _runAnalysis(
+          conversationId: state.conversationId,
+          reason: 'native_alarm',
+        );
+      }
+    } finally {
+      _nativeAlarmRunning = false;
+      if (!_nativeAlarmsOnly && _nativeAlarmEnabled && !_disposed) {
+        for (final state in _states.values.toList()) {
+          final due = _analysisDueAt(state);
+          if (due == null) continue;
+          if (state.mode == ConversationProactiveMode.silent) {
+            _scheduleSilentTimer(
+              conversationId: state.conversationId,
+              wakeAt: due,
+            );
+          } else {
+            final remaining = due.difference(DateTime.now());
+            _scheduleAnalysisTimer(
+              conversationId: state.conversationId,
+              delay: remaining > Duration.zero ? remaining : _immediateDelay,
+              reason: 'native_alarm_restored',
+              observingUntil: due,
+            );
+          }
+        }
+      }
+      await _syncNativeAnalyzerAlarm();
+    }
+  }
+
+  /// A short-lived headless engine must leave future work to native alarms.
+  void useNativeAlarmsOnly() {
+    _nativeAlarmsOnly = true;
+    _stopLocalTimers();
+  }
+
+  /// Finish persistence and native scheduling before destroying a headless engine.
+  Future<void> flushAlarmSchedule() async {
+    await _initFuture;
+    await _stateWrites;
+    await _syncNativeAnalyzerAlarm();
+    while (true) {
+      final pending = _nativeAlarmQueue;
+      await pending;
+      if (identical(pending, _nativeAlarmQueue)) return;
+    }
+  }
+
   Future<void> _runAnalysis({
+    required String conversationId,
+    required String reason,
+  }) {
+    final id = conversationId.trim();
+    return _analysisRuns[id] ??=
+        _runAnalysisOnce(conversationId: id, reason: reason).whenComplete(() {
+          _analysisRuns.remove(id);
+        });
+  }
+
+  Future<void> _runAnalysisOnce({
     required String conversationId,
     required String reason,
   }) async {
@@ -402,13 +559,66 @@ class AnalyzerScheduler {
       return;
     }
 
+    AutoReplyClaimStore? claims;
+    String? claimToken;
+    final claimKey = 'analyzer:$normalizedConversationId';
     try {
+      claims = AutoReplyClaimStore(_ref.read(databaseProvider));
+      claimToken = await claims.tryClaim(
+        triggerId: claimKey,
+        claimedBy: AutoReplyClaimOwner.foreground,
+      );
+      if (claimToken == null) return;
+      if (_ref.read(conversationSendingProvider(normalizedConversationId))) {
+        return;
+      }
+      final state = _states[normalizedConversationId];
+      final contact = (await _ref.read(
+        appSettingsProvider.future,
+      )).autoReplySettings.forContact(normalizedConversationId);
+      final quiet = QuietHours.parse(
+        enabled: contact.quietHoursEnabled,
+        start: contact.quietHoursStart,
+        end: contact.quietHoursEnd,
+      );
+      final now = DateTime.now();
+      if (quiet.contains(now)) {
+        final end = quiet.nextEnd(now);
+        if (state?.mode == ConversationProactiveMode.silent) {
+          _scheduleSilentTimer(
+            conversationId: normalizedConversationId,
+            wakeAt: end,
+          );
+        } else if (state?.observingUntil != null) {
+          _scheduleAnalysisTimer(
+            conversationId: normalizedConversationId,
+            delay: end.difference(now),
+            reason: 'quiet_hours_end',
+            observingUntil: state!.observingUntil,
+          );
+        }
+        return;
+      }
+      if (state?.observingUntil != null) {
+        await _setState(state!.withObservingUntil(null));
+      }
       await _runAnalysisUnlocked(
         conversationId: normalizedConversationId,
         reason: reason,
       );
     } finally {
-      _runningAnalysisConversationIds.remove(normalizedConversationId);
+      try {
+        if (claimToken != null) await claims!.release(claimKey, claimToken);
+      } catch (error) {
+        AppLogger.warning(
+          'AnalyzerScheduler',
+          '释放分析认领失败',
+          metadata: {'error': error.toString()},
+        );
+      } finally {
+        _runningAnalysisConversationIds.remove(normalizedConversationId);
+        await _syncNativeAnalyzerAlarm();
+      }
     }
   }
 
@@ -484,7 +694,9 @@ class AnalyzerScheduler {
     }
     if (state.mode == ConversationProactiveMode.silent &&
         state.silenceUntil != null &&
-        state.silenceUntil!.isAfter(DateTime.now())) {
+        state.silenceUntil!.isAfter(
+          DateTime.now().add(const Duration(seconds: 2)),
+        )) {
       _scheduleSilentTimer(
         conversationId: conversationId,
         wakeAt: state.silenceUntil!,
@@ -513,7 +725,17 @@ class AnalyzerScheduler {
       await _setState(effectiveState);
     }
 
+    AndroidGenerationKeepAliveLease? keepAliveLease;
     try {
+      try {
+        keepAliveLease = await AndroidKeepAliveManager.acquireGenerationLease();
+      } catch (error) {
+        AppLogger.warning(
+          'AnalyzerScheduler',
+          '启动生成防休眠失败',
+          metadata: {'error': error.toString()},
+        );
+      }
       await _appendHistoryLog(
         category: AutoReplyTriggerLogCategory.analyzer,
         event: 'analysis_started',
@@ -577,6 +799,16 @@ class AnalyzerScheduler {
           conversationId: conversationId,
           delay: _defaultDelay,
           reason: 'analysis_retry',
+        );
+      }
+    } finally {
+      try {
+        await keepAliveLease?.release();
+      } catch (error) {
+        AppLogger.warning(
+          'AnalyzerScheduler',
+          '释放生成防休眠失败',
+          metadata: {'error': error.toString()},
         );
       }
     }
@@ -668,15 +900,22 @@ class AnalyzerScheduler {
     // trigger; the reply is then written live at fire time.
     final drafts = <ProactiveDraft?>[];
     for (final plan in triggerPlans) {
+      if (!await _ownsConversation(conversationId)) return;
       ProactiveDraft? draft;
       try {
-        draft = await _ref
-            .read(proactiveMessagePregeneratorProvider)
-            .generate(
-              conversation: conversation,
-              systemReminder: plan.systemReminder,
-              fireAt: plan.fireAt,
-              allowCall: plan.allowCall,
+        draft =
+            await ModelRunScope(
+              purpose: 'proactive_reply',
+              conversationId: conversationId,
+            ).run(
+              () => _ref
+                  .read(proactiveMessagePregeneratorProvider)
+                  .generate(
+                    conversation: conversation,
+                    systemReminder: plan.systemReminder,
+                    fireAt: plan.fireAt,
+                    allowCall: plan.allowCall,
+                  ),
             );
       } catch (error) {
         AppLogger.warning(
@@ -819,6 +1058,9 @@ class AnalyzerScheduler {
     final live = await _findActiveAiTriggerForConversation(
       current.conversationId,
     );
+    if (_disposed || !identical(_states[current.conversationId], current)) {
+      return _states[current.conversationId] ?? current;
+    }
     if (current.pendingAutoTriggerId == live?.id) return current;
     final next = current.withPendingAutoTrigger(live?.id);
     await _setState(next);
@@ -841,8 +1083,10 @@ class AnalyzerScheduler {
     String conversationId, {
     String? reason,
   }) async {
+    if (_disposed) return;
     await _ref.read(autoReplyTriggersProvider.future);
     final currentTriggers = await _historyStorage.loadTriggers();
+    if (_disposed) return;
     final controller = _ref.read(autoReplyTriggersProvider.notifier);
     for (final trigger in currentTriggers) {
       if (trigger.conversationId != conversationId) continue;
@@ -862,7 +1106,12 @@ class AnalyzerScheduler {
   /// Another device answers for this conversation: stop watching it here.
   Future<bool> _ownsConversation(String conversationId) async {
     final ownership = await ProactiveOwnership.load();
-    if (ownership.owns(conversationId)) return true;
+    if (ownership.owns(conversationId) &&
+        (await ModelRequestLedger.instance.activeRemoteRunsForConversation(
+          conversationId,
+        )).isEmpty) {
+      return true;
+    }
     _cancelTimers(conversationId);
     await _appendHistoryLog(
       category: AutoReplyTriggerLogCategory.analyzer,
@@ -877,6 +1126,7 @@ class AnalyzerScheduler {
   }
 
   Future<void> _restoreTimers() async {
+    if (_disposed) return;
     for (final timer in _analysisTimers.values) {
       timer.cancel();
     }
@@ -888,7 +1138,10 @@ class AnalyzerScheduler {
 
     final now = DateTime.now();
     for (final stored in _states.values.toList()) {
+      if (_disposed) return;
+      if (!identical(_states[stored.conversationId], stored)) continue;
       final state = await _reconcilePendingTrigger(stored);
+      if (_disposed) return;
       final conversation = _ref.read(
         resolvedConversationByIdProvider(state.conversationId),
       );
@@ -916,7 +1169,20 @@ class AnalyzerScheduler {
         continue;
       }
       if (state.mode == ConversationProactiveMode.active &&
-          state.lastUserAt != null) {
+          !_ref.read(conversationSendingProvider(state.conversationId)) &&
+          await _ownsConversation(state.conversationId) &&
+          (state.lastUserAt != null || state.observingUntil != null)) {
+        if (_disposed) return;
+        if (state.observingUntil != null) {
+          final remaining = state.observingUntil!.difference(now);
+          _scheduleAnalysisTimer(
+            conversationId: state.conversationId,
+            delay: remaining > Duration.zero ? remaining : _immediateDelay,
+            reason: 'active_observation_restored',
+            observingUntil: state.observingUntil,
+          );
+          continue;
+        }
         final elapsed = now.difference(state.lastUserAt!);
         final delay = elapsed < _defaultDelay
             ? _defaultDelay - elapsed
@@ -934,6 +1200,8 @@ class AnalyzerScheduler {
   }
 
   void _scheduleForState(ConversationProactiveState state) {
+    if (_disposed) return;
+    unawaited(_syncNativeAnalyzerAlarm());
     final conversationId = state.conversationId;
     final conversation = _ref.read(
       resolvedConversationByIdProvider(conversationId),
@@ -964,7 +1232,7 @@ class AnalyzerScheduler {
     if (state.mode == ConversationProactiveMode.active &&
         state.lastUserAt != null &&
         !_analysisTimers.containsKey(conversationId)) {
-      final due = state.lastUserAt!.add(_defaultDelay);
+      final due = state.observingUntil ?? state.lastUserAt!.add(_defaultDelay);
       final now = DateTime.now();
       _scheduleAnalysisTimer(
         conversationId: conversationId,
@@ -978,12 +1246,25 @@ class AnalyzerScheduler {
     required String conversationId,
     required Duration delay,
     required String reason,
+    DateTime? observingUntil,
   }) {
+    if (_disposed) return;
+    _nativeAlarmEnabled = true;
+    final current =
+        _states[conversationId] ??
+        ConversationProactiveState(conversationId: conversationId);
+    _states[conversationId] = current.withObservingUntil(
+      observingUntil ?? DateTime.now().add(delay),
+    );
+    unawaited(_persistStates());
+    unawaited(_syncNativeAnalyzerAlarm());
     _analysisTimers.remove(conversationId)?.cancel();
-    _analysisTimers[conversationId] = Timer(delay, () {
-      _analysisTimers.remove(conversationId);
-      unawaited(_runAnalysis(conversationId: conversationId, reason: reason));
-    });
+    if (!_nativeAlarmsOnly && !_nativeAlarmRunning) {
+      _analysisTimers[conversationId] = Timer(delay, () {
+        _analysisTimers.remove(conversationId);
+        unawaited(_runAnalysis(conversationId: conversationId, reason: reason));
+      });
+    }
 
     _log('analyzer:scheduled', {
       'conversationId': conversationId,
@@ -1005,17 +1286,22 @@ class AnalyzerScheduler {
     required String conversationId,
     required DateTime wakeAt,
   }) {
+    if (_disposed) return;
+    _nativeAlarmEnabled = true;
     _silentTimers.remove(conversationId)?.cancel();
     final now = DateTime.now();
     final delay = wakeAt.isAfter(now)
         ? wakeAt.difference(now)
         : _immediateDelay;
-    _silentTimers[conversationId] = Timer(delay, () {
-      _silentTimers.remove(conversationId);
-      unawaited(
-        _runAnalysis(conversationId: conversationId, reason: 'silent_wakeup'),
-      );
-    });
+    if (!_nativeAlarmsOnly && !_nativeAlarmRunning) {
+      _silentTimers[conversationId] = Timer(delay, () {
+        _silentTimers.remove(conversationId);
+        unawaited(
+          _runAnalysis(conversationId: conversationId, reason: 'silent_wakeup'),
+        );
+      });
+    }
+    unawaited(_syncNativeAnalyzerAlarm());
 
     _log('analyzer:silent_scheduled', {
       'conversationId': conversationId,
@@ -1038,6 +1324,7 @@ class AnalyzerScheduler {
   void _cancelTimers(String conversationId) {
     _analysisTimers.remove(conversationId)?.cancel();
     _silentTimers.remove(conversationId)?.cancel();
+    unawaited(_syncNativeAnalyzerAlarm());
   }
 
   bool _isSupervisorEnabledForConversation(Conversation conversation) {
@@ -1045,11 +1332,113 @@ class AnalyzerScheduler {
   }
 
   Future<void> _setState(ConversationProactiveState state) async {
+    if (_disposed) return;
     _states[state.conversationId] = state;
-    await _storage.saveStates(_states);
+    await _persistStates();
+    await _syncNativeAnalyzerAlarm();
+  }
+
+  Future<void> _persistStates() {
+    _stateRevision++;
+    final snapshot = Map<String, ConversationProactiveState>.of(_states);
+    final write = _stateWrites.then((_) => _storage.saveStates(snapshot));
+    _stateWrites = write.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {
+        AppLogger.warning(
+          'AnalyzerScheduler',
+          '保存主动回复状态失败',
+          metadata: {'error': error.toString()},
+        );
+      },
+    );
+    return write;
+  }
+
+  DateTime? _analysisDueAt(ConversationProactiveState state) {
+    return switch (state.mode) {
+      ConversationProactiveMode.active =>
+        state.hasPendingAutoTrigger ? null : state.observingUntil,
+      ConversationProactiveMode.silent => state.silenceUntil,
+      ConversationProactiveMode.dormant => null,
+    };
+  }
+
+  /// Serialize native writes and discard obsolete snapshots before invoking
+  /// the channel. A slow earlier schedule cannot overwrite a later cancel.
+  Future<void> _syncNativeAnalyzerAlarm() {
+    if (_disposed) return Future<void>.value();
+    final revision = ++_nativeAlarmRevision;
+    final sync = _nativeAlarmQueue.then((_) async {
+      if (revision != _nativeAlarmRevision) return;
+      DateTime? earliest;
+      var exact = false;
+      if (_nativeAlarmEnabled) {
+        final settings = (await _ref.read(
+          appSettingsProvider.future,
+        )).autoReplySettings;
+        final ownership = await ProactiveOwnership.load();
+        if (_disposed || revision != _nativeAlarmRevision) return;
+        final now = DateTime.now();
+        for (final state in _states.values) {
+          if (!ownership.owns(state.conversationId) ||
+              _runningAnalysisConversationIds.contains(state.conversationId)) {
+            continue;
+          }
+          var due = _analysisDueAt(state);
+          if (due == null) continue;
+          final conversation = _ref.read(
+            resolvedConversationByIdProvider(state.conversationId),
+          );
+          if (conversation == null ||
+              !_isSupervisorEnabledForConversation(conversation)) {
+            continue;
+          }
+          final contact = settings.forContact(state.conversationId);
+          final quiet = QuietHours.parse(
+            enabled: contact.quietHoursEnabled,
+            start: contact.quietHoursStart,
+            end: contact.quietHoursEnd,
+          );
+          if (due.isBefore(now)) due = now;
+          if (quiet.contains(due)) due = quiet.nextEnd(due);
+          if (earliest == null || due.isBefore(earliest)) {
+            earliest = due;
+            exact = settings.allowExactAlarm;
+          }
+        }
+      }
+      if (revision != _nativeAlarmRevision) return;
+      if (earliest == null) {
+        await AndroidKeepAliveManager.cancelProactiveAlarm('analyzer');
+      } else {
+        await AndroidKeepAliveManager.scheduleProactiveAlarm(
+          slot: 'analyzer',
+          fireAt: earliest,
+          exact: exact,
+        );
+      }
+    });
+    _nativeAlarmQueue = sync.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {
+        AppLogger.warning(
+          'AnalyzerScheduler',
+          '同步主动回复分析闹钟失败',
+          metadata: {'error': error.toString()},
+        );
+      },
+    );
+    return _nativeAlarmQueue;
   }
 
   void cancel() {
+    _nativeAlarmEnabled = false;
+    _stopLocalTimers();
+    unawaited(_syncNativeAnalyzerAlarm());
+  }
+
+  void _stopLocalTimers() {
     for (final timer in _analysisTimers.values) {
       timer.cancel();
     }
@@ -1058,6 +1447,12 @@ class AnalyzerScheduler {
     }
     _analysisTimers.clear();
     _silentTimers.clear();
+  }
+
+  void _dispose() {
+    _disposed = true;
+    _nativeAlarmRevision++;
+    _stopLocalTimers();
   }
 
   void _log(String name, Map<String, Object?> data, {String level = 'INFO'}) {
@@ -1084,6 +1479,6 @@ class AnalyzerScheduler {
 
 final analyzerSchedulerProvider = Provider<AnalyzerScheduler>((ref) {
   final scheduler = AnalyzerScheduler(ref);
-  ref.onDispose(scheduler.cancel);
+  ref.onDispose(scheduler._dispose);
   return scheduler;
 });

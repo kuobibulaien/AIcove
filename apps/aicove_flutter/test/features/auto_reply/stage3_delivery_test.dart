@@ -10,6 +10,9 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart'
 import '../../../tool/chat_segmented_fixture.dart';
 import 'dart:io';
 
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
+import 'package:aicove_flutter/src/core/database/repositories/conversation_repository.dart';
+import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/background_service.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
@@ -559,6 +562,31 @@ void main() {
         expect(messages, age.inHours < 6 ? isNotEmpty : isEmpty);
       });
     }
+    test('delivered message counts as unread, skipped one does not', () async {
+      Future<int> unread() async => (await (fixture.database.select(
+        fixture.database.conversations,
+      )..where((c) => c.id.equals(fixture.conversation.id))).getSingle())
+          .unreadCount;
+      final stale = fixture.container
+          .read(conversationsProvider)
+          .value!
+          .firstWhere((c) => c.id == fixture.conversation.id);
+      expect((await dispatch(trigger())).success, isTrue);
+      expect(await unread(), 1);
+      // A row written back from an older in-memory copy keeps the count.
+      await ConversationRepository(fixture.database).upsert(
+        ConversationConverter.toCompanion(
+          stale.copyWith(isPinned: !stale.isPinned),
+        ),
+      );
+      expect(await unread(), 1);
+      generate = (_) async => throw StateError('live failed');
+      expect(
+        (await dispatch(trigger(age: const Duration(hours: 7)))).success,
+        isFalse,
+      );
+      expect(await unread(), 1);
+    });
     for (final prompt in [null, '  ', '最新内容']) {
       test('empty reminder falls back to title ($prompt)', () async {
         String? reminder;

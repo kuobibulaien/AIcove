@@ -27,7 +27,6 @@ void main() {
     expect(settings.interfaceSkin, InterfaceSkin.classic);
     expect(container.read(accentColorProvider), const Color(0xFFFC96AA));
     expect(container.read(darkAccentColorProvider), const Color(0xFFD4AF37));
-    expect(settings.lightChatBackground, isNull);
 
     final dark = MoeColors.dark(accentColor: settings.darkAccentColor);
     expect(dark.primary, const Color(0xFFD4AF37));
@@ -35,19 +34,25 @@ void main() {
     expect(dark.bgMain, const Color(0xFF000000));
   });
 
-  test('切换内置皮肤与自定义皮肤跨启动保留', () async {
+  test('切换内置主题色与自定义浅色／深色主题色跨启动保留', () async {
     SharedPreferences.setMockInitialValues({});
     final container = await open();
     final notifier = container.read(appSettingsProvider.notifier);
 
-    await notifier.setInterfaceSkin(InterfaceSkin.momotalk);
-    var settings = container.read(appSettingsProvider).requireValue;
-    expect(settings.lightChatBackground, const Color(0xFFF3F6F8));
-
-    await notifier.setCustomSkin(accentColor: '3390EC');
-    settings = container.read(appSettingsProvider).requireValue;
-    expect(settings.interfaceSkin, InterfaceSkin.custom);
+    await notifier.setInterfaceSkin(InterfaceSkin.sky);
     expect(container.read(accentColorProvider), const Color(0xFF3390EC));
+
+    await notifier.setCustomSkin(accentColor: '4ECDC4');
+    var settings = container.read(appSettingsProvider).requireValue;
+    expect(settings.interfaceSkin, InterfaceSkin.custom);
+    expect(container.read(accentColorProvider), const Color(0xFF4ECDC4));
+    // 没单独选深色时由浅色推算。
+    expect(settings.darkAccentColor, isNot(const Color(0xFF4ECDC4)));
+
+    await notifier.setCustomSkin(darkAccentColor: 'B39DDB');
+    settings = container.read(appSettingsProvider).requireValue;
+    expect(container.read(darkAccentColorProvider), const Color(0xFFB39DDB));
+    expect(container.read(accentColorProvider), const Color(0xFF4ECDC4));
     container.dispose();
 
     final reopened = await open();
@@ -56,13 +61,28 @@ void main() {
       reopened.read(appSettingsProvider).requireValue.interfaceSkin,
       InterfaceSkin.custom,
     );
-    expect(reopened.read(accentColorProvider), const Color(0xFF3390EC));
+    expect(reopened.read(accentColorProvider), const Color(0xFF4ECDC4));
+    expect(reopened.read(darkAccentColorProvider), const Color(0xFFB39DDB));
   });
+
+  for (final removed in ['momotalk', 'warm']) {
+    test('已下架的皮肤 $removed 读成默认', () async {
+      SharedPreferences.setMockInitialValues({
+        kUiModelsStoreKey: jsonEncode({'interface_skin': removed}),
+      });
+      final container = await open();
+      addTearDown(container.dispose);
+      expect(
+        container.read(appSettingsProvider).requireValue.interfaceSkin,
+        InterfaceSkin.classic,
+      );
+    });
+  }
 
   for (final (accent, background, expected) in [
     ('FC96AA', 'default', InterfaceSkin.classic),
     ('pink', 'white', InterfaceSkin.classic),
-    ('FC96AA', 'momotalk', InterfaceSkin.momotalk),
+    ('FC96AA', 'momotalk', InterfaceSkin.classic),
     ('FC96AA', 'warm', InterfaceSkin.custom),
     ('3390EC', 'default', InterfaceSkin.custom),
   ]) {

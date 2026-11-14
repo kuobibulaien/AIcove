@@ -11,6 +11,7 @@ import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/utils/data_image.dart';
 import '../../../../core/utils/message_formatter.dart';
+import '../../../../features/chat/domain/chat_timeline_deletion.dart';
 import '../../../../features/chat/domain/message.dart';
 import '../../../../features/chat/domain/tool_call_label.dart';
 import '../../../../features/content_tags/domain/tag_presentation.dart';
@@ -21,6 +22,8 @@ import '../../../../features/chat/services/chat_request_message_builder.dart';
 import '../../../../features/stickers/sticker_library.dart';
 import '../../../../features/task_agent/application/delegate_task_plugin.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
+import '../../voice_call/widgets/voice_call_live_messages.dart'
+    show voiceCallLiveMessagePrefix;
 
 abstract class ChatMessageListItem {
   const ChatMessageListItem();
@@ -39,20 +42,29 @@ class ChatMessageItem extends ChatMessageListItem {
 }
 
 class ChatChunkedMessageItem extends ChatMessageListItem {
-  const ChatChunkedMessageItem({
+  ChatChunkedMessageItem({
     required this.originalMessage,
     required this.chunkText,
     required this.chunkIndex,
     required this.totalChunks,
+    String? pieceId,
+    List<String>? mergedMessageIds,
     this.showCorner = false,
     this.showAvatar = true,
     this.fold,
-  });
+  }) : pieceId =
+           pieceId ??
+           ChatTimelinePieceId.compose(originalMessage.id, 'chunk_$chunkIndex'),
+       mergedMessageIds = List<String>.unmodifiable(
+         mergedMessageIds ?? <String>[originalMessage.id],
+       );
 
   final Message originalMessage;
   final String chunkText;
   final int chunkIndex;
   final int totalChunks;
+  final String pieceId;
+  final List<String> mergedMessageIds;
   final bool showCorner;
   final bool showAvatar;
 
@@ -98,10 +110,17 @@ enum ChatRunStatus {
 /// The quiet line under a reply that did not finish normally, so a cut-off
 /// or stopped run never reads as a finished answer.
 class ChatRunStatusItem extends ChatMessageListItem {
-  const ChatRunStatusItem(this.status, {required this.associatedMessageId});
+  ChatRunStatusItem(
+    this.status, {
+    required this.message,
+    String? associatedMessageId,
+    this.standalone = false,
+  }) : associatedMessageId = associatedMessageId ?? message.id;
 
   final ChatRunStatus status;
+  final Message message;
   final String associatedMessageId;
+  final bool standalone;
 }
 
 /// The quiet action row under a finished assistant reply in document mode:
@@ -142,9 +161,30 @@ class ChatNewTopicDividerItem extends ChatMessageListItem {
 /// Selection follows displayed bubbles, including legacy text chunks.
 Message? chatListItemSelectionMessage(ChatMessageListItem item) {
   if (item is ChatMessageItem) {
+    if (item.message.id.startsWith(voiceCallLiveMessagePrefix)) return null;
     return MessageBubble.hasVisibleContent(item.message) ? item.message : null;
   }
-  if (item is ChatChunkedMessageItem) return chatChunkDisplayMessage(item);
+  if (item is ChatChunkedMessageItem) {
+    if (item.originalMessage.id.startsWith(voiceCallLiveMessagePrefix)) {
+      return null;
+    }
+    return chatChunkDisplayMessage(item);
+  }
+  if (item is ChatRunStatusItem) {
+    if (!item.standalone ||
+        item.message.status == 'sending' ||
+        item.message.id.startsWith(voiceCallLiveMessagePrefix)) {
+      return null;
+    }
+    return Message(
+      id: item.message.id,
+      role: item.message.role,
+      content: '[${item.status.label}]',
+      createdAt: item.message.createdAt,
+      status: item.message.status,
+      sourceMessageId: item.message.sourceMessageId,
+    );
+  }
   return null;
 }
 
@@ -152,7 +192,7 @@ Message? chatListItemSelectionMessage(ChatMessageListItem item) {
 /// the bubble draws the fold component (ADR0046).
 Message chatChunkDisplayMessage(ChatChunkedMessageItem item) {
   final message = item.originalMessage;
-  final chunkId = '${message.id}_chunk_${item.chunkIndex}';
+  final chunkId = item.pieceId;
   final fold = item.fold;
   return Message(
     id: chunkId,
@@ -171,8 +211,16 @@ Message chatChunkDisplayMessage(ChatChunkedMessageItem item) {
           ],
     createdAt: message.createdAt,
     status: message.status,
+    sourceMessageId: message.sourceMessageIdOrSelf,
   );
 }
+
+typedef _GeneratedPiece = ({
+  String pieceId,
+  String text,
+  TagFoldPart? fold,
+  bool isThinkingFold,
+});
 
 List<ChatMessageListItem> buildChatMessageListItems({
   required List<Message> messages,
@@ -182,6 +230,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
   bool showThinkingFolds = true,
   bool showToolCallFolds = false,
   bool showReplyActions = false,
+  Set<String> hiddenPieceIds = const <String>{},
 }) {
   final items = <ChatMessageListItem>[];
   final enableChunking = config?.enableChunking ?? true;
@@ -192,11 +241,13 @@ List<ChatMessageListItem> buildChatMessageListItems({
     if (_isTaskReceipt(messages[index])) continue;
     final start = index;
     var source = messages[index];
+    final mergedMessageIds = <String>[source.id];
     // 连着几轮只调工具不说话时，相邻的工具调用收拢成一个过程折叠段。
     if (showToolCallFolds && _isToolOnly(source)) {
       final blocks = [...source.blocks!];
       while (index + 1 < messages.length && _isToolOnly(messages[index + 1])) {
         index++;
+        mergedMessageIds.add(messages[index].id);
         blocks.addAll(messages[index].blocks!);
       }
       if (index > start) {
@@ -211,27 +262,50 @@ List<ChatMessageListItem> buildChatMessageListItems({
       tagPresentation: tagPresentation,
     );
     final runStatus = ChatRunStatus.of(currentMessage);
-    final runningItems = [
-      for (final taskId in _delegateTaskIds(currentMessage))
+    final taskIds = _delegateTaskIds(currentMessage).toList(growable: false);
+    final hasRunningItems = taskIds.isNotEmpty || runStatus != null;
+    List<ChatMessageListItem> buildRunningItems({required bool standalone}) => [
+      for (final taskId in taskIds)
         ChatTaskRunningItem(taskId, associatedMessageId: currentMessage.id),
       if (runStatus != null)
-        ChatRunStatusItem(runStatus, associatedMessageId: currentMessage.id),
+        ChatRunStatusItem(
+          runStatus,
+          message: currentMessage,
+          standalone: standalone,
+        ),
     ];
+
+    final chunkSourceText = _resolveChunkSourceText(currentMessage);
+    final projectable =
+        currentMessage.role == 'assistant' &&
+        !_hasNonTextBlocks(currentMessage);
+    final thinkingFolds = projectable
+        ? _modelThinkingFolds(currentMessage)
+        : const <TagFoldPart>[];
+    final toolFolds = projectable && showToolCallFolds
+        ? _toolCallFolds(currentMessage)
+        : const <TagFoldPart>[];
+    final hasVisibleProcessFolds =
+        (showThinkingFolds && thinkingFolds.isNotEmpty) || toolFolds.isNotEmpty;
+
     // 只有派活调用或运行状态的那一轮不画空气泡，只留等待条／状态行。
-    if (runningItems.isNotEmpty &&
+    if (hasRunningItems &&
         currentMessage.status != 'sending' &&
-        _resolveChunkSourceText(currentMessage).trim().isEmpty &&
-        !_hasNonTextBlocks(currentMessage)) {
-      items.addAll(runningItems);
+        chunkSourceText.trim().isEmpty &&
+        !_hasNonTextBlocks(currentMessage) &&
+        !hasVisibleProcessFolds) {
+      items.addAll(buildRunningItems(standalone: true));
       continue;
     }
     // 只有选项的回复段交给对话选项气泡展示，不留空气泡。
     if (!identical(currentMessage, source) &&
         currentMessage.status != 'sending' &&
-        _resolveChunkSourceText(currentMessage).trim().isEmpty &&
-        !_hasNonTextBlocks(currentMessage)) {
+        chunkSourceText.trim().isEmpty &&
+        !_hasNonTextBlocks(currentMessage) &&
+        !hasVisibleProcessFolds) {
       continue;
     }
+
     // 时间小气泡属于时间感知插件：插件关掉时不显示，但隔了很久的消息照样重新露头像。
     final hasTimeDivider =
         start == 0 ||
@@ -239,22 +313,23 @@ List<ChatMessageListItem> buildChatMessageListItems({
                 .difference(messages[start - 1].createdAt)
                 .inMinutes >=
             20;
-    if (hasTimeDivider && showTimeDividers) {
-      items.add(
-        ChatTimeDividerItem(
-          currentMessage.createdAt,
-          associatedMessageId: currentMessage.id,
-        ),
-      );
+    bool computeShowAvatar() {
+      final result =
+          hasTimeDivider ||
+          previousShown == null ||
+          previousShown!.role != currentMessage.role;
+      previousShown = currentMessage;
+      if (hasTimeDivider && showTimeDividers) {
+        items.add(
+          ChatTimeDividerItem(
+            currentMessage.createdAt,
+            associatedMessageId: currentMessage.id,
+          ),
+        );
+      }
+      return result;
     }
 
-    final showAvatar =
-        hasTimeDivider ||
-        previousShown == null ||
-        previousShown.role != currentMessage.role;
-    previousShown = currentMessage;
-
-    final chunkSourceText = _resolveChunkSourceText(currentMessage);
     final shouldChunk =
         enableChunking &&
         currentMessage.role == 'assistant' &&
@@ -263,10 +338,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
         chunkSourceText.trim().isNotEmpty;
 
     // 预设语义标签：折叠标签单独成折叠气泡，正文标签去壳，其余照常分段。
-    final projectable =
-        currentMessage.role == 'assistant' &&
-        !_hasNonTextBlocks(currentMessage);
-    var tagParts = projectable
+    final rawTagParts = projectable
         ? _projectTagParts(
             chunkSourceText,
             tagPresentation,
@@ -274,90 +346,156 @@ List<ChatMessageListItem> buildChatMessageListItems({
             allowUnwrap: currentMessage.status != 'sending',
           )
         : null;
-    // 过程排在正文前：模型原生思考 → 工具调用 → 正文里的标签思维链。
-    final processFolds = projectable
-        ? [
-            ..._modelThinkingFolds(currentMessage),
-            if (showToolCallFolds) ..._toolCallFolds(currentMessage),
-          ]
-        : const <TagFoldPart>[];
-    if (processFolds.isNotEmpty) {
-      tagParts = [
-        ...processFolds,
-        ...tagParts ??
-            [
-              if (chunkSourceText.trim().isNotEmpty)
-                TagBodyPart(chunkSourceText),
-            ],
+    final hasAnyProcessFolds =
+        thinkingFolds.isNotEmpty || toolFolds.isNotEmpty;
+
+    if (hasAnyProcessFolds || rawTagParts != null) {
+      final allPieces = <_GeneratedPiece>[
+        for (var i = 0; i < thinkingFolds.length; i++)
+          (
+            pieceId: ChatTimelinePieceId.compose(
+              currentMessage.id,
+              'fold_thinking_$i',
+            ),
+            text: thinkingFolds[i].content,
+            fold: thinkingFolds[i],
+            isThinkingFold: true,
+          ),
+        for (var i = 0; i < toolFolds.length; i++)
+          (
+            pieceId: ChatTimelinePieceId.compose(
+              currentMessage.id,
+              'fold_tool_$i',
+            ),
+            text: toolFolds[i].content,
+            fold: toolFolds[i],
+            isThinkingFold: false,
+          ),
       ];
-    }
-    if (tagParts != null && !showThinkingFolds) {
-      tagParts = [
-        for (final part in tagParts)
-          if (part is! TagFoldPart || !_isThinkingFoldTitle(part.title)) part,
+      final bodyParts =
+          rawTagParts ??
+          [
+            if (chunkSourceText.trim().isNotEmpty)
+              TagBodyPart(chunkSourceText),
+          ];
+      var tagFoldIndex = 0;
+      var bodyIndex = 0;
+      for (final part in bodyParts) {
+        switch (part) {
+          case TagFoldPart():
+            allPieces.add((
+              pieceId: ChatTimelinePieceId.compose(
+                currentMessage.id,
+                'fold_tag_${tagFoldIndex++}',
+              ),
+              text: part.content,
+              fold: part,
+              isThinkingFold: _isThinkingFoldTitle(part.title),
+            ));
+          case TagBodyPart(:final text):
+            final bodyChunks = shouldChunk && config != null
+                ? _chunkTextMemoized(text, config)
+                : [text];
+            for (final chunk in bodyChunks) {
+              allPieces.add((
+                pieceId: ChatTimelinePieceId.compose(
+                  currentMessage.id,
+                  'body_${bodyIndex++}',
+                ),
+                text: chunk,
+                fold: null,
+                isThinkingFold: false,
+              ));
+            }
+        }
+      }
+      final visiblePieces = [
+        for (final piece in allPieces)
+          if ((showThinkingFolds || !piece.isThinkingFold) &&
+              !hiddenPieceIds.contains(piece.pieceId))
+            piece,
       ];
-    }
-    if (tagParts != null) {
-      final pieces = <(String, TagFoldPart?)>[
-        for (final part in tagParts)
-          ...switch (part) {
-            TagFoldPart() => [(part.content, part)],
-            TagBodyPart(:final text) => [
-              for (final chunk
-                  in shouldChunk && config != null
-                      ? _chunkTextMemoized(text, config)
-                      : [text])
-                (chunk, null),
-            ],
-          },
-      ];
-      for (var pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
+      if (visiblePieces.isEmpty) {
+        if (hasRunningItems) {
+          items.addAll(buildRunningItems(standalone: true));
+        }
+        continue;
+      }
+      final showAvatar = computeShowAvatar();
+      for (var pieceIndex = 0; pieceIndex < visiblePieces.length; pieceIndex++) {
+        final piece = visiblePieces[pieceIndex];
         items.add(
           ChatChunkedMessageItem(
             originalMessage: currentMessage,
-            chunkText: pieces[pieceIndex].$1,
+            chunkText: piece.text,
             chunkIndex: pieceIndex,
-            totalChunks: pieces.length,
+            totalChunks: visiblePieces.length,
+            pieceId: piece.pieceId,
+            mergedMessageIds: mergedMessageIds,
             showCorner: _resolveShowCornerForChunk(
               messages: messages,
               currentMessageIndex: index,
               chunkIndex: pieceIndex,
-              chunkCount: pieces.length,
+              chunkCount: visiblePieces.length,
             ),
             showAvatar: pieceIndex == 0 && showAvatar,
-            fold: pieces[pieceIndex].$2,
+            fold: piece.fold,
           ),
         );
       }
-      items.addAll(runningItems);
+      items.addAll(buildRunningItems(standalone: false));
       continue;
     }
 
     if (shouldChunk && config != null) {
       final chunks = _chunkTextMemoized(chunkSourceText, config);
       if (chunks.length > 1) {
-        for (var chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        final visiblePieces = <(String, String)>[
+          for (var chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++)
+            if (ChatTimelinePieceId.compose(
+                  currentMessage.id,
+                  'body_$chunkIndex',
+                )
+                case final pieceId when !hiddenPieceIds.contains(pieceId))
+              (pieceId, chunks[chunkIndex]),
+        ];
+        if (visiblePieces.isEmpty) {
+          if (hasRunningItems) {
+            items.addAll(buildRunningItems(standalone: true));
+          }
+          continue;
+        }
+        final showAvatar = computeShowAvatar();
+        for (
+          var pieceIndex = 0;
+          pieceIndex < visiblePieces.length;
+          pieceIndex++
+        ) {
           items.add(
             ChatChunkedMessageItem(
               originalMessage: currentMessage,
-              chunkText: chunks[chunkIndex],
-              chunkIndex: chunkIndex,
-              totalChunks: chunks.length,
+              chunkText: visiblePieces[pieceIndex].$2,
+              chunkIndex: pieceIndex,
+              totalChunks: visiblePieces.length,
+              pieceId: visiblePieces[pieceIndex].$1,
+              mergedMessageIds: mergedMessageIds,
               showCorner: _resolveShowCornerForChunk(
                 messages: messages,
                 currentMessageIndex: index,
-                chunkIndex: chunkIndex,
-                chunkCount: chunks.length,
+                chunkIndex: pieceIndex,
+                chunkCount: visiblePieces.length,
               ),
-              showAvatar: chunkIndex == 0 && showAvatar,
+              showAvatar: pieceIndex == 0 && showAvatar,
             ),
           );
         }
-        items.addAll(runningItems);
+        items.addAll(buildRunningItems(standalone: false));
         continue;
       }
     }
 
+    final showAvatar = computeShowAvatar();
+    final hasVisibleBubble = MessageBubble.hasVisibleContent(currentMessage);
     items.add(
       ChatMessageItem(
         currentMessage,
@@ -368,15 +506,276 @@ List<ChatMessageListItem> buildChatMessageListItems({
         showAvatar: showAvatar,
       ),
     );
-    items.addAll(runningItems);
+    items.addAll(buildRunningItems(standalone: !hasVisibleBubble));
   }
 
   return showReplyActions ? _withReplyActions(items) : items;
 }
 
+enum _DeletableEntryKind { message, chunk, standaloneRunStatus }
+
+class _DeletableListEntry {
+  const _DeletableListEntry({
+    required this.selectionId,
+    required this.parentMessageId,
+    required this.originalSourceMessageId,
+    required this.mergedMessageIds,
+    required this.rawMessageIds,
+    required this.isPrimaryBody,
+    required this.isToolOnlyFold,
+    required this.kind,
+  });
+
+  final String selectionId;
+  final String parentMessageId;
+  final String? originalSourceMessageId;
+  final List<String> mergedMessageIds;
+  final Set<String> rawMessageIds;
+  final bool isPrimaryBody;
+  final bool isToolOnlyFold;
+  final _DeletableEntryKind kind;
+}
+
+bool _isThinkingOnly(Message message) {
+  final blocks = message.blocks;
+  return blocks != null &&
+      blocks.isNotEmpty &&
+      blocks.every((block) => block is ThinkingBlock);
+}
+
+/// Resolves user-selected timeline targets into canonical raw deletions vs.
+/// local piece/projection hides, upgrading to canonical deletion whenever all
+/// primary body items of a raw message are removed.
+ChatTimelineDeletePlan resolveChatTimelineDeletePlan({
+  required List<Message> windowMessages,
+  required List<ChatMessageListItem> listItems,
+  Set<String> stagedMessageIds = const <String>{},
+  Iterable<String> targetSelectionIds = const <String>[],
+  Iterable<String> turnAnchorMessageIds = const <String>[],
+}) {
+  final anchors = <String>[];
+  final seenAnchors = <String>{};
+  for (final rawAnchor in turnAnchorMessageIds) {
+    final anchor = rawAnchor.trim();
+    if (anchor.isEmpty || anchor.startsWith(voiceCallLiveMessagePrefix)) {
+      continue;
+    }
+    if (seenAnchors.add(anchor)) anchors.add(anchor);
+  }
+  if (anchors.isNotEmpty) {
+    return ChatTimelineDeletePlan(turnAnchorMessageIdsToDelete: anchors);
+  }
+
+  final resolvedStagedIds = <String>[];
+  final seenStaged = <String>{};
+  final remainingTargets = <String>{};
+  for (final rawTarget in targetSelectionIds) {
+    final target = rawTarget.trim();
+    if (target.isEmpty || target.startsWith(voiceCallLiveMessagePrefix)) {
+      continue;
+    }
+    if (stagedMessageIds.contains(target)) {
+      if (seenStaged.add(target)) resolvedStagedIds.add(target);
+    } else {
+      remainingTargets.add(target);
+    }
+  }
+  if (remainingTargets.isEmpty) {
+    return ChatTimelineDeletePlan(stagedMessageIds: resolvedStagedIds);
+  }
+
+  final messageById = <String, Message>{
+    for (final message in windowMessages) message.id: message,
+  };
+  String rawIdOfId(String id, {String? fallbackSourceId}) {
+    final parentId = ChatTimelinePieceId.parentMessageIdOf(id) ?? id;
+    final message = messageById[parentId] ?? messageById[id];
+    return ChatTimelinePieceId.rawMessageIdOf(
+      id,
+      explicitSourceId: message?.sourceMessageId ?? fallbackSourceId,
+    );
+  }
+
+  final entries = <_DeletableListEntry>[];
+  for (final item in listItems) {
+    if (item is ChatMessageItem) {
+      final message = item.message;
+      if (message.id.startsWith(voiceCallLiveMessagePrefix) ||
+          !MessageBubble.hasVisibleContent(message) ||
+          stagedMessageIds.contains(message.id)) {
+        continue;
+      }
+      entries.add(
+        _DeletableListEntry(
+          selectionId: message.id,
+          parentMessageId: message.id,
+          originalSourceMessageId: message.sourceMessageId,
+          mergedMessageIds: <String>[message.id],
+          rawMessageIds: <String>{
+            ChatTimelinePieceId.rawMessageIdOf(
+              message.id,
+              explicitSourceId: message.sourceMessageId,
+            ),
+          },
+          isPrimaryBody: !_isToolOnly(message) && !_isThinkingOnly(message),
+          isToolOnlyFold: false,
+          kind: _DeletableEntryKind.message,
+        ),
+      );
+    } else if (item is ChatChunkedMessageItem) {
+      final original = item.originalMessage;
+      if (original.id.startsWith(voiceCallLiveMessagePrefix) ||
+          stagedMessageIds.contains(original.id)) {
+        continue;
+      }
+      final rawIds = <String>{
+        for (final mid in item.mergedMessageIds)
+          rawIdOfId(
+            mid,
+            fallbackSourceId: mid == original.id
+                ? original.sourceMessageId
+                : null,
+          ),
+      };
+      entries.add(
+        _DeletableListEntry(
+          selectionId: item.pieceId,
+          parentMessageId: original.id,
+          originalSourceMessageId: original.sourceMessageId,
+          mergedMessageIds: item.mergedMessageIds,
+          rawMessageIds: rawIds,
+          isPrimaryBody: item.fold == null,
+          isToolOnlyFold:
+              item.mergedMessageIds.length > 1 ||
+              (item.pieceId.contains(
+                    '${ChatTimelinePieceId.separator}fold_tool_',
+                  ) &&
+                  _isToolOnly(original)),
+          kind: _DeletableEntryKind.chunk,
+        ),
+      );
+    } else if (item is ChatRunStatusItem) {
+      final message = item.message;
+      if (!item.standalone ||
+          message.status == 'sending' ||
+          message.id.startsWith(voiceCallLiveMessagePrefix) ||
+          stagedMessageIds.contains(message.id)) {
+        continue;
+      }
+      entries.add(
+        _DeletableListEntry(
+          selectionId: message.id,
+          parentMessageId: message.id,
+          originalSourceMessageId: message.sourceMessageId,
+          mergedMessageIds: <String>[message.id],
+          rawMessageIds: <String>{
+            ChatTimelinePieceId.rawMessageIdOf(
+              message.id,
+              explicitSourceId: message.sourceMessageId,
+            ),
+          },
+          isPrimaryBody: false,
+          isToolOnlyFold: false,
+          kind: _DeletableEntryKind.standaloneRunStatus,
+        ),
+      );
+    }
+  }
+
+  bool isEntrySelected(_DeletableListEntry entry) =>
+      remainingTargets.contains(entry.selectionId) ||
+      remainingTargets.contains(entry.parentMessageId);
+
+  final matchedTargetIds = <String>{};
+  final affectedRawIds = <String>{};
+  for (final entry in entries) {
+    if (remainingTargets.contains(entry.selectionId)) {
+      matchedTargetIds.add(entry.selectionId);
+      affectedRawIds.addAll(entry.rawMessageIds);
+    }
+    if (remainingTargets.contains(entry.parentMessageId)) {
+      matchedTargetIds.add(entry.parentMessageId);
+      affectedRawIds.addAll(entry.rawMessageIds);
+    }
+  }
+  final unmatchedTargets = <String>[
+    for (final target in remainingTargets)
+      if (!matchedTargetIds.contains(target)) target,
+  ];
+  for (final target in unmatchedTargets) {
+    affectedRawIds.add(rawIdOfId(target));
+  }
+
+  final upgradedRawIds = <String>{};
+  for (final rawId in affectedRawIds) {
+    final rawEntries = [
+      for (final entry in entries)
+        if (entry.rawMessageIds.contains(rawId)) entry,
+    ];
+    final primaryEntries = [
+      for (final entry in rawEntries)
+        if (entry.isPrimaryBody) entry,
+    ];
+    if (primaryEntries.isNotEmpty) {
+      if (primaryEntries.every(isEntrySelected)) {
+        upgradedRawIds.add(rawId);
+      }
+    } else if (rawEntries.isNotEmpty &&
+        rawEntries.every(isEntrySelected) &&
+        rawEntries.any(
+          (entry) => entry.kind == _DeletableEntryKind.standaloneRunStatus,
+        )) {
+      upgradedRawIds.add(rawId);
+    }
+  }
+
+  final projectedIdsToHide = <String>{};
+  final pieceIdsToHide = <String>{};
+  for (final entry in entries) {
+    if (!isEntrySelected(entry)) continue;
+    if (entry.kind == _DeletableEntryKind.chunk && entry.isToolOnlyFold) {
+      for (final mid in entry.mergedMessageIds) {
+        final midRaw = rawIdOfId(
+          mid,
+          fallbackSourceId: mid == entry.parentMessageId
+              ? entry.originalSourceMessageId
+              : null,
+        );
+        if (!upgradedRawIds.contains(midRaw)) {
+          projectedIdsToHide.add(mid);
+        }
+      }
+      continue;
+    }
+    if (entry.rawMessageIds.every(upgradedRawIds.contains)) continue;
+    if (entry.kind == _DeletableEntryKind.chunk) {
+      pieceIdsToHide.add(entry.selectionId);
+    } else {
+      projectedIdsToHide.add(entry.selectionId);
+    }
+  }
+  for (final target in unmatchedTargets) {
+    final rawId = rawIdOfId(target);
+    if (upgradedRawIds.contains(rawId)) continue;
+    if (ChatTimelinePieceId.isPieceId(target)) {
+      pieceIdsToHide.add(target);
+    } else {
+      projectedIdsToHide.add(target);
+    }
+  }
+
+  return ChatTimelineDeletePlan(
+    stagedMessageIds: resolvedStagedIds,
+    rawMessageIdsToDelete: upgradedRawIds.toList(),
+    projectedMessageIdsToHide: projectedIdsToHide.toList(),
+    pieceIdsToHide: pieceIdsToHide.toList(),
+  );
+}
+
 Message? _itemMessage(ChatMessageListItem item) => switch (item) {
   ChatMessageItem(:final message) => message,
   ChatChunkedMessageItem(:final originalMessage) => originalMessage,
+  ChatRunStatusItem(:final message) => message,
   _ => null,
 };
 
@@ -385,6 +784,7 @@ Message? _itemMessage(ChatMessageListItem item) => switch (item) {
 List<ChatMessageListItem> _withReplyActions(List<ChatMessageListItem> items) {
   final result = <ChatMessageListItem>[];
   final turn = <Message>[];
+  final turnMessageIds = <String>{};
   var insertAt = 0;
   void flush() {
     if (turn.isNotEmpty) {
@@ -392,7 +792,7 @@ List<ChatMessageListItem> _withReplyActions(List<ChatMessageListItem> items) {
         insertAt,
         ChatReplyActionsItem(
           turn.last,
-          messageIds: [for (final m in turn) m.id],
+          messageIds: turnMessageIds.toList(),
           copyText: [
             for (final m in turn)
               if (_resolveChunkSourceText(m).trim() case final text
@@ -404,6 +804,7 @@ List<ChatMessageListItem> _withReplyActions(List<ChatMessageListItem> items) {
       );
     }
     turn.clear();
+    turnMessageIds.clear();
   }
 
   for (final item in items) {
@@ -412,10 +813,16 @@ List<ChatMessageListItem> _withReplyActions(List<ChatMessageListItem> items) {
     result.add(item);
     final assistantItem = message != null
         ? message.role == 'assistant'
-        : item is ChatTaskRunningItem || item is ChatRunStatusItem;
+        : item is ChatTaskRunningItem;
     if (!assistantItem) continue;
-    if (message != null && (turn.isEmpty || turn.last.id != message.id)) {
+    if (message != null && !turn.any((m) => m.id == message.id)) {
       turn.add(message);
+    }
+    if (message != null) {
+      turnMessageIds.add(message.id);
+    }
+    if (item is ChatChunkedMessageItem) {
+      turnMessageIds.addAll(item.mergedMessageIds);
     }
     insertAt = result.length;
   }

@@ -29,13 +29,13 @@ class ContactEditRoleActions {
 
   /// A new role's chat style follows its agent mode: documents for tool
   /// roles, bubbles for chat roles.
-  static ChatDisplayStyle initialDisplayStyle(RoleAgentMode? agentMode) =>
+  static ChatDisplayStyle initialDisplayStyle([RoleAgentMode? agentMode]) =>
       agentMode == RoleAgentMode.tool
       ? ChatDisplayStyle.document
       : ChatDisplayStyle.bubble;
 
   /// Creates a plain role without card resources, e.g. a saved copy.
-  Future<String> createConversation(RoleAgentMode? agentMode) {
+  Future<String> createConversation([RoleAgentMode? agentMode]) {
     return _ref
         .read(conversationsProvider.notifier)
         .createNew(chatDisplayStyle: initialDisplayStyle(agentMode));
@@ -56,7 +56,7 @@ class ContactEditRoleActions {
     required Future<void> Function(String id) applyEdit,
     required String displayName,
     required String? recipeId,
-    required RoleAgentMode? agentMode,
+    RoleAgentMode? agentMode,
     required bool Function() isActive,
     SillyTavernCharacterCard? card,
     String? greeting,

@@ -760,6 +760,7 @@ class LanTransport {
           result = {
             'approved': peer.approved,
             if (recentChanges) 'recent_changes': 1,
+            'context_memory_sync': 1,
           };
         } else {
           if (!peer!.approved) throw const LanSyncFailure('请先在另一端确认配对');

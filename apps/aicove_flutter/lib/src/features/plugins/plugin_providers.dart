@@ -503,7 +503,11 @@ class TriggerPluginConfigNotifier extends StateNotifier<TriggerConfig> {
 
   void syncFromAppSettings(AppSettings? settings) {
     if (settings == null) return;
-    final enabled = settings.autoReplySettings.allowAiSetReminders;
+    final autoReply = settings.autoReplySettings;
+    final enabled = autoReply.allowAiSetReminders ||
+        autoReply.contactSettings.values.any(
+          (contact) => contact.allowAiSetReminders == true,
+        );
     if (state.enabled != enabled) {
       state = state.copyWith(enabled: enabled);
     }

@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/analyzer_scheduler.dart';
+import 'package:aicove_flutter/src/features/observability/model_request_ledger.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_trigger_controller.dart';
@@ -309,6 +310,19 @@ void main() {
         await AutoReplyClaimStore(db).stateOf(_trigger),
         isA<AutoReplyClaimFree>(),
       );
+    });
+
+    test('analysis avoids an active remote model run', () async {
+      _prefs(owner: _localDevice);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final run = ModelRunRecord(runId: 'remote', deviceId: _otherDevice, deviceName: 'other', conversationId: _conv, purpose: 'chat', providerId: 'p', model: 'm', attempt: 1, status: 'running', stageSeq: 1, startedAtMs: now, updatedAtMs: now, leaseUntilMs: now + 180000);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('aicove.plugins.observability.model_runs.$_otherDevice.v1', jsonEncode({'snapshot': {'version': 1, 'device_id': _otherDevice, 'device_name': 'other', 'updated_at_ms': now, 'runs': [run.toJson()]}}));
+      await start();
+      container.read(analyzerSchedulerProvider).scheduleAnalysis(conversationId: _conv, delay: Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final events = [for (final log in await AutoReplyTriggerStorage().loadLogs()) log.event];
+      expect(events, contains('analysis_skipped_other_device'));
     });
 
     test('analysis is skipped on a device that does not own the conversation',

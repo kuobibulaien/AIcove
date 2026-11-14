@@ -1,6 +1,11 @@
 import 'dart:async';
 
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
+    show KernelCancelledException;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/app_logger.dart';
 
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/database/database_provider.dart';
@@ -125,6 +130,7 @@ class ProactiveReplyGenerator {
     required Conversation conversation,
     required String? reminder,
     DateTime? requestTime,
+    String? modelRef,
   }) async {
     final history = await _ref
         .read(chatHistoryStoreProvider)
@@ -139,7 +145,8 @@ class ProactiveReplyGenerator {
           conv: conversation,
           history: history,
           userText: reminder,
-          overrideModel: resolveAutoReplyAgentModelRef(settings, conversation),
+          overrideModel:
+              modelRef ?? resolveAutoReplyAgentModelRef(settings, conversation),
           conversationId: conversation.id,
           requestTime: requestTime,
           forceInlineImageRoute: true,
@@ -169,18 +176,52 @@ class ProactiveReplyGenerator {
     required String turnId,
     DateTime? requestTime,
   }) async {
-    final config = await prepare(
-      conversation: conversation,
-      reminder: reminder,
-      requestTime: requestTime,
+    return _withModelFallback(conversation, (modelRef) async {
+      final config = await prepare(
+        conversation: conversation,
+        reminder: reminder,
+        requestTime: requestTime,
+        modelRef: modelRef,
+      );
+      final result = await _ref.read(proactiveReplyExecutorProvider)(
+        config: config,
+        sessionId: conversation.id,
+        userText: reminder,
+        turnId: turnId,
+      );
+      return selectCacheableAutoReplyText(result);
+    });
+  }
+
+  Future<T> _withModelFallback<T>(
+    Conversation conversation,
+    Future<T> Function(String modelRef) run,
+  ) async {
+    final settings = await _ref.read(appSettingsProvider.future);
+    final candidates = resolveAutoReplyAgentModelCandidates(
+      settings,
+      conversation,
     );
-    final result = await _ref.read(proactiveReplyExecutorProvider)(
-      config: config,
-      sessionId: conversation.id,
-      userText: reminder,
-      turnId: turnId,
-    );
-    return selectCacheableAutoReplyText(result);
+    for (var index = 0; index < candidates.length; index++) {
+      final modelRef = candidates[index];
+      try {
+        return await run(modelRef);
+      } on KernelCancelledException {
+        rethrow;
+      } catch (error) {
+        AppLogger.warning(
+          'ProactiveReplyGenerator',
+          '主动回复模型请求失败',
+          metadata: {
+            'conversationId': conversation.id,
+            'modelRef': modelRef,
+            'error': error.toString(),
+          },
+        );
+        if (index == candidates.length - 1) rethrow;
+      }
+    }
+    throw StateError('proactive_model_candidates_empty');
   }
 
   /// Writes ahead for the fire time. With [allowCall] the reminder invites a
@@ -207,46 +248,49 @@ class ProactiveReplyGenerator {
     final withHint =
         '$reminder\n'
         '${pluginPrompts.of(PluginPromptSlot.proactiveCallHint)}';
-    String? openingLine;
-    bool Function({bool enabled})? yieldAtBoundary;
-    final tool = buildCallUserTool(
-      description: pluginPrompts.of(PluginPromptSlot.proactiveCallTool),
-      onCall: (line) {
-        openingLine ??= line;
-        yieldAtBoundary?.call();
-      },
-    );
-    final prepared = await prepare(
-      conversation: conversation,
-      reminder: withHint,
-      requestTime: requestTime,
-    );
-    final config = prepared.copyWith(
-      tools: [tool.toOpenAISchema()],
-      boundTools: [tool],
-      onYieldReady: (yieldHandle) {
-        yieldAtBoundary = yieldHandle;
-        prepared.onYieldReady?.call(yieldHandle);
-      },
-    );
-    final result = await _ref.read(proactiveReplyExecutorProvider)(
-      config: config,
-      sessionId: conversation.id,
-      userText: withHint,
-      turnId: turnId,
-    );
-    if (openingLine == null &&
-        result.toolResults.isEmpty &&
-        result.rawToolResults.isEmpty) {
-      openingLine = openingLineFromToolCalls(result.toolCalls);
-    }
-    if (openingLine != null) {
-      return ProactiveDraft(
-        text: openingLine!,
-        action: ProactiveAction.callUser,
+    return _withModelFallback(conversation, (modelRef) async {
+      String? openingLine;
+      bool Function({bool enabled})? yieldAtBoundary;
+      final tool = buildCallUserTool(
+        description: pluginPrompts.of(PluginPromptSlot.proactiveCallTool),
+        onCall: (line) {
+          openingLine ??= line;
+          yieldAtBoundary?.call();
+        },
       );
-    }
-    return ProactiveDraft(text: selectCacheableAutoReplyText(result));
+      final prepared = await prepare(
+        conversation: conversation,
+        reminder: withHint,
+        requestTime: requestTime,
+        modelRef: modelRef,
+      );
+      final config = prepared.copyWith(
+        tools: [tool.toOpenAISchema()],
+        boundTools: [tool],
+        onYieldReady: (yieldHandle) {
+          yieldAtBoundary = yieldHandle;
+          prepared.onYieldReady?.call(yieldHandle);
+        },
+      );
+      final result = await _ref.read(proactiveReplyExecutorProvider)(
+        config: config,
+        sessionId: conversation.id,
+        userText: withHint,
+        turnId: turnId,
+      );
+      if (openingLine == null &&
+          result.toolResults.isEmpty &&
+          result.rawToolResults.isEmpty) {
+        openingLine = openingLineFromToolCalls(result.toolCalls);
+      }
+      if (openingLine != null) {
+        return ProactiveDraft(
+          text: openingLine!,
+          action: ProactiveAction.callUser,
+        );
+      }
+      return ProactiveDraft(text: selectCacheableAutoReplyText(result));
+    });
   }
 }
 

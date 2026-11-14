@@ -23,7 +23,7 @@ class ToolResultStore {
 
   /// Tools that only return short control replies; a request whose tools
   /// are all of these has nothing to read back.
-  static const shortReplyTools = {'delegate_task', 'steer_task'};
+  static const shortReplyTools = {'delegate_task'};
 
   /// Whether a request offering [toolNames] should also offer the reader.
   static bool wantsReader(Iterable<String> toolNames) => toolNames.any(

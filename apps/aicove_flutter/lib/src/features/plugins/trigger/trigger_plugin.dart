@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_logger.dart';
 import '../../agent_plugins/aicove_plugin.dart';
+import '../../content_tags/domain/content_tag_registry.dart';
 import '../domain/index.dart';
 import '../prompts/plugin_prompts.dart';
 import '../domain/handlers/ai_tool.dart';
@@ -18,6 +19,18 @@ import '../../settings/app_settings.dart';
 
 /// (注释已丢失)
 class TriggerPlugin extends BasePlugin {
+  static const contentTags = StaticContentTagProvider(
+    providerId: 'trigger',
+    tagSpecs: [],
+    toolNames: {'reminder'},
+  );
+
+  static const defaultReminderDescription = '''
+管理当前会话的提醒。仅在用户明确要求设置、查询或取消提醒时调用；不要因为闲聊中提到时间就自动设置提醒。
+action=create：创建提醒，必须提供 title 和 time，可用 prompt 指定触发时要说什么。
+action=list：查询提醒；提供非空 query 时搜索，否则列出提醒，可用 include_completed 和 limit 控制结果。
+action=delete：取消提醒，优先提供 id，不知道 id 时提供 query。''';
+
   static const String defaultCreateReminderDescription = '''
 创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。
 使用场景：
@@ -70,18 +83,24 @@ class TriggerPlugin extends BasePlugin {
 
   // ========== 重写 enabled getter ==========
   @override
-  bool get enabled => _triggerConfig.enabled;
+  bool get enabled {
+    final settings = _ref.read(appSettingsProvider).valueOrNull;
+    if (settings == null) return _triggerConfig.enabled;
+    final autoReply = settings.autoReplySettings;
+    return autoReply.allowAiSetReminders ||
+        autoReply.contactSettings.values.any(
+          (contact) => contact.allowAiSetReminders == true,
+        );
+  }
 
   bool enabledForConversation(String? conversationId) {
+    final settings = _ref.read(appSettingsProvider).valueOrNull;
+    if (settings == null) return _triggerConfig.enabled;
     final id = conversationId?.trim() ?? '';
-    if (id.isNotEmpty) {
-      final settings = _ref.read(appSettingsProvider).valueOrNull;
-      if (settings != null &&
-          settings.autoReplySettings.hasContactOverride(id)) {
-        return settings.autoReplySettings.forContact(id).allowAiSetReminders;
-      }
-    }
-    return enabled;
+    final autoReply = settings.autoReplySettings;
+    return id.isEmpty
+        ? autoReply.allowAiSetReminders
+        : autoReply.forContact(id).allowAiSetReminders;
   }
 
   @override
@@ -119,112 +138,60 @@ class TriggerPlugin extends BasePlugin {
     if (!enabledForConversation(conversationId)) return [];
 
     final boundId = conversationId?.trim();
-    return [
-      _createReminderTool(boundId, prompts),
-      _deleteReminderTool(boundId, prompts),
-      _listRemindersTool(boundId, prompts),
-      _searchRemindersTool(boundId, prompts),
-    ];
+    return [_reminderTool(boundId)];
   }
 
-  AITool _createReminderTool(
-    String? conversationId,
-    PluginPrompts? prompts,
-  ) => AITool(
-        name: 'create_reminder',
-        description: prompts?.of(PluginPromptSlot.createReminderTool) ??
-            defaultCreateReminderDescription,
-        parameters: {
-          'title': ToolParameter(
-            type: 'string',
-            description: '提醒的标题或描述，简洁说明这个提醒是做什么的',
-            required: true,
-          ),
-          'time': ToolParameter(
-            type: 'string',
-            description:
-                '触发时间。支持格式：ISO 8601（2026-01-27T08:00:00）或简单时间（08:00，会自动判断今天/明天）',
-            required: true,
-          ),
-          'prompt': ToolParameter(
-            type: 'string',
-            description: '触发时的指导提示，告诉你到时候该说什么',
-            required: false,
-          ),
-        },
-        handler: (args) => _handleCreateReminder(args, conversationId),
-      );
-
-  AITool _deleteReminderTool(
-    String? conversationId,
-    PluginPrompts? prompts,
-  ) => AITool(
-        name: 'delete_reminder',
-        description: prompts?.of(PluginPromptSlot.deleteReminderTool) ??
-            defaultDeleteReminderDescription,
-        parameters: {
-          'id': ToolParameter(
-            type: 'string',
-            description: '要删除的提醒 ID（如果已知，优先提供）',
-            required: false,
-          ),
-          'query': ToolParameter(
-            type: 'string',
-            description: '不知道 id 时使用：用一句话描述你要取消的提醒（例如"明天早上叫我起床"）',
-            required: false,
-          ),
-        },
-        handler: (args) => _handleDeleteReminder(args, conversationId),
-      );
-
-  AITool _listRemindersTool(
-    String? conversationId,
-    PluginPrompts? prompts,
-  ) => AITool(
-        name: 'list_reminders',
-        description: prompts?.of(PluginPromptSlot.listRemindersTool) ??
-            defaultListRemindersDescription,
-        parameters: {
-          'include_completed': ToolParameter(
-            type: 'boolean',
-            description: '是否包含已完成、已作废的提醒（默认 false）',
-            required: false,
-          ),
-          'limit': ToolParameter(
-            type: 'integer',
-            description: '最多返回多少条（默认 20）',
-            required: false,
-          ),
-        },
-        handler: (args) => _handleListReminders(args, conversationId),
-      );
-
-  AITool _searchRemindersTool(
-    String? conversationId,
-    PluginPrompts? prompts,
-  ) => AITool(
-        name: 'search_reminders',
-        description: prompts?.of(PluginPromptSlot.searchRemindersTool) ??
-            defaultSearchRemindersDescription,
-        parameters: {
-          'query': ToolParameter(
-            type: 'string',
-            description: '搜索关键词：自然语言描述（例如"起床""明天早上8点""开会提醒"）',
-            required: true,
-          ),
-          'include_completed': ToolParameter(
-            type: 'boolean',
-            description: '是否包含已完成、已作废的提醒（默认 false）',
-            required: false,
-          ),
-          'limit': ToolParameter(
-            type: 'integer',
-            description: '最多返回多少条（默认 5）',
-            required: false,
-          ),
-        },
-        handler: (args) => _handleSearchReminders(args, conversationId),
-      );
+  AITool _reminderTool(String? conversationId) => AITool(
+    name: 'reminder',
+    description: defaultReminderDescription,
+    parameters: const {
+      'action': ToolParameter(
+        type: 'string',
+        description: '提醒操作：create 创建，list 查询，delete 取消',
+        required: true,
+        enumValues: ['create', 'list', 'delete'],
+      ),
+      'title': ToolParameter(type: 'string', description: '提醒标题；create 时必填'),
+      'time': ToolParameter(
+        type: 'string',
+        description: '触发时间；create 时必填，支持 ISO 8601 或 HH:mm（自动判断今天/明天）',
+      ),
+      'prompt': ToolParameter(
+        type: 'string',
+        description: '触发时的指导提示，告诉你到时候该说什么',
+      ),
+      'id': ToolParameter(
+        type: 'string',
+        description: '要取消的提醒 ID；delete 时优先提供',
+      ),
+      'query': ToolParameter(
+        type: 'string',
+        description: '提醒搜索关键词；list 时可选，delete 不知道 id 时提供',
+      ),
+      'include_completed': ToolParameter(
+        type: 'boolean',
+        description: '查询时是否包含已完成、已作废的提醒（默认 false）',
+      ),
+      'limit': ToolParameter(
+        type: 'integer',
+        description: '查询最多返回多少条（列表默认 20，搜索默认 5）',
+      ),
+    },
+    handler: (args) => switch (args['action']) {
+      'create' => _handleCreateReminder(args, conversationId),
+      'delete' => _handleDeleteReminder(args, conversationId),
+      'list' =>
+        (args['query'] as String? ?? '').trim().isNotEmpty
+            ? _handleSearchReminders(args, conversationId)
+            : _handleListReminders(args, conversationId),
+      _ => Future.value(
+        jsonEncode({
+          'ok': false,
+          'error': '请提供有效的 action：create、list 或 delete',
+        }),
+      ),
+    },
+  );
 
   // ========== 工具处理函数 ==========
 
@@ -470,7 +437,9 @@ class TriggerPlugin extends BasePlugin {
     }
 
     // XML 兜底默认下线（AR-040）：只清理标签展示，不再执行触发器增删
-    if (!_triggerConfig.xmlFallbackEnabled) {
+    // Legacy response processing has no conversation scope; retain its global
+    // opt-in instead of activating it through another role's native tools.
+    if (!_triggerConfig.xmlFallbackEnabled || !enabledForConversation(null)) {
       if (!containsLegacyTags) {
         return PluginProcessResult(processedText: text, events: []);
       }

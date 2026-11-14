@@ -4,6 +4,8 @@ import 'package:flutter/material.dart' show IconData, Icons;
 
 import '../../../../core/api_logger.dart' show ApiLogEntry, truncateLongText;
 import '../../../../core/app_logger.dart' show LogEntry, LogLevel;
+import '../../../../features/observability/model_request_ledger.dart'
+    show ModelRunRecord;
 import 'log_models.dart';
 import 'frontend_log_summary.dart';
 
@@ -1040,10 +1042,32 @@ List<ConversationTurnLog> buildConversationTurns(
   return turns;
 }
 
+String _modelRunPurposeLabel(String purpose) => switch (purpose) {
+      'chat' => '对话回复',
+      'proactive_analyze' => '主动关心判断',
+      'proactive_reply' => '主动发消息',
+      'context_compact' => '对话摘要整理',
+      'memory_consolidate' => '长期记忆整理',
+      'voice_brief' => '通话前情准备',
+      'task_agent' => '后台任务',
+      'webapp_ai' => '小应用生成',
+      _ => '模型请求',
+    };
+
+(String, LogLevel) _modelRunStatusPresentation(String status) =>
+    switch (status) {
+      'running' => ('生成中', LogLevel.info),
+      'succeeded' => ('已完成', LogLevel.info),
+      'failed' => ('失败', LogLevel.error),
+      'cancelled' => ('已取消', LogLevel.warning),
+      _ => ('已记录', LogLevel.info),
+    };
+
 /// 构建统一日志条目列表
 List<UnifiedLogEntry> buildUnifiedEntries(
   List<ApiLogEntry> apiLogs,
   List<LogEntry> systemLogs, {
+  List<ModelRunRecord> remoteModelRuns = const [],
   DateTime? hideBeforeTime,
   LogLevelFilter levelFilter = LogLevelFilter.all,
   LogTypeFilter typeFilter = LogTypeFilter.all,
@@ -1081,6 +1105,38 @@ List<UnifiedLogEntry> buildUnifiedEntries(
       rawAiResponse: log.rawAiResponse,
       rawContext: log.rawContext,
     ));
+  }
+
+  if (typeFilter == LogTypeFilter.all || typeFilter == LogTypeFilter.api) {
+    for (final run in remoteModelRuns) {
+      final time = DateTime.fromMillisecondsSinceEpoch(run.startedAtMs);
+      if (hideBeforeTime != null && time.isBefore(hideBeforeTime)) continue;
+      final (statusLabel, level) = _modelRunStatusPresentation(run.status);
+      if (minLevel != null && level.value < minLevel.value) continue;
+
+      final purposeLabel = _modelRunPurposeLabel(run.purpose);
+      final durationText =
+          run.durationMs != null ? ' · ${run.durationMs}ms' : '';
+      final title =
+          '来自 ${run.deviceName} · $purposeLabel$statusLabel$durationText';
+      final details = <String>[
+        '设备：${run.deviceName}',
+        '模型：${run.model}',
+        if (run.attempt > 1) '重试：第 ${run.attempt} 次',
+        if (run.errorBrief != null && run.errorBrief!.trim().isNotEmpty)
+          '原因：${run.errorBrief!.trim()}',
+      ].join('\n');
+
+      entries.add(UnifiedLogEntry(
+        time: time,
+        title: title,
+        extraContent: details,
+        fullContent: '[${formatTime(time)}] $title\n$details',
+        level: level,
+        isApiLog: true,
+        isConversation: true,
+      ));
+    }
   }
 
   if (typeFilter == LogTypeFilter.all ||

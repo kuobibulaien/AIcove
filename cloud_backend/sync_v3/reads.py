@@ -53,6 +53,8 @@ def document_references(document):
     row = document['payload'].get('row') or {}
     if document['kind'] == 'messages' and row.get('conversation_id'):
         wanted.add(('conversations', row['conversation_id']))
+    if document['kind'] in {'context_summaries', 'memory_items', 'memory_progress'} and row.get('owner_id'):
+        wanted.add(('conversations', row['owner_id']))
     owner_key = {'message_blocks':'message_id','message_projection_mappings':'raw_message_id'}.get(document['kind'])
     if owner_key and row.get(owner_key):
         wanted.add(('messages', row[owner_key]))

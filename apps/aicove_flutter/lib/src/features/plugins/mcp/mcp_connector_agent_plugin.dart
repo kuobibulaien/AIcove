@@ -31,7 +31,7 @@ class McpConnectorRequestScope extends PluginRequestScope {
   String get pluginName => plugin.name;
 
   @override
-  bool get active => plugin.enabled;
+  bool get active => plugin.enabled && plugin.connector.activeTools.isNotEmpty;
 
   @override
   List<AITool> tools() => plugin.getTools();

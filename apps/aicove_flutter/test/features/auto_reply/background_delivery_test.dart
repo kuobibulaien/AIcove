@@ -9,6 +9,8 @@ import 'package:aicove_flutter/src/core/media/media_store.dart';
 import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/background_service.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/conversation_proactive_state.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/conversation_proactive_state_storage.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -115,6 +117,31 @@ void main() {
         'prompt': '问候一下',
         'characterName': '理',
       };
+
+  test('background delivery retains the earliest active automatic plan', () async {
+    final prefs = await SharedPreferences.getInstance();
+    Map<String, Object?> planned(String id, int minutes, {
+      String source = 'aiScheduler', String status = 'pending', String conv = _conv,
+    }) => {..._triggerJson(), 'id': id, 'source': source, 'status': status,
+      'conversation_id': conv,
+      'next_fire_at': DateTime.now().add(Duration(minutes: minutes)).toIso8601String()};
+    await prefs.setString(_triggerKey, jsonEncode([
+      {..._triggerJson(), 'source': 'aiScheduler'},
+      planned('later', 20), planned('first', 10),
+      planned('manual', 1, source: 'userManual'),
+      planned('finished', 2, status: 'fired'),
+      planned('elsewhere', 3, conv: 'other'),
+    ]));
+    final storage = ConversationProactiveStateStorage();
+    await storage.saveStates({_conv: const ConversationProactiveState(
+      conversationId: _conv, pendingAutoTriggerId: _trigger,
+    )});
+    await runActiveReplyTaskForTest(task());
+    final state = (await storage.loadStates())[_conv]!;
+    expect(state.pendingAutoTriggerId, 'first');
+    expect(state.mode, ConversationProactiveMode.active);
+    expect(state.unrepliedCount, 0);
+  });
 
   test('delivers once under a stable id, then marks fired and completes',
       () async {

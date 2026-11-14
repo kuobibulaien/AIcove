@@ -5,6 +5,7 @@ import '../stickers/sticker_tag.dart';
 import '../task_agent/application/delegate_task_plugin.dart';
 import 'image/image_plugin.dart';
 import 'tts/tts_plugin.dart';
+import 'trigger/trigger_plugin.dart';
 import 'web_search/web_search_plugin.dart';
 
 /// 第一方插件声明的内容标签提供方（ADR0044）。
@@ -14,6 +15,7 @@ const List<ContentTagProvider> firstPartyContentTagProviders = [
   WebSearchPlugin.contentTags,
   StickerTag.contentTags,
   delegateTaskContentTags,
+  TriggerPlugin.contentTags,
 ];
 
 /// 与开关无关的解析（落库拆分、流式显示）使用的扫描器：全部提供方视为生效。

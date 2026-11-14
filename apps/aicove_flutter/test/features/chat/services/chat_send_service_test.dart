@@ -190,6 +190,27 @@ void main() {
     return container;
   }
 
+  test('retired steering and reminder calls and results are filtered together', () {
+    final policy = ChatPluginContextPolicy.firstParty(activeProviderIds: {'trigger', 'delegate_task'});
+    final messages = <Map<String, dynamic>>[
+      {'role': 'assistant', 'content': '继续聊天', 'tool_calls': [
+        for (final name in ['steer_task', 'create_reminder'])
+          {'id': name, 'type': 'function', 'function': {'name': name, 'arguments': '{}'}},
+      ]},
+      for (final name in ['steer_task', 'create_reminder'])
+        {'role': 'tool', 'tool_call_id': name, 'content': '旧工具结果'},
+      {'role': 'user', 'content': '你好'},
+    ];
+    expect(policy.filterMessages(messages), [
+      {'role': 'assistant', 'content': '继续聊天'},
+      {'role': 'user', 'content': '你好'},
+    ]);
+    expect(ChatPluginContextPolicy.firstParty(activeProviderIds: {}).allowsTool('delegate_task'), isFalse);
+    expect(policy.allowsTool('delegate_task'), isTrue);
+    expect(ChatPluginContextPolicy.firstParty(activeProviderIds: {}).allowsTool('reminder'), isFalse);
+    expect(policy.allowsTool('reminder'), isTrue);
+  });
+
   test('prepareHistoryFromStore keeps only messages after contextStartMessageId', () async {
     final now = DateTime.now();
     final conv = Conversation(
@@ -1044,7 +1065,7 @@ void main() {
         userPrompt: '你是测试助手。',
         customDrawingPrompt: '第一视角，保持人物一致性。',
       ),
-      enabledPlugins: const <String>['image'],
+      enabledPlugins: const <String>['image', 'aicove_assistant'],
       createdAt: now,
       updatedAt: now,
       messages: const <Message>[],
@@ -1207,7 +1228,7 @@ void main() {
     Conversation role(String id) => Conversation(id: id, title: id, displayName: id,
       agentMode: RoleAgentMode.agent,
       personaPrompt: PersonaPromptCodec.compose(userPrompt: id, drawingPresetId: id),
-      enabledPlugins: const ['image'], createdAt: now, updatedAt: now, messages: const []);
+      enabledPlugins: const ['image', 'aicove_assistant'], createdAt: now, updatedAt: now, messages: const []);
     final history = [Message(id: 'user', role: 'user', content: '画图', createdAt: now)];
     final requestA = await service.prepareApiConfig(conv: role('a'), history: history, userText: '画图');
     final requestB = await service.prepareApiConfig(conv: role('b'), history: history, userText: '画图');
@@ -1245,7 +1266,7 @@ void main() {
       conv: Conversation(id: 'r', title: 'r', displayName: 'r',
         agentMode: RoleAgentMode.agent,
         personaPrompt: PersonaPromptCodec.compose(userPrompt: 'r', drawingPresetId: 'p'),
-        enabledPlugins: const ['image'], createdAt: now, updatedAt: now, messages: const []),
+        enabledPlugins: const ['image', 'aicove_assistant'], createdAt: now, updatedAt: now, messages: const []),
       history: [Message(id: 'u', role: 'user', content: '画图', createdAt: now)],
       userText: '画图');
     final drawImage = request.boundTools!.firstWhere((t) => t.name == 'draw_image');
@@ -1959,7 +1980,7 @@ void main() {
   });
 
   test(
-      'prepareApiConfig should register trigger tools when both switches enabled',
+      'prepareApiConfig should expose only reminder when both switches enabled',
       () async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final now = DateTime(2026, 4, 16, 12, 0, 0);
@@ -2013,10 +2034,7 @@ void main() {
       for (final tool in apiConfig.tools ?? const <Map<String, dynamic>>[])
         ((tool['function'] as Map<String, dynamic>?)?['name'] ?? '').toString(),
     ];
-    expect(toolNames, contains('create_reminder'));
-    expect(toolNames, contains('delete_reminder'));
-    expect(toolNames, contains('list_reminders'));
-    expect(toolNames, contains('search_reminders'));
+    expect(toolNames.toSet(), {'reminder'});
     // 无预设时 options 仍会构造（承载思考档位），但预设字段全部为空。
     final options = apiConfig.providerRequestOptions;
     expect(options, isNotNull);
@@ -2087,6 +2105,7 @@ void main() {
       for (final tool in apiConfig.tools ?? const <Map<String, dynamic>>[])
         ((tool['function'] as Map<String, dynamic>?)?['name'] ?? '').toString(),
     ];
+    expect(toolNames, isNot(contains('reminder')));
     expect(toolNames, isNot(contains('create_reminder')));
     expect(toolNames, isNot(contains('delete_reminder')));
     expect(toolNames, isNot(contains('list_reminders')));
@@ -2299,9 +2318,14 @@ void main() {
         .toList();
     final reminderIndex =
         contents.indexWhere((content) => content.contains('只是提醒'));
-    // 紧贴最后一条用户消息之前；预设后半段仍排在最后，格式以预设为准。
-    expect(contents[reminderIndex + 1], '你好');
-    expect(contents.last, '根据剧情生成由<Options>包裹的剧情选项');
+    final userIndex = contents.indexOf('你好');
+    final tailIndex = contents.indexOf('根据剧情生成由<Options>包裹的剧情选项');
+    // 预设条目保持连续；提醒只放在预设之后的宿主后置区末尾。
+    expect(userIndex, greaterThanOrEqualTo(0));
+    expect(contents[userIndex + 1], '根据剧情生成由<Options>包裹的剧情选项');
+    expect(reminderIndex, greaterThan(tailIndex));
+    expect(reminderIndex, contents.length - 1);
+    expect(contents[reminderIndex], contains('<system-reminder>'));
     expect(contents[reminderIndex], contains('预设里提到的：<options>'));
     expect(contents[reminderIndex], isNot(contains('<image>')));
   });

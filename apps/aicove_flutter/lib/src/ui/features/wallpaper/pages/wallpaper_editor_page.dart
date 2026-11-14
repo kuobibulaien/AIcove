@@ -83,10 +83,9 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
   String? get _shownSource {
     if (_hasImage) return _source!.trim();
     if (widget.kind != WallpaperPreviewKind.chat) return null;
-    final settings = ref.read(appSettingsProvider).valueOrNull;
     return chatFallbackWallpaperSource(
       context,
-      resolveChatBackgroundColor(context, settings?.lightChatBackground),
+      resolveChatBackgroundColor(context),
     );
   }
 
@@ -403,10 +402,7 @@ class _WallpaperEditorPageState extends ConsumerState<WallpaperEditorPage>
     if (widget.kind == WallpaperPreviewKind.chat) {
       wallpaper = ChatWallpaperLayer(
         image: _source,
-        fallbackColor: resolveChatBackgroundColor(
-          context,
-          settings?.lightChatBackground,
-        ),
+        fallbackColor: resolveChatBackgroundColor(context),
         style: _style,
         layout: layout,
       );

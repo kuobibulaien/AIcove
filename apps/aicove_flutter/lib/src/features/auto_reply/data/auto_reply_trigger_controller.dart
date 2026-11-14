@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/app_logger.dart';
+import '../../../core/services/android_keep_alive_manager.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../chat/providers2.dart';
@@ -62,6 +63,10 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   bool _pollAgain = false;
   int _pollFailures = 0;
   bool _disposed = false;
+  bool _alarmPoll = false;
+  bool _nativeAlarmsOnly = false;
+  int _wakeRevision = 0;
+  Future<void> _wakeSync = Future<void>.value();
   late AutoReplyTriggerStorage _storage;
 
   /// Triggers whose send is under way in this process. The trigger stays
@@ -481,10 +486,41 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     unawaited(_pollDueTriggers());
   }
 
+  /// A headless engine only runs work awaited by its native slot consumer.
+  /// Local timers would outlive that consumer's accounting and emit events
+  /// without a foreground service to finish delivery.
+  void useNativeAlarmsOnly() {
+    _nativeAlarmsOnly = true;
+    _ticker?.cancel();
+    _ticker = null;
+  }
+
   void reschedule() => _scheduleFromStored(state.valueOrNull);
+
+  /// Flush pending native writes without cancelling future alarms on dispose.
+  Future<void> flushAlarmSchedule() async {
+    Future<void> pending;
+    do {
+      pending = _wakeSync;
+      await pending;
+    } while (!identical(pending, _wakeSync));
+  }
 
   @visibleForTesting
   Future<void> pollDueTriggersForTest() => _pollDueTriggers();
+
+  /// Native alarms run without AutoReplyService's event consumer. Dispatch and
+  /// settle every due send here before allowing the headless engine to close.
+  Future<void> pollDueTriggersForAlarm() async {
+    _alarmPoll = true;
+    try {
+      await reloadFromStorage();
+      await _pollDueTriggers();
+      await flushAlarmSchedule();
+    } finally {
+      _alarmPoll = false;
+    }
+  }
 
   void _scheduleFromStored(List<AutoReplyTrigger>? triggers) {
     if (_disposed) return;
@@ -492,26 +528,49 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       _pollAgain = true;
       return;
     }
+    final revision = ++_wakeRevision;
+    _wakeSync = _wakeSync.then((_) async {
+      final ownership = await ProactiveOwnership.load();
+      if (_disposed || revision != _wakeRevision) return;
+      final now = DateTime.now();
+      DateTime? earliest;
+      var requiresExact = false;
+      for (final trigger in triggers ?? const <AutoReplyTrigger>[]) {
+        if (!trigger.isActive || !ownership.owns(trigger.conversationId)) continue;
+        final candidate = _isInFlight(trigger.id, now)
+            ? _inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease)
+            : trigger.nextFireAt;
+        if (earliest == null || candidate.isBefore(earliest)) {
+          earliest = candidate;
+          requiresExact = trigger.requireExact;
+        } else if (candidate.isAtSameMomentAs(earliest)) {
+          requiresExact |= trigger.requireExact;
+        }
+      }
+      await _scheduleWakeTimer(earliest, requiresExact: requiresExact);
+    }).catchError((Object error, StackTrace stack) {
+      AppLogger.warning('AutoReplyTrigger', 'Trigger alarm sync failed',
+          metadata: {'error': error.toString()});
+    });
+  }
+
+  Future<void> _scheduleWakeTimer(DateTime? earliestWakeAt,
+      {bool requiresExact = false}) async {
+    if (_disposed) return;
     _ticker?.cancel();
     _ticker = null;
-    final now = DateTime.now();
-    DateTime? earliest;
-    for (final trigger in triggers ?? const <AutoReplyTrigger>[]) {
-      if (!trigger.isActive) continue;
-      final candidate = _isInFlight(trigger.id, now)
-          ? _inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease)
-          : trigger.nextFireAt;
-      if (earliest == null || candidate.isBefore(earliest)) {
-        earliest = candidate;
-      }
-    }
-    if (earliest != null) {
-      final delay = earliest.difference(now);
+    if (!_nativeAlarmsOnly && earliestWakeAt != null) {
+      final delay = earliestWakeAt.difference(DateTime.now());
       _ticker = Timer(
         delay < const Duration(seconds: 1) ? const Duration(seconds: 1) : delay,
         () => unawaited(_pollDueTriggers()),
       );
     }
+    final settings = await ref.read(appSettingsProvider.future);
+    await syncProactiveTriggerAlarm(
+      earliestWakeAt,
+      exact: settings.autoReplySettings.allowExactAlarm || requiresExact,
+    );
   }
 
   Future<void> _pollDueTriggers() {
@@ -524,6 +583,8 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   }
 
   Future<void> _runPollLoop() async {
+    ++_wakeRevision;
+    await _wakeSync;
     _ticker?.cancel();
     _ticker = null;
     try {
@@ -539,7 +600,19 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         _ticker?.cancel();
         final seconds = 1 << (_pollFailures < 6 ? _pollFailures : 6);
         _pollFailures++;
-        _ticker = Timer(Duration(seconds: seconds), () => unawaited(_pollDueTriggers()));
+        final retryDelay = Duration(seconds: seconds);
+        if (!_nativeAlarmsOnly) {
+          _ticker = Timer(retryDelay, () => unawaited(_pollDueTriggers()));
+        }
+        // A headless isolate has no surviving Dart timer after completion.
+        // Keep a native retry even when settings could not be loaded.
+        try {
+          await syncProactiveTriggerAlarm(DateTime.now().add(retryDelay),
+              exact: false);
+        } catch (alarmError) {
+          AppLogger.warning('AutoReplyTrigger', 'Trigger retry alarm failed',
+              metadata: {'error': alarmError.toString()});
+        }
       }
     } finally {
       if (_disposed) _ticker?.cancel();
@@ -558,8 +631,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       await _cleanupCompletedTriggers(now);
     }
     if (!current.any((t) => t.isActive)) {
-      _ticker?.cancel();
-      _ticker = null;
+      await _scheduleWakeTimer(null);
       return;
     }
     final settings = await ref.read(appSettingsProvider.future);
@@ -567,32 +639,36 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
     final activeChatId = ref.read(activeConversationIdProvider);
     final ownership = await ProactiveOwnership.load();
     DateTime? nextWakeAt;
-    void wake(DateTime candidate) {
+    var nextWakeRequiresExact = false;
+    void wake(AutoReplyTrigger trigger, DateTime candidate) {
       if (nextWakeAt == null || candidate.isBefore(nextWakeAt!)) {
         nextWakeAt = candidate;
+        nextWakeRequiresExact = trigger.requireExact;
+      } else if (candidate.isAtSameMomentAs(nextWakeAt!)) {
+        nextWakeRequiresExact |= trigger.requireExact;
       }
     }
+    final dueAt = _alarmPoll ? now.add(const Duration(seconds: 2)) : now;
 
     for (final trigger in current) {
       if (!trigger.isActive || !ownership.owns(trigger.conversationId)) continue;
-      if (trigger.requireExact && !autoReplySettings.allowExactAlarm) continue;
       if (_isInFlight(trigger.id, now)) {
-        wake(_inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease));
+        wake(trigger, _inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease));
         continue;
       }
-      if (trigger.nextFireAt.isAfter(now)) {
-        wake(trigger.nextFireAt);
+      if (trigger.nextFireAt.isAfter(dueAt)) {
+        wake(trigger, trigger.nextFireAt);
         continue;
       }
       try {
         if (await _settleStartedDelivery(trigger, now)) {
           final claim = await _claimStore.stateOf(trigger.id, now: now);
           if (claim is AutoReplyClaimDelivered && !claim.isStalled(now)) {
-            wake(claim.startedAt.add(AutoReplyClaimStore.lease));
+            wake(trigger, claim.startedAt.add(AutoReplyClaimStore.lease));
           } else if (claim is AutoReplyClaimHeld) {
-            wake(claim.leaseEndsAt);
+            wake(trigger, claim.leaseEndsAt);
           } else if (claim is! AutoReplyClaimDelivered) {
-            wake(now.add(const Duration(minutes: 1)));
+            wake(trigger, now.add(const Duration(minutes: 1)));
           }
           continue;
         }
@@ -603,10 +679,10 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
           end: contactSettings.quietHoursEnd,
         );
         if (quietHours.contains(now) && !trigger.allowNight) {
-          wake(quietHours.nextEnd(now));
+          wake(trigger, quietHours.nextEnd(now));
           continue;
         }
-        if (trigger.shouldFire(now, allowNightOverride: false)) {
+        if (trigger.shouldFire(dueAt, allowNightOverride: false)) {
           final reason = await _checkShouldExpire(trigger, activeChatId);
           if (reason != null) {
             await _expireUnderClaim(trigger, reason, now);
@@ -614,17 +690,17 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
             await _handleTrigger(trigger.id, now);
           }
           if (_isInFlight(trigger.id, DateTime.now())) {
-            wake(_inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease));
+            wake(trigger, _inFlight[trigger.id]!.since.add(AutoReplyClaimStore.lease));
           } else {
             final latest = state.valueOrNull?.where((t) => t.id == trigger.id).firstOrNull;
             if (latest != null && latest.isActive) {
               final claim = await _claimStore.stateOf(trigger.id, now: now);
               if (claim is AutoReplyClaimHeld) {
-                wake(claim.leaseEndsAt);
+                wake(trigger, claim.leaseEndsAt);
               } else if (claim is AutoReplyClaimDelivered) {
-                wake(claim.startedAt.add(AutoReplyClaimStore.lease));
+                wake(trigger, claim.startedAt.add(AutoReplyClaimStore.lease));
               } else {
-                wake(now.add(const Duration(minutes: 1)));
+                wake(trigger, now.add(const Duration(minutes: 1)));
               }
             }
           }
@@ -632,16 +708,12 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       } catch (error) {
         AppLogger.warning('AutoReplyTrigger', 'Trigger check failed',
             metadata: {'triggerId': trigger.id, 'error': error.toString()});
-        wake(now.add(const Duration(minutes: 1)));
+        wake(trigger, now.add(const Duration(minutes: 1)));
       }
     }
-    _ticker?.cancel();
-    _ticker = null;
-    if (!_disposed && nextWakeAt != null) {
-      final delay = nextWakeAt!.difference(DateTime.now());
-      _ticker = Timer(delay < const Duration(seconds: 1)
-          ? const Duration(seconds: 1) : delay,
-          () => unawaited(_pollDueTriggers()));
+    if (!_disposed) {
+      await _scheduleWakeTimer(nextWakeAt,
+          requiresExact: nextWakeRequiresExact);
     }
   }
 
@@ -787,7 +859,35 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
         'firedAt': firedAt.toIso8601String(),
       },
     );
-    _emitEvent(AutoReplyTriggerEventType.fired, fired, claimToken: token);
+    if (_alarmPoll) {
+      AutoReplyDispatchResult result;
+      try {
+        result = await ref.read(autoReplyDispatchServiceProvider)
+            .dispatchTrigger(latest, claimToken: token);
+      } catch (error) {
+        result = AutoReplyDispatchResult.failed(error.toString());
+      }
+      await completeTriggeredSend(
+        triggerId: id,
+        firedAt: firedAt,
+        success: result.success,
+        retryable: result.retryable,
+        reason: result.reason,
+        claimToken: token,
+      );
+      // History/list observers still need delivery feedback; only the bus
+      // would hand this send to AutoReplyService a second time.
+      _emitEvent(AutoReplyTriggerEventType.fired, fired,
+          claimToken: token, broadcast: false);
+      await ref.read(analyzerSchedulerProvider).onAutoTriggerSendCompleted(
+        trigger: latest,
+        success: result.success,
+        retryable: result.retryable,
+        occurredAt: DateTime.now(),
+      );
+    } else {
+      _emitEvent(AutoReplyTriggerEventType.fired, fired, claimToken: token);
+    }
     return true;
   }
 
@@ -1084,6 +1184,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       // 模型配置不随任务快照：后台执行时现读最新设置（见 auto_reply_request_config.dart）
       await BackgroundService.scheduleOneOffTask(
         uniqueName: 'trigger_${trigger.id}',
+        requiresNetwork: !trigger.hasCachedContent,
         delay: delay.isNegative ? const Duration(seconds: 1) : delay,
         inputData: {
           'triggerId': trigger.id,
@@ -1152,7 +1253,7 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
   }
 
   void _emitEvent(AutoReplyTriggerEventType type, AutoReplyTrigger trigger,
-      {String? reason, String? claimToken}) {
+      {String? reason, String? claimToken, bool broadcast = true}) {
     final event = AutoReplyTriggerEvent(
       type: type,
       triggerId: trigger.id,
@@ -1163,7 +1264,21 @@ class AutoReplyTriggerController extends AsyncNotifier<List<AutoReplyTrigger>> {
       reason: reason,
       claimToken: claimToken,
     );
-    ref.read(autoReplyTriggerEventBusProvider).emit(event);
+    if (broadcast) ref.read(autoReplyTriggerEventBusProvider).emit(event);
     ref.read(autoReplyTriggerEventProvider.notifier).state = event;
   }
+}
+
+Future<void> _triggerAlarmSync = Future<void>.value();
+
+/// One queue per isolate prevents a slower old schedule from winning over a
+/// subsequent cancel/update. WorkManager uses the same slot after settlement.
+Future<void> syncProactiveTriggerAlarm(DateTime? fireAt,
+    {required bool exact}) {
+  final next = _triggerAlarmSync.then((_) => fireAt == null
+      ? AndroidKeepAliveManager.cancelProactiveAlarm('trigger')
+      : AndroidKeepAliveManager.scheduleProactiveAlarm(
+          slot: 'trigger', fireAt: fireAt, exact: exact));
+  _triggerAlarmSync = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+  return next;
 }

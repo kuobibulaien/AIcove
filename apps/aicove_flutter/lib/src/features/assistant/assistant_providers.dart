@@ -993,11 +993,6 @@ class _ConversationsRoleStore implements AssistantRoleStore {
     String? text(String key) => fields[key] as String?;
     final modeName = text(RoleField.agentMode);
     final mode = RoleAgentMode.fromValue(modeName);
-    if (role.id == kAicoveAssistantId &&
-        mode != null &&
-        mode != RoleAgentMode.tool) {
-      throw StateError('AIcove酱恒为 tool 模式，不能改为 ${mode.name}');
-    }
     String? persona;
     if (has(RoleField.personaPrompt) ||
         has(RoleField.extraPrompt) ||
@@ -1101,7 +1096,9 @@ class _ConversationsRoleStore implements AssistantRoleStore {
     await _notifier.applyContactEdit(
       roleId,
       agentMode: mode,
-      clearAgentMode: has(RoleField.agentMode) && mode == null,
+      clearAgentMode:
+          (has(RoleField.agentMode) && mode == null) ||
+          (has(RoleField.enabledPlugins) && !has(RoleField.agentMode)),
       sessionProvider: text(RoleField.modelOverride),
       clearSessionProvider:
           has(RoleField.modelOverride) && text(RoleField.modelOverride) == null,

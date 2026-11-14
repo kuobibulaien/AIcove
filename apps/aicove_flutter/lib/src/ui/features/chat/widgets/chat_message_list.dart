@@ -18,6 +18,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../features/chat/chat_actions.dart';
 import '../../../../features/chat/conversation_providers.dart'
     show chatDisplayPolicyProvider;
+import '../../../../features/chat/conversation_timeline_providers.dart'
+    show conversationHiddenPieceIdsProvider;
 import '../../../../features/chat/application/active_stream_projection.dart';
 import '../../../../features/chat/application/chat_media_regeneration.dart';
 import '../../../../features/chat/application/chat_message_list_queries.dart';
@@ -40,6 +42,7 @@ import '../../../../ui/shared/widgets/moe_toast.dart';
 import '../../../../ui/shared/widgets/media/moe_image_preview.dart';
 import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
+import '../../../../core/models/block_status.dart';
 import '../../../../core/models/message_block.dart';
 import 'animated_message_item.dart';
 import '../../../../features/dialogue_options/domain/dialogue_options.dart';
@@ -274,6 +277,11 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
   TagPresentationMap _tagPresentation = const {};
   String _tagPresentationSignature = '';
 
+  /// 本机已隐藏的分段／折叠块 ID 集合，变化时重建列表项。
+  Set<String> _hiddenPieceIds = const <String>{};
+  String _hiddenPieceSignature = '';
+  String? _cachedHiddenPieceSignature;
+
   /// 缓存的聊天图片列表（画廊模式左右滑动切换）
   List<ImagePreviewItem> _cachedChatImages = [];
 
@@ -400,6 +408,12 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     final initialPolicy =
         ref.read(chatDisplayPolicyProvider(_displayPolicyKey));
     final initialSettings = ref.read(appSettingsProvider).valueOrNull;
+    final initialHiddenPieces = ref
+            .read(conversationHiddenPieceIdsProvider(widget.conversationId))
+            .valueOrNull ??
+        const <String>{};
+    _hiddenPieceIds = initialHiddenPieces;
+    _hiddenPieceSignature = _signHiddenPieces(initialHiddenPieces);
     _foldVisibility = _resolveFoldVisibility(
       initialSettings,
       document: initialPolicy.style == ChatDisplayStyle.document,
@@ -534,6 +548,13 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     _followAiOutput = display.followAi;
     _foldVisibility = display.fold;
 
+    final hiddenPieceIds = ref
+            .watch(conversationHiddenPieceIdsProvider(widget.conversationId))
+            .valueOrNull ??
+        const <String>{};
+    _hiddenPieceIds = hiddenPieceIds;
+    _hiddenPieceSignature = _signHiddenPieces(hiddenPieceIds);
+
     // 检测配置变化，需要重新构建列表项
     final timeDividersChanged =
         _cachedShowTimeDividers != widget.showTimeDividers;
@@ -541,7 +562,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
         (_cachedFormatConfig != formatConfig ||
             tagsChanged ||
             timeDividersChanged ||
-            _cachedFoldVisibility != _foldVisibility)) {
+            _cachedFoldVisibility != _foldVisibility ||
+            _cachedHiddenPieceSignature != _hiddenPieceSignature)) {
       _updateListItems(formatConfig);
     }
 
@@ -551,6 +573,8 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
     if (selection != null) {
       final pruned = selection.updateMessages(
         listItems.map(chatListItemSelectionMessage).whereType<Message>(),
+        windowMessages: _currentTimelineMessages,
+        listItems: listItems,
       );
       if (pruned) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -772,6 +796,12 @@ String _signTagPresentation(TagPresentationMap map) =>
     (map.entries.map((e) => '${e.key}=${e.value.presentation.name}:${e.value.title}').toList()
           ..sort())
         .join(',');
+
+String _signHiddenPieces(Set<String> ids) {
+  if (ids.isEmpty) return '';
+  final sorted = ids.toList()..sort();
+  return sorted.join(',');
+}
 
 typedef _FoldVisibility = ({bool thinking, bool tools, bool replyActions});
 

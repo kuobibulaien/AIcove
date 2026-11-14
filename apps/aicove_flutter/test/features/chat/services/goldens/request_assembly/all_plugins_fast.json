@@ -21,10 +21,65 @@
       "content": "帮我画一只猫"
     }
   ],
-  "tools": null,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "reminder",
+        "description": "管理当前会话的提醒。仅在用户明确要求设置、查询或取消提醒时调用；不要因为闲聊中提到时间就自动设置提醒。\naction=create：创建提醒，必须提供 title 和 time，可用 prompt 指定触发时要说什么。\naction=list：查询提醒；提供非空 query 时搜索，否则列出提醒，可用 include_completed 和 limit 控制结果。\naction=delete：取消提醒，优先提供 id，不知道 id 时提供 query。",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "提醒操作：create 创建，list 查询，delete 取消",
+              "enum": [
+                "create",
+                "list",
+                "delete"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "description": "提醒标题；create 时必填"
+            },
+            "time": {
+              "type": "string",
+              "description": "触发时间；create 时必填，支持 ISO 8601 或 HH:mm（自动判断今天/明天）"
+            },
+            "prompt": {
+              "type": "string",
+              "description": "触发时的指导提示，告诉你到时候该说什么"
+            },
+            "id": {
+              "type": "string",
+              "description": "要取消的提醒 ID；delete 时优先提供"
+            },
+            "query": {
+              "type": "string",
+              "description": "提醒搜索关键词；list 时可选，delete 不知道 id 时提供"
+            },
+            "include_completed": {
+              "type": "boolean",
+              "description": "查询时是否包含已完成、已作废的提醒（默认 false）"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "查询最多返回多少条（列表默认 20，搜索默认 5）"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    }
+  ],
   "toolChoice": null,
   "disableBuiltinWebSearch": true,
-  "boundTools": [],
+  "boundTools": [
+    "reminder"
+  ],
   "enabledPluginIds": null,
   "presetStreamResponse": null,
   "hasPresetScript": false

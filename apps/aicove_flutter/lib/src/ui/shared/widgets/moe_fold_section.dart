@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SelectedContent;
 
 import '../../theme/tokens.dart';
 import 'moe_collapsible_bubble.dart';
@@ -19,6 +20,7 @@ class MoeFoldSection extends StatefulWidget {
     this.foregroundColor,
     this.initiallyExpanded = false,
     this.onExpansionChanged,
+    this.onSelectionChanged,
     this.animationDuration = const Duration(milliseconds: 200),
     this.animationCurve = Curves.easeInOut,
   });
@@ -44,6 +46,7 @@ class MoeFoldSection extends StatefulWidget {
   final Color? foregroundColor;
   final bool initiallyExpanded;
   final ValueChanged<bool>? onExpansionChanged;
+  final ValueChanged<SelectedContent?>? onSelectionChanged;
   final Duration animationDuration;
   final Curve animationCurve;
 
@@ -132,24 +135,31 @@ class _MoeFoldSectionState extends State<MoeFoldSection> {
         children: [
           header,
           if (_expanded)
-            Container(
-              margin: const EdgeInsets.only(top: 4, bottom: 2, left: 2),
-              padding: const EdgeInsets.only(left: 12),
-              decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: fg.withValues(alpha: 0.16), width: 2),
-                ),
-              ),
-              child:
-                  widget.child ??
-                  Text(
-                    widget.content,
-                    style: TextStyle(
-                      color: MoeFoldSection.bodyColor(context, fg),
-                      fontSize: smallSize,
-                      height: MoeBubbleStyle.textHeight,
+            SelectionArea(
+              contextMenuBuilder: (_, _) => const SizedBox.shrink(),
+              onSelectionChanged: widget.onSelectionChanged,
+              child: Container(
+                margin: const EdgeInsets.only(top: 4, bottom: 2, left: 2),
+                padding: const EdgeInsets.only(left: 12),
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: fg.withValues(alpha: 0.16),
+                      width: 2,
                     ),
                   ),
+                ),
+                child:
+                    widget.child ??
+                    Text(
+                      widget.content,
+                      style: TextStyle(
+                        color: MoeFoldSection.bodyColor(context, fg),
+                        fontSize: smallSize,
+                        height: MoeBubbleStyle.textHeight,
+                      ),
+                    ),
+              ),
             ),
         ],
       ),

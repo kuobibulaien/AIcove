@@ -13,13 +13,8 @@ class QuickJsPresetRuntime
   final PublicNetwork _network;
   bool _closed = false;
   static final Map<String, String> _persistentStorage = {};
-  final String? _atePrefix;
-  String _transportName;
-  final _usedTransportNames = <String>{};
   final bool _toolsAllowed;
-  final bool _isWave;
-  bool get isWaveTransport => _isWave;
-  bool _waveActionEnabled = false;
+  String? _toolChoice;
   @override
   List<Map<String, dynamic>> businessTools;
   @override
@@ -29,17 +24,15 @@ class QuickJsPresetRuntime
   @override
   List<Map<String, dynamic>> get tools => [...businessTools, ...transportTools];
   @override
-  String? get toolChoice => transportTools.isEmpty ? null : 'auto';
+  String? get toolChoice => _toolChoice;
   QuickJsPresetRuntime._(
     this._session,
     this._network,
     this.businessTools,
     this.transportTools,
     this.diagnostics,
-    this._atePrefix,
-    this._transportName,
     this._toolsAllowed,
-    this._isWave,
+    this._toolChoice,
   );
 
   static Future<QuickJsPresetRuntime> open(
@@ -110,7 +103,7 @@ class QuickJsPresetRuntime
       final result =
           jsonDecode(
                 await session.evaluate(
-                  'Promise.resolve(__spreset.init(${snapshot.json})).then(v=>JSON.stringify(v))',
+                  'Promise.resolve(__spreset.init(${jsonEncode(snapshot.rawJson)})).then(v=>JSON.stringify(v))',
                 ),
               )
               as Map;
@@ -121,35 +114,13 @@ class QuickJsPresetRuntime
         throw StateError(_toolsDisabledMessage);
       }
       await session.evaluate(
-        await rootBundle.loadString('assets/preset_runtime/wave_context.js'),
-      );
-      await session.evaluate(
         await rootBundle.loadString('assets/preset_runtime/transport.js'),
       );
-      final input = jsonDecode(snapshot.json) as Map;
-      final config = input['transport'];
-      final isAte = config is Map && config['protocol'] == 'ate_buffer_v1';
-      final isWave = config is Map && config['protocol'] == 'wave_context_v1';
-      final isCustom =
-          config is Map && config['protocol'] == 'custom_script_v1';
-      final prefix = isAte
-          ? config['prefix'] as String? ?? 'view_file_stream_'
-          : 'emit_complete_response_';
-      final name = isWave ? 'wave_context_reference' : _randomName(prefix);
+      final input = snapshot.rawJson;
       final transportInput = {
-        'config': config,
+        ...input,
         'storage': Map<String, String>.of(_persistentStorage),
-        if (isAte ||
-            isCustom ||
-            (config is Map &&
-                config['scripts'] is List &&
-                (config['scripts'] as List).isNotEmpty))
-          'random': _randomBytes(),
-        'presetName': input['presetName'] ?? '',
-        'macros': input['macros'] ?? <String, String>{},
-        'prompts': input['prompts'] ?? [],
-        'extensions': input['extensions'] ?? {},
-        'name': name,
+        'random': _randomBytes(),
         'callerToolChoice': snapshot.callerToolChoice,
         'modelSupportsTools': snapshot.modelSupportsTools,
         'toolsAllowed': snapshot.toolsAllowed,
@@ -171,10 +142,8 @@ class QuickJsPresetRuntime
           ),
         ),
         List.unmodifiable((transport['diagnostics'] as List).cast<String>()),
-        isAte ? prefix : null,
-        name,
         snapshot.toolsAllowed,
-        isWave,
+        transport['toolChoice'] as String?,
       );
     } catch (_) {
       try {
@@ -193,24 +162,19 @@ class QuickJsPresetRuntime
 
   static const _toolsDisabledMessage = '当前模型未启用工具调用，无法运行此预设的输出协议';
 
-  static String _randomName(String prefix) {
-    final random = Random.secure();
-    final suffix = List.generate(
-      12,
-      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-    ).join();
-    return '$prefix$suffix';
-  }
-
   void _ensureOpen() {
     if (_closed) throw StateError('预设脚本运行环境已关闭，请重新打开。');
   }
 
   Future<void> _checkTimerTimeout() async {
-    final state = jsonDecode(
-      await _session.evaluate('JSON.stringify(__transport.state())'),
-    ) as Map;
-    diagnostics = List.unmodifiable((state['diagnostics'] as List).cast<String>());
+    final state =
+        jsonDecode(
+              await _session.evaluate('JSON.stringify(__transport.state())'),
+            )
+            as Map;
+    diagnostics = List.unmodifiable(
+      (state['diagnostics'] as List).cast<String>(),
+    );
     if (state['timerExpired'] == true) {
       await close();
       throw StateError('预设脚本定时器回调超时，运行环境已关闭。');
@@ -226,7 +190,7 @@ class QuickJsPresetRuntime
   @override
   Future<List<Map<String, dynamic>>> prepare(
     List<Map<String, dynamic>> messages,
-  ) => prepareWithTools(messages, tools: businessTools);
+  ) => prepareWithTools(messages, tools: const []);
 
   @override
   Future<List<Map<String, dynamic>>> prepareWithTools(
@@ -234,21 +198,13 @@ class QuickJsPresetRuntime
     required List<Map<String, dynamic>> tools,
   }) async {
     _ensureOpen();
-    if (_atePrefix != null) {
-      final names = {
-        for (final schema in [...businessTools, ...tools])
-          if (schema['function'] is Map) (schema['function'] as Map)['name'],
-      };
-      // Every prepared round owns a fresh identity, including recovery attempts.
-      // Newly activated ordinary tools and earlier round names stay unavailable.
-      do {
-        _transportName = _randomName(_atePrefix);
-      } while (names.contains(_transportName) ||
-          _usedTransportNames.contains(_transportName));
-      _usedTransportNames.add(_transportName);
-    }
     final references = PresetImageReferences();
-    final prepared = await _call('prepare', references.hide(messages));
+    final transformed =
+        await _call('prepare', references.hide(messages)) as List;
+    final prepared = references.preserveImages([
+      for (final message in transformed)
+        Map<String, dynamic>.from(message as Map),
+    ]);
     // The preset's final-request script may rewrite this round's tools.
     final roundTools = (await _call('tools', null) as List)
         .map((tool) => Map<String, dynamic>.from(tool as Map))
@@ -260,7 +216,7 @@ class QuickJsPresetRuntime
     final result =
         jsonDecode(
               await _session.evaluate(
-                'Promise.resolve(__transport.prepare(${jsonEncode(prepared)}, ${jsonEncode(_transportName)}, ${jsonEncode([...tools, ...roundTools])})).then(v=>JSON.stringify(v))',
+                'Promise.resolve(__transport.prepare(${jsonEncode(prepared)}, ${jsonEncode(tools)}, ${jsonEncode(roundTools)})).then(v=>JSON.stringify(v))',
               ),
             )
             as List;
@@ -276,21 +232,16 @@ class QuickJsPresetRuntime
     final scriptBusinessTools = (state['businessTools'] as List? ?? const [])
         .map((tool) => Map<String, dynamic>.from(tool as Map))
         .toList();
-    _waveActionEnabled = _isWave && state['actionTool'] == true;
-    businessTools = List.unmodifiable([
-      ...roundTools,
-      ...scriptBusinessTools,
-      if (_waveActionEnabled) ...stateTools,
-    ]);
-    if (_waveActionEnabled) {
-      transportTools = const [];
-    } else {
-      transportTools = List.unmodifiable(stateTools);
-    }
+    businessTools = List.unmodifiable(scriptBusinessTools);
+    transportTools = List.unmodifiable(stateTools);
+    _toolChoice = state['toolChoice'] as String?;
     diagnostics = List.unmodifiable(
       (state['diagnostics'] as List).cast<String>(),
     );
-    return (references.restore(result) as List)
+    final preserved = references.preserveImages([
+      for (final message in result) Map<String, dynamic>.from(message as Map),
+    ]);
+    return (references.restore(preserved) as List)
         .map((m) => Map<String, dynamic>.from(m as Map))
         .toList();
   }
@@ -302,16 +253,15 @@ class QuickJsPresetRuntime
       'Boolean(__transport.hasAction(${jsonEncode(name)}))',
     );
     if (hasAction == 'true') {
-      final result = jsonDecode(
-        await _session.evaluate(
-          'Promise.resolve(__transport.action(${jsonEncode({'name': name, 'args': arguments})})).then(v=>JSON.stringify(v))',
-        ),
-      ) as String;
+      final result =
+          jsonDecode(
+                await _session.evaluate(
+                  'Promise.resolve(__transport.action(${jsonEncode({'name': name, 'args': arguments})})).then(v=>JSON.stringify(v))',
+                ),
+              )
+              as String;
       await _checkTimerTimeout();
       return result;
-    }
-    if (_waveActionEnabled && name == 'wave_context_reference') {
-      return '资料已经完整放在 wave_context_reference 的说明中，无需再调用。请按 messages 中本轮交付约定回复。';
     }
     // Registered transport actions have their own gate; reject ordinary tools
     // here so a permission denial cannot throw inside and close the JS session.
@@ -324,6 +274,9 @@ class QuickJsPresetRuntime
   @override
   Future<void> reset(bool streaming) async {
     _ensureOpen();
+    await _session.evaluate(
+      'Promise.resolve(__transport.reset()).then(v=>JSON.stringify(v))',
+    );
     await _call('reset', streaming);
   }
 
@@ -333,7 +286,7 @@ class QuickJsPresetRuntime
     List<Map<String, dynamic>> calls = const [],
   }) async {
     _ensureOpen();
-    if (transportTools.isNotEmpty) {
+    {
       final selected =
           jsonDecode(
                 await _session.evaluate(

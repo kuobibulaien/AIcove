@@ -18,6 +18,8 @@ import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _Conversations extends ConversationsNotifier {
@@ -121,6 +123,37 @@ void main() {
     await Future<void>.delayed(Duration.zero);
   }
 
+  test('cached triggers register without network while live tasks require it', () async {
+    await start(const AutoReplySettings(quietHoursEnabled: false));
+    const channel = MethodChannel(
+      'be.tramckrijte.workmanager/foreground_channel_work_manager',
+    );
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return null;
+        });
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null));
+    final controller = container.read(autoReplyTriggersProvider.notifier);
+    for (final cache in <String?>['ready to deliver', null]) {
+      await controller.createTrigger(
+        title: 'network', type: AutoReplyTriggerType.fixed,
+        nextFireAt: DateTime.now().add(const Duration(hours: 1)),
+        allowNight: true, requireExact: false, delayMinutes: 0,
+        conversationId: 'c', cachedContent: cache,
+      );
+    }
+    final registered = calls.where((call) => call.method == 'registerOneOffTask').toList();
+    expect(registered.map((call) => (call.arguments as Map)['networkType']),
+        ['not_required', 'connected']);
+    await BackgroundService.scheduleOneOffTask(
+      uniqueName: 'default-network', delay: const Duration(hours: 1), inputData: {},
+    );
+    expect((calls.last.arguments as Map)['networkType'], 'connected');
+  });
+
   test('poll retries after settings loading fails', () async {
     _FlakySettings.attempts = 0;
     await start(const AutoReplySettings(), flaky: true);
@@ -194,6 +227,15 @@ void main() {
       );
     },
   );
+
+  test('manual exact reminder still fires when exact alarms are disabled', () async {
+    await start(const AutoReplySettings(
+      allowExactAlarm: false, quietHoursEnabled: false,
+    ));
+    await poll([_trigger('manual-exact', exact: true)]);
+    expect(events.where((e) => e.type == AutoReplyTriggerEventType.fired),
+        hasLength(1));
+  });
 
   test('an overdue exact reminder is delivered instead of expiring', () async {
     await start(

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aicove_flutter/src/features/chat/application/chat_page_conversation_actions.dart';
+import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/core/utils/image_preheat_queue.dart';
 import 'package:aicove_flutter/src/ui/features/chat/pages/chat_page.dart';
 import 'package:aicove_flutter/src/ui/theme/skin_provider.dart';
@@ -106,5 +107,67 @@ void main() {
         expect(imagePhases, earlyPop ? isEmpty : [AnimationStatus.completed]);
       });
     }
+  }
+
+  for (final covered in [false, true]) {
+    testWidgets('页面开着时新到的未读随即清掉，被盖住时等返回再清：covered=$covered',
+        (tester) async {
+      final fixture = (await tester
+          .runAsync(() => SegmentedChatFixture.create(historyCount: 0)))!;
+      final navigator = GlobalKey<NavigatorState>();
+      var clears = 0;
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: fixture.container,
+        child: ProviderScope(
+            overrides: [
+              imagePreheatQueueProvider
+                  .overrideWith((ref) => _EntryImages(() {})),
+              chatPageConversationActionsProvider
+                  .overrideWith((ref) => _EntryActions(ref, () => clears++)),
+            ],
+            child: SkinScope(
+                skin: const MoeTalkSkin(),
+                child: MaterialApp(
+                  navigatorKey: navigator,
+                  home: ChatPage(
+                    conversationId: fixture.conversation.id,
+                    initialConversation: fixture.conversation,
+                  ),
+                ))),
+      ));
+      await tester.pump(const Duration(milliseconds: 200));
+      final afterEntry = clears;
+      if (covered) {
+        unawaited(navigator.currentState!.push(MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: Text('设置')))));
+        await tester.pumpAndSettle();
+      }
+      await fixture.container.read(conversationsProvider.notifier).updateOne(
+            fixture.conversation.id,
+            (c) => c.copyWith(unreadCount: 1),
+            persist: false,
+          );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      final afterArrival = clears;
+      if (covered) {
+        navigator.currentState!.pop();
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      final afterReturn = clears;
+      await tester.pumpWidget(const SizedBox.shrink());
+      var disposed = false;
+      final cleanup = fixture.dispose().then((_) => disposed = true);
+      for (var attempt = 0; attempt < 100 && !disposed; attempt++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+      }
+      await cleanup;
+      expect(afterArrival - afterEntry, covered ? 0 : 1);
+      expect(afterReturn - afterEntry, 1);
+    });
   }
 }

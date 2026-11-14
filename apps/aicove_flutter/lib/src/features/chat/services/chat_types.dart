@@ -172,6 +172,9 @@ class ApiConfig {
   /// Product-stage round snapshot, persisted before any tool side effect.
   final Future<void> Function(List<ReplyRound> rounds, List<ToolCall> calls)?
       onToolRounds;
+
+  /// Actual prepared transport availability, reported before model output.
+  final void Function(bool)? onTransportStreamingChanged;
   final PresetScriptSnapshot? presetScript;
 
   /// The preset runtime service from the tavern compatibility plugin; null
@@ -238,6 +241,7 @@ class ApiConfig {
     this.onToolActivity,
     this.onToolCompleted,
     this.onToolRounds,
+    this.onTransportStreamingChanged,
     this.presetScript,
     this.openPresetRuntime,
     this.requestInputTokenLimit,
@@ -278,6 +282,7 @@ class ApiConfig {
   /// 在装配结果上换掉消息、工具或请求选项，其余字段原样保留。
   ApiConfig copyWith({
     KernelCancellation? cancellation,
+    void Function(bool)? onTransportStreamingChanged,
     List<Map<String, dynamic>>? messages,
     bool clearTools = false,
     List<Map<String, dynamic>>? tools,
@@ -309,6 +314,8 @@ class ApiConfig {
     onToolActivity: onToolActivity ?? this.onToolActivity,
     onToolCompleted: onToolCompleted ?? this.onToolCompleted,
     onToolRounds: onToolRounds ?? this.onToolRounds,
+    onTransportStreamingChanged:
+        onTransportStreamingChanged ?? this.onTransportStreamingChanged,
     presetScript: presetScript,
     openPresetRuntime: openPresetRuntime,
     requestInputTokenLimit: requestInputTokenLimit,

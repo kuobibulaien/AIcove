@@ -15,8 +15,9 @@ typedef ResolveTaskCapabilities =
     Future<TaskAgentCapabilities> Function(
       AgentTask task,
       String runId,
-      KernelCancellation cancellation,
-    );
+      KernelCancellation cancellation, {
+      bool readOnly,
+    });
 
 /// Writes a receipt as a chat message; called again with the same id after
 /// a crash, so it must replace, not duplicate.
@@ -54,6 +55,8 @@ class TaskAgentService {
     required this.ownsConversation,
     required this.deviceId,
     this.conversationBusy = _defaultConversationBusy,
+    this.inlineWait = Duration.zero,
+    this.isReceiptRelayed,
     this.preset = const TaskAgentPreset(),
     this.maxConcurrent = 3,
     String Function()? newId,
@@ -72,6 +75,12 @@ class TaskAgentService {
   final Future<bool> Function(String conversationId) ownsConversation;
   final Future<String> Function() deviceId;
   final FutureOr<bool> Function(String conversationId) conversationBusy;
+
+  final Duration inlineWait;
+  final Future<bool> Function(String conversationId, String receiptId)?
+  isReceiptRelayed;
+  final Map<String, Completer<TaskReceiptBlock?>> _receiptWaiters = {};
+  final Map<String, Set<(String, String)>> _inlineClaims = {};
 
   static bool _defaultConversationBusy(String conversationId) => false;
   final TaskAgentPreset preset;
@@ -103,11 +112,12 @@ class TaskAgentService {
     required String taskId,
     required String instruction,
   }) async {
-    return _update(taskId, () async {
+    final outcome = await _update(taskId, () async {
       final task = await store.get(taskId);
       if (task == null) return TaskControlOutcome.remote;
       if ((_running[taskId]?.isCancelled ?? false) ||
           task.status.isTerminal ||
+          (task.status == AgentTaskStatus.needsInput && task.frozen) ||
           instruction.trim().isEmpty) {
         return TaskControlOutcome.ignored;
       }
@@ -116,19 +126,37 @@ class TaskAgentService {
           TaskCheckpoint(
             transcript: TaskAgentRunner.firstTranscript(task.instruction),
           );
+      final waiting = task.status == AgentTaskStatus.needsInput;
       await process.saveCheckpoint(
         taskId,
         TaskCheckpoint(
-          transcript:
-              '${checkpoint.transcript}\n\n## 追加要求\n${instruction.trim()}',
-          lastLog: checkpoint.lastLog,
-          question: checkpoint.question,
+          readOnly: checkpoint.readOnly,
+          transcript: waiting
+              ? TaskAgentRunner.continueTranscript(
+                  previous: checkpoint.transcript,
+                  processLog: checkpoint.lastLog,
+                  question: checkpoint.question ?? '',
+                  answer: instruction.trim(),
+                )
+              : '${checkpoint.transcript}\n\n## 追加要求\n${instruction.trim()}',
+          lastLog: waiting ? '' : checkpoint.lastLog,
+          question: waiting ? null : checkpoint.question,
           messages: [
             ...checkpoint.contextMessages,
+            if (waiting && checkpoint.question != null)
+              {'role': 'assistant', 'content': checkpoint.question},
             {'role': 'user', 'content': instruction.trim()},
           ],
         ),
       );
+      if (waiting &&
+          !await store.consumeReply(
+            controlId: _newId(),
+            taskId: taskId,
+            answersReceiptId: task.questionReceiptId,
+          )) {
+        return TaskControlOutcome.ignored;
+      }
       if (_running.containsKey(taskId)) {
         final handle = _steering[taskId];
         if (handle == null && _snapshots.contains(taskId)) {
@@ -139,6 +167,8 @@ class TaskAgentService {
       }
       return TaskControlOutcome.applied;
     });
+    if (outcome == TaskControlOutcome.applied) await pump();
+    return outcome;
   }
 
   final Set<String> _relaying = {};
@@ -158,6 +188,7 @@ class TaskAgentService {
     required String conversationId,
     required String instruction,
     String? requestKey,
+    bool readOnly = false,
     AgentTaskSource source = AgentTaskSource.chat,
     TaskReceiptNotify notify = TaskReceiptNotify.always,
   }) async {
@@ -174,6 +205,7 @@ class TaskAgentService {
         task.id,
         TaskCheckpoint(
           transcript: TaskAgentRunner.firstTranscript(instruction),
+          readOnly: readOnly,
         ),
       );
     }
@@ -203,6 +235,7 @@ class TaskAgentService {
       await process.saveCheckpoint(
         taskId,
         TaskCheckpoint(
+          readOnly: checkpoint.readOnly,
           messages: [
             ...checkpoint.contextMessages,
             if (checkpoint.question != null)
@@ -258,7 +291,12 @@ class TaskAgentService {
       executorDevice: await deviceId(),
       summary: '任务已取消。',
     );
-    if (recorded != null) await _publish(recorded);
+    if (recorded != null) {
+      final waiter = _receiptWaiters.remove(recorded.task.id);
+      final claimedInline = waiter != null && !waiter.isCompleted;
+      if (claimedInline) waiter.complete(recorded.block);
+      await _publish(recorded, relayNow: !claimedInline);
+    }
     return TaskControlOutcome.applied;
   }
 
@@ -288,7 +326,20 @@ class TaskAgentService {
       );
     }
     for (final receipt in await store.unwrittenReceipts()) {
-      await _publish(receipt, relayNow: false);
+      if (isReceiptRelayed != null &&
+          await isReceiptRelayed!(
+            receipt.task.conversationId,
+            receipt.block.receiptId,
+          )) {
+        await store.claimDelivery(receipt.block.receiptId);
+        await store.completeDelivery(receipt.block.receiptId, delivered: true);
+        await store.markReceiptWritten(
+          receipt.task.id,
+          receipt.block.receiptId,
+        );
+      } else {
+        await _publish(receipt, relayNow: false);
+      }
     }
     await pump();
     await deliverPending();
@@ -385,7 +436,13 @@ class TaskAgentService {
             '## 已完成的步骤（不要重做）\n${checkpoint.lastLog}',
         ].join('\n\n'),
         contextMessages: checkpoint.contextMessages,
-        capabilities: await capabilities(task, runId, cancellation),
+        readOnly: checkpoint.readOnly,
+        capabilities: await capabilities(
+          task,
+          runId,
+          cancellation,
+          readOnly: checkpoint.readOnly,
+        ),
         preset: preset,
         cancellation: cancellation,
         onBeforeExternal: () => store.markSideEffectUncertain(task.id),
@@ -402,6 +459,7 @@ class TaskAgentService {
           await process.saveCheckpoint(
             task.id,
             TaskCheckpoint(
+              readOnly: latest.readOnly,
               transcript: latest.transcript,
               lastLog: [
                 latest.lastLog,
@@ -431,6 +489,7 @@ class TaskAgentService {
             await process.saveCheckpoint(
               task.id,
               TaskCheckpoint(
+                readOnly: latest.readOnly,
                 transcript: latest.transcript,
                 lastLog: latest.lastLog,
                 question: latest.question,
@@ -462,6 +521,7 @@ class TaskAgentService {
         await process.saveCheckpoint(
           task.id,
           TaskCheckpoint(
+            readOnly: latest.readOnly,
             transcript: latest.transcript,
             lastLog: outcome.processLog,
             question: outcome.question,
@@ -497,6 +557,7 @@ class TaskAgentService {
         executorDevice: device,
         summary: outcome.summary,
         question: outcome.question,
+        detail: outcome.detail,
         artifacts: outcome.artifacts,
       );
     } on KernelCancelledException {
@@ -525,7 +586,12 @@ class TaskAgentService {
         summary: '任务出错：${_brief(error)}',
       );
     }
-    if (recorded != null) await _publish(recorded);
+    if (recorded != null) {
+      final waiter = _receiptWaiters.remove(recorded.task.id);
+      final claimedInline = waiter != null && !waiter.isCompleted;
+      if (claimedInline) waiter.complete(recorded.block);
+      await _publish(recorded, relayNow: !claimedInline);
+    }
   }
 
   /// Writes the receipt message, then relays it when this device should.
@@ -554,8 +620,81 @@ class TaskAgentService {
     }
   }
 
+  Future<TaskReceiptBlock?> waitForReceipt(
+    String taskId, {
+    Duration? timeout,
+    bool Function()? isCancelled,
+  }) async {
+    final effectiveTimeout = timeout ?? inlineWait;
+    if (effectiveTimeout <= Duration.zero || (isCancelled?.call() ?? false)) {
+      return null;
+    }
+    final completer = Completer<TaskReceiptBlock?>();
+    _receiptWaiters[taskId] = completer;
+    final task = await store.get(taskId);
+    TaskReceiptBlock? block;
+    if (task != null &&
+        task.status != AgentTaskStatus.queued &&
+        task.status != AgentTaskStatus.running) {
+      final pending = (await store.unwrittenReceipts()).where(
+        (r) => r.task.id == taskId,
+      );
+      block = pending.isNotEmpty
+          ? pending.first.block
+          : await store.latestReceipt(taskId);
+    }
+    final deadline = DateTime.now().add(effectiveTimeout);
+    while (block == null &&
+        DateTime.now().isBefore(deadline) &&
+        !(isCancelled?.call() ?? false)) {
+      final left = deadline.difference(DateTime.now());
+      if (left <= Duration.zero) break;
+      block = await completer.future.timeout(
+        left < const Duration(milliseconds: 50)
+            ? left
+            : const Duration(milliseconds: 50),
+        onTimeout: () => null,
+      );
+    }
+    if (identical(_receiptWaiters[taskId], completer)) {
+      _receiptWaiters.remove(taskId);
+    }
+    if (block != null &&
+        block.relays &&
+        task != null &&
+        await store.claimDelivery(block.receiptId)) {
+      _inlineClaims.putIfAbsent(task.conversationId, () => {}).add((
+        taskId,
+        block.receiptId,
+      ));
+    }
+    return block;
+  }
+
+  Future<void> settleInlineDeliveries(
+    String conversationId, {
+    required Future<bool> Function(String receiptId) isRelayed,
+  }) async {
+    final claims = _inlineClaims.remove(conversationId) ?? {};
+    for (final (taskId, receiptId) in claims) {
+      final relayed = await isRelayed(receiptId);
+      await store.completeDelivery(receiptId, delivered: relayed);
+      // Failed foreground delivery stays pending until flushConversation has
+      // written the receipt; publishing may still be in progress here.
+      if (relayed) {
+        await store.markReceiptWritten(taskId, receiptId);
+      }
+    }
+  }
+
   Future<void> flushConversation(String conversationId) async {
     if (await conversationBusy(conversationId)) return;
+    if (isReceiptRelayed != null) {
+      await settleInlineDeliveries(
+        conversationId,
+        isRelayed: (id) => isReceiptRelayed!(conversationId, id),
+      );
+    }
     for (final receipt in await store.unwrittenReceipts()) {
       if (receipt.task.conversationId == conversationId) {
         await _publish(receipt, relayNow: false);

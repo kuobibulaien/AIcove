@@ -109,7 +109,7 @@ globalThis.__spreset = (() => {
       assistant: [substitute(s.char_prefix), substitute(s.char_suffix)],
       system: [substitute(s.prefix_system), substitute(s.suffix_system)],
     };
-    const result = []; let buffer = '', previous = '';
+    const result = []; let buffer = '', previous = '', bufferHistory = false;
     let role = s.role === 'follow' ? (messages[0]?.role || 'user') : (s.role || 'assistant');
     const flush = async () => {
       if (!buffer) return;
@@ -126,12 +126,12 @@ globalThis.__spreset = (() => {
           for (const [prefix] of Object.values(affix)) if (prefix) { const i = remaining.indexOf(prefix); if (i >= 0) end = Math.min(end,i); }
           let part = remaining.slice(0,end);
           if (affix[key][1] && part.endsWith(affix[key][1])) part = part.slice(0,-affix[key][1].length);
-          if (part.trim()) split.push({role:key,content:part.trim()});
+          if (part.trim()) split.push({role:key,content:part.trim(),__isHistory:bufferHistory});
           remaining = remaining.slice(end);
         }
-        if (split.length && !remaining) result.push(...split); else result.push({role,content:buffer});
-      } else result.push({role, content:buffer});
-      buffer = ''; previous = '';
+        if (split.length && !remaining) result.push(...split); else result.push({role,content:buffer,__isHistory:bufferHistory});
+      } else result.push({role, content:buffer, __isHistory:bufferHistory});
+      buffer = ''; previous = ''; bufferHistory = false;
     };
     const separator = s.enable_squashed_separator && s.squashed_separator_string
       ? (s.squashed_separator_regex ? new RegExp(s.squashed_separator_string) : s.squashed_separator_string) : null;
@@ -142,12 +142,12 @@ globalThis.__spreset = (() => {
     for (let index = 0; index < messages.length; index++) {
       const m = clone(messages[index]);
       const history = marked ? m.__isHistory === true : index >= firstChat && index <= lastChat;
-      delete m.__isHistory;
+      // Retain provenance until the transport host extracts chat floors.
       if (s.separate_chat_history && !history) { await flush(); result.push(m); continue; }
       if (s.parse_clewd && typeof m.content === 'string' && m.content.includes('<|no-trans|>')) {
         await flush(); m.content = m.content.replace(/<\|no-trans\|>/g,''); result.push(m); continue;
       }
-      const native = !affix[m.role] || Object.keys(m).some(k => !['role','content'].includes(k) && m[k] != null)
+      const native = !affix[m.role] || Object.keys(m).some(k => !['role','content','__isHistory'].includes(k) && m[k] != null)
         || (Array.isArray(m.content) && m.content.some(p => typeof p !== 'string' &&
           (!p || p.type !== 'text' || typeof p.text !== 'string' || Object.keys(p).some(k => !['type','text'].includes(k)))));
       if (native) {
@@ -173,7 +173,7 @@ globalThis.__spreset = (() => {
         if (previous) buffer += affix[previous][1];
         buffer += affix[m.role][0];
       } else buffer += '\n';
-      buffer += m.content; previous = m.role;
+      buffer += m.content; previous = m.role; bufferHistory ||= history;
     }
     await flush(); return result;
   }
@@ -196,7 +196,7 @@ globalThis.__spreset = (() => {
       }
       if ((mode.startsWith('semi') || mode.startsWith('strict')) && result.length && m.role === 'system') m.role = 'user';
       if (mode.startsWith('strict') && m.role === 'assistant' && !result.some(x => x.role !== 'system')) result.push({role:'user',content:"Let's get started."});
-      if (mode === 'single') { m.role = 'user'; if (typeof m.content !== 'string') m.content = JSON.stringify(m.content); for (const key of Object.keys(m)) if (!['role','content'].includes(key)) delete m[key]; }
+      if (mode === 'single') { m.role = 'user'; if (typeof m.content !== 'string') m.content = JSON.stringify(m.content); for (const key of Object.keys(m)) if (!['role','content','__isHistory'].includes(key)) delete m[key]; }
       if (m.name && typeof m.content === 'string') {
         const name = m.role === 'system'
           ? (m.name === 'example_user' ? macros.user : m.name === 'example_assistant' ? macros.char : '') : m.name;
@@ -208,9 +208,10 @@ globalThis.__spreset = (() => {
       if (last && last.role === m.role && m.role !== 'tool' && m.content &&
           typeof m.content === 'string' && typeof last.content === 'string' && !structured(last) && !structured(m)) {
         last.content += '\n\n'+m.content;
+        if (Object.hasOwn(last,'__isHistory') || Object.hasOwn(m,'__isHistory')) last.__isHistory = last.__isHistory === true || m.__isHistory === true;
       } else result.push(m);
     }
-    if (mode === 'single') return [{role:'user',content:result.map(m => m.content).filter(Boolean).join('\n\n')}];
+    if (mode === 'single') return [{role:'user',content:result.map(m => m.content).filter(Boolean).join('\n\n'),...(result.some(m=>Object.hasOwn(m,'__isHistory')) ? {__isHistory:result.some(m=>m.__isHistory === true)} : {})}];
     return result.length ? result : [{role:'user',content:"Let's get started."}];
   }
   function resetOutput(stream) {

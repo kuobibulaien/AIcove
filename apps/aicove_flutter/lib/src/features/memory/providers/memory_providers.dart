@@ -1,3 +1,5 @@
+import '../../../core/sync/conversation_ownership.dart';
+import '../../observability/model_request_ledger.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -61,6 +63,8 @@ final memoryKeeperProvider = Provider<MemoryKeeperService>(
         ref.read(contextSummaryStoreProvider).compactedBoundaries(owner),
     agentFactory: () => ref.read(memoryAgentProvider.future),
     allowed: (owner) => memoryAllowedFor(ref, owner),
+    claimOwnership: ConversationOwnership.claim,
+    canAutoRun: (owner) async => (await ConversationOwnership.load()).owns(owner) && (await ModelRequestLedger.instance.activeRemoteRunsForConversation(owner)).isEmpty,
   ),
 );
 

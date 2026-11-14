@@ -38,6 +38,7 @@ const kInterfaceSettingKeys = <String>[
   'frosted_tint_fill',
   'interface_skin',
   'accent_color',
+  'dark_accent_color',
   'chat_background_color',
   'global_background_color',
   'global_wallpaper',
@@ -59,6 +60,7 @@ const kInterfaceSettingKeys = <String>[
   'message_format_config',
   'stream_segment_delay_seconds',
   'hide_user_avatar',
+  'single_avatar_per_turn',
   'expand_audio_text',
   'windows_window_controls_side',
 ];
@@ -143,7 +145,7 @@ InterfaceSkin _legacyInterfaceSkin(
   return switch (chatBackground) {
     ChatBackgroundColor.defaultColor ||
     ChatBackgroundColor.white => InterfaceSkin.classic,
-    ChatBackgroundColor.momotalk => InterfaceSkin.momotalk,
+    ChatBackgroundColor.momotalk => InterfaceSkin.classic,
     ChatBackgroundColor.warm => InterfaceSkin.custom,
   };
 }
@@ -367,6 +369,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     data['windows_close_behavior']?.toString(),
   );
   final hideUserAvatar = data['hide_user_avatar'] != false;
+  final singleAvatarPerTurn = data['single_avatar_per_turn'] == true;
   final expandAudioText = data['expand_audio_text'] != false;
   final userAvatar = data['user_avatar'] as String?;
   final userName = data['user_name'] as String?;
@@ -432,6 +435,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
   // 支持十六进制颜色值（如 'FC96AA'）或旧枚举值（如 'pink'）
   final rawAccent = (data['accent_color'] as String?) ?? 'FC96AA';
   final accentColor = _migrateAccentColor(rawAccent);
+  final darkAccentColorHex = data['dark_accent_color'] as String?;
   final interfaceSkin =
       InterfaceSkin.tryParse(data['interface_skin'] as String?) ??
       _legacyInterfaceSkin(accentColor, chatBackgroundColor);
@@ -517,6 +521,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     windowsWindowControlsSide: windowsWindowControlsSide,
     windowsCloseBehavior: windowsCloseBehavior,
     hideUserAvatar: hideUserAvatar,
+    singleAvatarPerTurn: singleAvatarPerTurn,
     expandAudioText: expandAudioText,
     autoReplySettings: autoReplySettings,
     globalBackgroundColor: globalBackgroundColor,
@@ -532,6 +537,7 @@ AppSettings _mapToSettings(Map<String, dynamic> data) {
     isDarkMode: isDarkMode,
     useSystemTheme: useSystemTheme,
     accentColor: accentColor,
+    darkAccentColorHex: darkAccentColorHex,
     interfaceSkin: interfaceSkin,
     glassEffectEnabled: glassEffectEnabled,
     glassBlurSigma: glassBlurSigma,
@@ -1170,6 +1176,12 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _commit(() => _api.updatePartial({'hide_user_avatar': hide}));
   }
 
+  Future<void> setSingleAvatarPerTurn(bool enabled) async {
+    await _commit(
+      () => _api.updatePartial({'single_avatar_per_turn': enabled}),
+    );
+  }
+
   Future<void> setExpandAudioText(bool expand) async {
     await _commit(() => _api.updatePartial({'expand_audio_text': expand}));
   }
@@ -1356,29 +1368,28 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   /// 修改自定义皮肤的配色，并切换到自定义皮肤。
   Future<void> setCustomSkin({
     String? accentColor,
-    ChatBackgroundColor? chatBackground,
+    String? darkAccentColor,
   }) async {
     await _commit(
       () => _api.updatePartial({
         'interface_skin': InterfaceSkin.custom.value,
         if (accentColor != null) 'accent_color': accentColor,
-        if (chatBackground != null)
-          'chat_background_color': chatBackground.value,
+        if (darkAccentColor != null) 'dark_accent_color': darkAccentColor,
       }),
     );
   }
 
-  /// Writes the skin and both custom colors in one step (undo of a color
-  /// change puts all three back together).
+  /// Writes the skin and its custom colors in one step (undo of a color
+  /// change puts them all back together).
   Future<void> setSkinColors({
     required InterfaceSkin skin,
     required String accentColor,
-    required ChatBackgroundColor chatBackground,
+    required String? darkAccentColor,
   }) => _commit(
     () => _api.updatePartial({
       'interface_skin': skin.value,
       'accent_color': accentColor,
-      'chat_background_color': chatBackground.value,
+      'dark_accent_color': darkAccentColor,
     }),
   );
 

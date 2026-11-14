@@ -60,6 +60,7 @@ class CloudSyncEngine {
   final void Function(Set<String>)? onApplied;
   bool _running = false, _closed = false;
   String? _epoch;
+  Set<String>? _remoteKinds;
   bool _indexedRead = false, _probeBlobs = false;
   bool _settingTimes = false;
   int _mediaPriority = 0;
@@ -135,6 +136,8 @@ class CloudSyncEngine {
           status['media_usage_version'] != 1) {
         throw const CloudSyncFailure('服务器需要升级消息快照与图片用途协议');
       }
+      final kinds = status['kinds'];
+      _remoteKinds = kinds is List ? kinds.whereType<String>().toSet() : null;
       _epoch = status['epoch'] as String;
       _indexedRead = status['indexed_read_version'] == 1;
       _probeBlobs = status['blob_probe_version'] == 1;
@@ -224,6 +227,28 @@ class CloudSyncEngine {
       );
       await _pull();
       await _applyInbox();
+      await local.db.transaction(() async {
+        const migration = 'context_memory_sync_v1';
+        if ((await local.rows(
+          'SELECT 1 FROM cloud_local_migrations WHERE name=?',
+          [migration],
+        )).isEmpty) {
+          for (final kind in [
+            'context_summaries',
+            'memory_items',
+            'memory_progress',
+          ]) {
+            final key = cloudTables[kind]!;
+            await local.execute(
+              'INSERT OR IGNORE INTO cloud_dirty(kind,entity_id,revision) SELECT ?, t."$key", 1 FROM "$kind" t WHERE NOT EXISTS (SELECT 1 FROM cloud_versions v WHERE v.kind=? AND v.entity_id=t."$key")',
+              [kind, kind],
+            );
+          }
+          await local.execute('INSERT INTO cloud_local_migrations VALUES(?)', [
+            migration,
+          ]);
+        }
+      });
       await _pushDirty();
       await _pull();
       await _applyInbox();
@@ -489,7 +514,10 @@ class CloudSyncEngine {
     'messages' => 5,
     'message_blocks' => 6,
     'message_projection_mappings' => 7,
-    _ => 8,
+    'context_summaries' => 8,
+    'memory_items' => 9,
+    'memory_progress' => 10,
+    _ => 11,
   };
 
   Future<void> _applyInbox({bool initial = false, Set<int>? sequences}) async {
@@ -1227,6 +1255,7 @@ class CloudSyncEngine {
       if ((await local.state())['enabled'] != 1) return;
       final kind = pending[index]['kind'] as String,
           id = pending[index]['entity_id'] as String;
+      if (_remoteKinds != null && !_remoteKinds!.contains(kind)) continue;
       if (retiredCloudKinds.contains(kind)) {
         await local.execute(
           'DELETE FROM cloud_dirty WHERE kind=? AND entity_id=?',

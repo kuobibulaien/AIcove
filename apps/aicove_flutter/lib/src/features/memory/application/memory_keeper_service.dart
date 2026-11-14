@@ -32,6 +32,8 @@ class MemoryKeeperService implements MemoryMaintenancePort {
     required this.compactedBoundaries,
     required this.agentFactory,
     required this.allowed,
+    this.canAutoRun,
+    this.claimOwnership,
   });
   final MemoryStorePort store;
   final Future<List<Message>> Function(String ownerId) loadMessages;
@@ -39,6 +41,9 @@ class MemoryKeeperService implements MemoryMaintenancePort {
   final Future<MemoryAgentPort> Function() agentFactory;
   final Future<bool> Function(String ownerId) allowed;
 
+  final Future<bool> Function(String ownerId)? canAutoRun;
+  final Future<void> Function(String ownerId)? claimOwnership;
+  final _manual = <String>{};
   final _running = <String, Future<void>>{};
   final _needsRerun = <String>{};
   final _lastCheckedAt = <String, DateTime>{};
@@ -46,6 +51,8 @@ class MemoryKeeperService implements MemoryMaintenancePort {
 
   /// 某个角色的记忆或进度变化时发出其 id，供界面刷新。
   Stream<String> get changes => _changes.stream;
+
+  void notifyExternalChange([String ownerId = '']) => _changes.add(ownerId);
   bool isRunning(String ownerId) => _running.containsKey(ownerId);
 
   @override
@@ -56,6 +63,7 @@ class MemoryKeeperService implements MemoryMaintenancePort {
     }
     _running[ownerId] = _run(ownerId).whenComplete(() {
       _running.remove(ownerId);
+      _manual.remove(ownerId);
       _changes.add(ownerId);
       if (_needsRerun.remove(ownerId)) schedule(ownerId);
     });
@@ -116,7 +124,9 @@ class MemoryKeeperService implements MemoryMaintenancePort {
     }
     final messages = eligible(await loadMessages(ownerId));
     if (messages.isEmpty) throw const MemoryException('还没有可整理的聊天记录。');
+    await claimOwnership?.call(ownerId);
     await store.resetForRebuild(ownerId, messages.last);
+    _manual.add(ownerId);
     _changes.add(ownerId);
     schedule(ownerId);
   }
@@ -127,7 +137,9 @@ class MemoryKeeperService implements MemoryMaintenancePort {
   }
 
   Future<void> resume(String ownerId) async {
+    await claimOwnership?.call(ownerId);
     await store.setPaused(ownerId, false);
+    _manual.add(ownerId);
     _changes.add(ownerId);
     schedule(ownerId);
   }
@@ -268,6 +280,7 @@ class MemoryKeeperService implements MemoryMaintenancePort {
           batch.map((m) => m.displayText).join('\n'),
           limit: 12,
         );
+        if (!_manual.contains(ownerId) && canAutoRun != null && !await canAutoRun!(ownerId)) return;
         final ops = await agent.propose(
           ownerId: ownerId,
           core: core,

@@ -100,6 +100,8 @@ class ProactivePlanner {
           ProactiveTimeSlot.nextMorning,
         },
         ProactiveReachOutKind.newTopic: <ProactiveTimeSlot>{
+          ProactiveTimeSlot.inHalfHour,
+          ProactiveTimeSlot.inHours,
           ProactiveTimeSlot.laterToday,
           ProactiveTimeSlot.nextMorning,
           ProactiveTimeSlot.nextNoon,

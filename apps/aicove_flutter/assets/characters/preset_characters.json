@@ -15,7 +15,17 @@
       "description": "软件里的大部分事我都能帮你办，有问题直接找我～",
       "characterImage": "assets/characters/images/aicove_assistant.png",
       "avatarUrl": "assets/characters/images/aicove_assistant.png",
-      "personaPromptFile": "assets/characters/prompts/aicove_assistant.md"
+      "personaPromptFile": "assets/characters/prompts/aicove_assistant.md",
+      "enabledPlugins": [
+        "memory",
+        "trigger",
+        "sticker",
+        "tts",
+        "image",
+        "time_awareness",
+        "web_search",
+        "aicove_assistant"
+      ]
     },
     {
       "id": "preset_mangaka",
@@ -24,11 +34,11 @@
       "characterImage": "assets/characters/images/mangaka.png",
       "avatarUrl": "assets/characters/images/mangaka.png",
       "personaPromptFile": "assets/characters/prompts/mangaka.md",
-      "agentMode": "tool",
       "enabledPlugins": [
         "memory",
         "time_awareness",
-        "image"
+        "image",
+        "aicove_assistant"
       ],
       "chatDisplayStyle": "document",
       "firstMessage": "画板和分镜稿都已经铺好啦。今天想让我把哪位角色的故事画成漫画，还是我们从头构思一部新连载？"

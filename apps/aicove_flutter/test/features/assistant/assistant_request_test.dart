@@ -10,7 +10,15 @@ import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/agent_context/data/silly_tavern_preset_store.dart';
 import 'package:aicove_flutter/src/features/agent_context/providers/preset_recipe_provider.dart';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
-    show GateDecision, GateOutcome, KernelToolCall, ToolCallScope, ToolEffect;
+    show
+        GateDecision,
+        GateOutcome,
+        KernelToolCall,
+        ToolCallScope,
+        ToolEffect,
+        KernelCancellation;
+import 'package:aicove_flutter/src/features/task_agent/application/task_agent_runner.dart';
+import 'package:aicove_flutter/src/features/task_agent/task_agent_providers.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_review.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_plugin.dart';
 import 'package:aicove_flutter/src/features/assistant/application/assistant_approvals.dart';
@@ -174,9 +182,54 @@ void main() {
     await container.read(conversationsProvider.future);
   });
 
-  Future<ApiConfig> prepare(Conversation conv) => container
+  Future<ApiConfig> foreground(Conversation conv) => container
       .read(chatSendServiceProvider)
       .prepareApiConfig(conv: conv, history: _history, userText: '帮我看看');
+
+  Future<ApiConfig> prepare(Conversation conv, {bool readOnly = false}) async {
+    final cancellation = KernelCancellation();
+    final provider = Provider(
+      (ref) => resolveConversationTaskCapabilities(
+        ref,
+        conv,
+        instruction: '帮我看看',
+        runId: 'assistant-test',
+        cancellation: cancellation,
+        readOnly: readOnly,
+      ),
+    );
+    final capabilities = await container.read(provider);
+    late ApiConfig captured;
+    final runner = TaskAgentRunner(
+      loadSettings: () => container.read(appSettingsProvider.future),
+      executor:
+          ({
+            required config,
+            required tools,
+            required sessionId,
+            required cancellation,
+          }) async {
+            captured = config.copyWith(boundTools: tools);
+            return const ApiCallResult(
+              replyText: 'done',
+              processedText: 'done',
+              pluginEvents: [],
+              toolResults: [],
+            );
+          },
+    );
+    await runner.run(
+      taskId: 'assistant-test',
+      runId: 'assistant-test',
+      conversationId: conv.id,
+      transcript: '帮我看看',
+      readOnly: readOnly,
+      capabilities: capabilities,
+      preset: const TaskAgentPreset(),
+      cancellation: cancellation,
+    );
+    return captured;
+  }
 
   List<String> toolsOf(ApiConfig config) => [
     for (final tool in config.tools ?? const [])
@@ -197,25 +250,69 @@ void main() {
       .value!
       .singleWhere((c) => c.id == kAicoveAssistantId);
 
-  test('only the assistant conversation gets the assistant tools', () async {
-    final own = await prepare(assistant());
-    final other = await prepare(_role('role_li'));
+  test(
+    'foreground routes tasks; only capable background runs get management tools',
+    () async {
+      final front = await foreground(assistant());
+      expect(toolsOf(front), contains('delegate_task'));
+      expect(jsonEncode(front.messages), contains('<component name='));
+      expect(jsonEncode(front.messages), isNot(contains('aicove_list_roles')));
+      expect(
+        front.boundTools!.where((t) => t.name.startsWith('aicove_')),
+        isEmpty,
+      );
+      final own = await prepare(assistant());
+      final other = await prepare(_role('role_li'));
 
-    expect(
-      own.boundTools!
-          .where((t) => t.exposure == ToolExposure.codemode)
-          .map((t) => t.name),
-      containsAll(['aicove_docs_read', 'aicove_inspect_context']),
-    );
-    expect(toolsOf(own), contains('codemode'));
-    expect(toolsOf(own), containsAll(['aicove_role', 'aicove_role_context']));
-    expect(jsonEncode(own.tools), contains('aicove_inspect_context'));
-    expect(
-      other.boundTools?.where((t) => t.name.startsWith('aicove_')) ?? [],
-      isEmpty,
-    );
-    expect(toolsOf(other).where((t) => t.startsWith('aicove_')), isEmpty);
-    expect(jsonEncode(other.messages), isNot(contains('住在 AIcove 里的小管家')));
+      expect(
+        own.boundTools!
+            .where((t) => t.exposure == ToolExposure.codemode)
+            .map((t) => t.name),
+        containsAll(['aicove_docs_read', 'aicove_inspect_context']),
+      );
+      expect(toolsOf(own), contains('codemode'));
+      expect(
+        toolsOf(own),
+        containsAll([
+          'aicove_role',
+          'aicove_role_context',
+          'ask_user',
+          'submit_reference_material',
+        ]),
+      );
+      expect(jsonEncode(own.tools), contains('aicove_inspect_context'));
+      expect(
+        other.boundTools?.where((t) => t.name.startsWith('aicove_')) ?? [],
+        isEmpty,
+      );
+      expect(toolsOf(other).where((t) => t.startsWith('aicove_')), isEmpty);
+      expect(jsonEncode(other.messages), isNot(contains('住在 AIcove 里的小管家')));
+    },
+  );
+
+  test(
+    'other roles with management enabled only get routing guidance',
+    () async {
+      final role = _role(
+        'role_li',
+      ).copyWith(enabledPlugins: const ['aicove_assistant']);
+      final config = await foreground(role);
+      final prompt = jsonEncode(config.messages);
+      expect(toolsOf(config), contains('delegate_task'));
+      expect(prompt, contains('## AIcove 软件管理能力'));
+      expect(prompt, contains('交给后台执行'));
+      expect(prompt, isNot(contains('<component name=')));
+    },
+  );
+
+  test('read-only backend exposes role reads and no write or shell tools', () async {
+    final config = await prepare(assistant(), readOnly: true);
+    expect(config.boundTools!.where((tool) => tool.effect == ToolEffect.write), isEmpty);
+    expect(config.boundTools!.map((tool) => tool.name), isNot(contains('bash')));
+    final role = config.boundTools!.singleWhere((tool) => tool.name == 'aicove_role');
+    expect((role.parameterSchema['properties'] as Map)['action']['enum'], ['list', 'read']);
+    expect(role.effect, ToolEffect.readPrivate);
+    expect((await call(config, 'aicove_role', {'action': 'create'}))['message'], contains('只读'));
   });
 
   test(
@@ -345,6 +442,8 @@ void main() {
 
     final card = await call(config, 'aicove_read_role', {'role_id': 'role_li'});
     expect(card['persona_prompt'], _personaText);
+    expect(card, isNot(contains('agent_mode')));
+    expect(card['has_assistant_capability'], isFalse);
     // Roles that never narrowed their plugins drop to the defaults on load.
     expect(card['plugins'], ['memory', 'time_awareness']);
     final hidden = await call(config, 'aicove_read_role', {
@@ -409,7 +508,7 @@ void main() {
     await call(config, 'aicove_inspect_context', {'role_id': 'role_li'});
     expect(keeper.resumed, isEmpty);
 
-    await prepare(_role('role_li'));
+    await foreground(_role('role_li'));
     expect(keeper.resumed, contains('role_li'));
   });
 
@@ -527,9 +626,7 @@ void main() {
           config.boundTools!.map((t) => t.name),
           isNot(contains('read_skill_local-skill')),
         );
-        final next = await prepare(
-          (await roleNow('role_li'))!.copyWith(agentMode: RoleAgentMode.agent),
-        );
+        final next = await prepare((await roleNow('role_li'))!);
         expect(
           next.boundTools!.map((t) => t.name),
           contains('read_skill_local-skill'),
@@ -573,7 +670,9 @@ void main() {
         expect(
           (await roleNow('role_li'))!.enabledPlugins,
           containsAll([
-            ...kAssistantRolePlugins.keys,
+            ...kAssistantRolePlugins.keys.where(
+              (id) => id != 'aicove_assistant',
+            ),
             'pkg:local-skill',
             'mcp:local',
             'ws:local',
@@ -584,7 +683,7 @@ void main() {
           'plugins': ['pkg:local-skill'],
         });
         expect((await roleNow('role_li'))!.enabledPlugins, [
-          ...kAssistantRolePlugins.keys,
+          ...kAssistantRolePlugins.keys.where((id) => id != 'aicove_assistant'),
           'pkg:local-skill',
           'ws:local',
         ]);
@@ -763,63 +862,60 @@ void main() {
       },
     );
 
-    test(
-      'role mode and model are persisted, independently clearable and undoable',
-      () async {
-        final config = await prepare(assistant());
-        expect((await roleNow('role_li'))!.agentMode, isNull);
-        expect(
-          (await call(config, AssistantWriteTools.updateRole, {
-            'role_id': 'role_li',
-            'agent_mode': 'tool',
-            'model_override': 'openai:gpt-4o',
-          }))['ok'],
-          isTrue,
-        );
-        var role = (await roleNow('role_li'))!;
-        expect(role.agentMode, RoleAgentMode.tool);
-        expect(role.sessionProvider, 'openai:gpt-4o');
-        expect(role.chatDisplayStyle, isNull);
-        final first = await latestChange();
-        await undo(first);
-        role = (await roleNow('role_li'))!;
-        expect(
-          role.agentMode,
-          isNull,
-          reason: 'undo restores the raw nullable field',
-        );
-        expect(role.sessionProvider, isNull);
-        await call(config, AssistantWriteTools.updateRole, {
-          'role_id': 'role_li',
-          'model_override': 'openai:custom:model',
-        });
-        await call(config, AssistantWriteTools.updateRole, {
-          'role_id': 'role_li',
-          'model_override': '',
-        });
-        expect((await roleNow('role_li'))!.sessionProvider, isNull);
-        await undo(await latestChange());
-        expect(
-          (await roleNow('role_li'))!.sessionProvider,
-          'openai:custom:model',
-        );
-      },
-    );
+    test('software management and model are persisted and undoable', () async {
+      final config = await prepare(assistant());
+      expect((await roleNow('role_li'))!.agentMode, isNull);
+      final result = await call(config, AssistantWriteTools.updateRole, {
+        'role_id': 'role_li',
+        'enabled_plugins': ['memory', 'time_awareness', 'aicove_assistant'],
+        'model_override': 'openai:gpt-4o',
+      });
+      expect(result['ok'], isTrue, reason: '$result');
+      var role = (await roleNow('role_li'))!;
+      expect(role.agentMode, isNull);
+      expect(role.hasAssistantCapability, isTrue);
+      expect(role.sessionProvider, 'openai:gpt-4o');
+      expect(role.chatDisplayStyle, isNull);
+      final first = await latestChange();
+      await undo(first);
+      role = (await roleNow('role_li'))!;
+      expect(
+        role.agentMode,
+        isNull,
+        reason: 'undo restores the raw nullable field',
+      );
+      expect(role.sessionProvider, isNull);
+      await call(config, AssistantWriteTools.updateRole, {
+        'role_id': 'role_li',
+        'model_override': 'openai:custom:model',
+      });
+      await call(config, AssistantWriteTools.updateRole, {
+        'role_id': 'role_li',
+        'model_override': '',
+      });
+      expect((await roleNow('role_li'))!.sessionProvider, isNull);
+      await undo(await latestChange());
+      expect(
+        (await roleNow('role_li'))!.sessionProvider,
+        'openai:custom:model',
+      );
+    });
 
     test(
-      'new tool roles use documents and invalid mode/model never creates a role',
+      'new roles use bubbles and reject retired modes or invalid models',
       () async {
         final config = await prepare(assistant());
         final created = await call(config, AssistantWriteTools.createRole, {
           'name': '工具角色',
           'persona_prompt': '帮忙工作',
-          'agent_mode': 'tool',
+          'enabled_plugins': ['memory', 'time_awareness', 'aicove_assistant'],
           'model_override': 'openai:gpt-4o',
         });
         expect(created['ok'], isTrue);
         final role = (await roleNow(created['role_id'] as String))!;
-        expect(role.agentMode, RoleAgentMode.tool);
-        expect(role.chatDisplayStyle, ChatDisplayStyle.document);
+        expect(role.agentMode, isNull);
+        expect(role.hasAssistantCapability, isTrue);
+        expect(role.chatDisplayStyle, ChatDisplayStyle.bubble);
         expect(role.sessionProvider, 'openai:gpt-4o');
         await undo(await latestChange());
         expect(await roleNow(role.id), isNull);
@@ -829,6 +925,10 @@ void main() {
           {'agent_mode': 'invalid'},
           {'agent_mode': ''},
           {'agent_mode': null},
+          {'enabled_plugins': null},
+          {
+            'enabled_plugins': ['unknown'],
+          },
           {'model_override': 123},
           {'model_override': 'no-colon'},
           {'model_override': ':model'},
@@ -908,7 +1008,7 @@ void main() {
         other.boundTools?.where((t) => t.name.startsWith('aicove_')) ?? [],
         isEmpty,
       );
-      expect(other.toolPolicy, isNull);
+      expect(other.toolPolicy!.gate, isNot(isA<AssistantToolGate>()));
       expect(toolsOf(other), isNot(contains(AssistantWriteTools.updateRole)));
     });
 
@@ -1208,7 +1308,12 @@ void main() {
           ))['ok'],
           isTrue,
         );
-        expect((await roleNow('role_li'))!.enabledPlugins, isNull);
+        expect(
+          (await roleNow('role_li'))!.enabledPlugins,
+          unorderedEquals(
+            kAssistantRolePlugins.keys.where((id) => id != 'aicove_assistant'),
+          ),
+        );
         await undo(await latestChange());
         expect((await roleNow('role_li'))!.enabledPlugins, ['memory']);
         await pumpEventQueue();

@@ -8,6 +8,7 @@ import '../../agent_plugins/plugin_request_scope.dart';
 import '../../content_tags/domain/content_tag_registry.dart';
 import '../../content_tags/domain/content_tag_spec.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
+import '../domain/agent_task.dart';
 import '../../../core/models/message_block.dart';
 
 /// The task a `delegate_task` call started (or continued), read from the
@@ -32,7 +33,6 @@ const delegateTaskEnabled = bool.fromEnvironment(
 
 const delegateTaskPluginId = 'delegate_task';
 const delegateTaskToolName = 'delegate_task';
-const steerTaskToolName = 'steer_task';
 
 /// The receipt's text label (ADR0088 §4) declared per ADR0044. The core
 /// block writes it through `taskReceiptLabel`; a test keeps the two in step.
@@ -45,6 +45,7 @@ const delegateTaskContentTags = StaticContentTagProvider(
   providerId: delegateTaskPluginId,
   tagSpecs: [],
   eventLabels: [taskReceiptEventLabel],
+  toolNames: {delegateTaskToolName},
 );
 
 /// Office plugins: the chat model hands these to the errand agent instead of
@@ -61,6 +62,7 @@ abstract interface class DelegateTaskPort {
     required String conversationId,
     required String instruction,
     required String? callKey,
+    bool readOnly = false,
   });
 
   Future<Map<String, Object?>> reply({
@@ -77,31 +79,34 @@ abstract interface class DelegateTaskPort {
   });
 }
 
-/// Optional extension so existing delegation ports remain source-compatible.
-abstract interface class TaskSteeringPort {
-  Future<Map<String, Object?>> steer({
-    required String conversationId,
-    required String taskId,
-    required String instruction,
-  });
-}
-
 /// The chat model's only office tool (ADR0088 §1–2). Built in, so a role
 /// cannot turn it off; it applies only when the model can call tools.
-AicovePlugin delegateTaskAgentPlugin(DelegateTaskPort port) => AicovePlugin(
+AicovePlugin delegateTaskAgentPlugin(
+  DelegateTaskPort port, {
+  List<AgentTask> activeTasks = const [],
+}) => AicovePlugin(
   id: delegateTaskPluginId,
   name: '派活',
   exposure: PluginExposure.builtin,
   capabilities: const {AppCapability.request},
   setup: (registrar) => registrar.add(
     AppContributions.requestScope,
-    (inputs) =>
-        DelegateTaskRequestScope(port, active: inputs.supportsToolCalling),
+    (inputs) => DelegateTaskRequestScope(
+      port,
+      active: inputs.supportsToolCalling,
+      activeTasks: activeTasks,
+    ),
   ),
 );
 
 class DelegateTaskRequestScope extends PluginRequestScope {
-  DelegateTaskRequestScope(this.port, {required this.active});
+  DelegateTaskRequestScope(
+    this.port, {
+    required this.active,
+    this.activeTasks = const [],
+  });
+
+  final List<AgentTask> activeTasks;
 
   final DelegateTaskPort port;
 
@@ -119,21 +124,36 @@ class DelegateTaskRequestScope extends PluginRequestScope {
       active ? _prompt : null;
 
   @override
-  List<AITool> tools() => active
-      ? [
-          delegateTaskTool(port),
-          if (port is TaskSteeringPort) steerTaskTool(port as TaskSteeringPort),
-        ]
-      : const [];
+  List<AITool> tools() => active ? [delegateTaskTool(port)] : const [];
+
+  @override
+  List<PluginReminder> reminders(DateTime requestTime) {
+    if (!active || activeTasks.isEmpty) return const [];
+    return [
+      PluginReminder(
+        30,
+        [
+          '已有后台任务，避免重复新建；可直接用 delegate_task（action=reply）追加要求或回答，或用 action=cancel 取消：',
+          for (final task in activeTasks)
+            'task_id=${task.id} status=${task.status.dbName} instruction=${_compactInstruction(task.instruction)}${task.status == AgentTaskStatus.needsInput ? '（正在等用户回答）' : ''}',
+        ].join('\n'),
+      ),
+    ];
+  }
+
+  static String _compactInstruction(String instruction) {
+    final line = instruction.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final chars = line.runes.toList();
+    return chars.length <= 80
+        ? line
+        : '${String.fromCharCodes(chars.take(79))}…';
+  }
 
   static const _prompt =
       '## 派活\n'
-      '角色设定、世界观与历史对话已在当前上下文中，日常聊天、角色扮演、写故事或画分镜严禁调用 delegate_task。\n'
-      '你工具列表里有的工具直接用，不用派活。仅当用户明确要求联网查现实信息、调用外部服务或读写工作区文件时，'
-      '才调用 delegate_task（action=start）交给后台助手去办，然后用你自己的口吻简短回应，比如「我去查一下，好了告诉你」。\n'
-      '收到「杂活回执」之前，只能说在处理，绝不能编造结果。回执里有问题时，'
-      '用你的口吻转问用户；用户回答后用 action=reply 把回答交回去。'
-      '用户说不用了，用 action=cancel 取消。';
+      '主业是自然聊天，非必要绝不调用工具。日常闲聊、情绪倾诉、角色扮演、写故事、画分镜，以及聊天中顺嘴提到的现实话题（电影、天气、日常梗等，只要用户没让你查），一律直接用当前上下文接话，严禁自发派活搜索，严禁为回忆人设或前文派活。仅当用户明确要求联网查资料、调外部服务、读写文件、管理 AIcove 设置/渠道/预设/角色/插件，或直接提问客观事实且不查无法作答时，才调用 delegate_task(action=start)。纯查询、对比、读资料类任务设 read_only=true。\n'
+      '任务说明须包含目标和必要细节，后台看不到当前聊天。start 会短暂等待；返回 done、failed 或 needs_input 时根据 summary、完整 detail 和 artifacts 回答或追问；返回 accepted 时只简短说明正在处理，不编造结果。'
+      '用 action=reply 回答或追加要求，用 action=cancel 取消已有任务。';
 }
 
 /// Builds the tool; the conversation and request key come from the runner's
@@ -141,9 +161,8 @@ class DelegateTaskRequestScope extends PluginRequestScope {
 AITool delegateTaskTool(DelegateTaskPort port) => AITool(
   name: delegateTaskToolName,
   description:
-      '仅在用户明确要求联网搜索现实信息、调用外部服务或读写工作区文件时，把任务交给后台助手（严禁用于查阅角色设定、前文剧情或角色扮演）。'
-      'start 派活（写清楚要做什么）；reply 回答助手的提问；cancel 取消任务。'
-      '只返回受理结果，不等任务完成；结果之后以「杂活回执」送达。',
+      '主业是自然聊天，非必要绝不调用工具。日常闲聊、情绪倾诉、角色扮演、写故事、画分镜，以及聊天中顺嘴提到的现实话题（电影、天气、日常梗等，只要用户没让你查），一律直接用当前上下文接话，严禁自发派活搜索，严禁为回忆人设或前文派活。仅当用户明确要求联网查资料、调外部服务、读写文件、管理 AIcove 设置/渠道/预设/角色/插件，或直接提问客观事实且不查无法作答时，才调用 delegate_task(action=start)。纯查询、对比、读资料类任务设 read_only=true。'
+      'start 派活；reply 回答或追加要求；cancel 取消。返回 done、failed 或 needs_input 时根据 summary、完整 detail 和 artifacts 回答或追问；返回 accepted 时只简短说明正在处理，不编造结果。',
   parameters: const {},
   inputSchema: const {
     'type': 'object',
@@ -154,10 +173,15 @@ AITool delegateTaskTool(DelegateTaskPort port) => AITool(
       },
       'instruction': {
         'type': 'string',
-        'description': 'start 时必填：完整的任务说明，包含需要的全部细节',
+        'description': 'start 时必填：完整的任务说明，后台看不到当前聊天；reply 时也可填追加要求',
       },
       'task_id': {'type': 'string', 'description': 'reply／cancel 时必填'},
-      'answer': {'type': 'string', 'description': 'reply 时必填：用户的回答'},
+      'read_only': {
+        'type': 'boolean',
+        'description':
+            'start 时可选（默认 false）：仅查资料或只读检查时设为 true，后台将禁止修改任何设置、角色、预设或文件',
+      },
+      'answer': {'type': 'string', 'description': 'reply 时填用户的回答或对进行中任务的追加要求'},
     },
     'required': ['action'],
   },
@@ -177,17 +201,22 @@ AITool delegateTaskTool(DelegateTaskPort port) => AITool(
             context.toolCallId,
           ].join('|');
     String text(String key) => (args[key] ?? '').toString().trim();
+    final replyText = text('answer').isNotEmpty
+        ? text('answer')
+        : text('instruction');
     final Map<String, Object?> result = switch (text('action')) {
       'start' when text('instruction').isNotEmpty => await port.start(
         conversationId: conversationId,
         instruction: text('instruction'),
         callKey: callKey,
+        readOnly: args['read_only'] == true,
       ),
-      'reply' when text('task_id').isNotEmpty && text('answer').isNotEmpty =>
+      'reply' || 'steer' || 'follow_up'
+          when text('task_id').isNotEmpty && replyText.isNotEmpty =>
         await port.reply(
           conversationId: conversationId,
           taskId: text('task_id'),
-          answer: text('answer'),
+          answer: replyText,
           callKey: callKey,
         ),
       'cancel' when text('task_id').isNotEmpty => await port.cancel(
@@ -201,32 +230,5 @@ AITool delegateTaskTool(DelegateTaskPort port) => AITool(
       },
     };
     return jsonEncode(result);
-  },
-);
-
-AITool steerTaskTool(TaskSteeringPort port) => AITool(
-  name: steerTaskToolName,
-  description:
-      '给已派出的任务追加要求或纠正方向，不新建任务。运行中会在下一模型轮接收；排队或等回答的任务下次执行时接收。不会代替回答提问，也不会重做已完成的操作。',
-  parameters: const {},
-  inputSchema: const {
-    'type': 'object',
-    'properties': {
-      'task_id': {'type': 'string', 'minLength': 1},
-      'instruction': {'type': 'string', 'minLength': 1},
-    },
-    'required': ['task_id', 'instruction'],
-  },
-  effect: ToolEffect.write,
-  handler: (args) async {
-    final conversation = ToolCallContext.current?.sessionId;
-    if (conversation == null) return jsonEncode({'error': '只能在聊天里派活'});
-    return jsonEncode(
-      await port.steer(
-        conversationId: conversation,
-        taskId: args['task_id'] as String,
-        instruction: args['instruction'] as String,
-      ),
-    );
   },
 );

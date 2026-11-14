@@ -203,6 +203,124 @@ class _LineAwareSelectionDelegate extends StaticSelectionContainerDelegate {
   }
 }
 
+class _FoldBubbleGestureHost extends StatefulWidget {
+  const _FoldBubbleGestureHost({
+    required this.onLongPress,
+    required this.expandWidth,
+    required this.builder,
+  });
+
+  final void Function(
+    RenderBox box,
+    Offset globalPosition,
+    String? selectedText,
+  )?
+  onLongPress;
+  final bool expandWidth;
+  final Widget Function(ValueChanged<SelectedContent?> onSelectionChanged)
+  builder;
+
+  @override
+  State<_FoldBubbleGestureHost> createState() => _FoldBubbleGestureHostState();
+}
+
+class _FoldBubbleGestureHostState extends State<_FoldBubbleGestureHost> {
+  Timer? _pressTimer;
+  int? _pointer;
+  Offset _downPosition = Offset.zero;
+  bool _longPressed = false;
+  bool _dragged = false;
+  String? _selected;
+
+  void _openMenuLater(Offset position, String? Function() selectedText) {
+    final onLongPress = widget.onLongPress;
+    if (onLongPress == null) return;
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      final box = context.findRenderObject() as RenderBox?;
+      if (box != null) onLongPress(box, position, selectedText());
+    });
+  }
+
+  void _reset() {
+    _pressTimer?.cancel();
+    _pressTimer = null;
+    _pointer = null;
+    _longPressed = false;
+    _dragged = false;
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (widget.onLongPress == null) return;
+    if (event.kind == PointerDeviceKind.mouse) {
+      if ((event.buttons & kSecondaryMouseButton) != 0) {
+        final selected = _selected;
+        _openMenuLater(event.position, () => selected);
+      }
+      return;
+    }
+    _reset();
+    _pointer = event.pointer;
+    _downPosition = event.position;
+    _pressTimer = Timer(kLongPressTimeout, () => _longPressed = true);
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer) return;
+    if ((event.position - _downPosition).distance <= kTouchSlop) return;
+    if (_longPressed) {
+      _dragged = true;
+    } else {
+      _reset();
+    }
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (event.pointer != _pointer) return;
+    final longPressed = _longPressed;
+    final dragged = _dragged;
+    final position = _downPosition;
+    _reset();
+    if (!longPressed) return;
+    _openMenuLater(position, () => dragged ? _selected : null);
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (event.pointer == _pointer) _reset();
+  }
+
+  @override
+  void dispose() {
+    _pressTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget content = widget.builder((selectedContent) {
+      final text = selectedContent?.plainText;
+      _selected = text == null || text.isEmpty ? null : text;
+    });
+    if (widget.expandWidth) {
+      content = SizedBox(
+        width: double.infinity,
+        child: Align(alignment: Alignment.topLeft, child: content),
+      );
+    }
+    if (widget.onLongPress == null) return content;
+    return Listener(
+      behavior: widget.expandWidth
+          ? HitTestBehavior.opaque
+          : HitTestBehavior.translucent,
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
+      child: content,
+    );
+  }
+}
+
 class _DocumentMessageRow extends StatelessWidget {
   static const double maxReadingWidth = 760;
   static const double userMaxWidthFactor = 0.85;
@@ -252,26 +370,26 @@ class _DocumentMessageRow extends StatelessWidget {
         ),
       );
     }
-    final row = Padding(
-      padding: EdgeInsets.fromLTRB(
-        reserveSelectionGutter ? selectionGutter : 16,
-        startsTurn ? turnGap : 0,
-        16,
-        0,
-      ),
+    final inner = reserveSelectionGutter
+        ? Padding(
+            padding: const EdgeInsets.only(left: selectionGutter),
+            child: content,
+          )
+        : content;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, startsTurn ? turnGap : 0, 16, 0),
       child: Align(
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: maxReadingWidth),
-          child: content,
+          child: selectionWrapper?.call(inner) ?? inner,
         ),
       ),
     );
-    return selectionWrapper?.call(row) ?? row;
   }
 }
 
-/// 头像列（头像 + 与气泡的间隔）
+/// 头像列（头像 + 与气泡的间隔）。
 ///
 /// showAvatar=false 时仍保留同宽占位，确保连续消息对齐不抖动。
 class _AvatarSlot extends StatelessWidget {
@@ -311,6 +429,7 @@ class _AvatarSlot extends StatelessWidget {
 /// 规则：
 /// - 默认双头像：左右都预留头像列宽度
 /// - 隐藏用户头像：仅预留左侧头像列
+/// - 头像与气泡首行竖直居中对齐，较矮的一方下移
 class _AvatarAwareBubbleRow extends StatelessWidget {
   static const double _kMinBubbleMaxWidth = 120.0;
   static const double _kFailedIndicatorWidth = 24.0; // 20 + 右侧间距 4
@@ -319,6 +438,7 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
   final String debugId;
   final bool isMe;
   final bool hideUserAvatar;
+  final bool hasVisibleAvatar;
   final bool showLeftSlot;
   final bool showRightSlot;
   final bool hasFailedIndicator;
@@ -327,11 +447,15 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
   final Widget rightSlot;
   final Widget bubbleChild;
 
+  /// 单行文字气泡的高度，用于把头像与首行对齐。
+  final double firstLineHeight;
+
   const _AvatarAwareBubbleRow({
     required this.debugId,
     this.selectionWrapper,
     required this.isMe,
     required this.hideUserAvatar,
+    required this.hasVisibleAvatar,
     required this.showLeftSlot,
     required this.showRightSlot,
     required this.hasFailedIndicator,
@@ -339,10 +463,17 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
     required this.leftSlot,
     required this.rightSlot,
     required this.bubbleChild,
+    required this.firstLineHeight,
   });
 
   @override
   Widget build(BuildContext context) {
+    final centerOffset = (_Avatar.kSize - firstLineHeight) / 2;
+    final bubbleTop = hasVisibleAvatar ? math.max(0.0, centerOffset) : 0.0;
+    final avatarTop = math.max(0.0, -centerOffset);
+    Widget slot(Widget child) => avatarTop == 0
+        ? child
+        : Padding(padding: EdgeInsets.only(top: avatarTop), child: child);
     return LayoutBuilder(
       builder: (context, constraints) {
         const leftReserve = _AvatarSlot.fallbackWidth;
@@ -379,14 +510,17 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
         final row = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (showLeftSlot) leftSlot,
+            if (showLeftSlot) slot(leftSlot),
             Flexible(
-              child: Align(
-                alignment: isMe ? Alignment.topRight : Alignment.topLeft,
-                child: bubbleArea,
+              child: Padding(
+                padding: EdgeInsets.only(top: bubbleTop),
+                child: Align(
+                  alignment: isMe ? Alignment.topRight : Alignment.topLeft,
+                  child: bubbleArea,
+                ),
               ),
             ),
-            if (showRightSlot) rightSlot,
+            if (showRightSlot) slot(rightSlot),
           ],
         );
         return selectionWrapper?.call(row) ?? row;
@@ -396,14 +530,14 @@ class _AvatarAwareBubbleRow extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  static const double kSize = 42.0;
+  static const double kSize = 38.0;
 
   final String? avatarUrl;
   const _Avatar({required this.avatarUrl});
   @override
   Widget build(BuildContext context) {
     final colors = context.moeColors;
-    // 头像仅 42px 显示，按目标像素降采样解码，避免原图（可达数百万像素）
+    // 头像仅 38px 显示，按目标像素降采样解码，避免原图（可达数百万像素）
     // 进 ImageCache 拖慢滚动。
     final avatarDecodeWidth = (kSize * MediaQuery.devicePixelRatioOf(context))
         .round();

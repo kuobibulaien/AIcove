@@ -6,14 +6,13 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../core/utils/message_formatter.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../ui/shared/widgets/index.dart';
 import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
+import 'chat_ui_settings_page.dart';
 import 'custom_skin_page.dart';
 import 'global_wallpaper_edit_page.dart';
-import '../widgets/chunk_punctuation_sheet.dart';
 
 bool get _isWindowsDesktop => defaultTargetPlatform == TargetPlatform.windows;
 
@@ -46,7 +45,6 @@ class UiSettingsPage extends ConsumerWidget {
     AppSettings settings,
   ) {
     final colors = context.moeColors;
-    final chunkConfig = settings.messageFormatConfig;
 
     return MoeSettingsContent(
       child: Builder(
@@ -56,17 +54,29 @@ class UiSettingsPage extends ConsumerWidget {
             MoeSettingsLayout.verticalListPadding,
           ),
           children: [
-            // ========== 外观：界面皮肤 / 深色模式 ==========
+            // ========== 聊天界面：字体、缩放、新会话默认与样式细节 ==========
+            MoeSettingsGroup(
+              children: [
+                MoeSettingsRow(
+                  key: const ValueKey('chat_ui_settings_entry'),
+                  label: '聊天界面',
+                  onTap: () => Navigator.of(context).push(
+                    ParallaxSlidePageRoute(page: const ChatUiSettingsPage()),
+                  ),
+                ),
+              ],
+            ),
+
+            // ========== 外观：主题色 / 壁纸 / 深色模式 ==========
             MoeSettingsGroup(
               title: '外观',
               children: [
-                _buildSkinPicker(ref, settings, colors),
+                _buildSkinPicker(context, ref, settings, colors),
                 _divider(colors),
                 _buildWallpaperPicker(context, ref, settings, colors),
                 _divider(colors),
                 MoeSettingsRow(
                   label: '深色模式',
-                  subtitle: settings.useSystemTheme ? '当前跟随系统设置' : '手动控制',
                   trailingType: MoeSettingsRowTrailing.switchControl,
                   switchValue: settings.isDarkMode,
                   onSwitchChanged: (value) {
@@ -97,69 +107,11 @@ class UiSettingsPage extends ConsumerWidget {
               children: [_buildMaterialPicker(context, ref, settings, colors)],
             ),
 
-            // ========== 显示：字体 / 缩放 / 窗口按钮 ==========
-            MoeSettingsGroup(
-              title: '显示',
-              children: [
-                _buildScaleSlider(
-                  colors: colors,
-                  label: '字体大小',
-                  value: settings.textScaleFactor.clamp(
-                    kMinTextScaleFactor,
-                    kMaxTextScaleFactor,
-                  ),
-                  min: kMinTextScaleFactor,
-                  max: kMaxTextScaleFactor,
-                  divisions: 8, // 0.05 步长：(1.2-0.8)/0.05 = 8
-                  onChanged: (value) => ref
-                      .read(appSettingsProvider.notifier)
-                      .setTextScaleFactor(value),
-                  onValueTap: () => _showScaleInputDialog(
-                    context,
-                    title: '输入字体缩放值',
-                    hint: '范围 $kMinTextScaleFactor ~ $kMaxTextScaleFactor',
-                    min: kMinTextScaleFactor,
-                    max: kMaxTextScaleFactor,
-                    current: settings.textScaleFactor.clamp(
-                      kMinTextScaleFactor,
-                      kMaxTextScaleFactor,
-                    ),
-                    onSave: (value) => ref
-                        .read(appSettingsProvider.notifier)
-                        .setTextScaleFactor(value),
-                  ),
-                ),
-                _divider(colors),
-                _buildScaleSlider(
-                  colors: colors,
-                  label: '界面缩放',
-                  value: settings.uiScaleFactor.clamp(
-                    kMinUiScaleFactor,
-                    kMaxUiScaleFactor,
-                  ),
-                  min: kMinUiScaleFactor,
-                  max: kMaxUiScaleFactor,
-                  divisions: 6, // 0.05 步长：(1.15-0.85)/0.05 = 6
-                  onChanged: (value) => ref
-                      .read(appSettingsProvider.notifier)
-                      .setUiScaleFactor(value),
-                  onValueTap: () => _showScaleInputDialog(
-                    context,
-                    title: '输入界面缩放值',
-                    hint: '范围 $kMinUiScaleFactor ~ $kMaxUiScaleFactor',
-                    min: kMinUiScaleFactor,
-                    max: kMaxUiScaleFactor,
-                    current: settings.uiScaleFactor.clamp(
-                      kMinUiScaleFactor,
-                      kMaxUiScaleFactor,
-                    ),
-                    onSave: (value) => ref
-                        .read(appSettingsProvider.notifier)
-                        .setUiScaleFactor(value),
-                  ),
-                ),
-                if (_isWindowsDesktop) ...[
-                  _divider(colors),
+            // ========== 窗口：仅 Windows ==========
+            if (_isWindowsDesktop)
+              MoeSettingsGroup(
+                title: '窗口',
+                children: [
                   _buildWindowControlsSidePicker(
                     context,
                     ref,
@@ -169,108 +121,14 @@ class UiSettingsPage extends ConsumerWidget {
                   _divider(colors),
                   _buildWindowsCloseBehaviorPicker(ref, settings, colors),
                 ],
-              ],
-            ),
+              ),
 
-            // ========== 新会话默认：单个聊天可在「聊天界面」里另设 ==========
-            MoeSettingsGroup(
-              title: '新会话默认',
-              children: [
-                MoeSettingsRow(
-                  label: '样式',
-                  subtitle: '单个聊天可在「聊天界面」里另外设置',
-                  trailingType: MoeSettingsRowTrailing.custom,
-                  trailing: MoeSegmentedControl<ChatDisplayStyle>(
-                    key: const ValueKey('chat_display_style_toggle'),
-                    expanded: false,
-                    value: settings.chatDisplayStyle,
-                    segments: const [
-                      MoeSegment(
-                        value: ChatDisplayStyle.bubble,
-                        label: '气泡',
-                      ),
-                      MoeSegment(
-                        value: ChatDisplayStyle.document,
-                        label: '文档',
-                      ),
-                    ],
-                    onChanged: (style) => ref
-                        .read(appSettingsProvider.notifier)
-                        .setChatDisplayStyle(style),
-                  ),
-                ),
-                MoeSettingsRow(
-                  key: const ValueKey('default_chunking_switch'),
-                  label: '消息分段',
-                  subtitle: '气泡样式下长回复拆成多条气泡',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: chunkConfig.enableChunking,
-                  onSwitchChanged: (value) => ref
-                      .read(appSettingsProvider.notifier)
-                      .updateMessageFormatConfig(
-                        chunkConfig.copyWith(enableChunking: value),
-                      ),
-                ),
-                MoeSettingsRow(
-                  key: const ValueKey('default_hide_user_avatar_switch'),
-                  label: '隐藏用户头像',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: settings.hideUserAvatar,
-                  onSwitchChanged: ref
-                      .read(appSettingsProvider.notifier)
-                      .setHideUserAvatar,
-                ),
-                MoeSettingsRow(
-                  key: const ValueKey('default_expand_audio_switch'),
-                  label: '语音消息默认展开文字',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: settings.expandAudioText,
-                  onSwitchChanged: ref
-                      .read(appSettingsProvider.notifier)
-                      .setExpandAudioText,
-                ),
-              ],
-            ),
-
-            // ========== 消息分段：所有聊天共用 ==========
-            MoeSettingsGroup(
-              title: '消息分段',
-              children: [
-                MoeSettingsRow(
-                  key: const ValueKey('chunk_punctuation_set_row'),
-                  label: '分段标点',
-                  trailingType: MoeSettingsRowTrailing.text,
-                  detailText: _activeSetName(chunkConfig),
-                  onTap: () => showChunkPunctuationSheet(context),
-                ),
-                MoeSettingsRow(
-                  key: const ValueKey('filter_punctuation_switch'),
-                  label: '省略句末标点',
-                  subtitle: '分段后去掉每段末尾的句号、逗号等',
-                  trailingType: MoeSettingsRowTrailing.switchControl,
-                  switchValue: chunkConfig.filterPunctuation,
-                  onSwitchChanged: (value) => ref
-                      .read(appSettingsProvider.notifier)
-                      .updateMessageFormatConfig(
-                        chunkConfig.copyWith(filterPunctuation: value),
-                      ),
-                ),
-              ],
-            ),
-
-            // ========== 高级：自定义皮肤（刻意放在页底） ==========
+            // ========== 高级 ==========
             MoeSettingsGroup(
               title: '高级',
               children: [
                 MoeSettingsRow(
-                  label: '自定义皮肤',
-                  onTap: () => Navigator.of(
-                    context,
-                  ).push(ParallaxSlidePageRoute(page: const CustomSkinPage())),
-                ),
-                MoeSettingsRow(
                   label: '恢复默认界面设置',
-                  subtitle: '界面被改乱时用，聊天记录不受影响',
                   trailingType: MoeSettingsRowTrailing.none,
                   onTap: () => _confirmResetInterface(context, ref),
                 ),
@@ -282,12 +140,6 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  String _activeSetName(MessageFormatConfig config) {
-    final set = config.activeChunkPunctuationSet;
-    if (set == null) return '';
-    return chunkPunctuationSetName(set, config.chunkPunctuationSets.indexOf(set));
-  }
-
   Future<void> _confirmResetInterface(
     BuildContext context,
     WidgetRef ref,
@@ -296,7 +148,7 @@ class UiSettingsPage extends ConsumerWidget {
       context: context,
       title: '恢复默认界面设置',
       message:
-          '深浅色、材质、皮肤、全局壁纸、缩放、聊天样式、分段和思维链显示会回到新装时的样子。\n'
+          '深浅色、材质、主题色、全局壁纸、缩放、聊天样式、分段和思维链显示会回到新装时的样子。\n'
           '聊天记录、角色、各聊天自己设的样式和壁纸、模型和渠道、你的资料、导入过的壁纸都会保留。',
       cancelText: '取消',
       confirmText: '恢复',
@@ -326,34 +178,45 @@ class UiSettingsPage extends ConsumerWidget {
     );
   }
 
-  /// 界面皮肤选择块：内置皮肤；当前为自定义皮肤时额外显示自定义格。
+  /// 主题色选择块：内置配色加末尾「自定义」，一行三格与下方壁纸格同宽；
+  /// 点「自定义」切过去并进入调色页。
   Widget _buildSkinPicker(
+    BuildContext context,
     WidgetRef ref,
     AppSettings settings,
     MoeColors colors,
   ) {
     final current = settings.interfaceSkin;
-    final options = [
-      ...InterfaceSkin.presets,
-      if (current == InterfaceSkin.custom) InterfaceSkin.custom,
-    ];
+    final notifier = ref.read(appSettingsProvider.notifier);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _blockLabel(colors, '界面皮肤'),
+          _blockLabel(colors, '主题色'),
           const SizedBox(height: 10),
           Row(
             children: [
-              for (final skin in options)
+              for (final skin in InterfaceSkin.values)
                 Expanded(
                   child: _buildSkinTile(
-                    ref,
                     settings,
                     colors,
                     skin,
                     isSelected: skin == current,
+                    onTap: skin == InterfaceSkin.custom
+                        ? () {
+                            if (current != skin)
+                              notifier.setInterfaceSkin(skin);
+                            Navigator.of(context).push(
+                              ParallaxSlidePageRoute(
+                                page: const CustomSkinPage(),
+                              ),
+                            );
+                          }
+                        : skin == current
+                        ? null
+                        : () => notifier.setInterfaceSkin(skin),
                   ),
                 ),
             ],
@@ -364,19 +227,18 @@ class UiSettingsPage extends ConsumerWidget {
   }
 
   Widget _buildSkinTile(
-    WidgetRef ref,
     AppSettings settings,
     MoeColors colors,
     InterfaceSkin skin, {
     required bool isSelected,
+    required VoidCallback? onTap,
   }) {
     final resolved = settings.copyWith(interfaceSkin: skin);
-    final lightBg = resolved.lightChatBackground ?? moeSurface;
+    const lightBg = moeSurface;
     final borderWidth = isSelected ? 2.0 : 1.0;
     return GestureDetector(
-      onTap: isSelected
-          ? null
-          : () => ref.read(appSettingsProvider.notifier).setInterfaceSkin(skin),
+      key: ValueKey('interface-skin-${skin.value}'),
+      onTap: onTap,
       child: Column(
         children: [
           Padding(
@@ -588,8 +450,7 @@ class UiSettingsPage extends ConsumerWidget {
                         image: preview,
                         fit: BoxFit.cover,
                         alignment: alignment,
-                        errorBuilder: (_, __, ___) =>
-                            const MoeInsetSurface(),
+                        errorBuilder: (_, __, ___) => const MoeInsetSurface(),
                       ),
                     // 选中且可编辑时角上提示「再点一下进入调节」。
                     if (isSelected && editable)
@@ -755,87 +616,6 @@ class UiSettingsPage extends ConsumerWidget {
     }
   }
 
-  /// 数值滑块块：标题 + 可点击数值 + 滑块 + 可选说明
-  Widget _buildScaleSlider({
-    required MoeColors colors,
-    required String label,
-    required double value,
-    required double min,
-    required double max,
-    required int divisions,
-    required ValueChanged<double> onChanged,
-    required VoidCallback onValueTap,
-    String? note,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(child: _blockLabel(colors, label)),
-              GestureDetector(
-                onTap: onValueTap,
-                child: MoeButtonSurface(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  radius: 6,
-                  tintColor: colors.accentColor.withValues(alpha: 0.15),
-                  child: Text(
-                    value.toStringAsFixed(2),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: MoeFontWeights.emphasis,
-                      color: colors.accentColor,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          MoeSlider(
-            value: value,
-            min: min,
-            max: max,
-            divisions: divisions,
-            onChanged: onChanged,
-          ),
-          if (note != null)
-            Text(note, style: TextStyle(fontSize: 12, color: colors.muted)),
-        ],
-      ),
-    );
-  }
-
-  /// 弹窗手动输入缩放值
-  void _showScaleInputDialog(
-    BuildContext context, {
-    required String title,
-    required String hint,
-    required double min,
-    required double max,
-    required double current,
-    required Future<void> Function(double) onSave,
-  }) {
-    showMoeAutoSaveTextEditor(
-      context: context,
-      title: title,
-      initialValue: current.toStringAsFixed(2),
-      hint: hint,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      onSave: (text) async {
-        final value = double.tryParse(text);
-        if (value == null || !value.isFinite || value < min || value > max) {
-          throw const FormatException('请输入范围内的数值');
-        }
-        await onSave(value);
-      },
-    );
-  }
-
   /// Windows 窗口按钮位置（仿 Mac 三点）
   Widget _buildWindowControlsSidePicker(
     BuildContext context,
@@ -849,11 +629,6 @@ class UiSettingsPage extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _blockLabel(colors, '窗口按钮位置'),
-          const SizedBox(height: 2),
-          Text(
-            '窗口关闭、最小化、最大化按钮所在侧',
-            style: TextStyle(fontSize: 13, color: colors.muted),
-          ),
           const SizedBox(height: 10),
           MoeSegmentedControl<WindowControlButtonSide>(
             value: settings.windowsWindowControlsSide,

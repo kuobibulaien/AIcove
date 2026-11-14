@@ -36,7 +36,8 @@ int renderedContextTokens(
             jsonEncode(
               Map<String, dynamic>.of(m)
                 ..remove('content')
-                ..remove('role'),
+                ..remove('role')
+                ..remove(presetHistoryMarker),
             ),
           );
     }) +

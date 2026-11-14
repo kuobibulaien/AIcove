@@ -1,6 +1,6 @@
 # AIcove 协作说明
 
-所有 agent（Claude Code、Codex、Pi、Gemini 等）的共用入口。AIcove 是本地运行、隐私优先的 AI 陪伴聊天客户端（Flutter）＋用户自部署的云同步服务（`cloud_backend/`）；不是治疗产品，不做心理监控或内容审核（ADR0066）；不支持 Web 端。
+所有 agent（Claude Code、Codex、Pi、Gemini 等）的共用入口。AIcove 是本地运行、隐私优先的 AI 陪伴聊天客户端（Flutter）＋用户自部署的云同步服务（`cloud_backend/`）；不支持 Web 端。
 
 ## 资料在哪
 

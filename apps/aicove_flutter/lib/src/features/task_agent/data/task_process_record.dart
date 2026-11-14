@@ -25,6 +25,7 @@ class TaskProcessRecord {
       transcript: json['transcript'] as String,
       lastLog: json['last_log'] as String? ?? '',
       question: json['question'] as String?,
+      readOnly: json['read_only'] as bool? ?? false,
       messages: (json['messages'] as List?)
           ?.map((m) => Map<String, dynamic>.from(m as Map))
           .toList(),
@@ -38,6 +39,7 @@ class TaskProcessRecord {
     await temp.writeAsString(
       jsonEncode({
         'transcript': checkpoint.transcript,
+        'read_only': checkpoint.readOnly,
         'last_log': checkpoint.lastLog,
         if (checkpoint.question != null) 'question': checkpoint.question,
         if (checkpoint.messages != null) 'messages': checkpoint.messages,
@@ -67,9 +69,13 @@ class TaskCheckpoint {
   const TaskCheckpoint({
     required this.transcript,
     this.lastLog = '',
+    this.readOnly = false,
     this.question,
     this.messages,
   });
+
+  /// Restricts every continuation of this task to read-only tools.
+  final bool readOnly;
 
   /// What the next run receives as its brief.
   final String transcript;

@@ -1,3 +1,4 @@
+import '../../../core/sync/conversation_ownership.dart';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,7 +9,6 @@ import '../../assistant/domain/assistant_onboarding.dart';
 import '../../background_agent/background_agent_service.dart';
 import '../../chat/chat_providers.dart';
 import '../../chat/conversation_providers.dart';
-import '../../chat/domain/role_agent_mode.dart';
 import '../../chat/services/chat_history_store.dart';
 import '../../memory/providers/memory_providers.dart';
 import '../../settings/app_settings.dart';
@@ -78,14 +78,12 @@ Future<BackgroundContextSummarizer> _summarizer(
   );
 }
 
-/// 对话摘要：聊天模式的角色按陪伴整理；AIcove酱与工具模式按任务进度整理（ADR0097）。
+/// 对话摘要：普通角色按陪伴整理；AIcove酱按任务进度整理。
 final contextSummarizerProvider = FutureProvider<ContextSummarizerPort>(
   (ref) => _summarizer(
     ref,
     isCompanion: (owner) async {
-      if (owner == kAicoveAssistantId) return false;
-      final row = await ref.read(conversationRepositoryProvider).getById(owner);
-      return RoleAgentMode.fromValue(row?.agentMode) != RoleAgentMode.tool;
+      return owner != kAicoveAssistantId;
     },
   ),
 );
@@ -131,8 +129,25 @@ final contextManagerProvider = Provider<ContextManager>((ref) {
 
 /// 界面使用的手动压缩端口。
 final manualCompactionProvider = Provider<ManualCompactionPort>(
-  (ref) => ref.watch(contextManagerProvider),
+  (ref) => _ClaimingManualCompaction(ref.watch(contextManagerProvider)),
 );
+
+class _ClaimingManualCompaction implements ManualCompactionPort {
+  _ClaimingManualCompaction(this.delegate);
+  final ManualCompactionPort delegate;
+  @override
+  Future<ManualCompactionDraft> prepare(String ownerId, {required void Function(int, int) onProgress, required bool Function() isCancelled}) => delegate.prepare(ownerId, onProgress: onProgress, isCancelled: isCancelled);
+  @override
+  Future<ContextSummary> commit(ManualCompactionDraft draft, String summary) async {
+    final result = await delegate.commit(draft, summary);
+    await ConversationOwnership.claim(draft.snapshot.ownerId);
+    return result;
+  }
+  @override
+  Future<ContextSummary?> current(String ownerId) => delegate.current(ownerId);
+  @override
+  Future<void> undo(String ownerId) => delegate.undo(ownerId);
+}
 
 /// 发送链路使用的上下文端口。
 final conversationContextProvider = Provider<ConversationContextPort>(

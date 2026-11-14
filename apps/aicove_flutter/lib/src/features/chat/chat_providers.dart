@@ -311,3 +311,5 @@ final modelFailoverPromptProvider = NotifierProvider<
 final modelFailoverPromptForProvider = Provider.family<ModelFailoverPromptRequest?, String>(
   (ref, conversationId) => ref.watch(modelFailoverPromptProvider.select((state) => state[conversationId])),
 );
+
+final conversationRemoteRunningNoticeProvider = StateProvider.family<String?, String>((ref, conversationId) => null);

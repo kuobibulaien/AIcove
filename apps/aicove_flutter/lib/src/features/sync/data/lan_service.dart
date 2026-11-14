@@ -91,6 +91,7 @@ class LanService implements LanSyncPort {
   final _nearby = <String, List<LanEndpoint>>{};
   final _pushedRecent = <String, String>{};
   final _pulledRecent = <String, String>{};
+  final _peerContextMemory = <String, bool>{};
   int _roundPushed = 0, _roundPulled = 0, _roundFailed = 0;
   double _roundProgress = 0;
   bool _roundComplete = true;
@@ -700,13 +701,20 @@ class LanService implements LanSyncPort {
   ) async {
     switch (body['method']) {
       case 'recent':
-        return repository.recentChanges();
+        return repository.recentChangesForPeer(
+          includeContextMemory: body['context_memory_sync'] == 1,
+        );
       case 'manifest':
         final after = body['after'] as String? ?? '';
         // Later pages still drain committed DB edits, but need not fingerprint
         // every unchanged preference/preset again for the same manifest walk.
         await repository.capture(scanExternal: after.isEmpty);
-        return repository.manifest(after: after);
+        return body['context_memory_sync'] == 1
+            ? repository.manifestForPeer(
+                after: after,
+                includeContextMemory: true,
+              )
+            : repository.manifest(after: after);
       case 'missing':
         final hashes = (body['hashes'] as List).cast<String>();
         if (hashes.length > 200 ||
@@ -1018,7 +1026,10 @@ class LanService implements LanSyncPort {
     double startProgress = 0.06,
     double endProgress = 0.10,
   }) async {
-    final page = await transport.rpc(peer, {'method': 'recent'});
+    final page = await transport.rpc(peer, {
+      'method': 'recent',
+      if (_peerContextMemory[peer.id] == true) 'context_memory_sync': 1,
+    });
     return _pullRecentWithPage(
       peer,
       page,
@@ -1083,7 +1094,9 @@ class LanService implements LanSyncPort {
     var ok = true;
     final hashes = {
       for (final item in page['items'] as List)
-        ...(item['hashes'] as List).cast<String>(),
+        if (_peerContextMemory[peer.id] == true ||
+            !lanContextMemoryKinds.contains(item['kind']))
+          ...(item['hashes'] as List).cast<String>(),
     }.toList();
     final missing = <String>{};
     for (var offset = 0; offset < hashes.length; offset += 200) {
@@ -1138,6 +1151,13 @@ class LanService implements LanSyncPort {
           if (peer.incoming && !peer.approved) continue;
           final status = await _status(peer);
           if (status['approved'] != true) continue;
+          final includeContextMemory = status['context_memory_sync'] == 1;
+          if (_peerContextMemory[peer.id] != includeContextMemory) {
+            _pulledRecent.remove(peer.id);
+            _pushedRecent.remove(peer.id);
+            _lastFullSyncAt.remove(peer.id);
+          }
+          _peerContextMemory[peer.id] = includeContextMemory;
           if (!peer.approved) {
             peer.approved = true;
             await peers.save();
@@ -1160,6 +1180,7 @@ class LanService implements LanSyncPort {
             final localRecent = await repository.recentChanges();
             final remoteRecent = await transport.rpc(peer, {
               'method': 'recent',
+              if (includeContextMemory) 'context_memory_sync': 1,
             });
             final localRev = localRecent['revision'];
             final remoteRev = remoteRecent['revision'];
@@ -1192,7 +1213,10 @@ class LanService implements LanSyncPort {
           }
           localBaseline = await repository.recentChanges();
           if (status['recent_changes'] == 1) {
-            remoteBaseline = await transport.rpc(peer, {'method': 'recent'});
+            remoteBaseline = await transport.rpc(peer, {
+              'method': 'recent',
+              if (includeContextMemory) 'context_memory_sync': 1,
+            });
           }
           var complete = await _pushRecent(
             peer,
@@ -1220,6 +1244,7 @@ class LanService implements LanSyncPort {
             final page = await transport.rpc(peer, {
               'method': 'manifest',
               'after': after,
+              if (includeContextMemory) 'context_memory_sync': 1,
             });
             final items = page['items'] as List;
             if (items.length > 200) throw const LanSyncFailure('同步摘要过大');
@@ -1268,7 +1293,12 @@ class LanService implements LanSyncPort {
             );
             final next = page['after'] as String;
             if (page['has_more'] != true) break;
-            if (next.compareTo(after) <= 0) {
+            if (compareLanManifestCursors(
+                  next,
+                  after,
+                  includeContextMemory: includeContextMemory,
+                ) <=
+                0) {
               throw const LanSyncFailure('同步摘要分页无效');
             }
             after = next;
@@ -1309,7 +1339,12 @@ class LanService implements LanSyncPort {
             if (after.isNotEmpty && await repository.hasPendingChanges()) {
               await repository.capture(scanExternal: false);
             }
-            final page = await repository.manifest(after: after);
+            final page = includeContextMemory
+                ? await repository.manifestForPeer(
+                    after: after,
+                    includeContextMemory: true,
+                  )
+                : await repository.manifest(after: after);
             final items = page['items'] as List;
             if (after.isEmpty && page['total'] is int) {
               pushTotal = page['total'] as int;

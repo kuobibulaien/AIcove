@@ -27,7 +27,10 @@ const _userId = 'user_case';
 const _assistantText = '[assistant] 用于校验气泡最大宽度约束';
 const _userText = '[user] 用于校验气泡最大宽度约束';
 
-AppSettings _buildSettings({required bool hideUserAvatar}) {
+AppSettings _buildSettings({
+  required bool hideUserAvatar,
+  bool singleAvatarPerTurn = false,
+}) {
   return AppSettings(
     ttsEnabled: true,
     defaultModelName: 'deepseek-chat',
@@ -58,6 +61,7 @@ AppSettings _buildSettings({required bool hideUserAvatar}) {
     useSystemTheme: true,
     accentColor: 'FC96AA',
     hideUserAvatar: hideUserAvatar,
+    singleAvatarPerTurn: singleAvatarPerTurn,
   );
 }
 
@@ -116,8 +120,13 @@ Widget _buildSingleBubbleHost({
   required double width,
   required Message message,
   bool isMe = false,
+  bool showAvatar = true,
+  bool singleAvatarPerTurn = false,
 }) {
-  final settings = _buildSettings(hideUserAvatar: hideUserAvatar);
+  final settings = _buildSettings(
+    hideUserAvatar: hideUserAvatar,
+    singleAvatarPerTurn: singleAvatarPerTurn,
+  );
   return ProviderScope(
     overrides: [
       appSettingsProvider
@@ -134,7 +143,7 @@ Widget _buildSingleBubbleHost({
               child: MessageBubble(
                 isMe: isMe,
                 message: message,
-                showAvatar: true,
+                showAvatar: showAvatar,
               ),
             ),
           ),
@@ -384,4 +393,118 @@ void main() {
     expect(find.byType(TypingDotsIndicator), findsOneWidget);
   });
 
+  testWidgets('bubble mode shows the avatar on every consecutive message', (tester) async {
+    final avatar = find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_Avatar',
+    );
+    for (final isMe in [false, true]) {
+      await tester.pumpWidget(
+        _buildSingleBubbleHost(
+          hideUserAvatar: false,
+          width: 360,
+          isMe: isMe,
+          showAvatar: false,
+          message: Message.text(
+            id: 'follow_up_$isMe',
+            role: isMe ? 'user' : 'assistant',
+            content: '同一发送方的第二条',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(avatar, findsOneWidget, reason: 'isMe=$isMe');
+    }
+  });
+
+  testWidgets('single-line bubble is centered on its avatar and top-aligned at default size', (tester) async {
+    final avatar = find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_Avatar',
+    );
+    for (final scale in [1.0, 1.5]) {
+      await tester.pumpWidget(
+        MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+          child: _buildSingleBubbleHost(
+            hideUserAvatar: false,
+            width: 360,
+            message: Message.text(
+              id: 'single_line',
+              role: 'assistant',
+              content: '单行',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final bubbleCenter = tester
+          .getCenter(find.byKey(const ValueKey('message_bubble_single_line')))
+          .dy;
+      expect(
+        tester.getCenter(avatar).dy,
+        moreOrLessEquals(bubbleCenter, epsilon: 0.01),
+        reason: 'scale=$scale',
+      );
+      if (scale == 1.0) {
+        // 默认字号下单行气泡与头像等高，顶边和底边重合。
+        final bubbleRect = tester.getRect(
+          find.byKey(const ValueKey('message_bubble_single_line')),
+        );
+        final avatarRect = tester.getRect(avatar);
+        expect(avatarRect.top, moreOrLessEquals(bubbleRect.top, epsilon: 0.01));
+        expect(
+          avatarRect.bottom,
+          moreOrLessEquals(bubbleRect.bottom, epsilon: 0.01),
+        );
+      }
+    }
+  });
+
+  testWidgets('singleAvatarPerTurn shows avatar only when showAvatar is true and keeps width aligned', (tester) async {
+    final avatar = find.byWidgetPredicate(
+      (widget) => widget.runtimeType.toString() == '_Avatar',
+    );
+    for (final isMe in [false, true]) {
+      final firstId = 'single_turn_first_$isMe';
+      await tester.pumpWidget(
+        _buildSingleBubbleHost(
+          hideUserAvatar: false,
+          singleAvatarPerTurn: true,
+          width: 360,
+          isMe: isMe,
+          showAvatar: true,
+          message: Message.text(
+            id: firstId,
+            role: isMe ? 'user' : 'assistant',
+            content: '同一发送方的第一条',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(avatar, findsOneWidget, reason: 'first isMe=$isMe');
+      final firstWidth = _bubbleMaxWidth(tester, firstId);
+
+      final followId = 'single_turn_follow_$isMe';
+      await tester.pumpWidget(
+        _buildSingleBubbleHost(
+          hideUserAvatar: false,
+          singleAvatarPerTurn: true,
+          width: 360,
+          isMe: isMe,
+          showAvatar: false,
+          message: Message.text(
+            id: followId,
+            role: isMe ? 'user' : 'assistant',
+            content: '同一发送方的第二条',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(avatar, findsNothing, reason: 'follow-up isMe=$isMe');
+      expect(
+        _bubbleMaxWidth(tester, followId),
+        firstWidth,
+        reason: 'width stays aligned isMe=$isMe',
+      );
+    }
+  });
 }

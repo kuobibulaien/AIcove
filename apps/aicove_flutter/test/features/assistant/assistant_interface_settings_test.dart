@@ -96,15 +96,15 @@ void main() {
     expect(result['change'], isNot('没有变化'));
     expect(now().interfaceSkin, InterfaceSkin.custom);
 
-    await set('appearance.chat_background', ChatBackgroundColor.warm.value);
-    expect(now().chatBackgroundColor, ChatBackgroundColor.warm);
+    await set('appearance.dark_accent_color', 'B39DDB');
+    expect(now().darkAccentColorHex, 'B39DDB');
 
-    // The color change cannot be undone over the later background change.
+    // The color change cannot be undone over the later dark color change.
     final entries = await journal.recent();
     await expectLater(journal.undo(entries[1].id), throwsStateError);
 
     await journal.undo(entries[0].id);
-    expect(now().chatBackgroundColor, ChatBackgroundColor.defaultColor);
+    expect(now().darkAccentColorHex, isNull);
     await journal.undo(entries[1].id);
     expect(now().interfaceSkin, skin);
     expect(now().accentColor, accent);

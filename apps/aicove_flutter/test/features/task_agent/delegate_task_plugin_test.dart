@@ -4,16 +4,21 @@ import 'package:aicove_flutter/src/features/plugins/data/tool_result_store.dart'
 import 'package:aicove_flutter/src/features/plugins/domain/handlers/ai_tool.dart';
 import 'package:aicove_flutter/src/features/task_agent/application/delegate_task_plugin.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:aicove_flutter/src/features/task_agent/domain/agent_task.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 
 class _Port implements DelegateTaskPort {
   final List<String> calls = [];
+  bool? lastReadOnly;
 
   @override
   Future<Map<String, Object?>> start({
     required String conversationId,
     required String instruction,
     required String? callKey,
+    bool readOnly = false,
   }) async {
+    lastReadOnly = readOnly;
     calls.add('start $conversationId $instruction $callKey');
     return {'task_id': 't1', 'status': 'accepted'};
   }
@@ -40,47 +45,108 @@ class _Port implements DelegateTaskPort {
   }
 }
 
-class _SteeringPort extends _Port implements TaskSteeringPort {
-  @override
-  Future<Map<String, Object?>> steer({
-    required String conversationId,
-    required String taskId,
-    required String instruction,
-  }) async {
-    calls.add('steer $conversationId $taskId $instruction');
-    return {'task_id': taskId, 'status': 'steering_accepted'};
-  }
-}
-
 void main() {
-  test(
-    'steering tool forwards the current role and additional requirements',
-    () async {
-      final port = _SteeringPort();
-      final tools = DelegateTaskRequestScope(port, active: true).tools();
-      expect(tools.map((t) => t.name), [delegateTaskToolName, 'steer_task']);
-      const context = ToolCallContext(
-        sessionId: 'c',
-        turnId: 'run',
-        round: 1,
-        toolCallId: 'steer',
-      );
-      final result = await context.run(
-        () => tools.last.handler({'task_id': 't', 'instruction': '只输出 CSV'}),
-      );
-      expect(jsonDecode(result!)['status'], 'steering_accepted');
-      expect(port.calls, ['steer c t 只输出 CSV']);
-    },
-  );
-  test('delegation tools alone do not pull in the result reader', () {
-    expect(ToolResultStore.shortReplyTools, {
-      delegateTaskToolName,
-      steerTaskToolName,
-    });
-    expect(
-      ToolResultStore.wantsReader([delegateTaskToolName, steerTaskToolName]),
-      isFalse,
+  test('reply and legacy aliases forward additional requirements', () async {
+    final port = _Port();
+    final tools = DelegateTaskRequestScope(port, active: true).tools();
+    expect(tools.map((t) => t.name), [delegateTaskToolName]);
+    expect(DelegateTaskRequestScope(port, active: false).tools(), isEmpty);
+    const context = ToolCallContext(
+      sessionId: 'c',
+      turnId: 'r',
+      round: 1,
+      toolCallId: 'reply',
     );
+    for (final action in ['reply', 'steer', 'follow_up']) {
+      await context.run(
+        () => tools.single.handler({
+          'action': action,
+          'task_id': 't',
+          'instruction': '只输出 CSV',
+        }),
+      );
+    }
+    expect(port.calls, List.filled(3, 'reply t 只输出 CSV'));
+    await context.run(
+      () => tools.single.handler({
+        'action': 'reply',
+        'task_id': 't',
+        'instruction': '旧要求',
+        'answer': '新回答',
+      }),
+    );
+    expect(port.calls.last, 'reply t 新回答');
+  });
+
+  test('read_only is forwarded only for start', () async {
+    final port = _Port();
+    const context = ToolCallContext(
+      sessionId: 'c',
+      turnId: 'r',
+      round: 1,
+      toolCallId: 'start',
+    );
+    await context.run(
+      () => delegateTaskTool(
+        port,
+      ).handler({'action': 'start', 'instruction': '查资料', 'read_only': true}),
+    );
+    expect(port.lastReadOnly, isTrue);
+    await context.run(
+      () => delegateTaskTool(
+        port,
+      ).handler({'action': 'start', 'instruction': '改配置'}),
+    );
+    expect(port.lastReadOnly, isFalse);
+  });
+
+  test('active task reminder is compact and suggests reuse', () {
+    final now = DateTime(2026);
+    final task = AgentTask(
+      id: 't1',
+      requestKey: null,
+      conversationId: 'c',
+      source: AgentTaskSource.chat,
+      instruction: '第一行\n${List.filled(90, '字').join()}',
+      status: AgentTaskStatus.needsInput,
+      frozen: false,
+      notify: TaskReceiptNotify.always,
+      receiptSeq: 1,
+      questionReceiptId: 'q',
+      pendingReceipt: null,
+      sideEffectUncertain: false,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final scope = DelegateTaskRequestScope(
+      _Port(),
+      active: true,
+      activeTasks: [task],
+    );
+    final reminder = scope.reminders(now).single;
+    expect(reminder.content, contains('task_id=t1 status=needs_input'));
+    expect(reminder.content, contains('正在等用户回答'));
+    expect(reminder.content, contains('action=reply'));
+    expect(
+      reminder.content.split('instruction=').last.split('（').first.runes.length,
+      80,
+    );
+    expect(
+      DelegateTaskRequestScope(
+        _Port(),
+        active: false,
+        activeTasks: [task],
+      ).reminders(now),
+      isEmpty,
+    );
+    expect(
+      DelegateTaskRequestScope(_Port(), active: true).reminders(now),
+      isEmpty,
+    );
+  });
+  test('delegation tools alone do not pull in the result reader', () {
+    expect(ToolResultStore.shortReplyTools, {delegateTaskToolName});
+    expect(ToolResultStore.wantsReader([delegateTaskToolName]), isFalse);
     expect(
       ToolResultStore.wantsReader([delegateTaskToolName, 'web_search']),
       isTrue,
@@ -89,8 +155,8 @@ void main() {
 
   test('delegation description excludes roleplay and prior context', () {
     final description = delegateTaskTool(_Port()).description;
-    expect(description, contains('严禁用于查阅角色设定、前文剧情或角色扮演'));
-    expect(description, contains('调用外部服务'));
+    expect(description, contains('严禁为回忆人设或前文派活'));
+    expect(description, contains('调外部服务'));
   });
 
   test('office plugins are web search and MCP connectors', () {

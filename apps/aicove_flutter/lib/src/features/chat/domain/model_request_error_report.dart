@@ -1,3 +1,4 @@
+import '../../observability/model_request_ledger.dart';
 import 'dart:convert';
 
 import '../../../core/app_logger.dart';
@@ -119,6 +120,7 @@ class ModelRequestErrorReport {
     DateTime? roundStartedAt,
     required DateTime failedAt,
     required List<LogEntry> logEntries,
+    List<ModelRunRecord> modelRuns = const [],
   }) {
     final roundEntries = roundStartedAt == null
         ? const <LogEntry>[]
@@ -150,6 +152,17 @@ class ModelRequestErrorReport {
       for (final entry in roundEntries) {
         buffer.writeln(_formatEntry(entry));
       }
+    }
+    if (modelRuns.isNotEmpty) {
+      buffer.writeln(formatModelRuns(modelRuns));
+    }
+    return buffer.toString().trimRight();
+  }
+
+  static String formatModelRuns(List<ModelRunRecord> runs) {
+    final buffer = StringBuffer('== 跨端模型请求记录 ==\n');
+    for (final run in runs) {
+      buffer.writeln('${run.deviceName} ${DateTime.fromMillisecondsSinceEpoch(run.startedAtMs).toIso8601String()} ${run.purpose} ${run.model} ${run.status} ${run.durationMs ?? '-'}ms ${run.errorBrief ?? ''}');
     }
     return buffer.toString().trimRight();
   }

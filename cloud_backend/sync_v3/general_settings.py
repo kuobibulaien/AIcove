@@ -16,8 +16,9 @@ LOCAL_GENERAL_SETTINGS = {  # Keep in sync with localGeneralSettings (Dart).
     'global_wallpaper_custom_image', 'global_wallpaper_mask',
     'global_wallpaper_customs', 'global_wallpaper_custom_id',
     'global_wallpaper_styles', 'is_dark_mode', 'use_system_theme',
-    'hide_user_avatar', 'expand_audio_text', 'skip_vision_compat_dialog',
-    'interface_skin', 'accent_color', 'glass_effect_enabled',
+    'hide_user_avatar', 'single_avatar_per_turn',
+    'expand_audio_text', 'skip_vision_compat_dialog',
+    'interface_skin', 'accent_color', 'dark_accent_color', 'glass_effect_enabled',
     'glass_blur_sigma', 'frosted_blur_sigma', 'glass_tint_fill',
     'frosted_tint_fill', 'use_liquid_glass', 'user_name', 'user_avatar',
 }

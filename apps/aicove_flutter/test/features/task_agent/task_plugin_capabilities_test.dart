@@ -15,6 +15,7 @@ class _Plugin extends BasePlugin {
     this.events, {
     this.fail = '',
     this.on = true,
+    this.usable = true,
     this.exposure = PluginExposure.roleExplicit,
   }) : super(
          metadata: PluginMetadata(
@@ -30,6 +31,7 @@ class _Plugin extends BasePlugin {
   final List<String> events;
   final String fail;
   final bool on;
+  final bool usable;
   final PluginExposure exposure;
 
   @override
@@ -58,7 +60,7 @@ class _Scope extends PluginRequestScope {
   @override
   String get pluginName => plugin.name;
   @override
-  bool get active => true;
+  bool get active => plugin.usable;
   @override
   Future<String?> prompt(PluginRequestContext ctx) async {
     plugin.events.add('$pluginId:prompt:${ctx.conversationId}');
@@ -96,8 +98,9 @@ void main() {
           _Plugin('web_search', events, exposure: PluginExposure.roleDefault),
           _Plugin('mcp:work', events),
           _Plugin('pkg:work', events),
+          _Plugin('trigger', events),
         ],
-        {'web_search', 'mcp:work', 'pkg:work'},
+        {'web_search', 'mcp:work', 'pkg:work', 'trigger'},
         inputs: createPluginRequestInputs(),
       );
       expect(result.toolOwners, {
@@ -113,8 +116,16 @@ void main() {
           '$id:dispose',
         ],
       ]);
-      expect(result.prompts.keys, ['web_search', 'mcp:work', 'pkg:work']);
-      expect((await result.tools.last.invoke({})).text, 'pkg:work');
+      expect(result.prompts.keys, [
+        'web_search',
+        'mcp:work',
+        'pkg:work',
+      ]);
+      expect(
+        (await result.tools.firstWhere((t) => t.name == 'pkg_work').invoke({}))
+            .text,
+        'pkg:work',
+      );
     },
   );
   test(
@@ -163,6 +174,51 @@ void main() {
       ]);
     },
   );
+
+  test('active discovery never prepares prompts or constructs tools', () async {
+    final events = <String>[];
+    final ids = await resolveActiveTaskPluginIds(
+      [
+        _Plugin('web_search', events),
+        _Plugin('mcp:ready', events),
+        _Plugin('mcp:unusable', events, usable: false),
+        _Plugin('pkg:ready', events),
+        _Plugin('trigger', events),
+        _Plugin('mcp:disabled', events, on: false, fail: 'factory'),
+        _Plugin('image', events, fail: 'factory'),
+      ],
+      {
+        'web_search',
+        'mcp:ready',
+        'mcp:unusable',
+        'pkg:ready',
+        'trigger',
+        'mcp:disabled',
+        'image',
+      },
+      inputs: createPluginRequestInputs(),
+    );
+    expect(ids, {'web_search', 'mcp:ready', 'pkg:ready'});
+    expect(events, [
+      for (final id in [
+        'web_search',
+        'mcp:ready',
+        'mcp:unusable',
+        'pkg:ready',
+      ]) ...['$id:factory', '$id:dispose'],
+    ]);
+  });
+
+  test('inactive capabilities construct neither tools nor prompts', () async {
+    final events = <String>[];
+    final result = await resolveTaskPluginCapabilities(
+      [_Plugin('mcp:unusable', events, usable: false, fail: 'prompt')],
+      {'mcp:unusable'},
+      inputs: createPluginRequestInputs(),
+    );
+    expect(result.isEmpty, isTrue);
+    expect(events, ['mcp:unusable:factory', 'mcp:unusable:dispose']);
+  });
 
   for (final failure in ['prompt', 'tools', 'factory']) {
     test('scope resources close when $failure fails', () async {

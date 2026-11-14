@@ -20,9 +20,7 @@ import 'assistant_write_tools.dart';
 
 const assistantPluginId = 'aicove_assistant';
 
-/// Abilities to manage AIcove (ADR0073, ADR0111). Installed for every
-/// tool-mode role, AIcove酱 included, so a role card can be edited freely
-/// without losing them; chat-mode roles never see these tools.
+/// Full management capabilities, installed only in background task runs.
 ///
 /// [writes] and [settings] are null where calls cannot go through the
 /// review gate (the legacy runner); the assistant then stays read-only.
@@ -68,6 +66,75 @@ AicovePlugin assistantAgentPlugin(
     ),
   ),
 );
+
+/// Foreground guidance only. Management tools are mounted by TaskAgentRunner.
+AicovePlugin assistantRouterAgentPlugin({required String conversationId}) =>
+    AicovePlugin(
+      id: assistantPluginId,
+      name: '软件管理',
+      exposure: PluginExposure.builtin,
+      capabilities: const {AppCapability.request},
+      setup: (registrar) => registrar.add(
+        AppContributions.requestScope,
+        (inputs) => AssistantRouterRequestScope(
+          supportsTools: inputs.supportsToolCalling,
+          isAssistantRole: conversationId == kAicoveAssistantId,
+          uiState: () {
+            final replies = <({String id, String text})>[
+              for (final message in inputs.history)
+                if (message.role == 'assistant')
+                  (id: message.sourceMessageIdOrSelf, text: message.content),
+            ];
+            return buildUiStateContext(
+              uiSavedBlocksInMessages(
+                inputs.ref.read(uiBlockStateProvider(conversationId)),
+                replies,
+              ),
+              [for (final reply in replies) reply.id],
+            );
+          },
+        ),
+      ),
+    );
+
+class AssistantRouterRequestScope extends PluginRequestScope {
+  AssistantRouterRequestScope({
+    required this.supportsTools,
+    required this.isAssistantRole,
+    this.uiState,
+  });
+
+  final bool supportsTools;
+  final bool isAssistantRole;
+  final String? Function()? uiState;
+
+  @override
+  String get pluginId => assistantPluginId;
+
+  @override
+  String get pluginName => '软件管理';
+
+  @override
+  bool get active => true;
+
+  @override
+  Future<String?> prompt(PluginRequestContext ctx) async => [
+    '## AIcove 软件管理能力',
+    supportsTools
+        ? '涉及角色、预设、设置、资料库或工程排查，请调用 delegate_task 交给后台执行；回答保持当前角色的口吻。'
+        : '当前模型或预设未开启工具调用，无法操作真实配置；需要操作时请用户开启工具调用或更换模型。',
+    if (isAssistantRole) uiBlockPrompt(),
+    if (isAssistantRole) _panelPrompt(),
+  ].join('\n\n');
+
+  @override
+  List<PluginReminder> reminders(DateTime requestTime) {
+    final content = uiState?.call();
+    return content == null
+        ? const []
+        : [PluginReminder(AssistantRequestScope.uiStateReminderOrder, content)];
+  }
+}
 
 class AssistantRequestScope extends PluginRequestScope {
   AssistantRequestScope(
@@ -143,7 +210,7 @@ class AssistantRequestScope extends PluginRequestScope {
 
   static String genericPrompt({required bool writable}) => [
     '## Agent 工具与操作说明',
-    '你是 AIcove 里的 Agent，说话与行事始终保持角色卡里的身份、性格和任务目标。',
+    '你是 AIcove 后台任务助手，按任务说明操作，不代替聊天角色发言。',
     '- 跨角色取材与管理：用 aicove_role 列出、读取、新建或修改角色卡；用 aicove_role_context 读写或增删其他角色的聊天记录、话题摘要与长期记忆（按需先读后改，不访问隐私空间角色）。',
     '- 工作区与扩展工具：用 workspace_search、read、write、edit 查改文件，workspace_open 切换空间或本机目录；桌面端可用 bash。要批量串联或调其他设置、渠道、预设与资料库工具，在 codemode 里用 await searchTools(query) 或 await describeTool(name) 按需查调。',
     writable
@@ -153,7 +220,7 @@ class AssistantRequestScope extends PluginRequestScope {
 
   static const genericPromptWithoutTools =
       '## Agent 工具与操作说明\n'
-      '你是 AIcove 里的 Agent，说话与行事始终保持角色卡里的身份、性格和任务目标。'
+      '你是 AIcove 后台任务助手，按任务说明操作，不代替聊天角色发言。'
       '当前模型不支持工具调用，无法读取或修改真实数据；遇到需要动用工具的请求，请提醒用户换一个支持工具调用的模型，不要假装已经执行。';
 
   static final promptText =
@@ -164,10 +231,10 @@ class AssistantRequestScope extends PluginRequestScope {
 
   static String _prompt({required bool writable}) => [
     '## 你的工作',
-    '你是 AIcove 里的 Agent，几乎能操作软件里的一切：接模型渠道、改设置、'
+    '你是 AIcove 后台任务助手，能操作软件里的配置与资料：接模型渠道、改设置、'
         '写和改角色卡（连头像、音色、思考档位）、导入和扩充酒馆预设、排查插件和上下文。'
         '用户大多是什么都不会的新手，你的目标是让用户在 AIcove 里聊得顺，而且能不动手就不动手。'
-        '说话保持角色卡里的性格，但查资料、改配置时一样严谨。',
+        '按任务说明查资料、改配置，向前台角色返回准确的执行结果。',
     '',
     '## 怎么做',
     '- 先查后答：涉及 AIcove 的功能、位置、规则时，先用 aicove_docs_read 读资料库；'

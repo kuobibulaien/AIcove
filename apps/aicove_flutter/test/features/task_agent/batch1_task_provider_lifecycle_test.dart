@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:aicove_flutter/src/core/app_logger.dart' show TraceLogger;
+import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart'
+    show ToolResult;
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
 import 'package:aicove_flutter/src/core/database/database_provider.dart';
 import 'package:aicove_flutter/src/features/auto_reply/data/proactive_reply_generator.dart';
@@ -10,6 +14,7 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/chat/services/api_runner.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_history_store.dart';
+import 'package:aicove_flutter/src/features/chat/services/chat_message_projection_codec.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_send_service.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_tts_handler.dart';
 import 'package:aicove_flutter/src/features/chat/services/chat_types.dart';
@@ -18,6 +23,7 @@ import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/features/task_agent/application/task_agent_service.dart';
 import 'package:aicove_flutter/src/features/task_agent/data/agent_task_store.dart';
 import 'package:aicove_flutter/src/features/task_agent/domain/agent_task.dart';
+import 'package:aicove_flutter/src/features/task_agent/domain/task_relay.dart';
 import 'package:aicove_flutter/src/features/task_agent/task_agent_providers.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -178,7 +184,9 @@ void main() {
   late TaskAgentService service;
 
   setUp(() async {
-    root = await Directory.systemTemp.createTemp('batch1_task_provider_');
+    root = await Directory(
+      'test/features/task_agent',
+    ).createTemp('.batch1_task_provider_');
     originalPaths = PathProviderPlatform.instance;
     PathProviderPlatform.instance = _Paths(root.path);
     SharedPreferences.setMockInitialValues({
@@ -357,4 +365,122 @@ void main() {
     expect(delivery.committed, 1);
     await expectSettled();
   });
+  Future<RecordedReceipt> inlineReceipt() async {
+    final recorded = await receipt(writeAnchor: false);
+    expect(await service.waitForReceipt(recorded.task.id), isNotNull);
+    history.persist = true;
+    await service.writeReceipt(recorded);
+    await store.markReceiptWritten(recorded.task.id, recorded.block.receiptId);
+    return recorded;
+  }
+
+  for (final (status, runStatus, stopReason) in [
+    ('sent', ApiRunStatus.failed, null),
+    ('sent', ApiRunStatus.cancelled, null),
+    ('sent', ApiRunStatus.completed, 'inProgress'),
+    ('sending', ApiRunStatus.completed, null),
+  ]) {
+    test(
+      'persisted $status/$runStatus/$stopReason inline progress still needs relay',
+      () async {
+        final recorded = await inlineReceipt();
+        final payload = ChatMessageProjectionCodec.buildRawAssistantPayload(
+          apiResult: ApiCallResult(
+            status: runStatus,
+            stopReason: stopReason,
+            replyText: '正在处理',
+            processedText: '正在处理',
+            pluginEvents: const [],
+            toolResults: const [],
+            rawToolResults: [
+              ToolResult(
+                toolCallId: 'delegate',
+                name: 'delegate_task',
+                result: jsonEncode({
+                  'receipt_id': recorded.block.receiptId,
+                  'status': 'done',
+                  'summary': '完成',
+                }),
+              ),
+            ],
+          ),
+        );
+        await database
+            .into(database.messages)
+            .insert(
+              MessageConverter.toCompanion(
+                Message(
+                  id: 'foreground_progress',
+                  role: 'assistant',
+                  content: '正在处理',
+                  createdAt: DateTime(2026),
+                  status: status,
+                  rawPayload: payload,
+                ),
+                'c1',
+              ),
+            );
+        expect(
+          await service.isReceiptRelayed!('c1', recorded.block.receiptId),
+          isFalse,
+        );
+        await service.flushConversation('c1');
+        expect(generator.generations, 1);
+        expect(delivery.committed, 1);
+        await expectSettled();
+      },
+    );
+  }
+
+  for (final explicitRelay in [false, true]) {
+    test(
+      'completed ${explicitRelay ? 'synced relay marker' : 'inline reply'} suppresses duplicate relay',
+      () async {
+        final recorded = await inlineReceipt();
+        final payload = explicitRelay
+            ? {taskRelayReceiptKey: recorded.block.receiptId}
+            : ChatMessageProjectionCodec.buildRawAssistantPayload(
+                apiResult: ApiCallResult(
+                  replyText: '任务办好了',
+                  processedText: '任务办好了',
+                  pluginEvents: const [],
+                  toolResults: const [],
+                  rawToolResults: [
+                    ToolResult(
+                      toolCallId: 'delegate',
+                      name: 'delegate_task',
+                      result: jsonEncode({
+                        'receipt_id': recorded.block.receiptId,
+                        'status': 'done',
+                      }),
+                    ),
+                  ],
+                ),
+              );
+        await database
+            .into(database.messages)
+            .insert(
+              MessageConverter.toCompanion(
+                Message(
+                  id: 'foreground_completed',
+                  role: 'assistant',
+                  content: '任务办好了',
+                  createdAt: DateTime(2026),
+                  status: 'sent',
+                  rawPayload: payload,
+                ),
+                'c1',
+              ),
+            );
+        expect(
+          await service.isReceiptRelayed!('c1', recorded.block.receiptId),
+          isTrue,
+        );
+        await service.flushConversation('c1');
+        expect(generator.generations, 0);
+        expect(delivery.committed, 0);
+        await expectSettled();
+      },
+    );
+  }
 }

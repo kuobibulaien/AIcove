@@ -2,6 +2,7 @@ import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/context/domain/context_summary.dart';
 import 'package:aicove_flutter/src/features/voice_call/data/voice_call_context_brief.dart';
+import 'package:aicove_flutter/src/features/observability/model_request_ledger.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Store implements ContextSummaryStorePort {
@@ -27,6 +28,8 @@ class _Summarizer implements ContextSummarizerPort {
     required bool Function() isCancelled,
   }) async {
     expect(kind, ContextSummaryKind.auto);
+    expect(ModelRunScope.current?.purpose, 'voice_brief');
+    expect(ModelRunScope.current?.conversationId, snapshot.ownerId);
     snapshots.add(snapshot);
     return '摘要${snapshots.length}';
   }

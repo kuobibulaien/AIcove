@@ -16,6 +16,7 @@ class ConversationProactiveState {
   final DateTime? lastProactiveAt;
   final DateTime? silenceUntil;
   final String? pendingAutoTriggerId;
+  final DateTime? observingUntil;
 
   const ConversationProactiveState({
     required this.conversationId,
@@ -26,6 +27,7 @@ class ConversationProactiveState {
     this.lastProactiveAt,
     this.silenceUntil,
     this.pendingAutoTriggerId,
+    this.observingUntil,
   });
 
   bool get hasPendingAutoTrigger =>
@@ -59,6 +61,9 @@ class ConversationProactiveState {
               : normalizedTriggerId,
     );
   }
+
+  ConversationProactiveState withObservingUntil(DateTime? until) =>
+      copyWith(observingUntil: until);
 
   ConversationProactiveState clearPendingAutoTrigger({String? triggerId}) {
     final normalizedTriggerId = triggerId?.trim();
@@ -127,8 +132,20 @@ class ConversationProactiveState {
     Object? lastProactiveAt = _unset,
     Object? silenceUntil = _unset,
     Object? pendingAutoTriggerId = _unset,
+    Object? observingUntil = _unset,
   }) {
+    final nextMode = mode ?? this.mode;
+    final nextPending = identical(pendingAutoTriggerId, _unset)
+        ? this.pendingAutoTriggerId
+        : pendingAutoTriggerId as String?;
     return ConversationProactiveState(
+      observingUntil:
+          nextMode != ConversationProactiveMode.active ||
+              (nextPending != null && nextPending.trim().isNotEmpty)
+          ? null
+          : identical(observingUntil, _unset)
+          ? this.observingUntil
+          : observingUntil as DateTime?,
       conversationId: conversationId ?? this.conversationId,
       mode: mode ?? this.mode,
       unrepliedCount: unrepliedCount ?? this.unrepliedCount,
@@ -160,6 +177,7 @@ class ConversationProactiveState {
       'last_proactive_at': lastProactiveAt?.toIso8601String(),
       'silence_until': silenceUntil?.toIso8601String(),
       'pending_auto_trigger_id': pendingAutoTriggerId,
+      'observing_until': observingUntil?.toIso8601String(),
     };
   }
 
@@ -189,6 +207,7 @@ class ConversationProactiveState {
       lastProactiveAt: parseNullable(json['last_proactive_at'] as String?),
       silenceUntil: parseNullable(json['silence_until'] as String?),
       pendingAutoTriggerId: json['pending_auto_trigger_id'] as String?,
+      observingUntil: parseNullable(json['observing_until'] as String?),
     );
   }
 

@@ -170,6 +170,7 @@ Map<String, dynamic> buildDefaultUiModelsStoreData() => <String, dynamic>{
   'is_dark_mode': false,
   'use_system_theme': true,
   'hide_user_avatar': true,
+  'single_avatar_per_turn': false,
   'expand_audio_text': true,
   'user_avatar': null,
   'user_name': null,

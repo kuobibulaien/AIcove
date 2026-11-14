@@ -96,6 +96,35 @@ void main() {
     await root.delete(recursive: true);
   });
 
+  test('自动整理避让，手动重建认领后继续', () async {
+    messages['a'] = [_m('a1', 1), _m('a2', 2)];
+    boundaries['a'] = {'a2'};
+    var claimed = 0;
+    var owns = false;
+    var remoteRunning = false;
+    keeper = MemoryKeeperService(
+      store: store,
+      loadMessages: (o) async => messages[o] ?? const [],
+      compactedBoundaries: (o) async => boundaries[o] ?? const {},
+      agentFactory: () async => agent,
+      allowed: (_) async => true,
+      canAutoRun: (_) async => owns && !remoteRunning,
+      claimOwnership: (_) async { claimed++; },
+    );
+    keeper.resumeOnce('a');
+    await keeper.idle('a');
+    expect(agent.batches, isEmpty);
+    owns = true;
+    remoteRunning = true;
+    keeper.schedule('a');
+    await keeper.idle('a');
+    expect(agent.batches, isEmpty);
+    await keeper.startRebuild('a');
+    await keeper.idle('a');
+    expect(claimed, 1);
+    expect(agent.batches, isNotEmpty);
+  });
+
   test('只整理被压缩覆盖的原文；书签推进后不重复整理；角色隔离', () async {
     messages['a'] = [_m('a1', 1), _m('a2', 2, role: 'assistant'), _m('a3', 3)];
     messages['b'] = [_m('b1', 1)];

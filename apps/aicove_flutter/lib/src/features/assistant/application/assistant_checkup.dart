@@ -4,7 +4,6 @@ import 'package:aicove_agent_kernel/aicove_agent_kernel.dart' show ToolEffect;
 
 import '../../agent_context/domain/silly_tavern_preset.dart';
 import '../../chat/domain/conversation.dart';
-import '../../chat/domain/role_agent_mode.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../settings/app_settings.dart';
 import '../domain/assistant_onboarding.dart'
@@ -135,7 +134,7 @@ class AssistantCheckup {
     for (final role in visible) {
       final name = '「${role.displayName}」';
       final plugins = role.enabledPlugins;
-      bool uses(String id) => plugins == null || plugins.contains(id);
+      bool uses(String id) => role.isPluginEnabled(id);
       final recipeId = role.recipeId?.trim();
       final bound = recipeId != null && recipeId.isNotEmpty;
       // The preset the next message uses: the role's own, else the default.
@@ -156,8 +155,7 @@ class AssistantCheckup {
         );
       }
       if (preset != null) {
-        if (preset.functionCalling == false &&
-            role.effectiveAgentMode == RoleAgentMode.agent) {
+        if (preset.functionCalling == false) {
           final blocked = [
             for (final entry in _toolPlugins.entries)
               if (uses(entry.key)) entry.value,

@@ -55,11 +55,20 @@ class MessageBubble extends ConsumerWidget {
   static const double _kMediaBlockVerticalPadding = 2.0;
   static const double _kRichBlockVerticalPadding = 4.0;
 
+  static const double avatarSize = _Avatar.kSize;
   static const double avatarBubbleGap = 8;
 
   /// Left edge of the contact's bubbles in bubble mode: row padding, avatar
   /// column and gap. Lines that sit under a bubble align to it.
   static const double contactContentInset = 8 + _Avatar.kSize + avatarBubbleGap;
+
+  /// Reading column geometry in document mode, shared with timeline rows that
+  /// align beneath or alongside document messages.
+  static const double documentMaxReadingWidth =
+      _DocumentMessageRow.maxReadingWidth;
+  static const double documentHorizontalPadding = 16;
+  static const double documentSelectionGutter =
+      _DocumentMessageRow.selectionGutter;
 
   final Widget Function(Widget child)? selectionWrapper;
   final bool isMe;
@@ -92,7 +101,8 @@ class MessageBubble extends ConsumerWidget {
   /// 是否显示名称（群聊模式为 true，一对一聊天为 false）
   final bool showName;
 
-  /// 是否显示头像（连续消息组中只有第一条为 true）
+  /// 是否为同一发送方连续消息的第一条。文档模式据此决定轮次间距；
+  /// 气泡模式在开启「单轮聊天只显示一次头像」时据此决定是否显示头像。
   final bool showAvatar;
   final bool hideContactAvatar;
 
@@ -157,9 +167,6 @@ class MessageBubble extends ConsumerWidget {
       child: bubble,
     );
   }
-
-  bool get _useDesktopContextMenu =>
-      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -314,6 +321,8 @@ class MessageBubble extends ConsumerWidget {
       );
     }
 
+    final effectiveShowAvatar = !viewPrefs.singleAvatarPerTurn || showAvatar;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: _AvatarAwareBubbleRow(
@@ -321,12 +330,13 @@ class MessageBubble extends ConsumerWidget {
         selectionWrapper: hasVisibleContent(message) ? selectionWrapper : null,
         isMe: isMe,
         hideUserAvatar: hideUserAvatar,
+        hasVisibleAvatar: effectiveShowAvatar,
         showLeftSlot: !isMe,
         showRightSlot: isMe && !hideUserAvatar,
         hasFailedIndicator: isFailed,
         failedIndicator: failedIndicator,
         leftSlot: _AvatarSlot(
-          showAvatar: showAvatar,
+          showAvatar: effectiveShowAvatar,
           isUser: false,
           avatar: Visibility(
             visible: !hideContactAvatar,
@@ -338,15 +348,39 @@ class MessageBubble extends ConsumerWidget {
           gapOnLeft: false,
         ),
         rightSlot: _AvatarSlot(
-          showAvatar: showAvatar,
+          showAvatar: effectiveShowAvatar,
           isUser: true,
           avatar: _Avatar(avatarUrl: userAvatar),
           gapOnLeft: true,
         ),
         bubbleChild: bubbleChild,
+        firstLineHeight:
+            _renderedLineHeight(MediaQuery.textScalerOf(context).scale(fontSize)) +
+            MoeBubbleStyle.padding.vertical,
       ),
     );
   }
+
+  static final Map<double, double> _lineHeightCache = {};
+
+  /// 引擎按整像素排版文字行高（15 × 1.42 = 21.3 实际排成 21），
+  /// 头像对齐用实测值，不按公式推算。
+  static double _renderedLineHeight(double scaledFontSize) =>
+      _lineHeightCache.putIfAbsent(scaledFontSize, () {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: ' ',
+            style: TextStyle(
+              fontSize: scaledFontSize,
+              height: MoeBubbleStyle.textHeight,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final height = painter.height;
+        painter.dispose();
+        return height;
+      });
 
   /// Check if bubble should be shown (for text, audio, etc., but not for images/stickers only)
   bool _shouldShowBubble(
@@ -371,40 +405,34 @@ class MessageBubble extends ConsumerWidget {
   Widget _buildFoldBubble(BuildContext context, ThinkingBlock block) {
     final title = block.title?.trim();
     final displayTitle = title == null || title.isEmpty ? '思考过程' : title;
-    return Builder(
-      builder: (context) => GestureDetector(
-        onLongPressStart: onLongPress == null
-            ? null
-            : (details) {
-                final box = context.findRenderObject() as RenderBox?;
-                if (box != null) {
-                  onLongPress!(box, details.globalPosition, null);
-                }
-              },
-        // 文档模式的助手折叠内容用半隐藏折叠段，和正文区分开；其余仍是折叠气泡。
-        child: documentStyle && !isMe
-            ? Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: MoeFoldSection(
-                  key: ValueKey<String>('fold_bubble_${block.id}'),
-                  title: displayTitle,
-                  content: block.content,
-                  fontSize: fontSize,
-                  child: MoeMarkdownView(
-                    block.content,
-                    fontSize: fontSize - 1,
-                    color: MoeFoldSection.bodyColor(context),
-                  ),
-                ),
-              )
-            : MoeCollapsibleBubble(
+    final documentFold = documentStyle && !isMe;
+    // 文档模式的助手折叠内容用半隐藏折叠段，和正文区分开；其余仍是折叠气泡。
+    return _FoldBubbleGestureHost(
+      onLongPress: onLongPress,
+      expandWidth: documentFold,
+      builder: (onSelectionChanged) => documentFold
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: MoeFoldSection(
                 key: ValueKey<String>('fold_bubble_${block.id}'),
-                isMe: isMe,
                 title: displayTitle,
                 content: block.content,
                 fontSize: fontSize,
+                onSelectionChanged: onSelectionChanged,
+                child: MoeMarkdownView(
+                  block.content,
+                  fontSize: fontSize - 1,
+                  color: MoeFoldSection.bodyColor(context),
+                ),
               ),
-      ),
+            )
+          : MoeCollapsibleBubble(
+              key: ValueKey<String>('fold_bubble_${block.id}'),
+              isMe: isMe,
+              title: displayTitle,
+              content: block.content,
+              fontSize: fontSize,
+            ),
     );
   }
 

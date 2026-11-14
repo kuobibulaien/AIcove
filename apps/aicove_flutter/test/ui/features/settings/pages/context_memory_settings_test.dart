@@ -125,7 +125,7 @@ void main() {
         await container.read(contextSummarizerProvider.future)
             as BackgroundContextSummarizer;
     expect(await chat.isCompanion('chat_role'), isTrue);
-    expect(await chat.isCompanion('tool_role'), isFalse);
+    expect(await chat.isCompanion('tool_role'), isTrue);
     expect(await chat.isCompanion(kAicoveAssistantId), isFalse);
     final runtime =
         await container.read(runtimeContextSummarizerProvider.future)

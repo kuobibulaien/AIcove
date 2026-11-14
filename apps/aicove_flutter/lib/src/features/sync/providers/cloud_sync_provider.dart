@@ -7,8 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/media/media_store.dart';
 import '../../account/domain/account_port.dart';
+import '../../memory/providers/memory_providers.dart';
+import '../../observability/model_request_ledger.dart';
 import '../../account/providers/account_provider.dart';
 import '../../auto_reply/data/auto_reply_trigger_controller.dart';
+import '../../auto_reply/data/analyzer_scheduler.dart';
 import '../../chat/chat_providers.dart';
 import '../../chat/services/conversation_short_window_store.dart';
 import '../../plugins/plugin_providers.dart';
@@ -49,6 +52,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
     _foreground = active;
     _scheduler?.foreground(active);
   }
+
   CloudApi? _api;
   AccountConnection? _connected;
   String? _token;
@@ -140,6 +144,9 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
   }
 
   void handleApplied(Set<String> kinds, {Set<String>? conversationIds}) {
+    if (kinds.contains('memory_items') || kinds.contains('memory_progress')) {
+      unawaited(_notifyMemoryOwners());
+    }
     if (kinds.any(
       const {
         'messages',
@@ -160,6 +167,7 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
       ref.invalidate(presetRecipeProvider);
     }
     if (kinds.contains('settings')) {
+      ref.invalidate(modelRunsProvider);
       ref.invalidate(appSettingsProvider);
       ref.invalidate(ttsPluginConfigProvider);
       ref.invalidate(triggerPluginConfigProvider);
@@ -169,11 +177,24 @@ class CloudSyncController extends StateNotifier<CloudProgress> {
           ref.read(autoReplyTriggersProvider.notifier).reloadFromStorage(),
         );
       }
+      unawaited(ref.read(analyzerSchedulerProvider).refreshFromStorage());
       ref.invalidate(stickerPluginConfigProvider);
       ref.invalidate(imagePluginConfigProvider);
       ref.invalidate(drawingPresetCatalogProvider);
       ref.invalidate(timeAwarenessPluginConfigProvider);
       ref.invalidate(promptPackProvider);
+    }
+  }
+
+  Future<void> _notifyMemoryOwners() async {
+    final rows = await ref
+        .read(databaseProvider)
+        .customSelect('SELECT id FROM conversations WHERE deleted_at IS NULL')
+        .get();
+    if (!mounted) return;
+    final keeper = ref.read(memoryKeeperProvider);
+    for (final row in rows) {
+      keeper.notifyExternalChange(row.read<String>('id'));
     }
   }
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:aicove_flutter/src/core/api/tool_media.dart';
 
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_preset_assembler.dart';
 import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_ejs_evaluator.dart';
@@ -11,6 +12,220 @@ import 'package:aicove_flutter/src/features/agent_context/domain/silly_tavern_wo
 void main() {
   const parser = SillyTavernPresetParser();
   const assembler = SillyTavernPresetAssembler();
+
+  test(
+    'image references preserve multimodal shape and restore text copies',
+    () {
+      final references = PresetImageReferences();
+      final image = {
+        'type': 'image_url',
+        'image_url': {'url': 'data:image/png;base64,AAAA', 'detail': 'low'},
+      };
+      final hidden = references.hide(image) as Map;
+      expect(hidden['type'], 'image_url');
+      final id = (hidden['image_url'] as Map)['url'] as String;
+      expect(id, startsWith('__aicove_image_ref_'));
+      expect(references.restore(hidden), image);
+      expect(
+        references.restore([
+          hidden,
+          {'type': 'text', 'text': 'before $id after'},
+          id,
+        ]),
+        [
+          image,
+          {'type': 'text', 'text': 'before '},
+          image,
+          {'type': 'text', 'text': ' after'},
+          image,
+        ],
+      );
+      expect(references.restore('ordinary text'), 'ordinary text');
+      expect(
+        references.restore({
+          'type': 'image_url',
+          'image_url': {'url': 'https://example.com/image.png'},
+        }),
+        {
+          'type': 'image_url',
+          'image_url': {'url': 'https://example.com/image.png'},
+        },
+      );
+    },
+  );
+
+  for (final squash in [false, true]) {
+    for (final runtime in ['', 'host rules']) {
+      test(
+        'host postlude follows preset nodes and attachments squash=$squash runtime=$runtime',
+        () {
+          final preset = parser.parseSource(
+            jsonEncode({
+              'assistant_prefill': 'prefill',
+              'squash_system_messages': squash,
+              'prompts': [
+                {'identifier': 'chatHistory', 'marker': true},
+                {'identifier': 'tail', 'role': 'system', 'content': 'tail'},
+                {
+                  'identifier': 'depth',
+                  'role': 'system',
+                  'content': 'depth',
+                  'injection_position': 1,
+                  'injection_depth': 0,
+                },
+                {
+                  'identifier': 'attach',
+                  'role': 'system',
+                  'content': 'attached',
+                  'attach_index': 1,
+                  'attach_role': 'system',
+                  'attach_side': 'end',
+                },
+              ],
+              'prompt_order': [
+                {
+                  'order': [
+                    for (final id in ['chatHistory', 'tail', 'depth', 'attach'])
+                      {'identifier': id, 'enabled': true},
+                  ],
+                },
+              ],
+            }),
+            sourceFileName: 'postlude.json',
+          );
+          final result = assembler.assemble(
+            preset: preset,
+            historyMessages: const [
+              {'role': 'user', 'content': 'latest'},
+            ],
+            context: SillyTavernAssemblyContext(
+              characterName: 'C',
+              userName: 'U',
+              characterDescription: '',
+              scenario: '',
+              runtimeSystemContent: runtime,
+              drawingPromptContent: 'drawing',
+              protectedRuntimeMessages: const [
+                {'role': 'user', 'content': 'reminder'},
+              ],
+            ),
+            maxContextTokens: 16000,
+            truncateHistory: false,
+          );
+          expect(
+            result.messages.map((m) => m['content']),
+            squash
+                ? [
+                    'latest',
+                    [
+                      'depth',
+                      'tail\n\nattached',
+                      if (runtime.isNotEmpty) runtime,
+                      'drawing',
+                      'reminder',
+                    ].join('\n'),
+                    'prefill',
+                  ]
+                : [
+                    'latest',
+                    'depth',
+                    'tail\n\nattached',
+                    if (runtime.isNotEmpty) runtime,
+                    'drawing',
+                    'reminder',
+                    'prefill',
+                  ],
+          );
+          expect(result.messages[result.messages.length - 2]['role'], 'system');
+          expect(result.messages.last['role'], 'assistant');
+        },
+      );
+    }
+  }
+
+  test(
+    'script input marks only real history without mutating public messages',
+    () {
+      final preset = parser.parseSource(
+        jsonEncode({
+          'assistant_prefill': 'prefill',
+          'prompts': [
+            {'identifier': 'chatHistory', 'marker': true},
+            {
+              'identifier': 'presetAssistant',
+              'role': 'assistant',
+              'content': 'preset reply',
+            },
+          ],
+          'prompt_order': [
+            {
+              'order': [
+                {'identifier': 'chatHistory', 'enabled': true},
+                {'identifier': 'presetAssistant', 'enabled': true},
+              ],
+            },
+          ],
+        }),
+        sourceFileName: 'script-history.json',
+      );
+      final full = assembler.assemble(
+        preset: preset,
+        historyMessages: const [
+          {'role': 'user', 'content': 'old'},
+          {'role': 'assistant', 'content': 'real reply'},
+          {'role': 'user', 'content': 'latest'},
+        ],
+        context: const SillyTavernAssemblyContext(
+          characterName: 'C',
+          userName: 'U',
+          characterDescription: '',
+          scenario: '',
+          runtimeSystemContent: 'host',
+          protectedRuntimeMessages: [
+            {'role': 'user', 'content': 'reminder'},
+          ],
+        ),
+        maxContextTokens: 16000,
+        truncateHistory: false,
+      );
+      expect(full.scriptMessages.map((message) => message['__isHistory']), [
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(full.scriptMessages[1]['role'], 'assistant');
+      expect(full.scriptMessages[3]['role'], 'assistant');
+      expect(
+        full.messages.any((message) => message.containsKey('__isHistory')),
+        isFalse,
+      );
+      expect(
+        full.entries.any((entry) => entry.message.containsKey('__isHistory')),
+        isFalse,
+      );
+      final trimmed = assembler.truncateAssembly(
+        full,
+        inputBudget: 5,
+        estimateTokens: (messages) => messages.length,
+      );
+      expect(trimmed.scriptMessages.map((message) => message['__isHistory']), [
+        true,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(trimmed.scriptMessages.first['content'], 'latest');
+      expect(
+        trimmed.messages.any((message) => message.containsKey('__isHistory')),
+        isFalse,
+      );
+    },
+  );
 
   test('世界书深度条目先渲染 EJS 再注入', () {
     final preset = parser.parseSource(
@@ -541,6 +756,57 @@ void main() {
       },
     );
 
+    test(
+      'late fallback recovery preserves host postlude order after squash',
+      () {
+        final full = assembleDrawing(
+          squash: true,
+          prefill: 'reply',
+          prompts: const [
+            {
+              'identifier': 'draw',
+              'content': '{{drawing_prompt_pack}}',
+              'attach_index': 2,
+              'attach_role': 'user',
+              'attach_side': 'end',
+            },
+          ],
+          history: const [
+            {'role': 'user', 'content': 'old'},
+            {'role': 'user', 'content': 'new'},
+          ],
+          context: const SillyTavernAssemblyContext(
+            characterName: 'C',
+            userName: 'U',
+            characterDescription: '',
+            scenario: '',
+            runtimeSystemContent: 'host',
+            drawingPromptContent: drawing,
+            protectedRuntimeMessages: [
+              {'role': 'user', 'content': 'reminder'},
+            ],
+          ),
+        );
+        final unchanged = assembler.truncateAssembly(
+          full,
+          inputBudget: 100,
+          estimateTokens: (messages) => messages.length,
+        );
+        expect(identical(unchanged.entries[2], full.entries[2]), isTrue);
+        final trimmed = assembler.truncateAssembly(
+          full,
+          inputBudget: 3,
+          estimateTokens: (messages) => messages.length,
+        );
+        expect(trimmed.messages, [
+          {'role': 'user', 'content': 'new'},
+          {'role': 'system', 'content': 'host\n$drawing\nreminder'},
+          {'role': 'assistant', 'content': 'reply'},
+        ]);
+        expect(trimmed.keptHistoryCount, 1);
+      },
+    );
+
     test('late fallback recovery keeps system message squashing', () {
       final full = assembleDrawing(
         squash: true,
@@ -564,25 +830,28 @@ void main() {
         estimateTokens: (messages) => messages.length,
       );
       expect(trimmed.messages, [
-        {'role': 'system', 'content': 'voice rules\n$drawing'},
         {'role': 'user', 'content': 'new'},
+        {'role': 'system', 'content': 'voice rules\n$drawing'},
       ]);
     });
 
-    test('fallback precedes history and prefill without other plugins', () {
-      final result = assembleDrawing(
-        runtimeContent: '',
-        prefill: 'Start reply',
-        history: const [
-          {'role': 'user', 'content': 'new'},
-        ],
-      );
-      expect(result.messages.map((message) => message['content']), [
-        drawing,
-        'new',
-        'Start reply',
-      ]);
-    });
+    test(
+      'fallback follows history and precedes prefill without other plugins',
+      () {
+        final result = assembleDrawing(
+          runtimeContent: '',
+          prefill: 'Start reply',
+          history: const [
+            {'role': 'user', 'content': 'new'},
+          ],
+        );
+        expect(result.messages.map((message) => message['content']), [
+          'new',
+          drawing,
+          'Start reply',
+        ]);
+      },
+    );
 
     test(
       'legacy callers and unpositioned presets keep automatic drawing rules',
@@ -661,10 +930,10 @@ void main() {
           "Write 爱丽丝's next reply to 小云.",
           '你是温柔的爱丽丝。',
           '两人在图书馆。',
-          '只在必要时输出工具标签。',
           '你好',
           '你好呀',
           'Stay in character.',
+          '只在必要时输出工具标签。',
         ],
       );
       expect(result.historyIncluded, isTrue);

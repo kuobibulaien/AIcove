@@ -33,6 +33,18 @@ String resolveAutoReplyAgentModelRef(
 ) =>
     conversationPrimaryModel(settings, conversation);
 
+/// Ordered chat-model candidates for silent proactive failover.
+List<String> resolveAutoReplyAgentModelCandidates(
+  AppSettings settings,
+  Conversation conversation,
+) {
+  final candidates = conversationChatModels(
+    settings,
+    conversation,
+  ).toSet().toList();
+  return candidates.isEmpty ? <String>[settings.defaultModelName] : candidates;
+}
+
 List<Message> buildAutoReplyAgentContextMessages({
   required List<Message> messages,
   required String? systemReminder,

@@ -12,10 +12,53 @@ import 'package:aicove_flutter/src/features/plugins/trigger/trigger_config.dart'
 import 'package:aicove_flutter/src/features/plugins/trigger/trigger_plugin.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:aicove_flutter/src/features/plugins/plugin_providers.dart';
+import 'package:aicove_flutter/src/features/plugins/trigger/trigger_agent_plugin.dart';
 
 final _refProvider = Provider<Ref>((ref) => ref);
 
+class _Settings extends AppSettingsNotifier {
+  @override
+  Future<AppSettings> build() async => mapUiModelsToAppSettings(const {}).copyWith(
+    autoReplySettings: const AutoReplySettings(
+      allowAiSetReminders: false,
+      contactSettings: {'allowed': ContactAutoReplySettings(allowAiSetReminders: true)},
+    ),
+  );
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test('a role-only reminder opt-in activates the plugin but not other scopes', () async {
+    SharedPreferences.setMockInitialValues({});
+    final container = ProviderContainer(overrides: [
+      appSettingsProvider.overrideWith(_Settings.new),
+    ]);
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    await container.read(triggerPluginConfigProvider.notifier).ready;
+    expect(container.read(triggerPluginConfigProvider).enabled, isTrue);
+    final plugin = TriggerPlugin(const TriggerConfig(), container.read(_refProvider));
+    final runtime = PluginRuntime.fromPlugins([plugin]);
+    expect(runtime.selectForRole(null), contains('trigger'));
+    expect(TriggerRequestScope(plugin, conversationId: 'allowed').active, isTrue);
+    expect(TriggerRequestScope(plugin, conversationId: 'other').active, isFalse);
+    expect(TriggerRequestScope(plugin).active, isFalse);
+    expect(plugin.getTools(conversationId: 'allowed'), hasLength(4));
+    expect(plugin.getTools(conversationId: 'other'), isEmpty);
+    // Legacy response processors have no conversation scope. A role-only
+    // native-tool opt-in must not enable their global execution path.
+    final legacy = TriggerPlugin(
+      const TriggerConfig(xmlFallbackEnabled: true), container.read(_refProvider),
+    );
+    final result = await legacy.handleLegacyTriggerTags(
+      '<create_trigger time="10:00" title="legacy">',
+    );
+    expect(result.events, isEmpty);
+    expect(result.processedText, isNot(contains('create_trigger')));
+  });
+
   test('offers the reminder tools and cleans legacy tags in replies',
       () async {
     final container = ProviderContainer();

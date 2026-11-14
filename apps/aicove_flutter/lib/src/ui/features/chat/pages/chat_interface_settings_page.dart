@@ -10,6 +10,7 @@ import '../../../../features/chat/domain/conversation.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
+import '../../settings/pages/chat_ui_settings_page.dart';
 import '../../wallpaper/pages/wallpaper_editor_page.dart';
 import '../../wallpaper/widgets/wallpaper_preview_samples.dart';
 import '../widgets/chat_wallpaper_background.dart';
@@ -17,10 +18,10 @@ import '../widgets/chat_wallpaper_background.dart';
 const Duration _kDeferredPreviewWindow = Duration(milliseconds: 420);
 
 /// 聊天菜单「聊天界面」：上方用真实消息气泡预览当前会话效果，
-/// 下方高级材质面板分「界面」「行为」两个标签页；「界面」里的图片预览大小、
-/// 语音默认展开与隐藏用户头像只对这个联系人生效；壁纸的图片、遮罩、模糊与截取
-/// 在与全局壁纸共用的 [WallpaperEditorPage] 里调，样式下的「更多选项」
-/// 只列当前样式（气泡或文档）的细节。
+/// 下方高级材质面板分「界面」「行为」两个标签页。「界面」三项同高：消息样式只对
+/// 这个联系人生效；壁纸的图片、遮罩、模糊与截取在与全局壁纸共用的
+/// [WallpaperEditorPage] 里调；更多选项的箭头跳到 [ChatUiSettingsPage] 的
+/// 「其他」子项改全局值。
 class ChatInterfaceSettingsPage extends ConsumerStatefulWidget {
   const ChatInterfaceSettingsPage({super.key, required this.conversation});
 
@@ -34,7 +35,6 @@ class ChatInterfaceSettingsPage extends ConsumerStatefulWidget {
 class _ChatInterfaceSettingsPageState
     extends ConsumerState<ChatInterfaceSettingsPage> {
   int _tab = 0;
-  bool _styleOptionsExpanded = false;
   Timer? _deferredPreviewTimer;
   bool _deferHeavyPreview = true;
 
@@ -102,10 +102,7 @@ class _ChatInterfaceSettingsPageState
     final settings = ref.watch(appSettingsProvider).valueOrNull;
     final globalStyle = settings?.chatDisplayStyle ?? ChatDisplayStyle.bubble;
     final style = conv.effectiveDisplayStyle ?? globalStyle;
-    final fallbackColor = resolveChatBackgroundColor(
-      context,
-      settings?.lightChatBackground,
-    );
+    final fallbackColor = resolveChatBackgroundColor(context);
 
     return MoePageScaffold(
       extendBodyBehindAppBar: true,
@@ -143,7 +140,7 @@ class _ChatInterfaceSettingsPageState
     Conversation conv,
     AppSettings? settings,
   ) {
-    final maxContentHeight = MediaQuery.sizeOf(context).height * 0.3;
+    final maxContentHeight = MediaQuery.sizeOf(context).height * 0.34;
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -187,200 +184,48 @@ class _ChatInterfaceSettingsPageState
     Conversation conv,
     AppSettings? settings,
   ) {
-    final colors = context.moeColors;
-    final style = conv.effectiveDisplayStyle ??
+    final style =
+        conv.effectiveDisplayStyle ??
         settings?.chatDisplayStyle ??
         ChatDisplayStyle.bubble;
-    final hasImage = conv.chatBackgroundImage?.trim().isNotEmpty ?? false;
-    // 每项一行，面板尽量矮，把高度留给上方的消息预览。
+    // 三项同高；更多选项的箭头跳到通用设置的「其他」子项。
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              SizedBox(width: 40, child: _label(colors, '壁纸')),
-              Expanded(
-                child: Text(
-                  hasImage ? '专属壁纸' : '跟随全局壁纸',
-                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
-                ),
-              ),
-              MoeSecondaryButton(
-                key: const ValueKey('chat_interface_edit_wallpaper'),
-                label: hasImage ? '编辑壁纸' : '设置专属壁纸',
-                size: MoeSecondaryButtonSize.sm,
-                onPressed: () => _editWallpaper(conv),
-              ),
-            ],
+          _PanelRow(
+            label: '消息样式',
+            child: MoeSegmentedControl<ChatDisplayStyle>(
+              key: const ValueKey('chat_interface_style_toggle'),
+              value: style,
+              segments: const [
+                MoeSegment(value: ChatDisplayStyle.bubble, label: '气泡'),
+                MoeSegment(value: ChatDisplayStyle.document, label: '文档'),
+              ],
+              onChanged: (value) => ref
+                  .read(conversationsProvider.notifier)
+                  .setConversationChatDisplayStyle(conv.id, value),
+            ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              SizedBox(width: 40, child: _label(colors, '样式')),
-              Expanded(
-                child: MoeSegmentedControl<ChatDisplayStyle>(
-                  key: const ValueKey('chat_interface_style_toggle'),
-                  value: style,
-                  segments: const [
-                    MoeSegment(value: ChatDisplayStyle.bubble, label: '气泡'),
-                    MoeSegment(value: ChatDisplayStyle.document, label: '文档'),
-                  ],
-                  onChanged: (value) => ref
-                      .read(conversationsProvider.notifier)
-                      .setConversationChatDisplayStyle(conv.id, value),
-                ),
-              ),
-            ],
+          _PanelRow(
+            key: const ValueKey('chat_interface_edit_wallpaper'),
+            label: '壁纸',
+            onTap: () => _editWallpaper(conv),
+          ),
+          _PanelRow(
+            key: const ValueKey('chat_interface_more_options'),
+            label: '更多选项',
+            onTap: () => _openChatUiSettings(ChatUiSettingsTab.other),
           ),
           const SizedBox(height: 4),
-          ..._buildChatViewOptions(colors, conv, settings),
-          _buildStyleOptionsHeader(colors, style),
-          if (_styleOptionsExpanded && settings != null)
-            ..._buildStyleOptions(style, conv, settings),
-          const SizedBox(height: 6),
         ],
       ),
     );
   }
 
-  /// 只对这个联系人生效的显示偏好；没设过的项沿用全局值。
-  List<Widget> _buildChatViewOptions(
-    MoeColors colors,
-    Conversation conv,
-    AppSettings? settings,
-  ) {
-    final prefs = ChatViewPrefs.resolve(conv, settings);
-    final notifier = ref.read(conversationsProvider.notifier);
-    return [
-      Row(
-        children: [
-          SizedBox(width: 40, child: _label(colors, '图片')),
-          Expanded(
-            child: MoeSlider(
-              key: const ValueKey('chat_interface_image_scale_slider'),
-              value: prefs.imagePreviewScale,
-              min: kMinImagePreviewScale,
-              max: kMaxImagePreviewScale,
-              divisions: 20, // 0.05 步长：(1.5-0.5)/0.05 = 20
-              onChanged: (value) => notifier.setConversationChatView(
-                conv.id,
-                imagePreviewScale: value,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 36,
-            child: Text(
-              prefs.imagePreviewScale.toStringAsFixed(2),
-              textAlign: TextAlign.end,
-              style: TextStyle(fontSize: 13, color: colors.textSecondary),
-            ),
-          ),
-        ],
-      ),
-      MoeSettingsRow(
-        key: const ValueKey('chat_interface_expand_audio_switch'),
-        label: '语音消息默认展开文字',
-        trailingType: MoeSettingsRowTrailing.switchControl,
-        switchValue: prefs.expandAudioText,
-        onSwitchChanged: (value) =>
-            notifier.setConversationChatView(conv.id, expandAudioText: value),
-      ),
-      MoeSettingsRow(
-        key: const ValueKey('chat_interface_hide_user_avatar_switch'),
-        label: '隐藏用户头像',
-        trailingType: MoeSettingsRowTrailing.switchControl,
-        switchValue: prefs.hideUserAvatar,
-        onSwitchChanged: (value) =>
-            notifier.setConversationChatView(conv.id, hideUserAvatar: value),
-      ),
-    ];
-  }
-
-  Widget _buildStyleOptionsHeader(MoeColors colors, ChatDisplayStyle style) {
-    final styleName = style == ChatDisplayStyle.document ? '文档' : '气泡';
-    return InkWell(
-      key: const ValueKey('chat_interface_style_options'),
-      borderRadius: BorderRadius.circular(8),
-      onTap: () =>
-          setState(() => _styleOptionsExpanded = !_styleOptionsExpanded),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            const SizedBox(width: 40),
-            Expanded(
-              child: Text(
-                '$styleName样式更多选项',
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-              ),
-            ),
-            AnimatedRotation(
-              turns: _styleOptionsExpanded ? 0.25 : 0,
-              duration: const Duration(milliseconds: 160),
-              child: Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: colors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 当前样式的细节开关：是否分段只对这个联系人生效，分段标点、思维链与
-  /// 工具调用的显示所有聊天共用。
-  List<Widget> _buildStyleOptions(
-    ChatDisplayStyle style,
-    Conversation conv,
-    AppSettings settings,
-  ) {
-    final notifier = ref.read(appSettingsProvider.notifier);
-    if (style == ChatDisplayStyle.document) {
-      return [
-        MoeSettingsRow(
-          key: const ValueKey('document_show_thinking_switch'),
-          label: '显示思维链',
-          subtitle: '收在折叠段里，点开查看',
-          trailingType: MoeSettingsRowTrailing.switchControl,
-          switchValue: settings.documentShowThinking,
-          onSwitchChanged: notifier.setDocumentShowThinking,
-        ),
-        MoeSettingsRow(
-          key: const ValueKey('document_show_tool_calls_switch'),
-          label: '显示工具调用',
-          subtitle: '工具名、参数和结果，收在折叠段里',
-          trailingType: MoeSettingsRowTrailing.switchControl,
-          switchValue: settings.documentShowToolCalls,
-          onSwitchChanged: notifier.setDocumentShowToolCalls,
-        ),
-      ];
-    }
-    final format = conv.chunkOverride.applyTo(settings.messageFormatConfig);
-    final conversations = ref.read(conversationsProvider.notifier);
-    return [
-      MoeSettingsRow(
-        key: const ValueKey('bubble_chunking_switch'),
-        label: '消息分段',
-        subtitle: '长回复拆成多条气泡',
-        trailingType: MoeSettingsRowTrailing.switchControl,
-        switchValue: format.enableChunking,
-        onSwitchChanged: (value) =>
-            conversations.setConversationChatView(conv.id, chunkEnabled: value),
-      ),
-      MoeSettingsRow(
-        key: const ValueKey('bubble_show_thinking_switch'),
-        label: '显示思维链',
-        subtitle: '单独成一个折叠气泡',
-        trailingType: MoeSettingsRowTrailing.switchControl,
-        switchValue: settings.bubbleShowThinking,
-        onSwitchChanged: notifier.setBubbleShowThinking,
-      ),
-    ];
+  void _openChatUiSettings(ChatUiSettingsTab tab) {
+    MoeWorkspace.open(context, ChatUiSettingsPage(initialTab: tab));
   }
 
   Widget _buildBehaviorTab(AppSettings? settings) {
@@ -415,15 +260,56 @@ class _ChatInterfaceSettingsPageState
       ],
     );
   }
+}
 
-  Widget _label(MoeColors colors, String text) => Text(
-    text,
-    style: TextStyle(
-      fontSize: 13,
-      fontWeight: MoeFontWeights.emphasis,
-      color: colors.text,
-    ),
-  );
+/// 「界面」页的一行：左侧名称，中间可放控件，可点时右侧带跳转箭头。
+class _PanelRow extends StatelessWidget {
+  const _PanelRow({super.key, required this.label, this.child, this.onTap});
+
+  static const double height = 48;
+
+  final String label;
+  final Widget? child;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    final row = SizedBox(
+      height: height,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: MoeFontWeights.emphasis,
+                color: colors.text,
+              ),
+            ),
+          ),
+          Expanded(child: child ?? const SizedBox.shrink()),
+          if (onTap != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                size: 20,
+                color: colors.textSecondary,
+              ),
+            ),
+        ],
+      ),
+    );
+    if (onTap == null) return row;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: row,
+    );
+  }
 }
 
 /// 示例对话：与壁纸编辑页共用 [WallpaperSampleMessages]，样式调整即时可见。

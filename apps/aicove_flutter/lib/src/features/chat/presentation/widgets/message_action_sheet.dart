@@ -43,6 +43,8 @@ Future<void> showMessageActionMenu(
   /// 用户在气泡里选中的文字；有值时「复制」只复制这部分。
   String? selectedText,
   bool allowSelect = false,
+  bool allowCopy = true,
+  bool allowQuote = true,
   bool showEnhanceRegenerate = false,
   bool regenerateAudio = false,
   bool showTranscribe = false,
@@ -59,15 +61,16 @@ Future<void> showMessageActionMenu(
         label: '多选',
         onTap: () => onAction(MessageAction.select),
       ),
-    MoePopupMenuItem(
-      icon: Icons.copy_rounded,
-      label: selectedText == null ? '复制' : '复制选中',
-      width: selectedText == null ? 56 : 72,
-      onTap: () {
-        Clipboard.setData(ClipboardData(text: selectedText ?? messageText));
-        onAction(MessageAction.copy);
-      },
-    ),
+    if (allowCopy)
+      MoePopupMenuItem(
+        icon: Icons.copy_rounded,
+        label: selectedText == null ? '复制' : '复制选中',
+        width: selectedText == null ? 56 : 72,
+        onTap: () {
+          Clipboard.setData(ClipboardData(text: selectedText ?? messageText));
+          onAction(MessageAction.copy);
+        },
+      ),
     if (showTranscribe)
       MoePopupMenuItem(
         icon: isAudioTextExpanded
@@ -76,7 +79,7 @@ Future<void> showMessageActionMenu(
         label: isAudioTextExpanded ? '隐藏文字' : '转文字',
         onTap: () => onAction(MessageAction.toggleAudioText),
       ),
-    if (editable)
+    if (editable && allowQuote)
       MoePopupMenuItem(
         icon: Icons.format_quote_rounded,
         label: '引用',
@@ -103,8 +106,9 @@ Future<void> showMessageActionMenu(
   ];
 
   if (!isUserMessage && editable) {
+    final insertAt = (allowSelect ? 1 : 0) + (!allowSelect && allowCopy ? 1 : 0);
     items.insert(
-      1,
+      insertAt,
       MoePopupMenuItem(
         icon: Icons.refresh_rounded,
         label: regenerateAudio ? '重新生成语音' : '重新生成',
@@ -143,6 +147,8 @@ Future<void> showMediaActionMenu(
   Offset? globalPosition,
   required MediaType mediaType,
   bool allowSelect = false,
+  bool allowSave = true,
+  bool allowQuote = true,
   bool allowDelete = false,
   bool allowRegenerate = false,
   required void Function(MessageAction action) onAction,
@@ -154,16 +160,18 @@ Future<void> showMediaActionMenu(
         label: '多选',
         onTap: () => onAction(MessageAction.select),
       ),
-    MoePopupMenuItem(
-      icon: Icons.save_alt_rounded,
-      label: '保存',
-      onTap: () => onAction(MessageAction.save),
-    ),
-    MoePopupMenuItem(
-      icon: Icons.format_quote_rounded,
-      label: '引用',
-      onTap: () => onAction(MessageAction.quote),
-    ),
+    if (allowSave)
+      MoePopupMenuItem(
+        icon: Icons.save_alt_rounded,
+        label: '保存',
+        onTap: () => onAction(MessageAction.save),
+      ),
+    if (allowQuote)
+      MoePopupMenuItem(
+        icon: Icons.format_quote_rounded,
+        label: '引用',
+        onTap: () => onAction(MessageAction.quote),
+      ),
     if (allowDelete)
       MoePopupMenuItem(
         icon: Icons.delete_outline_rounded,
@@ -174,7 +182,8 @@ Future<void> showMediaActionMenu(
   ];
 
   if (allowRegenerate) {
-    items.insertAll(1, [
+    final insertAt = (allowSelect ? 1 : 0) + (!allowSelect && allowSave ? 1 : 0);
+    items.insertAll(insertAt, [
       MoePopupMenuItem(
         icon: Icons.refresh_rounded,
         label: mediaType == MediaType.image ? '重新生成图片' : '重新生成语音',

@@ -1,3 +1,4 @@
+import '../../observability/model_request_ledger.dart';
 import 'dart:convert';
 import '../../workspace/application/codemode_declarations.dart';
 import '../../workspace/application/tool_search.dart';
@@ -30,13 +31,17 @@ class TaskAgentCapabilities {
     this.prompts = const {},
     this.toolOwners = const {},
     this.workspaces,
+    this.toolPolicyFactory,
   });
 
-  /// Role-selected office and package tools, excluding workspaces.
+  /// Active role-selected backend and assistant tools, excluding workspaces.
   final List<AITool> tools;
   final Map<String, String> prompts;
   final Map<String, String> toolOwners;
   final WorkspaceToolset? workspaces;
+
+  /// Builds the assistant gate with the actual model and channel of this run.
+  final Future<AgentToolPolicy> Function(ApiConfig config)? toolPolicyFactory;
 
   bool get isEmpty =>
       prompts.isEmpty &&
@@ -72,6 +77,7 @@ class TaskRunOutcome {
   const TaskRunOutcome({
     required this.summary,
     required this.question,
+    this.detail,
     required this.artifacts,
     required this.processLog,
     this.status = ApiRunStatus.completed,
@@ -86,6 +92,7 @@ class TaskRunOutcome {
 
   /// Set when the agent asked the user something; the task then waits.
   final String? question;
+  final String? detail;
   final List<TaskArtifact> artifacts;
 
   /// This run's calls and results, appended to the local process record.
@@ -102,9 +109,11 @@ class TaskAgentRunner {
     this.summarizerFactory,
     this.resultStore,
     this.keyFailureRecorder,
+    this.resolveConversationId,
   }) : _requestConfig =
            requestConfig ?? BackgroundAgentService.resolveRequestConfig;
 
+  final Future<String?> Function(String taskId)? resolveConversationId;
   final ProviderKeyFailureRecorder? keyFailureRecorder;
   final Future<AppSettings> Function() loadSettings;
   final TaskAgentExecutor executor;
@@ -114,14 +123,17 @@ class TaskAgentRunner {
   final ToolResultStore? resultStore;
 
   static const askToolName = 'ask_user';
+  static const materialToolName = 'submit_reference_material';
 
   Future<TaskRunOutcome> run({
     required String taskId,
     required String runId,
+    String? conversationId,
     required String transcript,
     required TaskAgentCapabilities capabilities,
     required TaskAgentPreset preset,
     required KernelCancellation cancellation,
+    bool readOnly = false,
     AgentToolPolicy? toolPolicy,
     List<Map<String, dynamic>>? contextMessages,
 
@@ -154,6 +166,27 @@ class TaskAgentRunner {
         return '问题已记下。';
       },
     );
+    String? submittedMaterial;
+    final materialTool = AITool(
+      name: materialToolName,
+      description: '提交供创作或分镜使用的完整参考素材原文。',
+      parameters: const {},
+      inputSchema: const {
+        'type': 'object',
+        'properties': {
+          'content': {'type': 'string'},
+        },
+        'required': ['content'],
+      },
+      effect: ToolEffect.readDiagnostic,
+      handler: (args) async {
+        final content = (args['content'] as String).trim();
+        submittedMaterial = submittedMaterial == null
+            ? content
+            : '$submittedMaterial\n\n$content';
+        return '参考素材已附上。';
+      },
+    );
     final rawTools = [
       for (final tool in [
         for (final tool in capabilities.tools)
@@ -165,9 +198,11 @@ class TaskAgentRunner {
             tool,
         ...?capabilities.workspaces?.tools(),
         askTool,
+        materialTool,
         (resultStore ?? ToolResultStore.shared).reader(taskId),
       ])
-        _guarded(tool, cancellation, onExternalStart, onBeforeExternal),
+        if (!readOnly || tool.effect != ToolEffect.write)
+          _guarded(tool, cancellation, onExternalStart, onBeforeExternal),
     ];
     final tools = capabilities.workspaces?.enableScripts == true
         ? assembleCodemodeTools(rawTools)
@@ -183,7 +218,7 @@ class TaskAgentRunner {
       activatedTools: calledMcpToolNames(contextMessages ?? const []),
     );
     final runtimeSchemas = List<Map<String, dynamic>>.of(schemas);
-    final config = ApiConfig(
+    var config = ApiConfig(
       toolResultStore: resultStore,
       toolResultOwner: taskId,
       currentWorkspaceId: () => capabilities.workspaces?.currentWorkspaceId,
@@ -231,6 +266,7 @@ class TaskAgentRunner {
           'role': 'system',
           'content': [
             _systemPrompt,
+            if (readOnly) '当前任务为只读模式（read_only=true），只可查询和读取，严禁尝试写入或修改状态。',
             ?workspacePrompt,
             for (final entry in capabilities.prompts.entries)
               if (preset.allowedPluginIds == null ||
@@ -249,17 +285,30 @@ class TaskAgentRunner {
           toolPolicy ??
           const AgentToolPolicy(authorization: AgentToolAuthorization.allowAll),
     );
-    final result = await executeWithProviderKeyFailureRecording(
-      config: config,
-      recorder: keyFailureRecorder,
-      cancellation: cancellation,
-      execute: () => executor(
-        config: config,
-        tools: tools,
-        sessionId: runId,
-        cancellation: cancellation,
-      ),
-    );
+    if (toolPolicy == null && capabilities.toolPolicyFactory != null) {
+      config = config.copyWith(
+        toolPolicy: await capabilities.toolPolicyFactory!(config),
+      );
+    }
+    final result =
+        await ModelRunScope(
+          purpose: 'task_agent',
+          conversationId:
+              conversationId ?? await resolveConversationId?.call(taskId),
+          turnId: runId,
+        ).run(
+          () => executeWithProviderKeyFailureRecording(
+            config: config,
+            recorder: keyFailureRecorder,
+            cancellation: cancellation,
+            execute: () => executor(
+              config: config,
+              tools: tools,
+              sessionId: runId,
+              cancellation: cancellation,
+            ),
+          ),
+        );
     cancellation.throwIfCancelled();
     final reply =
         (result.processedText.trim().isNotEmpty
@@ -272,6 +321,7 @@ class TaskAgentRunner {
       stopReason: result.stopReason,
       summary: reply,
       question: question?.isEmpty ?? true ? null : question,
+      detail: submittedMaterial,
       artifacts: [
         for (final (workspace, path)
             in capabilities.workspaces?.changed ?? const <(String, String)>[])
@@ -375,5 +425,6 @@ class TaskAgentRunner {
       '只根据任务说明和可用工具完成任务，不编造结果；工具失败就如实说明。\n'
       '完成后用简短的中文写结果摘要（300 字以内）：做了什么、结果是什么、'
       '写了哪些文件。摘要会由角色转告用户。\n'
+      '需要提取原文台词、外貌设定或大段参考资料供创作或分镜使用时，调用 submit_reference_material 提交完整素材原文，再写 300 字以内摘要；普通办事无需调用。\n'
       '任务说明不清楚或需要用户做决定时，调用 ask_user 提一个问题，然后结束。';
 }

@@ -14,6 +14,12 @@ class FakeChatInterfaceSettingsNotifier extends AppSettingsNotifier {
   Future<AppSettings> build() async => settings;
 
   @override
+  Future<void> setSingleAvatarPerTurn(bool enabled) async {
+    settings = settings.copyWith(singleAvatarPerTurn: enabled);
+    state = AsyncData(settings);
+  }
+
+  @override
   Future<void> setAutoScrollOnSend(bool enabled) async {
     settings = settings.copyWith(autoScrollOnSend: enabled);
     state = AsyncData(settings);

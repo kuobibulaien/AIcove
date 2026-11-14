@@ -49,6 +49,32 @@ void main() {
     );
   });
 
+  test(
+    'software management requires explicit capability, not null defaults',
+    () {
+      expect(roleWith().hasAssistantCapability, isFalse);
+      expect(roleWith().isPluginEnabled('memory'), isTrue);
+      expect(roleWith().isPluginEnabled('aicove_assistant'), isFalse);
+      expect(
+        roleWith(mode: RoleAgentMode.chat).hasAssistantCapability,
+        isFalse,
+      );
+      expect(
+        roleWith(mode: RoleAgentMode.agent).hasAssistantCapability,
+        isFalse,
+      );
+      expect(roleWith(mode: RoleAgentMode.tool).hasAssistantCapability, isTrue);
+      expect(roleWith(id: kAicoveAssistantId).hasAssistantCapability, isTrue);
+      final enabled = roleWith().copyWith(enabledPlugins: ['aicove_assistant']);
+      expect(enabled.hasAssistantCapability, isTrue);
+      expect(enabled.allowsPlugin('aicove_assistant'), isTrue);
+      expect(
+        enabled.copyWith(enabledPlugins: <String>[]).hasAssistantCapability,
+        isFalse,
+      );
+    },
+  );
+
   test('copyWith can set and clear the mode', () {
     final tool = roleWith().copyWith(agentMode: RoleAgentMode.tool);
     expect(tool.agentMode, RoleAgentMode.tool);

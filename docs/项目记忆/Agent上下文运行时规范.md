@@ -12,13 +12,13 @@
 Agent = 模型 + 上下文策略 + 工具策略 + 输出契约 + 后处理器
 ```
 
-五类 Agent：Chat / Proactive / Analyzer / Memory / Renderer。它们共享 `AgentDefinition` 定义面，通过 `AgentContextAssemblyPermissions` 收窄职责。
+后台专用 Agent（主动回复判断、压缩、记忆整理等）用 `AgentDefinition`、`ContextProfile`、`AgentOutputContract` 描述目标、历史窗口与输出格式；前台聊天直接按联系人 `Conversation` 与设置装配请求。`ContextProfile` 只是上下文配置，不是权限门禁，读取范围与工具授权要在执行路径里落实（见 `DEVELOPMENT.md`「Agent Context Runtime」）。
 
 ## 开发规则
 
-1. 新增 Agent 前先定义 `AgentDefinition`、`ContextProfile`、`AgentContextAssemblyPermissions`、`AgentOutputContract`、`AgentDeliveryChannel`（实际类名见 `agent_runtime_contracts.dart`）。
+1. 新增 Agent 前先定义 `AgentDefinition`、`ContextProfile`、`AgentOutputContract`、`AgentToolAuthorization`，用途标记用 `AgentDeliveryChannelKind`（都在 `features/agent_context/domain/agent_runtime_contracts.dart`）。
 2. 聊天主链路不得把 UI 投影作为模型上下文，必须从 DB raw message 组装。
-3. 工具调用、TTS、生图、记忆等能力要通过可调度契约接入 Agent Scheduler。
+3. 工具调用、TTS、生图、记忆等能力作为内核 v2 插件经 `PluginRuntime.requestScopes` 贡献提示词与工具，执行沿 `ApiRunner`／`KernelApiRunner`／`AgentLoop`，不另建调度外壳（ADR0108、0118）。
 4. 旧 Web 管理面板已按 ADR0031 删除；schema 与随包资源通过源码维护，App 端继续本地消费。
 5. 主动回复 Analyzer 当前职责已拆分：`ContextAnalyzer.analyze(conversation, proactiveState: ...)` 只返回 `ContextAnalysisDecision?`；调度、会话主动状态更新、触发器写入存储由 `AnalyzerScheduler` 负责。测试应断言 analyzer 决策或 scheduler 存储结果，不再调用旧的 `analyzeAndSchedule()`。
 6. Prompt 默认节点由本地 JSON 与 `apps/aicove_flutter/tool/prompt_defaults_codegen.py` 维护；App 端不得本机覆盖默认节点模板，只能创建与默认节点 ID 不冲突的自定义节点。
@@ -127,19 +127,18 @@ Proactive reply generation:
 ### 2. Signatures
 - `AutoReplyTriggerController.createTrigger(...)` and `createManualTrigger(...)` persist the trigger, then schedule `BackgroundService.scheduleOneOffTask(...)`.
 - `AutoReplyTriggerController.togglePause(...)`, `deleteTrigger(...)`, and terminal delivery paths call `BackgroundService.cancelTaskByTriggerId(triggerId)`.
-- `AnalyzerScheduler.onAppBackground()` schedules a delayed `_runAnalysis(conversationId, reason: 'app_background')` for the current active conversation.
+- `AnalyzerScheduler.onAppBackground()` no longer forces an analysis; it only logs and keeps the existing analysis／silent timers. `onAppResumed()` reloads triggers from storage.
 - `BackgroundService.scheduleOneOffTask(uniqueName: 'trigger_$id', delay: ..., inputData: {...})` registers `taskNameActiveReply`.
 - `callbackDispatcher()` is the WorkManager entry point and must initialize Flutter plugins before using platform channels.
 
 ### 3. Contracts
 - Active trigger create, resume, and retry must register a one-off WorkManager task keyed as `trigger_<triggerId>`.
 - Pause, delete, success, expiry, and final failure must cancel the matching background task.
-- WorkManager `inputData` must include `triggerId`, `convId`, `prompt`, `model`, `apiBase`, and `characterName`; include `apiKey` only when available; pass `requestFormat`, `apiPath`, and `vertexExpress` from provider custom config when present.
+- WorkManager `inputData` carries only `triggerId`, `convId`, `prompt`, `userTitle`, and `characterName`. Model, provider and API key are **not** snapshotted into the task: the background isolate reads the current settings at execution time (`_loadBackgroundRequestConfig`), so a changed key or model takes effect immediately and the key never lands in WorkManager storage. `apiKey`／`model` in `inputData` are read only as an upgrade fallback for tasks scheduled by older versions.
 - A trigger with non-empty `cachedContent` must schedule and run without a provider API key.
 - Live generation may skip execution when no API key is available and no cached reply exists.
 - Background persistence must write the assistant message before notification; notification failure logs a warning and must not undo the stored message.
 - Stored assistant message `content` and `rawPayload` preserve the raw reply, while conversation summary uses a cleaned preview for `<tts>` / `<image>` style tags.
-- App background analysis uses a short delay and cooldown; app resume and scheduler cancel must cancel any pending background analysis timer.
 
 ### 4. Validation & Error Matrix
 - Empty `convId` -> skip task and record warning history.
@@ -152,10 +151,10 @@ Proactive reply generation:
 ### 5. Good/Base/Bad Cases
 - Good: creating an active trigger registers `trigger_<id>`, then background isolate writes the message and tries notification.
 - Base: cached proactive content sends in background with no API key.
-- Bad: relying only on foreground polling timers; mobile OS background suspension prevents delivery.
+- Bad: relying only on the foreground wake timer; mobile OS background suspension prevents delivery.
 
 ### 6. Tests Required
-- Assert trigger creation registers `registerOneOffTask` with trigger and model input fields.
+- Assert trigger creation registers `registerOneOffTask` with the trigger input fields (no model or key).
 - Assert cached background replies do not require model API key.
 - Assert background storage payload keeps raw reply text while cleaning display text for known multimodal tags.
 - Assert notification failure does not prevent local message persistence.
@@ -166,7 +165,7 @@ Proactive reply generation:
 #### Wrong
 ```dart
 await _persist([...current, trigger]);
-// Wait for the foreground 30s poller to notice the trigger.
+// Wait for the foreground timer to notice the trigger.
 ```
 
 #### Correct
@@ -178,12 +177,13 @@ await _scheduleBackgroundTaskForTrigger(trigger);
 ## Scenario: Proactive Foreground Delivery
 
 ### 1. Scope / Trigger
-- Trigger: Flutter foreground polling finds an active proactive trigger whose target conversation is currently open.
+- Trigger: the foreground due-time wake finds an active proactive trigger. `AutoReplyTriggerController` arms one `Timer` for the nearest due point (next fire time, claim lease end, or quiet-hours end) and re-arms after each pass; there is no periodic 30s poller.
 - Scope: trigger expiry rules and foreground dispatch into the local chat timeline.
 
 ### 2. Contracts
 - A low-priority proactive trigger must not expire only because the target chat page is active.
-- If the user has not sent a newer message since trigger creation, foreground polling should dispatch the trigger so the open chat can observe the database update.
+- If the user has not sent a newer message since trigger creation, the foreground wake should dispatch the trigger so the open chat can observe the database update.
+- Every proactive message delivered in the foreground counts as unread (`ConversationRepository.incrementUnread`, same as background delivery). The unread count lives only in the database; a chat page that is the top route while the app is resumed clears it for its own conversation.
 - A newer user message still expires low-priority and medium-priority non-manual triggers.
 
 ### 3. Tests Required
@@ -191,6 +191,8 @@ await _scheduleBackgroundTaskForTrigger(trigger);
 - Assert low-priority triggers still expire when the last user message changed.
 
 ## Scenario: Proactive Memory Linkage
+
+> 2026-11-10 注：本节是 2026 年初的接口设想，未实施：`retrieveRelevantMemories`、`MemorySnippet`、`AutoReplyAgent` 在代码里都不存在，L1／L2／L3 分层已被 ADR0038 的记忆库取代。主动回复现在走主聊天装配，长期记忆由 `MemoryPlugin` 注入，现行边界见文末「短期／长期记忆的 Agent 边界」。下文只作历史参考。
 
 ### 1. Scope / Trigger
 - Trigger: proactive analyzer or agent needs contextual memory to inform trigger scheduling or reply generation decisions.

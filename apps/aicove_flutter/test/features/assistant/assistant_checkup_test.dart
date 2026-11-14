@@ -90,11 +90,11 @@ void main() {
     expect(findings.where((f) => f.roleId == 'secret'), isEmpty);
     expect(
       findings.where((f) => f.roleId == 'agent' && f.text.contains('关闭了函数调用')),
-      isEmpty,
+      isNotEmpty,
     );
     expect(
       findings.where((f) => f.roleId == 'chat' && f.text.contains('关闭了函数调用')),
-      isEmpty,
+      isNotEmpty,
     );
     expect(checked, ['drawer', 'lost']);
   });

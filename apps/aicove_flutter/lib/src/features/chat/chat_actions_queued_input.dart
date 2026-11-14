@@ -27,9 +27,7 @@ extension ChatActionsQueuedInput on ChatActions {
     final task = _activeGenerations[id];
     final conv = _ref.read(conversationSnapshotByIdProvider(id)) ??
         _ref.read(activeConversationProvider);
-    if (task == null ||
-        conv?.id != id ||
-        conv!.effectiveAgentMode != RoleAgentMode.tool) {
+    if (task == null || conv?.id != id) {
       return false;
     }
     final queue = _ref.read(conversationQueuedInputsProvider(id).notifier);

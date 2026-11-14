@@ -1,11 +1,15 @@
 import 'package:flutter/foundation.dart';
 
+import '../../../../features/chat/domain/chat_timeline_deletion.dart';
 import '../../../../features/chat/domain/message.dart';
+import 'chat_message_list_items.dart';
 
 /// Page-owned selection of displayed bubbles, independent of raw chat history.
 class ChatMessageSelection extends ChangeNotifier {
   bool _active = false;
   Map<String, Message> _messages = {};
+  List<Message> _windowMessages = const <Message>[];
+  List<ChatMessageListItem> _listItems = const <ChatMessageListItem>[];
   Set<String> _selected = {};
   Set<String>? _dragBaseline;
   String? _dragAnchor;
@@ -15,6 +19,7 @@ class ChatMessageSelection extends ChangeNotifier {
   int get count => _selected.length;
   bool contains(String id) => _selected.contains(id);
   bool canSelect(String id) => _messages.containsKey(id);
+  Set<String> get selectedIds => Set<String>.unmodifiable(_selected);
 
   List<Message> get selectedMessages => List.unmodifiable(
     _messages.values.where((message) => _selected.contains(message.id)),
@@ -22,14 +27,44 @@ class ChatMessageSelection extends ChangeNotifier {
 
   /// Called by the timeline owner; returns whether the count was pruned.
   /// Notification is deferred by the owner when synchronizing during build.
-  bool updateMessages(Iterable<Message> messages) {
+  bool updateMessages(
+    Iterable<Message> messages, {
+    List<Message>? windowMessages,
+    List<ChatMessageListItem>? listItems,
+  }) {
     _messages = {
       for (final message in messages)
         if (message.status != 'sending') message.id: message,
     };
+    if (windowMessages != null) {
+      _windowMessages = List<Message>.unmodifiable(windowMessages);
+    }
+    if (listItems != null) {
+      _listItems = List<ChatMessageListItem>.unmodifiable(listItems);
+    }
     final previousCount = count;
     _selected.removeWhere((id) => !_messages.containsKey(id));
     return previousCount != count;
+  }
+
+  ChatTimelineDeletePlan buildDeletePlan({
+    Set<String> stagedMessageIds = const <String>{},
+  }) {
+    if (_selected.isEmpty) return const ChatTimelineDeletePlan();
+    if (_listItems.isEmpty && _windowMessages.isEmpty) {
+      return resolveChatTimelineDeletePlan(
+        windowMessages: selectedMessages,
+        listItems: [for (final message in selectedMessages) ChatMessageItem(message)],
+        stagedMessageIds: stagedMessageIds,
+        targetSelectionIds: _selected,
+      );
+    }
+    return resolveChatTimelineDeletePlan(
+      windowMessages: _windowMessages,
+      listItems: _listItems,
+      stagedMessageIds: stagedMessageIds,
+      targetSelectionIds: _selected,
+    );
   }
 
   void refresh() => notifyListeners();

@@ -84,6 +84,12 @@ void main() {
           );
           await container.read(appSettingsProvider.future);
           await tester.pumpAndSettle();
+          // 列表懒加载：先滚到分组被构建出来，再对齐到顶部。
+          await tester.scrollUntilVisible(
+            find.text('材质等级'),
+            300,
+            scrollable: find.byType(Scrollable).first,
+          );
           await Scrollable.ensureVisible(
             tester.element(find.text('材质等级')),
             alignment: 0.03,
@@ -172,6 +178,12 @@ void main() {
           );
           await container.read(appSettingsProvider.future);
           await tester.pumpAndSettle();
+          // 列表懒加载：先滚到分组被构建出来，再对齐到顶部。
+          await tester.scrollUntilVisible(
+            find.text('材质等级'),
+            300,
+            scrollable: find.byType(Scrollable).first,
+          );
           await Scrollable.ensureVisible(
             tester.element(find.text('材质等级')),
             alignment: 0.03,

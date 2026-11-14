@@ -307,6 +307,8 @@ List<AITool> assembleCodemodeTools(Iterable<AITool> tools) {
     'aicove_role_context',
     'web_search',
     'draw_image',
+    'ask_user',
+    'submit_reference_material',
   };
   final loadout = [
     for (final tool in tools)

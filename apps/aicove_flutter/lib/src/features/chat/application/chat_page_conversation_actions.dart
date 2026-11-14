@@ -13,6 +13,7 @@ import '../chat_actions.dart' show quotedMessageProvider;
 import '../chat_providers.dart';
 import '../domain/conversation.dart';
 import '../domain/message.dart';
+import '../domain/chat_timeline_deletion.dart';
 import '../domain/persona_prompt_codec.dart';
 import '../services/chat_frontend_message_projection_service.dart';
 import '../services/chat_message_projection_codec.dart';
@@ -127,6 +128,65 @@ class ChatPageConversationActions {
           enabledPlugins: enabledPlugins,
           clearEnabledPlugins: clearEnabledPlugins,
         );
+  }
+
+  Future<void> executeDeletePlan(
+    String conversationId,
+    ChatTimelineDeletePlan plan,
+  ) async {
+    final store = _ref.read(chatHistoryStoreProvider);
+    final rawIds = await store.resolveTimelineDeleteRawMessageIds(
+      conversationId,
+      plan,
+    );
+    final staged = _ref.read(
+      stagedUserMessagesProvider(conversationId).notifier,
+    );
+    final stagedRemoved = staged.state
+        .where(
+          (message) =>
+              plan.stagedMessageIds.contains(message.id) ||
+              plan.rawMessageIdsToDelete.contains(message.id),
+        )
+        .map((message) => message.id)
+        .toSet();
+    if (stagedRemoved.isNotEmpty) {
+      staged.state = [
+        for (final message in staged.state)
+          if (!stagedRemoved.contains(message.id)) message,
+      ];
+    }
+
+    final quoted = _ref.read(quotedMessageProvider);
+    if (quoted != null) {
+      final parentId =
+          ChatTimelinePieceId.parentMessageIdOf(quoted.id) ?? quoted.id;
+      var clearQuote =
+          stagedRemoved.contains(quoted.id) ||
+          plan.projectedMessageIdsToHide.contains(quoted.id) ||
+          plan.projectedMessageIdsToHide.contains(parentId) ||
+          plan.pieceIdsToHide.contains(quoted.id) ||
+          plan.pieceIdsToHide.any(
+            (id) => ChatTimelinePieceId.parentMessageIdOf(id) == quoted.id,
+          ) ||
+          rawIds.contains(parentId);
+      if (!clearQuote && rawIds.isNotEmpty) {
+        final message = await store.loadFrontendMessageById(
+          parentId,
+          conversationId: conversationId,
+        );
+        clearQuote = rawIds.contains(
+          ChatTimelinePieceId.rawMessageIdOf(
+            parentId,
+            explicitSourceId: message?.sourceMessageId,
+          ),
+        );
+      }
+      if (clearQuote && _ref.read(quotedMessageProvider) == quoted) {
+        _ref.read(quotedMessageProvider.notifier).state = null;
+      }
+    }
+    await store.executeTimelineDeletePlan(conversationId, plan);
   }
 
   Future<void> hideMessages(

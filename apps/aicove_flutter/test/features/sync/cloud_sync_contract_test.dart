@@ -15,6 +15,7 @@ import 'package:aicove_flutter/src/core/media/media_resolver.dart';
 import 'package:aicove_flutter/src/features/account/data/account_repository.dart';
 import 'package:aicove_flutter/src/features/account/domain/account_port.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_api.dart';
+import 'package:aicove_flutter/src/features/memory/data/sqlite_memory_store.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_local_store.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_sync_engine.dart';
 import 'package:aicove_flutter/src/features/sync/data/cloud_sync_scheduler.dart';
@@ -350,6 +351,45 @@ void main() {
       [at, 'conversations', 'role', field],
     );
   }
+
+  test('cloud transfers context and memory to an empty receiver', () async {
+    final phone = await device('phone');
+    await seed(phone);
+    await phone.local.execute(
+      "INSERT INTO context_summaries(id,owner_id,kind,boundary_id,summary,source_ids,source_digest,created_at) VALUES('summary','role','voice_brief','text','brief','[]','digest',1)",
+    );
+    await phone.local.execute(
+      "INSERT INTO memory_items(id,owner_id,layer,title,content,embedding,created_at,updated_at) VALUES('memory','role','core','爱好','桂花茶',x'0102',1,1)",
+    );
+    await phone.local.execute(
+      "INSERT INTO memory_progress(owner_id,until_at,until_id,updated_at) VALUES('role',1,'text',1)",
+    );
+    await phone.sync.enable();
+    final mac = await device('mac');
+    await mac.sync.enable();
+    expect(
+      (await mac.local.rows(
+        'SELECT kind,summary FROM context_summaries',
+      )).single['summary'],
+      'brief',
+    );
+    expect(
+      (await mac.local.rows(
+        'SELECT until_id FROM memory_progress',
+      )).single['until_id'],
+      'text',
+    );
+    expect(
+      (await mac.local.rows(
+        'SELECT embedding FROM memory_items',
+      )).single['embedding'],
+      isNull,
+    );
+    expect(
+      await SqliteMemoryStore(mac.local.db).searchKeyword('role', '桂花茶'),
+      hasLength(1),
+    );
+  });
 
   test(
     'field edit clocks merge offline settings and apply receipts on both devices',
@@ -1309,11 +1349,13 @@ void main() {
         } else {
           await expectLater(
             resolveModelMedia(input, store: desktop.media),
-            throwsA(isA<OriginalMediaUnavailable>().having(
-              (error) => error.toString(),
-              'message',
-              '这条消息里的图片取不到原图，本轮没有发出。请重新选择图片后再发。',
-            )),
+            throwsA(
+              isA<OriginalMediaUnavailable>().having(
+                (error) => error.toString(),
+                'message',
+                '这条消息里的图片取不到原图，本轮没有发出。请重新选择图片后再发。',
+              ),
+            ),
           );
           final history = await resolveModelMedia([
             ...input,

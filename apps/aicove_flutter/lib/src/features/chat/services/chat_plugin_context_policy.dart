@@ -39,7 +39,7 @@ class ChatPluginContextPolicy {
   final ContentTagScanner _scanner;
 
   /// 已下线的旧记忆工具（ADR0038）：历史里残留的调用与结果成对从请求中去掉。
-  static const retiredTools = {'memory_search', 'memory_read', 'context_read'};
+  static const retiredTools = {'memory_search', 'memory_read', 'context_read', 'steer_task', 'create_reminder', 'delete_reminder', 'list_reminders', 'search_reminders'};
 
   bool allowsTool(String name) {
     if (retiredTools.contains(name)) return false;

@@ -7,17 +7,24 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../../observability/background_delivery_diagnostics.dart';
+import '../../observability/model_request_ledger.dart';
 import '../../../core/database/database.dart' hide MessageBlock;
 import '../../../core/database/converters/database_converters.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../../core/media/media_store.dart';
 import '../../../core/sync/cloud_setting_policy.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/services/android_keep_alive_manager.dart';
+import '../../chat/conversation_providers.dart';
+import 'analyzer_scheduler.dart';
+import 'auto_reply_trigger_controller.dart';
 import '../../../core/database/repositories/repositories.dart';
 import '../../chat/services/chat_message_processor.dart';
 import '../../content_tags/domain/content_tag_scanner.dart';
@@ -253,6 +260,7 @@ Future<void> _rescheduleBackgroundTask({
   final normalizedDelay = delay < const Duration(minutes: 1)
       ? const Duration(minutes: 1)
       : delay;
+  final retryAt = DateTime.now().add(normalizedDelay);
   await Workmanager().registerOneOffTask(
     'trigger_$triggerId',
     taskNameActiveReply,
@@ -261,6 +269,15 @@ Future<void> _rescheduleBackgroundTask({
     constraints: Constraints(networkType: NetworkType.connected),
     existingWorkPolicy: ExistingWorkPolicy.replace,
   );
+  await cloudLocalWrite(() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final triggers = await _historyStorage.loadTriggers();
+    await _historyStorage.saveTriggers(triggers.map((trigger) =>
+        trigger.id == triggerId && trigger.isActive
+            ? trigger.copyWith(nextFireAt: retryAt)
+            : trigger).toList());
+  });
 }
 
 /// 后台尝试认领触发器执行权；返回令牌，null 表示未认领到。
@@ -346,8 +363,31 @@ Future<void> _runActiveReplyTask(Map<String, dynamic> data) async {
     final db = _taskDb;
     _taskDb = null;
     _taskClock = null;
-    await db?.close();
+    try {
+      await db?.close();
+    } finally {
+      await _syncBackgroundTriggerAlarm();
+    }
   }
+}
+
+Future<void> _syncBackgroundTriggerAlarm() async {
+  final ownership = await ProactiveOwnership.load();
+  final triggers = await _historyStorage.loadTriggers();
+  DateTime? earliest;
+  var requiresExact = false;
+  for (final trigger in triggers) {
+    if (!trigger.isActive || !ownership.owns(trigger.conversationId)) continue;
+    if (earliest == null || trigger.nextFireAt.isBefore(earliest)) {
+      earliest = trigger.nextFireAt;
+      requiresExact = trigger.requireExact;
+    } else if (trigger.nextFireAt.isAtSameMomentAs(earliest)) {
+      requiresExact |= trigger.requireExact;
+    }
+  }
+  final settings = AutoReplySettings.fromJson(await _loadAutoReplySettingsMap());
+  await syncProactiveTriggerAlarm(earliest,
+      exact: settings.allowExactAlarm || requiresExact);
 }
 
 /// SQLITE_BUSY / SQLITE_LOCKED, also when wrapped by drift's isolate channel.
@@ -420,11 +460,67 @@ Future<void> _appendHistoryLog({
   }
 }
 
+/// AlarmManager's standalone engine owns one database and provider graph for
+/// the entire run. Native completion atomically rechecks slots queued during
+/// teardown before releasing the engine's wake lease.
+@pragma('vm:entry-point')
+Future<void> proactiveAlarmEntrypoint() async {
+  AppDatabase? db;
+  ProviderContainer? container;
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    DartPluginRegistrant.ensureInitialized();
+    ModelRequestLedger.useBackgroundLane = true;
+    db = AppDatabase();
+    container = ProviderContainer(overrides: [
+      databaseProvider.overrideWithValue(db),
+    ]);
+    final providers = container;
+    providers.read(autoReplyTriggersProvider.notifier).useNativeAlarmsOnly();
+    await providers.read(conversationsProvider.future);
+    providers.read(analyzerSchedulerProvider).useNativeAlarmsOnly();
+    await providers.read(autoReplyTriggersProvider.future);
+    await drainProactiveAlarmSlots(
+      trigger: () => providers.read(autoReplyTriggersProvider.notifier)
+          .pollDueTriggersForAlarm(),
+      analyzer: () => providers.read(analyzerSchedulerProvider)
+          .onNativeAlarmFired(),
+    );
+    await providers.read(autoReplyTriggersProvider.notifier).flushAlarmSchedule();
+    await providers.read(analyzerSchedulerProvider).flushAlarmSchedule();
+  } finally {
+    try {
+      try {
+        container?.dispose();
+      } finally {
+        await db?.close();
+      }
+    } finally {
+      await AndroidKeepAliveManager.completeHeadlessAlarmRun();
+    }
+  }
+}
+
+@visibleForTesting
+Future<void> drainProactiveAlarmSlots({
+  required Future<void> Function() trigger,
+  required Future<void> Function() analyzer,
+}) async {
+  while (true) {
+    final slots = await AndroidKeepAliveManager.consumePendingAlarmSlots();
+    if (slots.isEmpty) return;
+    // Delivery wins over analysis when both became due during sleep.
+    if (slots.contains('trigger')) await trigger();
+    if (slots.contains('analyzer')) await analyzer();
+  }
+}
+
 // 入口函数（必须是顶层函数）
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     DartPluginRegistrant.ensureInitialized();
+    ModelRequestLedger.useBackgroundLane = true;
 
     if (task == taskNameActiveReply && inputData != null) {
       print('[Background] Active Reply Task Started');
@@ -547,7 +643,7 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   }
 
   // 用户已换到另一台设备说话：这个会话的主动回复归那台设备负责。
-  if (!(await ProactiveOwnership.load()).owns(convId)) {
+  if (!(await ProactiveOwnership.load()).owns(convId) || (await ModelRequestLedger.instance.activeRemoteRunsForConversation(convId)).isNotEmpty) {
     await _appendHistoryLog(
       event: 'task_skipped_other_device',
       message: '后台主动回复任务已跳过：这个会话由另一台设备负责',
@@ -994,12 +1090,12 @@ Future<String?> _generateLiveReply({
             Zone.current[#backgroundGenerate]
                 as Future<String?> Function(String)?;
         if (generate != null) return generate(latestReminder);
-        return generateHeadlessProactiveReply(
+        return ModelRunScope(purpose: 'proactive_reply', conversationId: conversationId, turnId: 'auto_reply_background_$triggerId').run(() => generateHeadlessProactiveReply(
           conversationId: conversationId,
           reminder: latestReminder,
           turnId: 'auto_reply_background_$triggerId',
           overrides: [databaseProvider.overrideWithValue(db)],
-        );
+        ));
       },
     );
   } catch (e) {
@@ -1079,7 +1175,7 @@ Future<String?> _backgroundDeliveryInvalidReason(
   if (conversation == null || conversation.deletedAt != null) {
     return 'conversation_deleted';
   }
-  if (!(await ProactiveOwnership.load()).owns(conversationId)) {
+  if (!(await ProactiveOwnership.load()).owns(conversationId) || (await ModelRequestLedger.instance.activeRemoteRunsForConversation(conversationId)).isNotEmpty) {
     return 'other_device';
   }
   if (triggerId.isEmpty) return null; // Legacy tasks have no trigger snapshot.
@@ -1481,11 +1577,7 @@ Future<bool> _saveMessageToStorage(
         ),
       );
       await convRepo.updateSummary(convId, payload.displayText, now);
-      await db.customUpdate(
-        'UPDATE conversations SET unread_count = unread_count + 1 WHERE id = ?',
-        variables: [Variable.withString(convId)],
-        updates: {db.conversations},
-      );
+      await convRepo.incrementUnread(convId);
       return true;
     });
 
@@ -1713,11 +1805,24 @@ Future<void> _advanceConversationProactiveStateAfterBackgroundSend({
                   ? user != null
                   : userAt == null ||
                         userAt.isAfter(trigger.contextLastUserMessageAt!)));
+    final remaining = contextChanged
+        ? <AutoReplyTrigger>[]
+        : (await _loadAllTriggerMaps())
+              .map(AutoReplyTrigger.fromJson)
+              .where((candidate) =>
+                  candidate.conversationId == conversationId &&
+                  candidate.id != triggerId &&
+                  candidate.source == TriggerSource.aiScheduler &&
+                  candidate.isActive)
+              .toList()
+      ..sort((a, b) => a.nextFireAt.compareTo(b.nextFireAt));
     final next = contextChanged
         ? current.markUserMessage(
             messageId: user?.id,
             occurredAt: userAt ?? DateTime.now(),
           )
+        : remaining.isNotEmpty
+        ? current.withPendingAutoTrigger(remaining.first.id)
         : current
               .clearPendingAutoTrigger(triggerId: triggerId)
               .afterSuccessfulAutoTriggerSend(occurredAt: DateTime.now());
@@ -1771,6 +1876,7 @@ class BackgroundService {
     required String uniqueName,
     required Duration delay,
     required Map<String, dynamic> inputData,
+    bool requiresNetwork = true,
   }) async {
     await Workmanager().registerOneOffTask(
       uniqueName,
@@ -1778,7 +1884,9 @@ class BackgroundService {
       initialDelay: delay,
       inputData: inputData,
       constraints: Constraints(
-        networkType: NetworkType.connected, // 必须有网
+        networkType: requiresNetwork
+            ? NetworkType.connected
+            : NetworkType.not_required,
       ),
       existingWorkPolicy: ExistingWorkPolicy.replace, // 如果ID相同则替换
     );

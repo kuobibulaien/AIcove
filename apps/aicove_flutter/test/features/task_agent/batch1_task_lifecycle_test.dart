@@ -56,10 +56,12 @@ class _Runner extends TaskAgentRunner {
   Future<TaskRunOutcome> run({
     required String taskId,
     required String runId,
+    String? conversationId,
     required String transcript,
     required TaskAgentCapabilities capabilities,
     required TaskAgentPreset preset,
     required KernelCancellation cancellation,
+    bool readOnly = false,
     AgentToolPolicy? toolPolicy,
     List<Map<String, dynamic>>? contextMessages,
     void Function()? onExternalStart,
@@ -211,7 +213,8 @@ void main() {
     store: store,
     process: process,
     runner: runner,
-    capabilities: (_, _, _) async => const TaskAgentCapabilities(),
+    capabilities: (_, _, _, {bool readOnly = false}) async =>
+        const TaskAgentCapabilities(),
     writeReceipt: (receipt) async {
       written.add(receipt);
     },
@@ -284,7 +287,8 @@ void main() {
         store: store,
         process: _Process(),
         runner: _Runner(),
-        capabilities: (_, _, _) async => const TaskAgentCapabilities(),
+        capabilities: (_, _, _, {bool readOnly = false}) async =>
+            const TaskAgentCapabilities(),
         writeReceipt: (_) async {},
         relay: (_, _) async => throw StateError('not owner'),
         findReceipt: (_) async => null,

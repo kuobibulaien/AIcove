@@ -14,6 +14,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../features/agent_context/providers/preset_recipe_provider.dart';
+import '../../../../features/assistant/domain/assistant_onboarding.dart'
+    show kAicoveAssistantId;
 import '../../../../features/chat/domain/persona_prompt_codec.dart';
 import '../../../../features/plugins/image/drawing_preset_provider.dart';
 import '../../../../features/plugins/mcp/mcp_connector.dart';
@@ -185,6 +187,14 @@ class _CharacterPluginsSectionState
               : _unconfigured,
         ),
       ),
+      _PluginSpec(
+        id: 'aicove_assistant',
+        label: '软件管理',
+        lockedOn: widget.conversationId == kAicoveAssistantId,
+        binding: widget.conversationId == kAicoveAssistantId
+            ? const _BindingSpec(value: '始终开启')
+            : null,
+      ),
       // 每个 MCP 连接器单独开关；角色未开启时不会拿到它的工具。
       for (final connector in ref.watch(mcpConnectorsConfigProvider).connectors)
         _PluginSpec(
@@ -230,7 +240,9 @@ class _CharacterPluginsSectionState
   }
 
   bool _isActive(_PluginSpec plugin) =>
-      plugin.alwaysOn || widget.selectedPluginIds.contains(plugin.id);
+      plugin.alwaysOn ||
+      plugin.lockedOn ||
+      widget.selectedPluginIds.contains(plugin.id);
 
   // ==================== 已开启插件列表 ====================
 
@@ -547,9 +559,11 @@ class _CharacterPluginsSectionState
                   _switchRow(
                     colors,
                     plugins[i],
-                    value: selected.contains(plugins[i].id),
+                    value: plugins[i].lockedOn ||
+                        selected.contains(plugins[i].id),
                     showDivider: i < plugins.length - 1,
                     onToggle: (value) {
+                      if (plugins[i].lockedOn) return;
                       final next = Set<String>.from(selected);
                       value ? next.add(plugins[i].id) : next.remove(plugins[i].id);
                       setSheetState(() => selected = next);
@@ -741,11 +755,15 @@ class _PluginSpec {
   /// 没有按角色开关位，始终显示在已开启列表里，不进入管理列表
   final bool alwaysOn;
 
+  /// 进入管理列表，但锁定开启、不可关闭（如 AIcove酱 的软件管理）
+  final bool lockedOn;
+
   const _PluginSpec({
     required this.id,
     required this.label,
     this.binding,
     this.alwaysOn = false,
+    this.lockedOn = false,
   });
 }
 

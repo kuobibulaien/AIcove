@@ -32,7 +32,7 @@ class AppRelease {
 
   /// Version without the `v` prefix, e.g. `0.1.0-test.5`.
   final String version;
-  /// One short line per change, see [releaseHighlights].
+  /// One full line per change, see [releaseHighlights].
   final List<String> highlights;
   final String url;
 
@@ -49,23 +49,29 @@ int? compareReleaseVersions(String a, String b) {
   return left.compareTo(right);
 }
 
-/// Condenses release notes to at most [limit] short highlights.
+/// Extracts the change list shown in the update prompt.
 ///
-/// Takes the bullets under the `新增与改进` heading (or the first bullet list
-/// when the heading is missing) and keeps each bullet up to its first clause,
-/// so verification and download sections never reach the prompt.
-List<String> releaseHighlights(String body, {int limit = 5}) {
+/// Takes every bullet under the `新增与改进` heading, across `###` subheadings
+/// and notes between them, in full, until a `##` heading or a `验证`／`下载`
+/// line. Without that heading it takes the first bullet list only.
+List<String> releaseHighlights(String body, {int? limit}) {
   final lines = body.split('\n').map((line) => line.trim()).toList();
-  final heading = lines.indexWhere((line) => line.startsWith('新增与改进'));
+  String title(String line) => line.replaceFirst(RegExp(r'^#+\s*'), '');
+  final heading = lines.indexWhere((line) => title(line).startsWith('新增与改进'));
   final highlights = <String>[];
   for (final line in lines.skip(heading + 1)) {
-    if (!line.startsWith('- ') && !line.startsWith('* ')) {
-      if (highlights.isNotEmpty) break;
+    if (line.startsWith('## ') ||
+        title(line).startsWith('验证') ||
+        title(line).startsWith('下载')) {
+      break;
+    }
+    if (line.startsWith('- ') || line.startsWith('* ')) {
+      final text = line.substring(2).trim();
+      if (text.isNotEmpty) highlights.add(text);
+      if (highlights.length == limit) break;
       continue;
     }
-    final text = line.substring(2).split(RegExp('[；，。（;]')).first.trim();
-    if (text.isNotEmpty) highlights.add(text);
-    if (highlights.length == limit) break;
+    if (heading < 0 && line.isNotEmpty && highlights.isNotEmpty) break;
   }
   return highlights;
 }

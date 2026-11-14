@@ -15,8 +15,12 @@ import 'package:aicove_flutter/src/features/auto_reply/domain/proactive_decision
 import 'package:aicove_flutter/src/features/chat/conversation_providers.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:drift/native.dart';
+import 'package:aicove_flutter/src/features/chat/chat_providers.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/auto_reply_claim_store.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _id = 'stage3_scheduler';
@@ -320,4 +324,189 @@ void main() {
       expect(state.silenceUntil, isNull);
     },
   );
+  test('observation deadline persists and survives resume unchanged', () async {
+    final deadline = DateTime.now().add(const Duration(minutes: 2));
+    await ConversationProactiveStateStorage().saveStates({
+      _id: ConversationProactiveState(
+        conversationId: _id,
+        lastUserAt: DateTime.now().subtract(const Duration(minutes: 20)),
+        observingUntil: deadline,
+      ),
+    });
+    final scheduler = container.read(analyzerSchedulerProvider);
+    await scheduler.onAppResumed();
+    await drain();
+    expect(analyzer.started.isCompleted, isFalse);
+    final state = (await ConversationProactiveStateStorage()
+        .loadStates())[_id]!;
+    expect(
+      state.observingUntil!.difference(deadline).inMilliseconds.abs(),
+      lessThan(100),
+    );
+  });
+
+  test('AI idle refreshes a full five minute observation', () async {
+    final scheduler = container.read(analyzerSchedulerProvider);
+    await scheduler.handleUserMessageActivity(
+      conversationId: _id,
+      messageId: 'user',
+      occurredAt: DateTime.now(),
+    );
+    scheduler.scheduleAnalysis(
+      conversationId: _id,
+      delay: const Duration(seconds: 20),
+    );
+    await drain();
+    final before = DateTime.now();
+    container.read(conversationIdleEventsProvider).add(_id);
+    await drain();
+    final state = (await ConversationProactiveStateStorage()
+        .loadStates())[_id]!;
+    expect(
+      state.observingUntil!.difference(before).inSeconds,
+      inInclusiveRange(299, 301),
+    );
+  });
+
+  test('sending skips analysis until idle and resets observation', () async {
+    final scheduler = container.read(analyzerSchedulerProvider);
+    await scheduler.handleUserMessageActivity(
+      conversationId: _id,
+      messageId: 'user',
+      occurredAt: DateTime.now(),
+    );
+    container.read(conversationSendingProvider(_id).notifier).state = true;
+    scheduler.scheduleAnalysis(conversationId: _id, delay: Duration.zero);
+    await drain();
+    expect(analyzer.started.isCompleted, isFalse);
+    container.read(conversationSendingProvider(_id).notifier).state = false;
+    container.read(conversationIdleEventsProvider).add(_id);
+    await drain();
+    expect(
+      (await ConversationProactiveStateStorage().loadStates())[_id]!
+          .observingUntil,
+      isNotNull,
+    );
+  });
+
+  test(
+    'another isolate claim blocks analysis, release allows next run',
+    () async {
+      final claims = AutoReplyClaimStore(database);
+      final token = await claims.tryClaim(
+        triggerId: 'analyzer:$_id',
+        claimedBy: AutoReplyClaimOwner.background,
+      );
+      container
+          .read(analyzerSchedulerProvider)
+          .scheduleAnalysis(conversationId: _id, delay: Duration.zero);
+      await drain();
+      expect(analyzer.started.isCompleted, isFalse);
+      await claims.release('analyzer:$_id', token!);
+      await startAnalysis();
+      analyzer.result.complete(
+        const ContextAnalysisDecision(contextMessages: []),
+      );
+      await drain();
+      expect(await claims.stateOf('analyzer:$_id'), isA<AutoReplyClaimFree>());
+    },
+  );
+
+  test('expired persisted observation runs immediately', () async {
+    await ConversationProactiveStateStorage().saveStates({
+      _id: ConversationProactiveState(
+        conversationId: _id,
+        lastUserAt: DateTime.now(),
+        observingUntil: DateTime.now().subtract(const Duration(seconds: 1)),
+      ),
+    });
+    container.read(analyzerSchedulerProvider);
+    await analyzer.started.future.timeout(const Duration(seconds: 3));
+    expect(
+      (await ConversationProactiveStateStorage().loadStates())[_id]!
+          .observingUntil,
+      isNull,
+    );
+    analyzer.result.complete(
+      const ContextAnalysisDecision(contextMessages: []),
+    );
+    await drain();
+  });
+
+  test('observation JSON and transitions clear stale deadlines', () {
+    final state = ConversationProactiveState(
+      conversationId: _id,
+      observingUntil: DateTime(2026, 11, 13),
+    );
+    expect(
+      ConversationProactiveState.fromJson(state.toJson()).observingUntil,
+      state.observingUntil,
+    );
+    expect(state.withObservingUntil(null).observingUntil, isNull);
+    expect(state.withPendingAutoTrigger('pending').observingUntil, isNull);
+    expect(
+      state
+          .applySessionPatch(mode: ConversationProactiveMode.silent)
+          .observingUntil,
+      isNull,
+    );
+    expect(
+      state.copyWith(mode: ConversationProactiveMode.dormant).observingUntil,
+      isNull,
+    );
+  });
+
+  for (final failure in ['none', 'start', 'release']) {
+    final failStart = failure == 'start';
+    test(
+      'analysis keeps generation lease through drafts (failure: $failure)',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        const channel = MethodChannel('com.example.aicove_flutter/keep_alive');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        final transitions = <bool>[];
+        var active = false;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'setGenerationActive') {
+            active = (call.arguments as Map)['active'] == true;
+            transitions.add(active);
+            if ((active && failStart) || (!active && failure == 'release')) {
+              throw PlatformException(code: 'denied');
+            }
+            return null;
+          }
+          return <String, Object>{
+            'generationActive': active,
+            'serviceRunning': active,
+            'generationWakeLockHeld': active,
+          };
+        });
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(channel, null);
+          debugDefaultTargetPlatformOverride = null;
+        });
+        await startAnalysis();
+        expect(transitions, failStart ? [true, false] : [true]);
+        analyzer.result.complete(
+          ContextAnalysisDecision(
+            contextMessages: const [],
+            triggerPlan: ContextAnalysisTriggerPlan(
+              kind: ProactiveReachOutKind.checkIn,
+              title: 'check in',
+              fireAt: DateTime.now().add(const Duration(hours: 1)),
+              allowNight: true,
+              priority: AutoReplyTriggerPriority.medium,
+              systemReminder: 'check in',
+            ),
+          ),
+        );
+        await pregenerator.started.future.timeout(const Duration(seconds: 2));
+        expect(transitions, failStart ? [true, false] : [true]);
+        pregenerator.result.complete(null);
+        await drain();
+        expect(transitions, [true, false]);
+      },
+    );
+  }
 }

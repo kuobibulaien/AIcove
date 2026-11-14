@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -31,37 +30,37 @@ class _FakeAppSettingsNotifier extends AppSettingsNotifier {
 
 AppSettings _buildSettings() {
   const defaultModelRef = 'openai:gpt-4o-mini';
-  return AppSettings(
+  return const AppSettings(
     ttsEnabled: true,
     defaultModelName: defaultModelRef,
     defaultPersonaPrompt: '',
-    modelList: const <String>[defaultModelRef],
-    allKnownModels: const <String>[defaultModelRef],
-    modelDisplayNames: const <String, String>{},
-    modelTypes: const <String, String>{},
-    modelConfigs: const <String, ModelConfig>{},
+    modelList: <String>[defaultModelRef],
+    allKnownModels: <String>[defaultModelRef],
+    modelDisplayNames: <String, String>{},
+    modelTypes: <String, String>{},
+    modelConfigs: <String, ModelConfig>{},
     apiKey: '',
     apiBaseUrl: 'https://api.openai.com/v1',
     imageGenerationEnabled: false,
     maxFileUploadMB: 10,
     contextWindowTokens: 272000,
-    customModels: const <CustomModel>[],
-    providers: const <ProviderAuth>[],
-    modelProviderMap: const <String, String>{},
+    customModels: <CustomModel>[],
+    providers: <ProviderAuth>[],
+    modelProviderMap: <String, String>{},
     backendApiKey: '',
     messageChunkingEnabled: false,
-    messageFormatConfig: const MessageFormatConfig(),
+    messageFormatConfig: MessageFormatConfig(),
     textScaleFactor: 1.0,
     uiScaleFactor: 1.0,
     imagePreviewScale: 1.0,
-    autoReplySettings: const AutoReplySettings(),
+    autoReplySettings: AutoReplySettings(),
     globalBackgroundColor: GlobalBackgroundColor.white,
     chatBackgroundColor: ChatBackgroundColor.defaultColor,
     isDarkMode: false,
     useSystemTheme: true,
     accentColor: 'FC96AA',
     hideUserAvatar: true,
-    defaultChatModels: const <String>[defaultModelRef],
+    defaultChatModels: <String>[defaultModelRef],
     streamSegmentDelaySeconds: 0,
   );
 }
@@ -157,20 +156,20 @@ void main() {
               fontFamily: _writePreview ? 'Preview' : null,
               extensions: [dark ? MoeColors.dark() : MoeColors.light()],
             ),
-            home: Scaffold(
-              backgroundColor: dark
-                  ? MoeColors.dark().bgMain
-                  : MoeColors.light().bgMain,
-              body: RepaintBoundary(
-                key: capture,
-                child: Align(
+            home: RepaintBoundary(
+              key: capture,
+              child: Scaffold(
+                backgroundColor: dark
+                    ? MoeColors.dark().bgMain
+                    : MoeColors.light().bgMain,
+                body: Align(
                   alignment: Alignment.bottomCenter,
                   child: Composer(
-                disabled: false,
-                onSend: (text) async => sent.add(text),
-                onImageSelected: (_, {String? text}) async {},
-                onFileSelected: (_, {String? text}) async {},
-                onHeightChanged: (_) {},
+                    disabled: false,
+                    onSend: (text) async => sent.add(text),
+                    onImageSelected: (_, {String? text}) async {},
+                    onFileSelected: (_, {String? text}) async {},
+                    onHeightChanged: (_) {},
                   ),
                 ),
               ),
@@ -245,11 +244,24 @@ void main() {
     expect(sent, isEmpty);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
-  testWidgets('聊天模式的 Enter 不发送', (tester) async {
+  testWidgets('普通角色空闲时支持桌面 Enter 发送', (tester) async {
     await pumpComposer(tester, mode: RoleAgentMode.chat);
     await type(tester, '你好');
     await press(tester, LogicalKeyboardKey.enter);
-    expect(sent, isEmpty);
+    expect(sent, ['你好']);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('普通角色运行中支持桌面 Enter 插话与 Option+Enter 做完再发', (tester) async {
+    await pumpComposer(tester, mode: RoleAgentMode.chat, running: true);
+    await type(tester, '插一句');
+    await press(tester, LogicalKeyboardKey.enter);
+    await type(tester, '稍后发');
+    await press(
+      tester,
+      LogicalKeyboardKey.enter,
+      modifier: LogicalKeyboardKey.altLeft,
+    );
+    expect(actions.queued, [('插一句', true), ('稍后发', false)]);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('排队显示在输入框上方，Option+↑ 放回输入框', (tester) async {
@@ -299,6 +311,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(actions.queued, [('改看 c', true), ('最后总结', false)]);
   }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+  testWidgets('手机生成中显示「长按发送按钮，排队发送」且占位提示字体更透明', (
+    tester,
+  ) async {
+    final expectedHintColor = MoeColors.light().muted.withValues(alpha: 0.55);
+
+    await pumpComposer(tester, running: false);
+    final idleField = tester.widget<TextField>(find.byType(TextField));
+    expect(idleField.decoration?.hintText, '消息');
+    expect(idleField.decoration?.hintStyle?.color, expectedHintColor);
+
+    container.read(conversationSendingProvider(_convId).notifier).state = true;
+    await tester.pumpAndSettle();
+    final runningField = tester.widget<TextField>(find.byType(TextField));
+    expect(runningField.decoration?.hintText, '长按发送按钮，排队发送');
+    expect(
+      runningField.decoration?.hintText?.contains('发送＝插话'),
+      isFalse,
+    );
+    expect(runningField.decoration?.hintStyle?.color, expectedHintColor);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   // 源码渲染预览：--dart-define=WRITE_COMPOSER_PREVIEW=true 时写到
   // scratch/agent-steer-20261024/。Mac 窄屏，运行中有排队、输入框分空与有字两态。
   for (final (name, dark, typed) in [
@@ -334,5 +367,31 @@ void main() {
         await file.writeAsBytes(bytes!.buffer.asUint8List());
       });
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+  }
+
+  // 源码渲染预览：--dart-define=WRITE_COMPOSER_PREVIEW=true 时写到
+  // scratch/composer-hint-preview/。手机窄屏，生成中空输入框提示文案与透明度。
+  for (final (name, dark) in [
+    ('mobile-running-light', false),
+    ('mobile-running-dark', true),
+  ]) {
+    testWidgets('preview $name', (tester) async {
+      if (!_writePreview) return;
+      tester.view.physicalSize = const Size(360 * 2, 180 * 2);
+      tester.view.devicePixelRatio = 2;
+      addTearDown(tester.view.reset);
+      final capture = GlobalKey();
+      await pumpComposer(tester, running: true, capture: capture, dark: dark);
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        final boundary =
+            capture.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 2);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        final file = File('../../scratch/composer-hint-preview/$name.png');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(bytes!.buffer.asUint8List());
+      });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   }
 }

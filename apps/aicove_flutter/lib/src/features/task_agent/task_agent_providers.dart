@@ -1,8 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
-    show KernelCancellation;
+    show KernelCancellation, ToolEffect;
 import 'package:drift/drift.dart' show Variable;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -17,13 +18,21 @@ import '../agent_plugins/plugin_runtime.dart';
 import '../agent_plugins/tool_policy.dart';
 import '../agent_plugins/plugin_request_context.dart';
 import '../agent_plugins/plugin_request_scope.dart';
+import '../assistant/assistant_providers.dart';
+import '../assistant/application/assistant_approvals.dart';
+import '../assistant/application/assistant_plugin.dart';
+import '../assistant/application/assistant_review.dart';
+import '../assistant/application/assistant_settings_tools.dart';
+import '../assistant/application/assistant_tool_group.dart';
 import '../auto_reply/data/proactive_owner_device.dart';
+import '../agent_context/domain/agent_runtime_contracts.dart';
 import '../auto_reply/data/proactive_reply_generator.dart';
 import '../background_agent/background_agent_service.dart';
 import '../chat/chat_providers.dart';
 import '../context/providers/context_providers.dart';
 import '../chat/conversation_providers.dart';
 import '../chat/domain/message.dart';
+import '../chat/domain/conversation.dart';
 import '../chat/services/chat_history_store.dart';
 import '../chat/services/chat_send_service.dart';
 import '../chat/services/chat_tts_handler.dart';
@@ -66,8 +75,13 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
   final history = ref.read(chatHistoryStoreProvider);
   return TaskAgentService(
     store: store,
+    inlineWait: const Duration(seconds: 3),
+    isReceiptRelayed: (conversationId, receiptId) =>
+        _alreadyRelayed(ref, conversationId, receiptId),
     process: TaskProcessRecord(directory),
     runner: TaskAgentRunner(
+      resolveConversationId: (id) async =>
+          (await store.get(id))?.conversationId,
       keyFailureRecorder: ref.read(providerKeyFailureRecorderProvider),
       // Task steps are compacted as task progress, never as companion chat.
       summarizerFactory: () =>
@@ -88,8 +102,14 @@ final taskAgentServiceProvider = FutureProvider<TaskAgentService>((ref) async {
             cancellation: cancellation,
           ),
     ),
-    capabilities: (task, runId, cancellation) =>
-        _resolveCapabilities(ref, task, runId, cancellation),
+    capabilities: (task, runId, cancellation, {bool readOnly = false}) =>
+        _resolveCapabilities(
+          ref,
+          task,
+          runId,
+          cancellation,
+          readOnly: readOnly,
+        ),
     writeReceipt: (recorded) =>
         ref.read(databaseProvider).transaction(() async {
           final conversation = await ref
@@ -130,52 +150,106 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
   Ref ref,
   AgentTask task,
   String runId,
-  KernelCancellation cancellation,
-) async {
+  KernelCancellation cancellation, {
+  bool readOnly = false,
+}) async {
   final conversation = await ref
       .read(proactiveReplyGeneratorProvider)
       .loadConversation(task.conversationId);
   if (conversation == null) return const TaskAgentCapabilities();
+  return resolveConversationTaskCapabilities(
+    ref,
+    conversation,
+    instruction: task.instruction,
+    runId: runId,
+    cancellation: cancellation,
+    readOnly: readOnly,
+  );
+}
+
+/// Resolves one role's backend without loading task storage or chat history.
+Future<TaskAgentCapabilities> resolveConversationTaskCapabilities(
+  Ref ref,
+  Conversation conversation, {
+  required String instruction,
+  required String runId,
+  required KernelCancellation cancellation,
+  bool readOnly = false,
+}) async {
   await ensurePluginConfigsLoaded(ref);
   final enabled = conversation.enabledPlugins?.toSet();
   final plugins = ref.read(pluginManagerProvider).getAllPlugins();
+  final inputs = PluginRequestInputs(
+    ref: ref,
+    settings: await ref.read(appSettingsProvider.future),
+    conversationId: conversation.id,
+    rolePluginIds: enabled,
+    imageConfig: const ImageConfig(),
+    voiceRequest: VoiceRequest(ownerId: conversation.id),
+    pluginPrompts: const PluginPrompts(),
+    history: const [],
+    previousUserMessageTime: null,
+    useFastImageRoute: false,
+    useStableImageRoute: false,
+    supportsToolCalling: true,
+    reminders: const SystemReminderService(),
+  );
   final extension = await resolveTaskPluginCapabilities(
     plugins,
     enabled,
-    inputs: PluginRequestInputs(
-      ref: ref,
-      settings: await ref.read(appSettingsProvider.future),
-      conversationId: conversation.id,
-      rolePluginIds: enabled,
-      imageConfig: const ImageConfig(),
-      voiceRequest: VoiceRequest(ownerId: conversation.id),
-      pluginPrompts: const PluginPrompts(),
-      history: const [],
-      previousUserMessageTime: null,
-      useFastImageRoute: false,
-      useStableImageRoute: false,
-      supportsToolCalling: true,
-      reminders: const SystemReminderService(),
-    ),
+    inputs: inputs,
   );
+  if (conversation.hasAssistantCapability) {
+    final runtime = PluginRuntime();
+    try {
+      runtime.install(
+        assistantAgentPlugin(
+          ref.read(assistantToolsetProvider),
+          conversationId: conversation.id,
+          writes: readOnly ? null : ref.read(assistantWriteToolsProvider),
+          settings: readOnly ? null : ref.read(assistantSettingsToolsProvider),
+          cards: ref.read(assistantCardToolsProvider),
+          checkup: ref.read(assistantCheckupProvider),
+          groups: ref.read(assistantToolGroupsProvider),
+        ),
+      );
+      await _collectTaskPluginCapabilities(
+        runtime,
+        [assistantPluginId],
+        inputs,
+        tools: extension.tools,
+        prompts: extension.prompts,
+        owners: extension.toolOwners,
+      );
+    } finally {
+      await runtime.scope.dispose();
+    }
+  }
   final store = await ref.read(workspaceStoreProvider.future);
+  final localIds = [for (final workspace in await store.list()) workspace.id];
   final workspaceIds = WorkspaceGrants.effective(
-    roleGrants: WorkspaceGrants.forRole(
-      conversation.id,
-      conversation.enabledPlugins,
-    ),
+    roleGrants: conversation.hasAssistantCapability
+        ? localIds.toSet()
+        : WorkspaceGrants.forRole(conversation.id, conversation.enabledPlugins),
     presetAllows: null,
     // The workspace plugin has no global switch yet; grants decide.
     pluginEnabled: true,
-    localIds: [for (final workspace in await store.list()) workspace.id],
+    localIds: localIds,
   );
   final prefs = await SharedPreferences.getInstance();
   final home =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  final selectionKey = 'workspace_current_${conversation.id}';
   return TaskAgentCapabilities(
-    tools: extension.tools,
+    tools: [
+      for (final tool in extension.tools)
+        if (!readOnly || tool.effect != ToolEffect.write) tool,
+    ],
     prompts: extension.prompts,
     toolOwners: extension.toolOwners,
+    toolPolicyFactory: conversation.hasAssistantCapability
+        ? (config) => _assistantTaskToolPolicy(ref, config, conversation.id)
+        : null,
     workspaces: WorkspaceToolset(
       store: store,
       userSkillRoots: [
@@ -184,23 +258,31 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
           p.join(home, '.claude', 'skills'),
         ],
       ],
-      currentWorkspaceId: prefs.getString(
-        'workspace_current_${conversation.id}',
-      ),
-      currentLocalDirectory: prefs.getString(
-        'workspace_current_${conversation.id}_local',
-      ),
+      currentWorkspaceId: prefs.getString(selectionKey),
+      currentLocalDirectory: prefs.getString('${selectionKey}_local'),
+      onWorkspaceChanged: (id) async {
+        await prefs.setString(selectionKey, id);
+      },
+      onLocalDirectoryChanged: (path) async {
+        if (path == null) {
+          await prefs.remove('${selectionKey}_local');
+        } else {
+          await prefs.setString('${selectionKey}_local', path);
+        }
+      },
       enableLocalFiles: true,
       enableScripts: true,
-      enableShell: WorkspaceShell.available(platform: Platform.operatingSystem),
+      enableShell:
+          !readOnly &&
+          WorkspaceShell.available(platform: Platform.operatingSystem),
       workspaceIds: workspaceIds,
       runId: runId,
       isCancelled: () => cancellation.isCancelled,
       onCreated: (workspace) =>
-          _grantWorkspace(ref, task.conversationId, workspace),
+          _grantWorkspace(ref, conversation.id, workspace),
       shellEnvironment: () {
         final settings = ref.read(appSettingsProvider).valueOrNull;
-        return settings == null
+        return !conversation.hasAssistantCapability || settings == null
             ? const <String, String>{}
             : channelKeyEnvironment(settings);
       },
@@ -214,8 +296,48 @@ Future<TaskAgentCapabilities> _resolveCapabilities(
   );
 }
 
-/// Resolves role-selected, enabled, locally installed package/office plugins.
-/// The runner applies the preset's narrowing to both tools and prompt fragments.
+/// Plugins delegated to the backend; media and persona remain in chat.
+bool isTaskBackendPluginId(String id) =>
+    isOfficePluginId(id) || id.startsWith('pkg:');
+
+List<String> _selectedTaskPluginIds(
+  PluginRuntime runtime,
+  Set<String>? enabled,
+) => [
+  for (final id in runtime.selectForRole(enabled))
+    if (isTaskBackendPluginId(id)) id,
+];
+
+/// Checks role selection and usability without building prompts or tools.
+Future<Set<String>> resolveActiveTaskPluginIds(
+  Iterable<Plugin> plugins,
+  Set<String>? enabled, {
+  required PluginRequestInputs inputs,
+}) async {
+  final runtime = PluginRuntime();
+  try {
+    for (final plugin in plugins) {
+      runtime.install(plugin.agentPlugin, enabled: plugin.enabled);
+    }
+    final ids = <String>{};
+    for (final scope in runtime.requestScopes(
+      runtime.snapshot(),
+      _selectedTaskPluginIds(runtime, enabled),
+      inputs,
+    )) {
+      try {
+        if (scope.active) ids.add(scope.pluginId);
+      } finally {
+        await scope.dispose();
+      }
+    }
+    return ids;
+  } finally {
+    await runtime.scope.dispose();
+  }
+}
+
+/// Resolves active backend plugins. Presets may narrow tools and prompts later.
 Future<TaskAgentCapabilities> resolveTaskPluginCapabilities(
   Iterable<Plugin> plugins,
   Set<String>? enabled, {
@@ -226,39 +348,17 @@ Future<TaskAgentCapabilities> resolveTaskPluginCapabilities(
     for (final plugin in plugins) {
       runtime.install(plugin.agentPlugin, enabled: plugin.enabled);
     }
-    // Packages remain direct chat plugins; do not broaden the global office
-    // predicate, which also controls chat's delegate_task redirection.
-    final selected = [
-      for (final id in runtime.selectForRole(enabled))
-        if (isOfficePluginId(id) || id.startsWith('pkg:')) id,
-    ];
     final tools = <AITool>[];
     final prompts = <String, String>{};
     final owners = <String, String>{};
-    final context = PluginRequestContext(
-      userMessage: '',
-      supportsToolCalling: inputs.supportsToolCalling,
-      conversationId: inputs.conversationId,
-      rawHistory: inputs.history,
-    );
-    for (final scope in runtime.requestScopes(
-      runtime.snapshot(),
-      selected,
+    await _collectTaskPluginCapabilities(
+      runtime,
+      _selectedTaskPluginIds(runtime, enabled),
       inputs,
-    )) {
-      try {
-        if (!scope.active) continue;
-        // Package prompts prepare script declarations used by tools().
-        final prompt = await scope.prompt(context);
-        if (prompt != null) prompts[scope.pluginId] = prompt;
-        for (final tool in scope.tools()) {
-          tools.add(tool);
-          owners[tool.name] = scope.pluginId;
-        }
-      } finally {
-        await scope.dispose();
-      }
-    }
+      tools: tools,
+      prompts: prompts,
+      owners: owners,
+    );
     return TaskAgentCapabilities(
       tools: tools,
       prompts: prompts,
@@ -267,6 +367,145 @@ Future<TaskAgentCapabilities> resolveTaskPluginCapabilities(
   } finally {
     await runtime.scope.dispose();
   }
+}
+
+Future<void> _collectTaskPluginCapabilities(
+  PluginRuntime runtime,
+  List<String> selected,
+  PluginRequestInputs inputs, {
+  required List<AITool> tools,
+  required Map<String, String> prompts,
+  required Map<String, String> owners,
+}) async {
+  final context = PluginRequestContext(
+    userMessage: '',
+    supportsToolCalling: inputs.supportsToolCalling,
+    conversationId: inputs.conversationId,
+    rawHistory: inputs.history,
+  );
+  for (final scope in runtime.requestScopes(
+    runtime.snapshot(),
+    selected,
+    inputs,
+  )) {
+    try {
+      if (!scope.active) continue;
+      // Package prompts prepare script declarations used by tools().
+      final prompt = await scope.prompt(context);
+      if (prompt != null) prompts[scope.pluginId] = prompt;
+      for (final tool in scope.tools()) {
+        tools.add(tool);
+        owners[tool.name] = scope.pluginId;
+      }
+    } finally {
+      await scope.dispose();
+    }
+  }
+}
+
+/// The assistant's original gate, now applied to the backend execution model.
+Future<AgentToolPolicy> _assistantTaskToolPolicy(
+  Ref ref,
+  ApiConfig config,
+  String conversationId,
+) async {
+  final alwaysAsk = await ref.read(assistantAlwaysAskProvider.future);
+  bool alwaysAskNow() =>
+      ref.read(assistantAlwaysAskProvider).valueOrNull ?? alwaysAsk;
+  final store = await ref.read(workspaceStoreProvider.future);
+  final spaceNames = {
+    for (final space in await store.list()) space.id: space.name,
+  };
+  final toolset = ref.read(assistantToolsetProvider);
+  final writes = ref.read(assistantWriteToolsProvider);
+  final settingsTools = ref.read(assistantSettingsToolsProvider);
+  final groups = ref.read(assistantToolGroupsProvider);
+  final riskOf = AssistantRequestScope.riskOf(
+    toolset,
+    writes,
+    settings: settingsTools,
+    groups: groups,
+  );
+  final descriptions = {
+    for (final tool in [
+      ...toolset.tools(),
+      ...writes.tools(),
+      ...settingsTools.tools(),
+      for (final group in groups) ...group.tools(),
+    ])
+      tool.name: tool.description,
+  };
+  // Approval uses the user's words, never a model-authored task brief.
+  final history = await ref
+      .read(chatHistoryStoreProvider)
+      .loadCanonicalContextMessages(conversationId, limit: 30);
+  final userMessages = [
+    for (final message in history)
+      if (message.role == 'user' &&
+          message.content.trim().isNotEmpty &&
+          (message.blocks?.any((block) => block is TaskReceiptBlock) != true))
+        message.content.trim(),
+  ];
+  final reviewer = AssistantReviewer(
+    (messages) async =>
+        (await ref
+                .read(backgroundApiRunnerProvider)
+                .executeApiCall(
+                  config: ApiConfig(
+                    settings: config.settings,
+                    modelFullId: config.modelFullId,
+                    providerApiBase: config.providerApiBase,
+                    providerApiKey: config.providerApiKey,
+                    providerId: config.providerId,
+                    providerApiKeyItemId: config.providerApiKeyItemId,
+                    providerApiKeyItemIndex: config.providerApiKeyItemIndex,
+                    providerApiKeyStrategy: config.providerApiKeyStrategy,
+                    customConfig: config.customConfig,
+                    messages: messages,
+                    providerRequestOptions: config.providerRequestOptions,
+                    cancellation: config.cancellation,
+                  ),
+                  sessionId: '${config.toolResultOwner}_review',
+                  userText: null,
+                  responseProcessors: const [],
+                  availableTools: const [],
+                  cancellation: config.cancellation,
+                ))
+            .replyText,
+  );
+  return AgentToolPolicy(
+    authorization: AgentToolAuthorization.allowAll,
+    customGate: AssistantToolGate(riskOf, alwaysAsk: alwaysAskNow),
+    redactor: redactorForCredentials(settings: config.settings),
+    approvalTimeout: const Duration(minutes: 5),
+    approvals: AssistantApprovalPort(
+      riskOf: riskOf,
+      describe: (name, args) => name == 'bash'
+          ? ApprovalPrompt.workspaceShell(
+              spaceNames[config.currentWorkspaceId?.call()] ??
+                  config.currentWorkspaceId?.call() ??
+                  '未选择',
+              '${args['command']}',
+            )
+          : name == 'codemode'
+          ? ApprovalPrompt.workspaceScript(
+              spaceNames[config.currentWorkspaceId?.call()] ??
+                  config.currentWorkspaceId?.call() ??
+                  '未选择',
+            )
+          : groups.ownerOf(name)?.describe(name, args) ??
+                (AssistantSettingsTools.describes(name)
+                    ? settingsTools.describe(name, args)
+                    : writes.describe(name, args)),
+      toolDescription: (name) => descriptions[name] ?? name,
+      userMessages: userMessages.length <= 6
+          ? userMessages
+          : userMessages.sublist(userMessages.length - 6),
+      review: reviewer.review,
+      askUser: ref.read(assistantApprovalsProvider.notifier).ask,
+      alwaysAsk: alwaysAskNow,
+    ),
+  );
 }
 
 /// A workspace the errand agent created belongs to its role. "All plugins"
@@ -291,7 +530,17 @@ Future<void> _grantWorkspace(
   if (current.contains(grant)) return;
   await ref
       .read(conversationsProvider.notifier)
-      .applyContactEdit(conversationId, enabledPlugins: [...current, grant]);
+      .applyContactEdit(
+        conversationId,
+        enabledPlugins: [
+          ...current,
+          // Explicit selection clears the legacy mode; migrate its capability.
+          if (conversation.hasAssistantCapability &&
+              !current.contains(assistantPluginId))
+            assistantPluginId,
+          grant,
+        ],
+      );
 }
 
 Future<TaskReceiptBlock?> _findReceipt(Ref ref, String receiptId) async {
@@ -382,15 +631,54 @@ Future<bool> _alreadyRelayed(
   final rows = await ref
       .read(databaseProvider)
       .customSelect(
-        'SELECT 1 FROM messages WHERE conversation_id=? AND deleted_at IS NULL '
-        'AND raw_payload LIKE ? LIMIT 1',
+        'SELECT role, status, raw_payload FROM messages WHERE conversation_id=? AND deleted_at IS NULL '
+        "AND (raw_payload LIKE ? OR (role='assistant' AND raw_payload LIKE ?))",
         variables: [
           Variable(conversationId),
           Variable('%"$taskRelayReceiptKey":"$receiptId"%'),
+          Variable('%$receiptId%'),
         ],
       )
       .get();
-  return rows.isNotEmpty;
+  bool hasReceipt(Object? value) {
+    if (value is Map) {
+      if (value['receipt_id'] == receiptId) {
+        return true;
+      }
+      return value.values.any(hasReceipt);
+    }
+    if (value is List) return value.any(hasReceipt);
+    if (value is String) {
+      try {
+        return hasReceipt(jsonDecode(value));
+      } on FormatException {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  for (final row in rows) {
+    try {
+      final payload = jsonDecode(row.read<String>('raw_payload'));
+      if (payload is! Map<String, dynamic>) continue;
+      // Dedicated relay markers are committed persona replies, including sync.
+      if (taskRelayReceiptIdOf(payload) == receiptId) return true;
+      // Tool progress also persists inline receipts, even if the reply later
+      // fails or is cancelled. Only a completed foreground reply relays them.
+      final runStatus = payload['runStatus'];
+      if (row.read<String>('role') == 'assistant' &&
+          row.read<String>('status') != 'sending' &&
+          (runStatus == null || runStatus == 'completed') &&
+          payload['stopReason'] != 'inProgress' &&
+          hasReceipt(payload)) {
+        return true;
+      }
+    } on FormatException {
+      continue;
+    }
+  }
+  return false;
 }
 
 String _relayReminder(TaskReceiptBlock receipt) =>
@@ -406,27 +694,7 @@ String _relayReminder(TaskReceiptBlock receipt) =>
             '不要编造结果，不要提「回执」这个词。',
     };
 
-class _DelegatePort implements DelegateTaskPort, TaskSteeringPort {
-  @override
-  Future<Map<String, Object?>> steer({
-    required String conversationId,
-    required String taskId,
-    required String instruction,
-  }) async {
-    final service = await _service;
-    final task = await service.store.get(taskId);
-    if (task == null || task.conversationId != conversationId) {
-      return {'error': '没有这个任务'};
-    }
-    final outcome = await service.steer(
-      taskId: taskId,
-      instruction: instruction,
-    );
-    return outcome == TaskControlOutcome.applied
-        ? {'task_id': taskId, 'status': 'steering_accepted'}
-        : {'error': '这个任务已经结束'};
-  }
-
+class _DelegatePort implements DelegateTaskPort {
   _DelegatePort(this._ref);
 
   final Ref _ref;
@@ -446,6 +714,7 @@ class _DelegatePort implements DelegateTaskPort, TaskSteeringPort {
     required String conversationId,
     required String instruction,
     required String? callKey,
+    bool readOnly = false,
   }) async {
     final service = await _service;
     if (!await service.enabled) {
@@ -456,7 +725,27 @@ class _DelegatePort implements DelegateTaskPort, TaskSteeringPort {
         conversationId: conversationId,
         instruction: instruction,
         requestKey: await _requestKey(callKey),
+        readOnly: readOnly,
       );
+      final inline = service.inlineWait > Duration.zero
+          ? await service.waitForReceipt(
+              task.id,
+              isCancelled: () =>
+                  ToolCallContext.current?.isCancelled?.call() ?? false,
+            )
+          : null;
+      if (inline != null) {
+        return {
+          'task_id': task.id,
+          'receipt_id': inline.receiptId,
+          'status': TaskReceiptBlock.statusName(inline.receiptStatus),
+          'summary': inline.summary,
+          if (inline.question != null) 'question': inline.question,
+          if (inline.detail != null) 'detail': inline.detail,
+          if (inline.artifacts.isNotEmpty)
+            'artifacts': [for (final a in inline.artifacts) a.toJson()],
+        };
+      }
       return {'task_id': task.id, 'status': 'accepted'};
     } on AgentTaskKeyConflict {
       return {'error': '请求重复'};
@@ -477,14 +766,21 @@ class _DelegatePort implements DelegateTaskPort, TaskSteeringPort {
       return {'error': '没有这个任务'};
     }
     if (task != null) {
-      final outcome = await service.reply(
-        taskId: taskId,
-        controlId: controlId,
-        answersReceiptId: task.questionReceiptId,
-        answer: answer,
-      );
+      if (task.status.isTerminal) return {'error': '这个任务已经结束'};
+      final waiting = task.status == AgentTaskStatus.needsInput;
+      final outcome = waiting
+          ? await service.reply(
+              taskId: taskId,
+              controlId: controlId,
+              answersReceiptId: task.questionReceiptId,
+              answer: answer,
+            )
+          : await service.steer(taskId: taskId, instruction: answer);
       return outcome == TaskControlOutcome.applied
-          ? {'task_id': taskId, 'status': 'resumed'}
+          ? {
+              'task_id': taskId,
+              'status': waiting ? 'resumed' : 'steering_accepted',
+            }
           : {'error': '这个任务现在不在等回答'};
     }
     final question = await _openQuestion(conversationId, taskId);
@@ -603,9 +899,13 @@ final taskAgentSupervisorProvider = Provider<TaskAgentSupervisor>((ref) {
             ?.blocks ??
         const <MessageBlock>[],
   );
-  final subscription = ref.read(conversationIdleEventsProvider).stream.listen(
-    (conversationId) => unawaited(supervisor.flushConversation(conversationId)),
-  );
+  final subscription = ref
+      .read(conversationIdleEventsProvider)
+      .stream
+      .listen(
+        (conversationId) =>
+            unawaited(supervisor.flushConversation(conversationId)),
+      );
   ref.onDispose(() {
     unawaited(subscription.cancel());
     supervisor.stop();

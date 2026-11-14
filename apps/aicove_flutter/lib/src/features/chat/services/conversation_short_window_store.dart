@@ -13,6 +13,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/models/message_block.dart';
 import '../../../core/models/block_status.dart';
 import '../domain/message.dart';
+import '../domain/chat_timeline_deletion.dart';
 import '../../observability/frontend_diagnostics_port.dart';
 import 'history_display_decoder.dart';
 import 'chat_message_projection_codec.dart';
@@ -280,6 +281,7 @@ class ConversationTimelineCache {
     required String conversationId,
     List<String> rawMessageIds = const <String>[],
     List<String> projectedMessageIds = const <String>[],
+    List<String> pieceIds = const <String>[],
   }) async {
     final normalizedConversationId = conversationId.trim();
     if (normalizedConversationId.isEmpty) {
@@ -294,7 +296,13 @@ class ConversationTimelineCache {
       for (final projectedMessageId in projectedMessageIds)
         if (projectedMessageId.trim().isNotEmpty) projectedMessageId.trim(),
     };
-    if (normalizedRawIds.isEmpty && normalizedProjectedIds.isEmpty) {
+    final normalizedPieceIds = {
+      for (final pieceId in pieceIds)
+        if (pieceId.trim().isNotEmpty) pieceId.trim(),
+    };
+    if (normalizedRawIds.isEmpty &&
+        normalizedProjectedIds.isEmpty &&
+        normalizedPieceIds.isEmpty) {
       return;
     }
 
@@ -304,19 +312,114 @@ class ConversationTimelineCache {
       final next = current.merge(
         hiddenRawMessageIds: normalizedRawIds,
         hiddenProjectedMessageIds: normalizedProjectedIds,
+        hiddenPieceIds: normalizedPieceIds,
       );
-      final preferences = await SharedPreferences.getInstance();
-      final saved = await preferences.setString(
-        _visibilityKey(normalizedConversationId),
-        jsonEncode({
-          'raw': next.hiddenRawMessageIds.toList(),
-          'projected': next.hiddenProjectedMessageIds.toList(),
-        }),
-      );
-      if (!saved) throw StateError('消息隐藏记录保存失败');
+      await _saveVisibility(normalizedConversationId, next);
       _visibilityByConversation[normalizedConversationId] = next;
       _notifyConversationChanged(normalizedConversationId);
     });
+  }
+
+  Future<Set<String>> loadHiddenPieceIds(String conversationId) async {
+    final id = conversationId.trim();
+    if (id.isEmpty) return const <String>{};
+    return _runConversationTask(id, () async {
+      await _loadVisibility(id);
+      return Set<String>.unmodifiable(_visibilityFor(id).hiddenPieceIds);
+    });
+  }
+
+  Stream<Set<String>> watchHiddenPieceIds(String conversationId) async* {
+    final id = conversationId.trim();
+    if (id.isEmpty) {
+      yield const <String>{};
+      return;
+    }
+    // Buffer changes before loading the first value, including while paused.
+    final changes = StreamController<void>();
+    final subscription = _controllerFor(id).stream.listen(
+      changes.add,
+      onError: changes.addError,
+      onDone: changes.close,
+    );
+    try {
+      yield await loadHiddenPieceIds(id);
+      yield* changes.stream.asyncMap((_) => loadHiddenPieceIds(id));
+    } finally {
+      await subscription.cancel();
+      unawaited(changes.close());
+    }
+  }
+
+  Future<void> clearHiddenEntriesForRawMessages({
+    required String conversationId,
+    required Iterable<String> rawMessageIds,
+  }) async {
+    final id = conversationId.trim();
+    final rawIds = {
+      for (final rawId in rawMessageIds)
+        if (rawId.trim().isNotEmpty) rawId.trim(),
+    };
+    if (id.isEmpty || rawIds.isEmpty) return;
+    await _runConversationTask(id, () async {
+      await _loadVisibility(id);
+      final current = _visibilityFor(id);
+      final projectionMappings = await _ref
+          .read(messageProjectionMappingRepositoryProvider)
+          .getByConversation(id);
+      final sourcesByProjectedId = <String, String>{
+        for (final mapping in projectionMappings)
+          mapping.projectedMessageId: mapping.rawMessageId,
+        for (final message in
+            _snapshotsByConversation[id]?.messages ?? const <Message>[])
+          message.id: _messageRawSourceId(message),
+      };
+      bool belongsToDeletedRaw(String entry) =>
+          rawIds.contains(entry) ||
+          rawIds.contains(
+            ChatTimelinePieceId.rawMessageIdOf(
+              entry,
+              explicitSourceId: sourcesByProjectedId[
+                  ChatTimelinePieceId.parentMessageIdOf(entry) ?? entry],
+            ),
+          );
+      final next = _ConversationFrontendVisibilityState(
+        hiddenRawMessageIds: current.hiddenRawMessageIds
+            .where((entry) => !belongsToDeletedRaw(entry))
+            .toSet(),
+        hiddenProjectedMessageIds: current.hiddenProjectedMessageIds
+            .where((entry) => !belongsToDeletedRaw(entry))
+            .toSet(),
+        hiddenPieceIds: current.hiddenPieceIds
+            .where((entry) => !belongsToDeletedRaw(entry))
+            .toSet(),
+      );
+      if (next.hiddenRawMessageIds.length == current.hiddenRawMessageIds.length &&
+          next.hiddenProjectedMessageIds.length ==
+              current.hiddenProjectedMessageIds.length &&
+          next.hiddenPieceIds.length == current.hiddenPieceIds.length) {
+        return;
+      }
+      await _saveVisibility(id, next);
+      _visibilityByConversation[id] = next;
+      _notifyConversationChanged(id);
+    });
+  }
+
+  Future<void> _saveVisibility(
+    String conversationId,
+    _ConversationFrontendVisibilityState visibility,
+  ) async {
+    final preferences = await SharedPreferences.getInstance();
+    final saved = await preferences.setString(
+      _visibilityKey(conversationId),
+      jsonEncode({
+        'raw': visibility.hiddenRawMessageIds.toList(),
+        'projected': visibility.hiddenProjectedMessageIds.toList(),
+        'pieces': visibility.hiddenPieceIds.toList(),
+      }),
+    );
+    if (!saved) throw StateError('消息隐藏记录保存失败');
   }
 
   // Local presentation preferences only: never stored in raw history or synced.
@@ -337,6 +440,9 @@ class ConversationTimelineCache {
           ),
           hiddenProjectedMessageIds: Set<String>.from(
             value['projected'] as List? ?? const [],
+          ),
+          hiddenPieceIds: Set<String>.from(
+            value['pieces'] as List? ?? const [],
           ),
         );
   }
@@ -2099,14 +2205,17 @@ class _ConversationFrontendVisibilityState {
   const _ConversationFrontendVisibilityState({
     this.hiddenRawMessageIds = const <String>{},
     this.hiddenProjectedMessageIds = const <String>{},
+    this.hiddenPieceIds = const <String>{},
   });
 
   final Set<String> hiddenRawMessageIds;
   final Set<String> hiddenProjectedMessageIds;
+  final Set<String> hiddenPieceIds;
 
   _ConversationFrontendVisibilityState merge({
     Set<String> hiddenRawMessageIds = const <String>{},
     Set<String> hiddenProjectedMessageIds = const <String>{},
+    Set<String> hiddenPieceIds = const <String>{},
   }) {
     return _ConversationFrontendVisibilityState(
       hiddenRawMessageIds: {
@@ -2117,6 +2226,7 @@ class _ConversationFrontendVisibilityState {
         ...this.hiddenProjectedMessageIds,
         ...hiddenProjectedMessageIds,
       },
+      hiddenPieceIds: {...this.hiddenPieceIds, ...hiddenPieceIds},
     );
   }
 }
@@ -2228,16 +2338,12 @@ List<Message> _selectNewestProjectedMessagesByRawWindow(
 
   final normalizedLimit = rawMessageLimit < 1 ? 1 : rawMessageLimit;
   final selectedRawIds = <String>{};
-  var firstSelectedIndex = messages.length;
   for (var index = messages.length - 1; index >= 0; index -= 1) {
     final rawId = _messageRawSourceId(messages[index]);
     if (selectedRawIds.add(rawId)) {
-      firstSelectedIndex = index;
       if (selectedRawIds.length >= normalizedLimit) {
         break;
       }
-    } else if (selectedRawIds.isNotEmpty) {
-      firstSelectedIndex = index;
     }
   }
 
@@ -2245,8 +2351,10 @@ List<Message> _selectNewestProjectedMessagesByRawWindow(
     return const <Message>[];
   }
 
+  // A raw message can have multiple, even interleaved, projected siblings.
+  // Select all siblings after determining the newest raw-message identities.
   return <Message>[
-    for (var index = firstSelectedIndex; index < messages.length; index += 1)
+    for (var index = 0; index < messages.length; index += 1)
       if (selectedRawIds.contains(_messageRawSourceId(messages[index])))
         messages[index],
   ];

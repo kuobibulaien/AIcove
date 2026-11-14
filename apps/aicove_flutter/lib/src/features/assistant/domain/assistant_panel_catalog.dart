@@ -68,7 +68,7 @@ String assistantPanelPrompt({Map<String, String> settings = const {}}) {
 <catalog>
 $catalog
 </catalog>
-<example>用户说「帮我改一下纳西妲的绘图预设」：先用 aicove_list_roles 找到纳西妲的 id（例如 nahida），再用一句话说明她现在用哪个、能改什么，然后：
+<example>用户说「帮我改一下纳西妲的绘图预设」：如果还不知道纳西妲的角色 id，先在心里对照上下文或用派活查清再给出面板，然后：
 ```$kUiBlockFenceLanguage
 {"component": "drawing-presets", "id": "nahida-drawing", "title": "纳西妲的绘图预设", "role": "nahida"}
 ```

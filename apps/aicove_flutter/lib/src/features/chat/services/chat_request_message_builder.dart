@@ -77,9 +77,18 @@ class ChatRequestMessageBuilder {
     bool inlineImagePrompts = true,
   }) async {
     final reqMessages = <Map<String, dynamic>>[];
-    for (final message in history) {
+    final lastCompletedAssistantIndex = history.lastIndexWhere(
+      (m) =>
+          m.role == 'assistant' &&
+          m.status != 'sending' &&
+          (m.rawPayload?['runStatus'] == null ||
+              m.rawPayload?['runStatus'] == 'completed') &&
+          m.rawPayload?['stopReason'] != 'inProgress',
+    );
+    for (final (i, message) in history.indexed) {
       final convertedMessages = await _toRequestMessages(
         message,
+        expandTaskMaterial: i > lastCompletedAssistantIndex,
         settings: settings,
         supportsVision: supportsVision,
         pluginPolicy: pluginPolicy,
@@ -149,6 +158,7 @@ class ChatRequestMessageBuilder {
     bool supportsVision = true,
     ChatPluginContextPolicy? pluginPolicy,
     bool inlineImagePrompts = true,
+    bool expandTaskMaterial = false,
   }) async {
     final rounds = ChatMessageProjectionCodec.replyRounds(message.rawPayload);
     if (message.role == 'assistant' && rounds.isNotEmpty) {
@@ -180,7 +190,12 @@ class ChatRequestMessageBuilder {
             'role': 'tool',
             'tool_call_id': call.id,
             'name': call.name,
-            'content': result?.persistentText ?? '已中断，未拿到结果',
+            'content': !expandTaskMaterial
+                ? _stripHistoricalTaskDetail(
+                    call.name,
+                    result?.persistentText ?? '已中断，未拿到结果',
+                  )
+                : result?.persistentText ?? '已中断，未拿到结果',
           });
         }
         if (calls.isNotEmpty) {
@@ -209,6 +224,7 @@ class ChatRequestMessageBuilder {
                     block,
             ],
           ),
+          expandTaskMaterial: expandTaskMaterial,
           settings: settings,
           supportsVision: supportsVision,
           pluginPolicy: pluginPolicy,
@@ -252,7 +268,11 @@ class ChatRequestMessageBuilder {
 
     for (final block in blocks) {
       if (block is TextBlock) {
-        final text = requestText(block.content);
+        final text = requestText(
+          block is TaskReceiptBlock && expandTaskMaterial
+              ? block.expandedContent
+              : block.content,
+        );
         if (text.trim().isEmpty) continue;
         parts.add({'type': 'text', 'text': text});
         continue;
@@ -382,7 +402,14 @@ class ChatRequestMessageBuilder {
             'role': 'tool',
             'tool_call_id': block.toolCallId,
             'name': block.toolName,
-            'content': block.result != null
+            'content': !expandTaskMaterial && message.role == 'assistant'
+                ? _stripHistoricalTaskDetail(
+                    block.toolName,
+                    block.result != null
+                        ? jsonEncode(block.result)
+                        : '{"success": true}',
+                  )
+                : block.result != null
                 ? jsonEncode(block.result)
                 : '{"success": true}',
           });
@@ -599,4 +626,18 @@ class ChatRequestMessageBuilder {
     if (content.length <= maxChars) return content;
     return '${content.substring(0, maxChars)}\n...(内容过长，已截断，仅发送前 $maxChars 字符)';
   }
+}
+
+String _stripHistoricalTaskDetail(String toolName, String content) {
+  if (toolName != 'delegate_task') return content;
+  try {
+    final value = jsonDecode(content);
+    if (value is Map && value.containsKey('detail')) {
+      value.remove('detail');
+      return jsonEncode(value);
+    }
+  } on FormatException {
+    return content;
+  }
+  return content;
 }

@@ -69,6 +69,12 @@ OpenAI／Gemini 流式、非流式回复都经过解包，截断参数尝试恢�
 - **行内美化正则与折叠词表**：折叠关键词增补 `折叠|心声|内心话`（如 `<wave_mind>` 归为折叠块）；仅含行内 HTML 标签（`span/style/br` 等）的显示美化正则自动转为纯文本模板（如双语对白转为 `$1\n$2`）继续执行，不再接管拆成折叠卡片。
 - **选项分类前缀与占位过滤**：对话选项支持解析行首 `**分类名**：行动`（菜单显示 `分类名：行动`，点击仅发送纯 `行动` 文本），自动过滤 `本场景不适用` 占位项。
 
+## 2026-11-13 补充（统一单飞传输封套与宿主能力后置隔离，ADR0125）
+
+- **退役按预设嗅探的仿写壳**：删除 `wave_transport_config.dart`、`kemini_transport_config.dart` 与 `wave_context.js`；所有预设的 `tavern_helper.scripts` 与 `SPreset` 均在 `QuickJsPresetRuntime` 内原生执行，不再按脚本 UUID 或特征词分流。
+- **单飞挂起式 `window.fetch` 传输封套**：每轮 `prepare` 发起唯一一次内部 `fetch('/api/backends/chat-completions/generate')` 并挂起，流式增量与完整响应以 SSE／JSON 流喂回同一次 `fetch` Promise，使浪潮 1112（`actual_content`＋`wave_context_reference`）、Kemini（`emit_complete_response_*`）、昆仑（`dispatch_stream_payload_*`）、TRANS-AM（`ToolManager` `stealth: true`）等传输通道与主对话业务工具同轮共存且绝不落库。
+- **权限分层与宿主能力后置**：`preset.function_calling = false` 仅关闭 `ToolManager`、`canPerformToolCalls()` 与业务工具，不拦截预设 `window.fetch` 抗截断工具；绑定预设时 AIcove 运行时规则、兜底生图说明与 `<system-reminder>` 统一置于预设条目之后、`assistantPrefill` 之前的宿主后置区，真实历史楼层经内部溯源标记供 `getChatMessages()` 精确读取并在出站／预览／token 估算前彻底剥离。
+
 ## 明确后推
 
 - 世界书递归、向量检索、包含组、粘性／冷却／延迟、角色过滤、作者注、示例对话、Outlet 及非 normal 专用触发。依赖未支持位置或条件的条目在导入警告/条目说明中标记并跳过；递归开关只提示本版扫描聊天，不递归触发。

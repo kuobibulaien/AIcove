@@ -36,6 +36,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     _cachedFormatConfig = config;
     _cachedShowTimeDividers = widget.showTimeDividers;
     _cachedFoldVisibility = _foldVisibility;
+    _cachedHiddenPieceSignature = _hiddenPieceSignature;
     _cachedListItems = cached.listItems.cast<ChatMessageListItem>();
     _cachedChatImages = List<ImagePreviewItem>.from(cached.chatImages);
     _hasHydratedInitialListItems = true;
@@ -72,6 +73,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     _cachedFormatConfig = effectiveConfig;
     _cachedShowTimeDividers = widget.showTimeDividers;
     _cachedFoldVisibility = _foldVisibility;
+    _cachedHiddenPieceSignature = _hiddenPieceSignature;
     _cachedListItems = buildChatMessageListItems(
       messages: timelineMessages,
       config: effectiveConfig,
@@ -80,6 +82,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       showThinkingFolds: _foldVisibility.thinking,
       showToolCallFolds: _foldVisibility.tools,
       showReplyActions: _foldVisibility.replyActions,
+      hiddenPieceIds: _hiddenPieceIds,
     );
     _cachedChatImages = collectChatMessageListImages(timelineMessages);
     _hasHydratedInitialListItems = true;
@@ -162,7 +165,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
         '|tags:$_tagPresentationSignature'
         '|time:${widget.showTimeDividers}'
         '|fold:${_foldVisibility.thinking}${_foldVisibility.tools}'
-        '${_foldVisibility.replyActions}';
+        '${_foldVisibility.replyActions}'
+        '|hidden:$_hiddenPieceSignature';
   }
 
   SliverChildBuilderDelegate _buildSectionDelegate(
@@ -244,34 +248,76 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   Widget _buildReplyActions(BuildContext context, ChatReplyActionsItem item) {
     _syncReplyTurns();
     final message = item.message;
-    return Padding(
-      padding: const EdgeInsets.only(left: 10, right: 16, bottom: 4),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: ValueListenableBuilder<String?>(
-          valueListenable: _hoveredReplyId,
-          builder: (context, hovered, _) => ChatReplyActionBar(
-            timeLabel: chatReplyTimeLabel(
-              message.createdAt,
-              DateTime.now(),
-              _formatChatTime,
+    final selecting = widget.selection?.active == true;
+    final bar = ValueListenableBuilder<String?>(
+      valueListenable: _hoveredReplyId,
+      builder: (context, hovered, _) => ChatReplyActionBar(
+        timeLabel: chatReplyTimeLabel(
+          message.createdAt,
+          DateTime.now(),
+          _formatChatTime,
+        ),
+        color: context.moeColors.muted,
+        enabled: item.finished && !selecting,
+        visible: hovered == message.id || _latestReplyId == message.id,
+        onCopy: () async {
+          await Clipboard.setData(ClipboardData(text: item.copyText));
+          if (context.mounted) MoeToast.show(context, '已复制到剪贴板');
+        },
+        onQuote: () =>
+            ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
+              id: message.id,
+              content: item.copyText,
+              isUser: false,
             ),
-            color: context.moeColors.muted,
-            enabled: item.finished,
-            visible: hovered == message.id || _latestReplyId == message.id,
-            onCopy: () async {
-              await Clipboard.setData(ClipboardData(text: item.copyText));
-              if (context.mounted) MoeToast.show(context, '已复制到剪贴板');
-            },
-            onQuote: () =>
-                ref.read(quotedMessageProvider.notifier).state = QuotedMessage(
-                  id: message.id,
-                  content: item.copyText,
-                  isUser: false,
-                ),
-            onRetry: ChatPageConversationActions.isCharacterGreeting(message)
-                ? null
-                : () => widget.onRegenerateMessage?.call(message, null),
+        onRetry: ChatPageConversationActions.isCharacterGreeting(message)
+            ? null
+            : () => widget.onRegenerateMessage?.call(message, null),
+        onDelete: !item.finished
+            ? null
+            : () async {
+                final ok = await showMeoTalkConfirm(
+                  context: context,
+                  title: '删除回复',
+                  message: '确定删除这轮回复吗？删除后 AI 也会忘记这段内容。',
+                  confirmText: '删除',
+                  isDanger: true,
+                );
+                if (ok != true || !context.mounted) return;
+                final plan = resolveChatTimelineDeletePlan(
+                  windowMessages: _currentTimelineMessages,
+                  listItems: _cachedListItems,
+                  turnAnchorMessageIds: item.messageIds,
+                );
+                if (plan.isEmpty) return;
+                await ref
+                    .read(chatPageConversationActionsProvider)
+                    .executeDeletePlan(widget.conversationId, plan);
+                if (context.mounted) {
+                  MoeToast.show(context, '已删除回复');
+                }
+              },
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 4),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            maxWidth: MessageBubble.documentMaxReadingWidth,
+          ),
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: selecting ? MessageBubble.documentSelectionGutter : 0,
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Transform.translate(
+                offset: const Offset(-6, 0),
+                child: bar,
+              ),
+            ),
           ),
         ),
       ),
@@ -338,21 +384,32 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       return KeyedSubtree(key: itemKey, child: _buildNewTopicDivider(context));
     }
     if (item is ChatTaskRunningItem) {
+      final bar = TaskRunningBar(
+        taskId: item.taskId,
+        textColor: context.moeColors.muted,
+      );
       return KeyedSubtree(
         key: itemKey,
-        child: Padding(
-          padding: EdgeInsets.only(
-            left: _documentStyle ? 16 : MessageBubble.contactContentInset,
-            right: 16,
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: TaskRunningBar(
-              taskId: item.taskId,
-              textColor: context.moeColors.muted,
-            ),
-          ),
-        ),
+        child: _documentStyle
+            ? Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: MessageBubble.documentMaxReadingWidth,
+                    ),
+                    child: Align(alignment: Alignment.centerLeft, child: bar),
+                  ),
+                ),
+              )
+            : Padding(
+                padding: const EdgeInsets.only(
+                  left: MessageBubble.contactContentInset,
+                  right: 16,
+                ),
+                child: Align(alignment: Alignment.centerLeft, child: bar),
+              ),
       );
     }
     if (item is ChatReplyActionsItem) {
@@ -362,22 +419,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       );
     }
     if (item is ChatRunStatusItem) {
-      return KeyedSubtree(
-        key: itemKey,
-        child: Padding(
-          padding: EdgeInsets.only(
-            left: _documentStyle ? 16 : MessageBubble.contactContentInset,
-            right: 16,
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: ChatRunStatusLine(
-              status: item.status,
-              textColor: context.moeColors.muted,
-            ),
-          ),
-        ),
-      );
+      return _buildRunStatusItem(context, item, itemKey);
     }
     if (item is ChatChunkedMessageItem) {
       final message = item.originalMessage;
@@ -413,6 +455,8 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
                   position,
                   selectionId: chunkMessage.id,
                   selectedText: selectedText,
+                  copyTextOverride: item.fold?.content ?? item.chunkText,
+                  editableOverride: item.fold != null ? false : null,
                 ),
             onMediaLongPress: (mediaBox, block, position) =>
                 _handleMediaLongPress(
@@ -695,6 +739,215 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
   bool _isLiveCallMessage(Message message) =>
       message.id.startsWith(voiceCallLiveMessagePrefix);
 
+  Widget _buildRunStatusItem(
+    BuildContext context,
+    ChatRunStatusItem item,
+    ValueKey<String> itemKey,
+  ) {
+    final message = item.message;
+    final selecting = widget.selection?.active == true;
+    final statusLine = ChatRunStatusLine(
+      status: item.status,
+      textColor: context.moeColors.muted,
+    );
+    final interactiveLine = Builder(
+      builder: (lineContext) {
+        void openMenu(Offset globalPosition) {
+          final box = lineContext.findRenderObject() as RenderBox?;
+          if (box != null) {
+            _handleRunStatusLongPress(context, item, box, globalPosition);
+          }
+        }
+
+        return Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (event) {
+            if (event.kind == PointerDeviceKind.mouse &&
+                (event.buttons & kSecondaryMouseButton) != 0) {
+              scheduleMicrotask(() {
+                if (lineContext.mounted) openMenu(event.position);
+              });
+            }
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onLongPressStart: (details) => openMenu(details.globalPosition),
+            child: SizedBox(
+              width: double.infinity,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: statusLine,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (_documentStyle) {
+      Widget inner = interactiveLine;
+      if (selecting) {
+        inner = Padding(
+          padding: const EdgeInsets.only(
+            left: MessageBubble.documentSelectionGutter,
+          ),
+          child: inner,
+        );
+      }
+      if (item.standalone) {
+        inner = ChatSelectableMessage(messageId: message.id, child: inner);
+      }
+      return KeyedSubtree(
+        key: itemKey,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: _kMessageItemVerticalPadding,
+          ),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: MessageBubble.documentMaxReadingWidth,
+              ),
+              child: inner,
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget row = Padding(
+      padding: const EdgeInsets.only(
+        left: MessageBubble.contactContentInset - 8,
+        right: 8,
+      ),
+      child: interactiveLine,
+    );
+    if (item.standalone) {
+      row = ChatSelectableMessage(messageId: message.id, child: row);
+    }
+    return KeyedSubtree(
+      key: itemKey,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 8,
+          vertical: _kMessageItemVerticalPadding,
+        ),
+        child: row,
+      ),
+    );
+  }
+
+  Future<void> _handleRunStatusLongPress(
+    BuildContext context,
+    ChatRunStatusItem item,
+    RenderBox targetBox,
+    Offset globalPosition,
+  ) async {
+    final message = item.message;
+    final liveCall = _isLiveCallMessage(message);
+    final enableEnhancedRegenerate =
+        kEnhancedRegenerateAvailable &&
+        ref
+                .read(appSettingsProvider)
+                .valueOrNull
+                ?.enhancedDialogueSettings
+                .enabled ==
+            true;
+    final canRegenerate =
+        !liveCall && !ChatPageConversationActions.isCharacterGreeting(message);
+    await showMessageActionMenu(
+      context,
+      targetBox: targetBox,
+      globalPosition: globalPosition,
+      isUserMessage: false,
+      messageText: item.status.label,
+      allowSelect:
+          item.standalone &&
+          !liveCall &&
+          widget.selection != null &&
+          message.status != 'sending',
+      allowCopy: false,
+      allowQuote: false,
+      editable: canRegenerate,
+      showEnhanceRegenerate: enableEnhancedRegenerate,
+      onAction: (action) async {
+        if (!context.mounted) return;
+        switch (action) {
+          case MessageAction.select:
+            widget.selection?.start(message.id);
+            break;
+          case MessageAction.regenerate:
+            final guidance = await showRegenerateGuidanceDialog(context);
+            if (guidance == null || !context.mounted) break;
+            widget.onRegenerateMessage?.call(
+              message,
+              guidance.isEmpty ? null : guidance,
+            );
+            break;
+          case MessageAction.enhanceRegenerate:
+            widget.onEnhanceRegenerateMessage?.call(message);
+            break;
+          case MessageAction.delete:
+            if (liveCall) {
+              await _deleteLiveCallMessage(context, message);
+              break;
+            }
+            await _confirmAndDeleteTimelineTarget(
+              context,
+              message: message,
+              selectionId: message.id,
+            );
+            break;
+          default:
+            break;
+        }
+      },
+    );
+  }
+
+  Future<void> _confirmAndDeleteTimelineTarget(
+    BuildContext context, {
+    required Message message,
+    String? selectionId,
+  }) async {
+    if (message.status == 'sending') {
+      MoeToast.show(context, '发送中的消息暂不可删除');
+      return;
+    }
+    final stagedIds = ref
+        .read(stagedUserMessagesProvider(widget.conversationId))
+        .map((staged) => staged.id)
+        .toSet();
+    final plan = resolveChatTimelineDeletePlan(
+      windowMessages: _currentTimelineMessages,
+      listItems: _cachedListItems,
+      stagedMessageIds: stagedIds,
+      targetSelectionIds: <String>[selectionId ?? message.id],
+    );
+    if (plan.isEmpty) return;
+
+    final isCanonical =
+        plan.hasCanonicalDeletion || plan.stagedMessageIds.isNotEmpty;
+    final ok = await showMeoTalkConfirm(
+      context: context,
+      title: isCanonical ? '删除消息' : '移除内容',
+      message: isCanonical
+          ? '确定删除这条消息吗？删除后 AI 也会忘记这段内容。'
+          : '确定从当前界面移除这块内容吗？同条消息的其余部分和 AI 记忆会保留。',
+      confirmText: isCanonical ? '删除' : '移除',
+      isDanger: true,
+    );
+    if (ok != true || !context.mounted) return;
+    await ref
+        .read(chatPageConversationActionsProvider)
+        .executeDeletePlan(widget.conversationId, plan);
+    if (context.mounted) {
+      MoeToast.show(context, isCanonical ? '已删除消息' : '已移除该内容');
+    }
+  }
+
   Future<void> _handleMessageLongPress(
     BuildContext context,
     Message message,
@@ -703,10 +956,11 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     Offset globalPosition, {
     String? selectionId,
     String? selectedText,
+    String? copyTextOverride,
+    bool? editableOverride,
   }) async {
     // 通话中的临时气泡不在聊天历史里：只能复制和删除（只从显示里移除）。
     final liveCall = _isLiveCallMessage(message);
-    final actions = ref.read(chatActionsProvider);
     final enableEnhancedRegenerate =
         kEnhancedRegenerateAvailable &&
         ref
@@ -733,9 +987,21 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     final localExpand = ref.read(audioMessageTextExpandedProvider(message.id));
     final isAudioExpanded = localExpand ?? defaultExpand;
 
-    final effectiveMessageText = (hasAudioText && audioText.isNotEmpty)
-        ? audioText
-        : message.displayText;
+    final effectiveMessageText =
+        copyTextOverride ??
+        ((hasAudioText && audioText.isNotEmpty)
+            ? audioText
+            : message.displayText);
+    final isEditable =
+        editableOverride ??
+        (!liveCall &&
+            (message.blocks == null ||
+                !message.blocks!.any(
+                  (block) =>
+                      block is EmojiBlock ||
+                      block is ChatRecordBlock ||
+                      block is CallRecordBlock,
+                )));
 
     await showMessageActionMenu(
       context,
@@ -744,10 +1010,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
       isUserMessage: isMe,
       allowSelect:
           !liveCall && widget.selection != null && message.status != 'sending',
-      editable:
-          !liveCall &&
-          (message.blocks == null ||
-              !message.blocks!.any((block) => block is EmojiBlock)),
+      editable: isEditable,
       messageText: effectiveMessageText,
       selectedText: selectedText,
       showEnhanceRegenerate: enableEnhancedRegenerate && !canRegenerateAudio,
@@ -807,23 +1070,11 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
               await _deleteLiveCallMessage(context, message);
               break;
             }
-            if (message.status == 'sending') {
-              MoeToast.show(context, '发送中的消息暂不可删除');
-              break;
-            }
-            final ok = await showMeoTalkConfirm(
-              context: context,
-              title: '删除消息',
-              message: '确定删除这条消息吗？',
-              confirmText: '删除',
-              isDanger: true,
+            await _confirmAndDeleteTimelineTarget(
+              context,
+              message: message,
+              selectionId: selectionId,
             );
-            if (ok == true && context.mounted) {
-              await actions.deleteMessage(message.id);
-              if (context.mounted) {
-                MoeToast.show(context, '已删除消息');
-              }
-            }
             break;
           case MessageAction.save:
           case MessageAction.editAndRegenerateMedia:
@@ -915,14 +1166,16 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
     Offset globalPosition,
   ) async {
     if (_isLiveCallMessage(message)) return;
-    final actions = ref.read(chatActionsProvider);
     final mediaType = block is AudioBlock ? MediaType.audio : MediaType.image;
+    final isPendingPlaceholder = block.status == BlockStatus.pending;
     await showMediaActionMenu(
       context,
       targetBox: mediaBox,
       globalPosition: globalPosition,
       mediaType: mediaType,
       allowSelect: widget.selection != null && message.status != 'sending',
+      allowSave: !isPendingPlaceholder,
+      allowQuote: !isPendingPlaceholder,
       allowDelete: true,
       allowRegenerate: MediaRegenerationTarget.canRegenerate(message, block),
       onAction: (action) async {
@@ -970,23 +1223,7 @@ extension _ChatMessageListPresentationX on _ChatMessageListState {
             );
             break;
           case MessageAction.delete:
-            if (message.status == 'sending') {
-              MoeToast.show(context, '发送中的消息暂不可删除');
-              break;
-            }
-            final ok = await showMeoTalkConfirm(
-              context: context,
-              title: '删除消息',
-              message: '确定删除这条消息吗？',
-              confirmText: '删除',
-              isDanger: true,
-            );
-            if (ok == true && context.mounted) {
-              await actions.deleteMessage(message.id);
-              if (context.mounted) {
-                MoeToast.show(context, '已删除消息');
-              }
-            }
+            await _confirmAndDeleteTimelineTarget(context, message: message);
             break;
           default:
             break;

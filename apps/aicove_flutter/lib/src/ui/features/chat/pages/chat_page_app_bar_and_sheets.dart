@@ -29,18 +29,38 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
         .map((message) => message.id)
         .toList();
     if (ids.isEmpty || _selectionBusy) return;
-    if (!await _confirmAction(
-          '删除消息',
-          '删除选中的 ${ids.length} 条消息？仅从聊天界面隐藏，不影响原始历史和模型上下文。',
-        ) ||
-        !mounted) {
+    final stagedIds = ref
+        .read(stagedUserMessagesProvider(conv.id))
+        .map((message) => message.id)
+        .toSet();
+    final plan = _selection.buildDeletePlan(stagedMessageIds: stagedIds);
+    if (plan.isEmpty) {
+      _selection.clear();
+      return;
+    }
+    final hasCanonical =
+        plan.hasCanonicalDeletion || plan.stagedMessageIds.isNotEmpty;
+    final hasPartial = plan.hasPartialHide;
+    final String title;
+    final String prompt;
+    if (hasCanonical && !hasPartial) {
+      title = '删除消息';
+      prompt = '删除选中的 ${ids.length} 条消息？删除后 AI 也会忘记这些内容。';
+    } else if (!hasCanonical && hasPartial) {
+      title = '移除内容';
+      prompt = '移除选中的 ${ids.length} 项内容？仅从当前界面隐藏，其余部分和 AI 记忆会保留。';
+    } else {
+      title = '删除内容';
+      prompt = '删除选中的 ${ids.length} 项内容？整条删完的消息 AI 也会忘记，只移除其中一部分的会保留其余内容。';
+    }
+    if (!await _confirmAction(title, prompt) || !mounted) {
       return;
     }
     _updateState(() => _selectionBusy = true);
     try {
       await ref
           .read(chatPageConversationActionsProvider)
-          .hideMessages(conv.id, ids);
+          .executeDeletePlan(conv.id, plan);
       if (mounted) _selection.clear();
     } catch (_) {
       if (mounted) MoeToast.error(context, '删除失败，请重试');
@@ -54,10 +74,7 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
     final chatSize = context.size ?? MediaQuery.sizeOf(context);
     final background = ChatWallpaperLayer.forConversation(
       conversation: conv,
-      fallbackColor: resolveChatBackgroundColor(
-        context,
-        ref.read(appSettingsProvider).valueOrNull?.lightChatBackground,
-      ),
+      fallbackColor: resolveChatBackgroundColor(context),
     );
     final height = MediaQuery.sizeOf(context).height * 0.85;
     final exported = await showMoeBottomSheet<String>(
@@ -230,7 +247,7 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
             ChatTavernPresetPage(conversationId: conv.id),
           ),
         ),
-        if (conv.effectiveAgentMode == RoleAgentMode.tool)
+        if (conv.hasAssistantCapability)
           MoePopupMenuItem(
             label: ref.read(assistantAlwaysAskProvider).valueOrNull == true
                 ? '修改前不再每次问我'

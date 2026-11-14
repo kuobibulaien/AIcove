@@ -1247,7 +1247,7 @@ void main() {
         convId: 'transport_chunk_$channel',
         settings: _buildTestSettings(enableChunking: true),
         presetScript: const PresetScriptSnapshot(
-          '{"transport":{"protocol":"content_tool_v1","enabled":true}}',
+          '{"scripts":[{"id":"custom","enabled":true,"content":"run()"}]}',
         ),
         script: const [
           _DeltaStep('清晨'),

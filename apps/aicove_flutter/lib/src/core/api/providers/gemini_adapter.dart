@@ -168,7 +168,11 @@ class GeminiAdapter implements ProviderAdapter {
         ],
       if (geminiTools != null && requestOptions?.toolChoice != null)
         'toolConfig': {
-          'functionCallingConfig': {'mode': requestOptions!.toolChoice!.toUpperCase()},
+          'functionCallingConfig': {
+            'mode': requestOptions!.toolChoice == 'required'
+                ? 'ANY'
+                : requestOptions.toolChoice!.toUpperCase(),
+          },
         },
       'generationConfig': generationConfig,
     };

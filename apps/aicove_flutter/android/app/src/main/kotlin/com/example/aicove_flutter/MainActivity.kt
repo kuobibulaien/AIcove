@@ -1,34 +1,25 @@
 package com.example.aicove_flutter
 
-import android.Manifest
-import android.app.AlarmManager
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.ActivityNotFoundException
-import android.content.ComponentName
-import android.content.pm.PackageManager
 import android.net.ConnectivityManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
 import java.io.File
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     companion object {
         private const val SYSTEM_PROXY_CHANNEL = "com.example.aicove_flutter/system_proxy"
-        private const val KEEP_ALIVE_CHANNEL = "com.example.aicove_flutter/keep_alive"
     }
+
+    private var keepAliveChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,14 +110,18 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, KEEP_ALIVE_CHANNEL)
-            .setMethodCallHandler { call, result ->
-                try {
-                    handleKeepAliveMethod(call, result)
-                } catch (t: Throwable) {
-                    result.error("keep_alive_error", t.message, null)
-                }
-            }
+        val channel = KeepAliveConfig.createChannel(this, flutterEngine.dartExecutor.binaryMessenger)
+        keepAliveChannel = channel
+        ProactiveAlarmScheduler.attachMainChannel(applicationContext, channel)
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        keepAliveChannel?.let { channel ->
+            ProactiveAlarmScheduler.detachMainChannel(applicationContext, channel)
+            channel.setMethodCallHandler(null)
+        }
+        keepAliveChannel = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     private fun querySystemProxy(): Map<String, Any?> {
@@ -187,262 +182,5 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    private fun handleKeepAliveMethod(call: MethodCall, result: MethodChannel.Result) {
-        when (call.method) {
-            "getStatus" -> result.success(buildKeepAliveStatus())
-            "setGuardEnabled" -> {
-                val enabled = call.argument<Boolean>("enabled") == true
-                if (enabled) {
-                    KeepAliveConfig.setGuardEnabled(this, true)
-                    val started = PersistentGuardService.start(this)
-                    if (!started) {
-                        KeepAliveConfig.setGuardEnabled(this, false)
-                    }
-                } else {
-                    KeepAliveConfig.setGuardEnabled(this, false)
-                    PersistentGuardService.stopIfIdle(this)
-                }
-                result.success(buildKeepAliveStatus())
-            }
-            "startGuardService" -> {
-                KeepAliveConfig.setGuardEnabled(this, true)
-                val started = PersistentGuardService.start(this)
-                if (!started) {
-                    KeepAliveConfig.setGuardEnabled(this, false)
-                }
-                result.success(buildKeepAliveStatus())
-            }
-            "stopGuardService" -> {
-                KeepAliveConfig.setGuardEnabled(this, false)
-                PersistentGuardService.stopIfIdle(this)
-                result.success(buildKeepAliveStatus())
-            }
-            "setGenerationActive" -> {
-                val active = call.argument<Boolean>("active") == true
-                val changed = PersistentGuardService.setGenerationActive(this, active)
-                if (changed) {
-                    result.success(null)
-                } else {
-                    result.error(
-                        "generation_guard_start_failed",
-                        PersistentGuardService.getLastStartError()
-                            ?: "Unable to start generation guard service",
-                        null,
-                    )
-                }
-            }
-            "setWebAppActive" -> {
-                val active = call.argument<Boolean>("active") == true
-                val changed = PersistentGuardService.setWebAppActive(this, active)
-                if (changed) {
-                    result.success(null)
-                } else {
-                    result.error(
-                        "webapp_guard_start_failed",
-                        PersistentGuardService.getLastStartError()
-                            ?: "Unable to start web app guard service",
-                        null,
-                    )
-                }
-            }
-            "requestIgnoreBatteryOptimizations" -> {
-                result.success(requestIgnoreBatteryOptimizations())
-            }
-            "openBatteryOptimizationSettings" -> {
-                result.success(openBatteryOptimizationSettings())
-            }
-            "openAutoStartSettings" -> {
-                result.success(openAutoStartSettings())
-            }
-            "openBackgroundProtectionSettings" -> {
-                result.success(openBackgroundProtectionSettings())
-            }
-            "openNotificationSettings" -> {
-                result.success(openNotificationSettings())
-            }
-            "openExactAlarmSettings" -> {
-                result.success(openExactAlarmSettings())
-            }
-            else -> result.notImplemented()
-        }
-    }
 
-    private fun buildKeepAliveStatus(): Map<String, Any?> {
-        val notificationPermissionGranted = hasNotificationPermission()
-        val notificationsEnabled = areNotificationsEnabled()
-        val guardNotificationChannelEnabled = isGuardNotificationChannelEnabled()
-        val notificationVisibleInDrawer = notificationPermissionGranted &&
-            notificationsEnabled &&
-            guardNotificationChannelEnabled
-
-        return mapOf(
-            "guardEnabled" to KeepAliveConfig.isGuardEnabled(this),
-            "generationActive" to PersistentGuardService.isGenerationActive(),
-            "webAppActive" to PersistentGuardService.isWebAppActive(),
-            "serviceRunning" to PersistentGuardService.isForegroundActive(),
-            "generationWakeLockHeld" to PersistentGuardService.isGenerationWakeLockHeld(),
-            "batteryOptimizationIgnored" to isBatteryOptimizationIgnored(),
-            "canScheduleExactAlarms" to canScheduleExactAlarms(),
-            "notificationPermissionGranted" to notificationPermissionGranted,
-            "notificationsEnabled" to notificationsEnabled,
-            "guardNotificationChannelEnabled" to guardNotificationChannelEnabled,
-            "notificationVisibleInDrawer" to notificationVisibleInDrawer,
-            "lastStartError" to PersistentGuardService.getLastStartError(),
-            "manufacturer" to Build.MANUFACTURER,
-            "brand" to Build.BRAND,
-            "model" to Build.MODEL,
-        )
-    }
-
-    private fun isBatteryOptimizationIgnored(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
-        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
-        return pm.isIgnoringBatteryOptimizations(packageName)
-    }
-
-    private fun canScheduleExactAlarms(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
-        val manager = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-        return manager.canScheduleExactAlarms()
-    }
-
-    private fun hasNotificationPermission(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return true
-        }
-        return ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun areNotificationsEnabled(): Boolean {
-        return NotificationManagerCompat.from(this).areNotificationsEnabled()
-    }
-
-    private fun isGuardNotificationChannelEnabled(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return true
-        }
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            ?: return false
-        val channel = manager.getNotificationChannel(PersistentGuardService.CHANNEL_ID)
-            ?: return true
-        return channel.importance != NotificationManager.IMPORTANCE_NONE
-    }
-
-    private fun requestIgnoreBatteryOptimizations(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
-        if (isBatteryOptimizationIgnored()) return true
-        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-            data = Uri.parse("package:$packageName")
-        }
-        return launchIntent(intent)
-    }
-
-    private fun openBatteryOptimizationSettings(): Boolean {
-        return launchIntent(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-    }
-
-    private fun openAutoStartSettings(): Boolean {
-        val manufacturer = Build.MANUFACTURER.lowercase()
-        val candidates = mutableListOf<Intent>()
-
-        if (manufacturer.contains("xiaomi")) {
-            candidates += Intent().apply {
-                component = ComponentName(
-                    "com.miui.securitycenter",
-                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
-                )
-            }
-        }
-
-        candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-        }
-
-        return launchFirstAvailable(candidates)
-    }
-
-    private fun openBackgroundProtectionSettings(): Boolean {
-        val manufacturer = Build.MANUFACTURER.lowercase()
-        val appLabel = applicationInfo.loadLabel(packageManager).toString()
-        val candidates = mutableListOf<Intent>()
-
-        if (manufacturer.contains("xiaomi")) {
-            candidates += Intent().apply {
-                component = ComponentName(
-                    "com.miui.powerkeeper",
-                    "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"
-                )
-                putExtra("package_name", packageName)
-                putExtra("package_label", appLabel)
-            }
-            candidates += Intent().apply {
-                component = ComponentName(
-                    "com.miui.powerkeeper",
-                    "com.miui.powerkeeper.ui.HiddenAppsContainerManagementActivity"
-                )
-            }
-        }
-
-        candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-        }
-
-        return launchFirstAvailable(candidates)
-    }
-
-    private fun openNotificationSettings(): Boolean {
-        val candidates = mutableListOf<Intent>()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            candidates += Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                putExtra(Settings.EXTRA_CHANNEL_ID, PersistentGuardService.CHANNEL_ID)
-            }
-            candidates += Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-            }
-        }
-
-        candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-        }
-
-        return launchFirstAvailable(candidates)
-    }
-
-    private fun openExactAlarmSettings(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return false
-        }
-        val candidates = mutableListOf<Intent>()
-        candidates += Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
-            data = Uri.parse("package:$packageName")
-        }
-        candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:$packageName")
-        }
-        return launchFirstAvailable(candidates)
-    }
-
-    private fun launchFirstAvailable(candidates: List<Intent>): Boolean {
-        for (intent in candidates) {
-            if (launchIntent(intent)) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private fun launchIntent(intent: Intent): Boolean {
-        return try {
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-            true
-        } catch (_: Throwable) {
-            false
-        }
-    }
 }

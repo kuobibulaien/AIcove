@@ -1,25 +1,10 @@
 library;
 
-import 'dart:io';
-import 'dart:convert';
-import 'package:path/path.dart' as p;
-import '../../../core/models/message_block.dart' show ToolBlock;
-import '../../plugins/data/tool_result_store.dart';
-import '../../workspace/application/workspace_shell.dart';
-import '../../workspace/application/codemode_declarations.dart';
-import '../../workspace/application/tool_search.dart';
+import '../../observability/model_request_ledger.dart';
 
-import '../../agent_context/domain/agent_runtime_contracts.dart'
-    show AgentToolAuthorization;
-import '../../agent_plugins/tool_policy.dart';
-import '../../assistant/application/assistant_approvals.dart';
+import 'dart:convert';
+
 import '../../assistant/application/assistant_plugin.dart';
-import '../../assistant/application/assistant_review.dart';
-import '../../assistant/application/assistant_settings_tools.dart';
-import '../../assistant/application/assistant_tool_group.dart';
-import '../../assistant/assistant_providers.dart';
-import '../../assistant/domain/assistant_onboarding.dart'
-    show kAicoveAssistantId;
 import '../../agent_context/domain/preset_script_runtime.dart';
 import '../../agent_context/domain/preset_tag_mapping.dart';
 import 'dart:async';
@@ -28,7 +13,6 @@ import '../../context/domain/context_window_policy.dart';
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../conversation_state/domain/conversation_state_port.dart';
 import '../../conversation_state/domain/mvu_content.dart';
@@ -41,7 +25,6 @@ import '../../agent_context/domain/silly_tavern_world_book.dart';
 import '../../agent_context/providers/preset_recipe_provider.dart';
 import '../application/conversation_model.dart';
 import '../domain/conversation.dart';
-import '../domain/role_agent_mode.dart';
 import '../domain/chat_context_preview.dart';
 import '../../context/domain/context_summary.dart';
 import '../../context/providers/context_providers.dart';
@@ -54,6 +37,7 @@ import '../../plugins/image/drawing_preset_provider.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/image/image_plugin.dart';
+import '../../plugins/trigger/trigger_plugin.dart';
 import '../../plugins/prompts/plugin_prompt_resolution.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
 import '../../plugins/prompts/prompt_pack.dart';
@@ -64,13 +48,8 @@ import '../../plugins/tts/voice_preset_application.dart';
 import '../../plugins/tavern_compat/tavern_compat_agent_plugin.dart';
 import '../../task_agent/application/delegate_task_plugin.dart';
 import '../../task_agent/domain/task_relay.dart';
-import '../../workspace/application/workspace_request_scope.dart';
-import '../../workspace/application/workspace_toolset.dart';
 import '../../workspace/domain/workspace_grants.dart';
-import '../../workspace/domain/workspace_models.dart';
-import '../../workspace/webapp/webapp_launcher.dart';
 import '../../workspace/workspace_providers.dart';
-import '../conversation_providers.dart';
 import '../../task_agent/task_agent_providers.dart';
 import '../../agent_plugins/plugin_request_context.dart';
 import '../../agent_plugins/plugin_request_scope.dart';
@@ -80,6 +59,7 @@ import 'tts_fallback_notification.dart';
 import '../../observability/trace_models.dart';
 import '../../observability/trace_store.dart';
 import '../../../core/app_logger.dart';
+import '../../../core/api/tool_media.dart';
 import '../../../core/api/providers/provider_adapter.dart'
     show ProviderChatRequestOptions;
 import '../../../core/api/providers/provider_adapter_factory.dart';
@@ -225,12 +205,13 @@ class ChatSendBackendService {
       preview: collector,
     );
     final tools = config.tools ?? const <Map<String, dynamic>>[];
+    final previewMessages = ToolMedia.wire(config.messages);
     return ChatContextPreview(
       modelId: config.modelFullId,
       presetName: collector.presetName,
-      messages: config.messages,
+      messages: previewMessages,
       messageTokens: ChatContextUsage.measure(
-        config.messages,
+        previewMessages,
         tools,
       ).messageTokens,
       tools: tools,
@@ -367,32 +348,11 @@ class ChatSendBackendService {
       settings: settings,
       modelRef: modelRef,
     );
-    final roleMode = conv.effectiveAgentMode;
-    final pureChatMode = roleMode == RoleAgentMode.chat;
-    final toolMode = roleMode == RoleAgentMode.tool;
-    final agentMode = roleMode == RoleAgentMode.agent;
     final modelSupportsTools =
         settings.hasChatModelCapability(modelRef, ChatModelCapability.tools) &&
         !settings.isModelToolCallingDisabled(modelRef);
-    final supportsToolCalling =
-        !pureChatMode &&
-        (toolMode || (agentMode && boundPreset?.functionCalling != false)) &&
-        modelSupportsTools;
-    final effectiveImageRoute = settings.resolveEffectiveImageGenerationRoute(
-      modelRef,
-    );
-    final useForcedInlineImageRoute =
-        forceInlineImageRoute &&
-        settings.imageGenerationEnabled &&
-        (conv.enabledPlugins == null || conv.enabledPlugins!.contains('image'));
-    final shouldUseStableImageRoute =
-        !useForcedInlineImageRoute &&
-        supportsToolCalling &&
-        effectiveImageRoute == EffectiveImageGenerationRoute.stable;
-    final shouldUseFastImageRoute =
-        useForcedInlineImageRoute ||
-        !supportsToolCalling ||
-        effectiveImageRoute == EffectiveImageGenerationRoute.fast;
+    final modelAllowsTools =
+        modelSupportsTools && boundPreset?.functionCalling != false;
     if (resolvedConversationId != conv.id) {
       throw StateError('请求联系人与角色上下文不一致');
     }
@@ -501,6 +461,69 @@ class ChatSendBackendService {
     }
     final previousUserMessageTime =
         _resolveTimeAwarenessPreviousUserMessageTime(history);
+    PluginRequestInputs requestInputs({
+      required bool supportsTools,
+      bool fastImage = true,
+      bool stableImage = false,
+    }) => PluginRequestInputs(
+      ref: _ref,
+      settings: settings,
+      imageConfig: imageConfig,
+      voiceRequest: voiceRequest,
+      pluginPrompts: pluginPrompts,
+      conversationId: resolvedConversationId,
+      history: history,
+      previousUserMessageTime: previousUserMessageTime,
+      useFastImageRoute: fastImage,
+      useStableImageRoute: stableImage,
+      supportsToolCalling: supportsTools,
+      reminders: _systemReminderService,
+      boundPreset: boundPreset,
+      voicePrompts: voicePrompts,
+      imagePrompts: imagePrompts,
+      rolePluginIds: enabledPluginIds,
+    );
+    final activeBackendPluginIds = await resolveActiveTaskPluginIds(
+      _ref.read(pluginManagerProvider).getAllPlugins(),
+      enabledPluginIds,
+      inputs: requestInputs(supportsTools: true),
+    );
+    final roleWorkspaceGrants = WorkspaceGrants.forRole(
+      conv.id,
+      conv.enabledPlugins,
+    );
+    final hasWorkspaceGrant =
+        roleWorkspaceGrants.isNotEmpty &&
+        WorkspaceGrants.effective(
+          roleGrants: roleWorkspaceGrants,
+          presetAllows: null,
+          pluginEnabled: true,
+          localIds: [
+            for (final workspace in await (await _ref.read(
+              workspaceStoreProvider.future,
+            )).list())
+              workspace.id,
+          ],
+        ).isNotEmpty;
+    final hasActiveBackendCapability =
+        conv.hasAssistantCapability ||
+        activeBackendPluginIds.isNotEmpty ||
+        hasWorkspaceGrant;
+    final trigger = _ref.read(pluginManagerProvider).getPlugin('trigger');
+    final hasActiveTriggerCapability =
+        (enabledPluginIds == null || enabledPluginIds.contains('trigger')) &&
+        trigger is TriggerPlugin && trigger.enabledForConversation(conv.id);
+    final canDelegateTasks = modelAllowsTools && hasActiveBackendCapability;
+    final supportsToolCalling = modelAllowsTools &&
+        (hasActiveBackendCapability || hasActiveTriggerCapability);
+    // Image-only conversations retain the inline route. When the router is
+    // active, the existing stable draw_image route remains available.
+    final shouldUseStableImageRoute =
+        !forceInlineImageRoute &&
+        supportsToolCalling &&
+        settings.resolveEffectiveImageGenerationRoute(modelRef) ==
+            EffectiveImageGenerationRoute.stable;
+    final shouldUseFastImageRoute = !shouldUseStableImageRoute;
     // 插件按自身范围贡献提示词、提醒、工具与输出标签；核心不再识别具体插件类型。
     final pluginRuntime = PluginRuntime();
     try {
@@ -508,31 +531,20 @@ class ChatSendBackendService {
         pluginRuntime.install(plugin.agentPlugin, enabled: plugin.enabled);
       }
       pluginRuntime.install(tavernCompatAgentPlugin());
-      final officeToErrandAgent = delegateTaskEnabled && agentMode;
-      if (officeToErrandAgent) {
+      if (canDelegateTasks) {
+        final activeTasks = await _ref.read(agentTaskStoreProvider).activeByConversation(conv.id);
         pluginRuntime.install(
-          delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider)),
+          delegateTaskAgentPlugin(_ref.read(delegateTaskPortProvider), activeTasks: activeTasks),
         );
       }
-      // ADR0111: every tool-mode role has AIcove酱's abilities; they follow the
-      // work mode, not the editable role card.
-      if (toolMode) {
+      if (conv.hasAssistantCapability) {
         pluginRuntime.install(
-          assistantAgentPlugin(
-            _ref.read(assistantToolsetProvider),
-            conversationId: conv.id,
-            // Writes need the review gate, which only the kernel runner has.
-            writes: _ref.read(assistantWriteToolsProvider),
-            settings: _ref.read(assistantSettingsToolsProvider),
-            cards: _ref.read(assistantCardToolsProvider),
-            checkup: _ref.read(assistantCheckupProvider),
-            groups: _ref.read(assistantToolGroupsProvider),
-          ),
+          assistantRouterAgentPlugin(conversationId: conv.id),
         );
       }
       final selectedPluginIds = [
         for (final id in pluginRuntime.selectForRole(enabledPluginIds))
-          if (!officeToErrandAgent || !isOfficePluginId(id)) id,
+          if (!isTaskBackendPluginId(id)) id,
       ];
       final pluginScopes = <PluginRequestScope>[];
       void retainScope(PluginRequestScope scope) {
@@ -543,36 +555,13 @@ class ChatSendBackendService {
       for (final scope in pluginRuntime.requestScopes(
         pluginRuntime.snapshot(),
         selectedPluginIds,
-        PluginRequestInputs(
-          ref: _ref,
-          settings: settings,
-          imageConfig: imageConfig,
-          voiceRequest: voiceRequest,
-          pluginPrompts: pluginPrompts,
-          conversationId: resolvedConversationId,
-          history: history,
-          previousUserMessageTime: previousUserMessageTime,
-          useFastImageRoute: shouldUseFastImageRoute,
-          useStableImageRoute: shouldUseStableImageRoute,
-          supportsToolCalling: supportsToolCalling,
-          packageExecutable: toolMode,
-          reminders: _systemReminderService,
-          boundPreset: boundPreset,
-          voicePrompts: voicePrompts,
-          imagePrompts: imagePrompts,
-          rolePluginIds: enabledPluginIds,
+        requestInputs(
+          supportsTools: supportsToolCalling,
+          fastImage: shouldUseFastImageRoute,
+          stableImage: shouldUseStableImageRoute,
         ),
       )) {
         retainScope(scope);
-      }
-      // 工具模式的工作区直接给角色用，不经杂活 Agent（ADR0097）。
-      if (toolMode) {
-        retainScope(
-          WorkspaceRequestScope(
-            await _roleWorkspaceToolset(conv, resolvedConversationId),
-            supportsTools: supportsToolCalling,
-          ),
-        );
       }
       final contextPolicy = ChatPluginContextPolicy.firstParty(
         activeProviderIds: {
@@ -691,17 +680,17 @@ class ChatSendBackendService {
       if (supportsToolCalling) {
         final aiTools = await _pluginContextBuilder.collectToolsWithRetry([
           for (final scope in pluginScopes)
-            PluginToolSource(pluginId: scope.pluginId, tools: scope.tools),
+            if (scope.pluginId == delegateTaskPluginId ||
+                scope.pluginId == 'trigger' ||
+                scope.pluginId == 'image')
+              PluginToolSource(pluginId: scope.pluginId, tools: scope.tools),
         ]);
-        if (toolMode) {
-          aiTools.add(ToolResultStore.shared.reader(resolvedConversationId));
-        }
-        final exposedTools = toolMode
-            ? assembleCodemodeTools(aiTools)
-            : aiTools;
+        final exposedTools = aiTools;
         boundTools = List.unmodifiable(exposedTools);
         if (aiTools.isNotEmpty) {
-          var schemas = directToolSchemas(exposedTools);
+          var schemas = [
+            for (final tool in exposedTools) tool.toOpenAISchema(),
+          ];
           for (final scope in pluginScopes) {
             schemas = scope.rewriteToolSchemas(schemas);
           }
@@ -756,9 +745,13 @@ class ChatSendBackendService {
           presetId: boundPreset.id,
           conversationId: resolvedConversationId,
         );
-        final regexVariables = Map<String, String>.of(presetVariableSnapshot.values);
+        final regexVariables = Map<String, String>.of(
+          presetVariableSnapshot.values,
+        );
         final regexMacroValues = <String, String>{
-          'char': conv.displayName.trim().isEmpty ? conv.title : conv.displayName,
+          'char': conv.displayName.trim().isEmpty
+              ? conv.title
+              : conv.displayName,
           'user': promptUserName,
           'description': contextPolicy.filterText(personaParts.rolePrompt),
           'scenario': conv.description?.trim() ?? '',
@@ -850,7 +843,9 @@ class ChatSendBackendService {
           reserveTokens: boundPreset.maxOutputTokens ?? 2048,
           truncateHistory: false,
         );
-        reqMessages = contextPolicy.filterMessages(presetAssembly.messages);
+        reqMessages = contextPolicy.filterMessages(
+          presetAssembly.scriptMessages,
+        );
         truncatedMessages = reqMessages;
         systemAssemblyEntries
           ..clear()
@@ -881,49 +876,19 @@ class ChatSendBackendService {
       systemAssemblyEntries.removeWhere(
         (entry) => (entry['content'] ?? '').toString().trim().isEmpty,
       );
-      var finalMessages = _systemReminderService.normalizeReminderPlacement(
-        messages: contextPolicy.filterMessages(truncatedMessages),
-      );
-
-      // ToolBlock calls have already been rendered from the uncompressed raw
-      // history. Only currently granted deferred tools can be carried forward.
-      if (toolMode && tools != null) {
-        final called = {
-          ...calledMcpToolNames(finalMessages),
-          // Legacy ToolBlocks may have no provider call id and therefore no
-          // native wire call. The raw-derived, uncovered history still records
-          // their actual tool name; never inspect text summaries for names.
-          for (final message in history)
-            if (message.role == 'assistant')
-              for (final block in message.blocks ?? const [])
-                if (block is ToolBlock && block.toolName.startsWith('mcp__'))
-                  block.toolName,
-        };
-        final names = {
-          for (final schema in tools) (schema['function'] as Map)['name'],
-        };
-        tools = [
-          ...tools,
-          for (final tool in boundTools)
-            if (tool.exposure == ToolExposure.deferred &&
-                called.contains(tool.name) &&
-                !names.contains(tool.name))
-              tool.toOpenAISchema(),
-        ];
+      List<Map<String, dynamic>> prepareMessages(
+        List<Map<String, dynamic>> messages,
+      ) {
+        final filtered = contextPolicy.filterMessages(messages);
+        return boundPreset == null
+            ? _systemReminderService.normalizeReminderPlacement(
+                messages: filtered,
+              )
+            : filtered;
       }
 
-      if (!toolMode &&
-          ToolResultStore.wantsReader([
-            for (final s in tools ?? const <Map<String, dynamic>>[])
-              '${(s['function'] as Map?)?['name']}',
-          ])) {
-        tools = [
-          ...tools!,
-          ToolResultStore.shared
-              .reader(resolvedConversationId)
-              .toOpenAISchema(),
-        ];
-      }
+      var finalMessages = prepareMessages(truncatedMessages);
+
       final policy = ContextWindowPolicy(
         configured: settings.contextWindowTokens,
         modelWindow: modelContextTokens,
@@ -1015,12 +980,8 @@ class ChatSendBackendService {
           fullAssembly,
           inputBudget: budget,
           outputExceedsWindow: exceedsWindow,
-          estimateTokens: (messages) => renderedContextTokens(
-            _systemReminderService.normalizeReminderPlacement(
-              messages: contextPolicy.filterMessages(messages),
-            ),
-            tools,
-          ),
+          estimateTokens: (messages) =>
+              renderedContextTokens(prepareMessages(messages), tools),
         );
         if (presetAssembly.keptHistoryCount < fullAssembly.keptHistoryCount) {
           if (runtimePrepared) {
@@ -1035,7 +996,10 @@ class ChatSendBackendService {
               if (message['role'] == 'tool' && id != null) {
                 return 'tool:$id';
               }
-              return jsonEncode(message);
+              return jsonEncode({
+                for (final entry in message.entries)
+                  if (entry.key != presetHistoryMarker) entry.key: entry.value,
+              });
             }
 
             final omittedCounts = <String, int>{};
@@ -1058,9 +1022,7 @@ class ChatSendBackendService {
                 .where((message) => !removed.contains(message))
                 .toList();
           } else {
-            finalMessages = _systemReminderService.normalizeReminderPlacement(
-              messages: contextPolicy.filterMessages(presetAssembly.messages),
-            );
+            finalMessages = prepareMessages(presetAssembly.scriptMessages);
             if (toolResultsPruned) {
               finalMessages = await runtimeContext.pruneToolResults(
                 finalMessages,
@@ -1220,9 +1182,7 @@ class ChatSendBackendService {
         ),
         presetScript: PresetScriptSnapshot.fromPreset(
           boundPreset,
-          toolsAllowed:
-              (toolMode || boundPreset?.functionCalling != false) &&
-              modelSupportsTools,
+          toolsAllowed: modelAllowsTools,
           modelSupportsTools: modelSupportsTools,
           macros: {
             'char': conv.displayName.trim().isEmpty
@@ -1242,11 +1202,6 @@ class ChatSendBackendService {
             ..addAll(schemas);
         },
         toolResultOwner: resolvedConversationId,
-        currentWorkspaceId: () => pluginScopes
-            .whereType<WorkspaceRequestScope>()
-            .firstOrNull
-            ?.toolset
-            .currentWorkspaceId,
         settings: settings,
         modelFullId: modelFull,
         providerApiBase: requestConfig.providerApiBase,
@@ -1264,14 +1219,11 @@ class ChatSendBackendService {
             boundPreset?.temperature ?? requestConfig.modelTemperature,
         modelTopP: boundPreset?.topP ?? requestConfig.modelTopP,
         modelContextMessageLimit: requestConfig.modelContextMessageLimit,
-        // 纯聊天关闭内置搜索；派活或联网插件接管时也关闭内置搜索。
-        providerRequestOptions:
-            pureChatMode ||
-                officeToErrandAgent ||
-                supportsToolCalling &&
-                    pluginScopes.any((scope) => scope.disablesBuiltinWebSearch)
-            ? providerRequestOptions.copyWith(disableBuiltinWebSearch: true)
-            : providerRequestOptions,
+        // External work goes through the background worker, never a
+        // provider's implicit search path.
+        providerRequestOptions: providerRequestOptions.copyWith(
+          disableBuiltinWebSearch: true,
+        ),
         // 显示美化正则输出的 HTML 界面无法渲染，已由语义标签组件接管的不再执行，
         // 保留原标签交给聊天列表投影为折叠／正文／选项（ADR0046）。
         presetRegexScripts: boundPreset == null
@@ -1300,208 +1252,11 @@ class ChatSendBackendService {
           ),
         ),
       );
-      if (conv.effectiveAgentMode != RoleAgentMode.tool || preview != null) {
-        return config;
-      }
-      return config.copyWith(
-        toolPolicy: await _assistantToolPolicy(
-          alwaysAsk: await _ref.read(assistantAlwaysAskProvider.future),
-          config: config,
-          history: history,
-          userText: userText,
-          settings: settings,
-        ),
-      );
+      return config;
     } finally {
       await pluginRuntime.scope.dispose();
     }
   }
-
-  /// 工具模式的角色可用本机全部工作区（ADR0111），本次新建的工作区仍记到
-  /// 角色名下。
-  Future<WorkspaceToolset> _roleWorkspaceToolset(
-    Conversation conv,
-    String conversationId,
-  ) async {
-    final store = await _ref.read(workspaceStoreProvider.future);
-    final localIds = [for (final workspace in await store.list()) workspace.id];
-    final prefs = await SharedPreferences.getInstance();
-    final selectionKey = 'workspace_current_$conversationId';
-    final home =
-        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
-    return WorkspaceToolset(
-      store: store,
-      userSkillRoots: [
-        if (home != null && home.isNotEmpty) ...[
-          p.join(home, '.agents', 'skills'),
-          p.join(home, '.claude', 'skills'),
-        ],
-      ],
-      currentWorkspaceId: prefs.getString(selectionKey),
-      enableLocalFiles: true,
-      currentLocalDirectory: prefs.getString('${selectionKey}_local'),
-      onLocalDirectoryChanged: (path) async {
-        if (path == null) {
-          await prefs.remove('${selectionKey}_local');
-        } else {
-          await prefs.setString('${selectionKey}_local', path);
-        }
-      },
-      onWorkspaceChanged: (id) async {
-        await prefs.setString(selectionKey, id);
-      },
-      enableScripts: true,
-      enableShell: WorkspaceShell.available(platform: Platform.operatingSystem),
-      workspaceIds: WorkspaceGrants.effective(
-        roleGrants: localIds.toSet(),
-        presetAllows: null,
-        pluginEnabled: true,
-        localIds: localIds,
-      ),
-      runId: 'chat_${conv.id}_${DateTime.now().microsecondsSinceEpoch}',
-      isCancelled: () => ToolCallContext.current?.isCancelled?.call() ?? false,
-      onCreated: (workspace) => _grantWorkspaceToRole(conv.id, workspace),
-      runWebApp: (ws, path) async => (await _ref.read(
-        webAppLauncherProvider.future,
-      )).openForAgent(ws, path),
-      runLocalWebApp: (root, page) async => (await _ref.read(
-        webAppLauncherProvider.future,
-      )).openLocalDirectoryForAgent(root, page),
-      // Every tool-mode role's shell gets channel keys (ADR0111).
-      shellEnvironment: () {
-        final settings = _ref.read(appSettingsProvider).valueOrNull;
-        return settings == null
-            ? const <String, String>{}
-            : channelKeyEnvironment(settings);
-      },
-    );
-  }
-
-  /// 「全部插件」不含空间授权，先把它展开成具体列表再追加这一项。
-  Future<void> _grantWorkspaceToRole(
-    String conversationId,
-    WorkspaceInfo workspace,
-  ) async {
-    final latest = _ref
-        .read(conversationsProvider)
-        .valueOrNull
-        ?.where((c) => c.id == conversationId)
-        .firstOrNull;
-    if (latest == null) return;
-    final current =
-        latest.enabledPlugins ??
-        [
-          for (final plugin in _ref.read(pluginManagerProvider).getAllPlugins())
-            if (!isOfficePluginId(plugin.id) || plugin.id == 'web_search')
-              plugin.id,
-        ];
-    final grant = WorkspaceGrants.pluginIdOf(workspace.id);
-    if (current.contains(grant)) return;
-    await _ref
-        .read(conversationsProvider.notifier)
-        .applyContactEdit(conversationId, enabledPlugins: [...current, grant]);
-  }
-
-  /// Assistant calls run without approval by default (ADR0107). The local
-  /// opt-in switch restores per-call confirmation.
-  Future<AgentToolPolicy> _assistantToolPolicy({
-    required ApiConfig config,
-    required List<Message> history,
-    required String? userText,
-    required AppSettings settings,
-    required bool alwaysAsk,
-  }) async {
-    final store = await _ref.read(workspaceStoreProvider.future);
-    final spaceNames = {
-      for (final space in await store.list()) space.id: space.name,
-    };
-    bool alwaysAskNow() =>
-        _ref.read(assistantAlwaysAskProvider).valueOrNull ?? alwaysAsk;
-    final toolset = _ref.read(assistantToolsetProvider);
-    final writes = _ref.read(assistantWriteToolsProvider);
-    final settingsTools = _ref.read(assistantSettingsToolsProvider);
-    final groups = _ref.read(assistantToolGroupsProvider);
-    final riskOf = AssistantRequestScope.riskOf(
-      toolset,
-      writes,
-      settings: settingsTools,
-      groups: groups,
-    );
-    final descriptions = {
-      for (final tool in [
-        ...toolset.tools(),
-        ...writes.tools(),
-        ...settingsTools.tools(),
-        for (final group in groups) ...group.tools(),
-      ])
-        tool.name: tool.description,
-    };
-    final userMessages = [
-      for (final message in history)
-        if (message.role == 'user' && message.content.trim().isNotEmpty)
-          message.content.trim(),
-    ];
-    final current = userText?.trim() ?? '';
-    if (current.isNotEmpty &&
-        (userMessages.isEmpty || userMessages.last != current)) {
-      userMessages.add(current);
-    }
-    final reviewer = AssistantReviewer(
-      (messages) async => (await executeApiCall(
-        config: _reviewConfig(config, messages),
-        sessionId: '${kAicoveAssistantId}_review',
-        userText: null,
-      )).replyText,
-    );
-    return AgentToolPolicy(
-      authorization: AgentToolAuthorization.allowAll,
-      customGate: AssistantToolGate(riskOf, alwaysAsk: alwaysAskNow),
-      redactor: redactorForCredentials(settings: settings),
-      approvalTimeout: const Duration(minutes: 5),
-      approvals: AssistantApprovalPort(
-        riskOf: riskOf,
-        describe: (name, args) => name == 'bash'
-            ? ApprovalPrompt.workspaceShell(
-                '${spaceNames[config.currentWorkspaceId?.call()] ?? config.currentWorkspaceId?.call() ?? '未选择'}',
-                '${args['command']}',
-              )
-            : name == 'codemode'
-            ? ApprovalPrompt.workspaceScript(
-                '${spaceNames[config.currentWorkspaceId?.call()] ?? config.currentWorkspaceId?.call() ?? '未选择'}',
-              )
-            : groups.ownerOf(name)?.describe(name, args) ??
-                  (AssistantSettingsTools.describes(name)
-                      ? settingsTools.describe(name, args)
-                      : writes.describe(name, args)),
-        toolDescription: (name) => descriptions[name] ?? name,
-        userMessages: userMessages.length <= 6
-            ? userMessages
-            : userMessages.sublist(userMessages.length - 6),
-        review: reviewer.review,
-        askUser: _ref.read(assistantApprovalsProvider.notifier).ask,
-        alwaysAsk: alwaysAskNow,
-      ),
-    );
-  }
-
-  /// The reviewer's request: the assistant's model and channel, nothing of
-  /// its assembly (no preset, tools or reply processors).
-  static ApiConfig _reviewConfig(
-    ApiConfig base,
-    List<Map<String, dynamic>> messages,
-  ) => ApiConfig(
-    settings: base.settings,
-    modelFullId: base.modelFullId,
-    providerApiBase: base.providerApiBase,
-    providerApiKey: base.providerApiKey,
-    providerId: base.providerId,
-    providerApiKeyItemId: base.providerApiKeyItemId,
-    providerApiKeyItemIndex: base.providerApiKeyItemIndex,
-    providerApiKeyStrategy: base.providerApiKeyStrategy,
-    customConfig: base.customConfig,
-    messages: messages,
-    providerRequestOptions: base.providerRequestOptions,
-  );
 
   Future<ApiCallResult> executeApiCall({
     required ApiConfig config,
@@ -1515,38 +1270,50 @@ class ChatSendBackendService {
     void Function()? onStreamTextReset,
     void Function()? onStreamToolCallObserved,
     void Function()? onStreamingFallback,
+    void Function(bool)? onTransportStreamingChanged,
   }) async {
     if (config.voiceRequest != null &&
         config.voiceRequest!.ownerId != sessionId) {
       throw StateError('语音请求与当前发送角色不一致');
     }
-    return executeWithProviderKeyFailureRecording(
-      config: config,
-      recorder: _ref.read(providerKeyFailureRecorderProvider),
-      execute: () => _apiRunner.executeApiCall(
+    return ModelRunScope(
+      purpose: ModelRunScope.current?.purpose ?? 'chat',
+      conversationId: sessionId,
+      turnId: turnId,
+      attempt: ModelRunScope.current?.attempt ?? 1,
+    ).run(
+      () => executeWithProviderKeyFailureRecording(
         config: config,
-        sessionId: sessionId,
-        userText: userText,
-        responseProcessors: config.responseProcessors,
-        availableTools: config.boundTools,
-        turnId: turnId,
-        trace: trace,
-        onToolExecuting: onToolExecuting,
-        enableStreaming: enableStreaming,
-        onStreamTextDelta: onStreamTextDelta == null
-            ? null
-            : (delta) {
-                final request = config.voiceRequest;
-                if (request == null) {
-                  onStreamTextDelta(delta);
-                } else {
-                  request.run(() => onStreamTextDelta(delta));
-                }
-              },
-        onStreamTextReset: onStreamTextReset,
-        onStreamToolCallObserved: onStreamToolCallObserved,
-        onStreamingFallback: onStreamingFallback,
-        traceContext: config.traceContext,
+        recorder: _ref.read(providerKeyFailureRecorderProvider),
+        execute: () => _apiRunner.executeApiCall(
+          config: onTransportStreamingChanged == null
+              ? config
+              : config.copyWith(
+                  onTransportStreamingChanged: onTransportStreamingChanged,
+                ),
+          sessionId: sessionId,
+          userText: userText,
+          responseProcessors: config.responseProcessors,
+          availableTools: config.boundTools,
+          turnId: turnId,
+          trace: trace,
+          onToolExecuting: onToolExecuting,
+          enableStreaming: enableStreaming,
+          onStreamTextDelta: onStreamTextDelta == null
+              ? null
+              : (delta) {
+                  final request = config.voiceRequest;
+                  if (request == null) {
+                    onStreamTextDelta(delta);
+                  } else {
+                    request.run(() => onStreamTextDelta(delta));
+                  }
+                },
+          onStreamTextReset: onStreamTextReset,
+          onStreamToolCallObserved: onStreamToolCallObserved,
+          onStreamingFallback: onStreamingFallback,
+          traceContext: config.traceContext,
+        ),
       ),
     );
   }

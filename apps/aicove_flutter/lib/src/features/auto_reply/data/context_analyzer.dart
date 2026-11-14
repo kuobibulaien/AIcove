@@ -1,3 +1,6 @@
+import 'package:aicove_agent_kernel/aicove_agent_kernel.dart'
+    show KernelCancelledException;
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_logger.dart';
@@ -13,6 +16,7 @@ import '../../chat/services/chat_history_store.dart';
 import '../../settings/app_settings.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
 import '../domain/proactive_decision.dart';
+import 'auto_reply_agent_helpers.dart';
 import 'auto_reply_trigger.dart';
 import 'auto_reply_trigger_storage.dart';
 import 'chat_model_decision_adapter.dart';
@@ -414,7 +418,7 @@ ProactiveDecisionPort _defaultDecisionPort(
   AppSettings settings,
   Conversation conversation,
 ) {
-  final modelRef = resolveJudgmentModelRef(settings);
+  final candidates = resolveJudgmentModelCandidates(settings, conversation);
   final contactSettings = settings.autoReplySettings.forContact(
     conversation.id,
   );
@@ -422,35 +426,66 @@ ProactiveDecisionPort _defaultDecisionPort(
     assistantName: conversation.title,
     frequency: contactSettings.frequency,
     run: (prompt) async {
-      final result = await ref
-          .read(backgroundAgentServiceProvider)
-          .run(
-            definition: BackgroundAgentDefinition(
-              id: 'auto_reply_decision',
-              name: '主动回复判断',
-              objectivePrompt: '你只做判断，只回一行 JSON。',
-              contextProfile: ContextProfile.background(
-                const ConversationWindowSpec(
-                  lastMessages: 1,
-                  includeAssistant: false,
+      for (var index = 0; index < candidates.length; index++) {
+        final modelRef = candidates[index];
+        try {
+          final result = await ref
+              .read(backgroundAgentServiceProvider)
+              .run(
+                definition: BackgroundAgentDefinition(
+                  id: 'auto_reply_decision',
+                  name: '主动回复判断',
+                  objectivePrompt: '你只做判断，只回一行 JSON。',
+                  contextProfile: ContextProfile.background(
+                    const ConversationWindowSpec(
+                      lastMessages: 1,
+                      includeAssistant: false,
+                    ),
+                  ),
+                  modelRef: modelRef,
+                  temperature: 0.2,
                 ),
-              ),
-              modelRef: modelRef,
-              temperature: 0.2,
-            ),
-            conversationId: conversation.id,
-            contextMessages: <Message>[
-              Message.text(
-                id: 'auto_reply_decision_${DateTime.now().microsecondsSinceEpoch}',
-                role: 'user',
-                content: prompt,
-                createdAt: DateTime.now(),
-              ),
-            ],
+                conversationId: conversation.id,
+                contextMessages: <Message>[
+                  Message.text(
+                    id: 'auto_reply_decision_${DateTime.now().microsecondsSinceEpoch}',
+                    role: 'user',
+                    content: prompt,
+                    createdAt: DateTime.now(),
+                  ),
+                ],
+              );
+          return result.text;
+        } on KernelCancelledException {
+          rethrow;
+        } catch (error) {
+          AppLogger.warning(
+            'ContextAnalyzer',
+            '主动回复判断模型请求失败',
+            metadata: {
+              'conversationId': conversation.id,
+              'modelRef': modelRef,
+              'error': error.toString(),
+            },
           );
-      return result.text;
+          if (index == candidates.length - 1) rethrow;
+        }
+      }
+      throw StateError('proactive_judgment_candidates_empty');
     },
   );
+}
+
+/// Explicit judgment models stay isolated; otherwise follow the conversation.
+List<String> resolveJudgmentModelCandidates(
+  AppSettings settings,
+  Conversation conversation,
+) {
+  final model = settings.autoReplySettings.analyzerModel?.trim();
+  if (model != null && model.isNotEmpty) {
+    return <String>[resolveJudgmentModelRef(settings)];
+  }
+  return resolveAutoReplyAgentModelCandidates(settings, conversation);
 }
 
 /// The judgment model: the analyzer setting, else the default chat model.

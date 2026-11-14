@@ -8,6 +8,9 @@ const cloudTables = <String, String>{
   'message_blocks': 'id',
   'message_projection_mappings': 'id',
   'providers': 'id',
+  'context_summaries': 'id',
+  'memory_items': 'id',
+  'memory_progress': 'owner_id',
 };
 
 /// 同步表的结构版本，写进每条同步记录的 `client_schema`。
