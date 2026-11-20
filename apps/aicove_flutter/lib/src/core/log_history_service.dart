@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import '../features/observability/trace_store.dart';
 import 'storage/app_data_directory.dart';
 
 /// 日志历史文件信息
@@ -339,6 +340,7 @@ class LogHistoryService {
 
   /// 清理所有历史日志
   static Future<int> clearAllHistory() async {
+    await TraceStore.instance.flush();
     int deletedCount = 0;
 
     // 清理新的日志文件

@@ -32,10 +32,12 @@ import 'core/utils/image_preheat_queue.dart';
 import 'core/utils/svg_preheat.dart';
 import 'core/log_history_service.dart';
 import 'core/services/android_keep_alive_manager.dart';
+import 'core/services/display_refresh_rate_controller.dart';
 import 'core/app_logger.dart';
 import 'core/api_logger.dart';
 import 'features/observability/frame_jank_recorder.dart';
 import 'features/observability/trace_store.dart';
+import 'features/observability/usage/token_usage_ledger.dart';
 import 'features/chat/domain/conversation.dart';
 import 'features/auto_reply/data/analyzer_scheduler.dart';
 import 'features/auto_reply/data/auto_reply_service.dart';
@@ -61,7 +63,7 @@ class MyApp extends ConsumerStatefulWidget {
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   // GoRouter 只创建一次，避免设置变更时路由重置
   final _detailNavigatorKey = GlobalKey<NavigatorState>();
-  final _detailObserver = MoeDetailStackObserver();
+  final _detailObserver = _DetailStackObserver();
   late final GoRouter _router = _createRouter();
 
   // App 启动/恢复时的“预热重试”定时器（当会话列表还没加载出来时使用）
@@ -90,7 +92,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       unawaited(_applyFactoryNahidaVoice());
       unawaited(ref.read(promptPackMigratorProvider).ensure());
       // 后台响过的角色来电：点了通知就接通，没接的记为未接（方案 12 §4.8）。
-      unawaited(ref.read(incomingCallNotificationBridgeProvider).start());
+      unawaited(
+        ref
+            .read(incomingCallNotificationBridgeProvider)
+            .start(onOpenConversation: _openNotificationConversation),
+      );
       // 杂活任务：启动恢复，之后定时接收同步来的回执与控制（ADR0088）。
       if (delegateTaskEnabled) {
         unawaited(ref.read(taskAgentSupervisorProvider).start());
@@ -155,6 +161,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
+      unawaited(TokenUsageLedger.instance.flushPendingSnapshot());
+      unawaited(TraceStore.instance.flush());
       ref.read(chatActionsProvider).onAppBackground();
       ref.read(cloudSyncProvider.notifier).foreground(false);
       ref.read(accountProvider.notifier).foreground(false);
@@ -322,6 +330,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   /// 清理过期日志（启动时调用）
   Future<void> _cleanExpiredLogs() async {
     try {
+      await TraceStore.instance.flush();
       final cleanedCount = await LogHistoryService.cleanExpiredLogs();
       if (cleanedCount > 0) {
         AppLogger.info('App', '已清理 $cleanedCount 个过期日志文件');
@@ -367,6 +376,30 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   /// 接听角色来电：回到这个角色的聊天，通话视图在聊天页里显示。
   void _openAcceptedCall(Conversation conversation, ActiveVoiceCall call) {
     _router.go('/chat/${conversation.id}', extra: conversation);
+  }
+
+  /// 点击后台主动回复通知：等根路由挂载后打开对应角色的聊天页。
+  Future<void> _openNotificationConversation(String conversationId) async {
+    final normalizedId = conversationId.trim();
+    if (normalizedId.isEmpty || !mounted) return;
+    try {
+      await ref.read(appSettingsProvider.future);
+    } catch (_) {
+      return;
+    }
+    var conversations = const <Conversation>[];
+    try {
+      conversations = await ref.read(conversationsProvider.future);
+    } catch (_) {}
+    if (!mounted) return;
+    final conversation = conversations
+        .where((c) => c.id == normalizedId)
+        .firstOrNull;
+    WidgetsBinding.instance.ensureVisualUpdate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _router.go('/chat/$normalizedId', extra: conversation);
+    });
   }
 
   /// 创建路由配置（只调用一次）
@@ -532,6 +565,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               final uiScale = settings.uiScaleFactor
                   .clamp(kMinUiScaleFactor, kMaxUiScaleFactor)
                   .toDouble();
+              final displayRate = DisplayRefreshRateController.instance;
+              if (displayRate.isSupported) {
+                child = NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    displayRate.onScrollNotification(notification);
+                    return false;
+                  },
+                  child: child ?? const SizedBox.shrink(),
+                );
+              }
               return MediaQuery(
                 data: MediaQuery.of(context).copyWith(
                   textScaler: TextScaler.linear(textScale),
@@ -700,5 +743,19 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             : MoeColors.light(accentColor: accent),
       ],
     );
+  }
+}
+
+class _DetailStackObserver extends MoeDetailStackObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPush(route, previousRoute);
+    DisplayRefreshRateController.instance.notifyRouteTransition();
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    super.didPop(route, previousRoute);
+    DisplayRefreshRateController.instance.notifyRouteTransition();
   }
 }

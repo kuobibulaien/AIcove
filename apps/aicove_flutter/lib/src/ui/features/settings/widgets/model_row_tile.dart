@@ -24,6 +24,7 @@ import '../../../../core/api/thinking/thinking_level.dart';
 import '../../../../core/api/thinking/thinking_level_catalog.dart';
 import '../../../../core/api/thinking/thinking_level_labels.dart';
 import '../../../../features/chat/presentation/widgets/thinking_level_sheet.dart';
+import '../../../../features/observability/usage/model_pricing_catalog.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/moe_input_theme.dart';
 import '../../../../ui/theme/tokens.dart';
@@ -224,6 +225,18 @@ class ModelRowTile extends ConsumerWidget {
     final maxCtxTokensCtrl = TextEditingController(
       text: currentConfig.maxContextTokens?.toString() ?? '',
     );
+    final builtinPricing = lookupBuiltinModelPricing(modelId);
+    final inputPriceCtrl = TextEditingController(
+      text: _formatEditablePrice(currentConfig.inputPricePerMillion),
+    );
+    final outputPriceCtrl = TextEditingController(
+      text: _formatEditablePrice(currentConfig.outputPricePerMillion),
+    );
+    final cachedPriceCtrl = TextEditingController(
+      text: _formatEditablePrice(currentConfig.cachedInputPricePerMillion),
+    );
+    var selectedPriceCurrency =
+        currentConfig.priceCurrency ?? builtinPricing?.currency ?? 'USD';
     var selectedType = currentType;
     var disableToolCalling = currentConfig.disableToolCalling;
     var selectedThinkingLevel = currentConfig.thinkingLevel;
@@ -258,6 +271,10 @@ class ModelRowTile extends ConsumerWidget {
       final topPText = topPCtrl.text.trim();
       final ctxText = ctxLimitCtrl.text.trim();
       final maxCtxTokensText = maxCtxTokensCtrl.text.trim();
+      final inputPriceText = inputPriceCtrl.text.trim();
+      final outputPriceText = outputPriceCtrl.text.trim();
+      final cachedPriceText = cachedPriceCtrl.text.trim();
+      final priceCurrency = selectedPriceCurrency;
       final manualChatCapabilities = ChatModelCapability.values
           .where(
             (capability) => selectedCapabilities.contains(capability.value),
@@ -269,6 +286,18 @@ class ModelRowTile extends ConsumerWidget {
         if (entry.value.isNotEmpty &&
             (double.tryParse(entry.value)?.isFinite != true)) {
           throw FormatException('${entry.key}请输入有效数字');
+        }
+      }
+      for (final entry in {
+        '输入单价': inputPriceText,
+        '输出单价': outputPriceText,
+        '缓存单价': cachedPriceText,
+      }.entries) {
+        if (entry.value.isNotEmpty) {
+          final parsed = double.tryParse(entry.value);
+          if (parsed == null || !parsed.isFinite || parsed < 0) {
+            throw FormatException('${entry.key}请输入不小于 0 的数字');
+          }
         }
       }
       for (final entry in {
@@ -292,7 +321,12 @@ class ModelRowTile extends ConsumerWidget {
       // 保存模型类型
       await notifier.setModelType(modelId: modelRef, type: type);
 
-      // 保存模型配置（包括工具调用、温度、TopP、上下文数）
+      final hasCustomPrice =
+          inputPriceText.isNotEmpty ||
+          outputPriceText.isNotEmpty ||
+          cachedPriceText.isNotEmpty;
+
+      // 保存模型配置（包括工具调用、温度、TopP、上下文数、计费单价）
       await notifier.updateModelConfig(
         modelId: modelRef,
         disableToolCalling: disableTools,
@@ -312,6 +346,20 @@ class ModelRowTile extends ConsumerWidget {
             ? manualChatCapabilities
             : null,
         clearChatCapabilities: type != ModelType.chat || automaticCapabilities,
+        inputPricePerMillion: inputPriceText.isNotEmpty
+            ? double.tryParse(inputPriceText)
+            : null,
+        clearInputPricePerMillion: inputPriceText.isEmpty,
+        outputPricePerMillion: outputPriceText.isNotEmpty
+            ? double.tryParse(outputPriceText)
+            : null,
+        clearOutputPricePerMillion: outputPriceText.isEmpty,
+        cachedInputPricePerMillion: cachedPriceText.isNotEmpty
+            ? double.tryParse(cachedPriceText)
+            : null,
+        clearCachedInputPricePerMillion: cachedPriceText.isEmpty,
+        priceCurrency: hasCustomPrice ? priceCurrency : null,
+        clearPriceCurrency: !hasCustomPrice,
       );
     }
 
@@ -328,13 +376,26 @@ class ModelRowTile extends ConsumerWidget {
           topPCtrl.text,
           ctxLimitCtrl.text,
           maxCtxTokensCtrl.text,
+          inputPriceCtrl.text,
+          outputPriceCtrl.text,
+          cachedPriceCtrl.text,
+          selectedPriceCurrency,
           selectedType.name,
           disableToolCalling,
           selectedThinkingLevel,
           useAutoCapabilities,
           selectedCapabilities.toList()..sort(),
         ]),
-        fields: [ctrl, tempCtrl, topPCtrl, ctxLimitCtrl, maxCtxTokensCtrl],
+        fields: [
+          ctrl,
+          tempCtrl,
+          topPCtrl,
+          ctxLimitCtrl,
+          maxCtxTokensCtrl,
+          inputPriceCtrl,
+          outputPriceCtrl,
+          cachedPriceCtrl,
+        ],
         builder: (context, setSheetState) => Padding(
           padding: const EdgeInsets.all(16),
           child: SingleChildScrollView(
@@ -539,6 +600,20 @@ class ModelRowTile extends ConsumerWidget {
                   helper: '留空=按模型名自动判断',
                 ),
 
+                if (selectedType == ModelType.chat ||
+                    selectedType == ModelType.embedding) ...[
+                  const SizedBox(height: 16),
+                  _ModelPricingFieldsSection(
+                    builtinPricing: builtinPricing,
+                    currency: selectedPriceCurrency,
+                    inputController: inputPriceCtrl,
+                    outputController: outputPriceCtrl,
+                    cachedController: cachedPriceCtrl,
+                    onCurrencyChanged: (next) =>
+                        setSheetState(() => selectedPriceCurrency = next),
+                  ),
+                ],
+
                 // 默认思考档位
                 const SizedBox(height: 16),
                 _ThinkingLevelField(
@@ -716,6 +791,227 @@ class _ModelTypeChip extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+String _formatEditablePrice(double? value) {
+  if (value == null || !value.isFinite) return '';
+  final fixed = value.toStringAsFixed(4);
+  return fixed
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+}
+
+String _currencySymbol(String currency) => currency == 'CNY' ? '¥' : '\$';
+
+String _formatReferenceHint(ModelPricing? builtin) {
+  if (builtin == null) {
+    return '未匹配到内置参考价，填写单价后即可自动换算花费';
+  }
+  final symbol = _currencySymbol(builtin.currency);
+  final inStr = _formatEditablePrice(builtin.inputPricePerMillion);
+  final outStr = _formatEditablePrice(builtin.outputPricePerMillion);
+  final cacheVal = builtin.cachedInputPricePerMillion;
+  final cachePart = cacheVal != null
+      ? '，缓存 $symbol${_formatEditablePrice(cacheVal)}'
+      : '';
+  return '留空默认用参考价：输入 $symbol$inStr / 输出 $symbol$outStr$cachePart';
+}
+
+/// 独立模型计费单价编辑弹窗（供「用量账单」页一键设单价复用）
+Future<void> showModelPricingSheet(
+  BuildContext context,
+  WidgetRef ref, {
+  required String providerId,
+  required String modelId,
+}) async {
+  final settings = ref.read(appSettingsProvider).valueOrNull;
+  final modelRef = settings?.buildModelRef(providerId, modelId) ??
+      (providerId.isEmpty ? modelId : '$providerId:$modelId');
+  final currentConfig = settings?.getModelConfig(modelRef) ?? const ModelConfig();
+  final displayName =
+      settings?.getCustomModelDisplayName(modelId, providerId: providerId) ??
+      modelId;
+  final builtinPricing = lookupBuiltinModelPricing(modelId);
+  final inputPriceCtrl = TextEditingController(
+    text: _formatEditablePrice(currentConfig.inputPricePerMillion),
+  );
+  final outputPriceCtrl = TextEditingController(
+    text: _formatEditablePrice(currentConfig.outputPricePerMillion),
+  );
+  final cachedPriceCtrl = TextEditingController(
+    text: _formatEditablePrice(currentConfig.cachedInputPricePerMillion),
+  );
+  var selectedCurrency =
+      currentConfig.priceCurrency ?? builtinPricing?.currency ?? 'USD';
+
+  Future<void> savePricing() async {
+    final inputText = inputPriceCtrl.text.trim();
+    final outputText = outputPriceCtrl.text.trim();
+    final cachedText = cachedPriceCtrl.text.trim();
+    for (final entry in {
+      '输入单价': inputText,
+      '输出单价': outputText,
+      '缓存单价': cachedText,
+    }.entries) {
+      if (entry.value.isNotEmpty) {
+        final parsed = double.tryParse(entry.value);
+        if (parsed == null || !parsed.isFinite || parsed < 0) {
+          throw FormatException('${entry.key}请输入不小于 0 的数字');
+        }
+      }
+    }
+    final hasCustomPrice =
+        inputText.isNotEmpty || outputText.isNotEmpty || cachedText.isNotEmpty;
+    await ref.read(appSettingsProvider.notifier).updateModelConfig(
+      modelId: modelRef,
+      inputPricePerMillion:
+          inputText.isNotEmpty ? double.tryParse(inputText) : null,
+      clearInputPricePerMillion: inputText.isEmpty,
+      outputPricePerMillion:
+          outputText.isNotEmpty ? double.tryParse(outputText) : null,
+      clearOutputPricePerMillion: outputText.isEmpty,
+      cachedInputPricePerMillion:
+          cachedText.isNotEmpty ? double.tryParse(cachedText) : null,
+      clearCachedInputPricePerMillion: cachedText.isEmpty,
+      priceCurrency: hasCustomPrice ? selectedCurrency : null,
+      clearPriceCurrency: !hasCustomPrice,
+    );
+  }
+
+  await showMoeBottomSheet<void>(
+    context: context,
+    title: '设置单价 · $displayName',
+    showCloseButton: true,
+    builder: (context) => MoeAutoSaveForm(
+      disposeFields: true,
+      save: savePricing,
+      snapshot: () => moeAutoSaveSignature([
+        inputPriceCtrl.text,
+        outputPriceCtrl.text,
+        cachedPriceCtrl.text,
+        selectedCurrency,
+      ]),
+      fields: [inputPriceCtrl, outputPriceCtrl, cachedPriceCtrl],
+      builder: (context, setSheetState) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        child: SingleChildScrollView(
+          child: _ModelPricingFieldsSection(
+            builtinPricing: builtinPricing,
+            currency: selectedCurrency,
+            inputController: inputPriceCtrl,
+            outputController: outputPriceCtrl,
+            cachedController: cachedPriceCtrl,
+            onCurrencyChanged: (next) =>
+                setSheetState(() => selectedCurrency = next),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ModelPricingFieldsSection extends StatelessWidget {
+  const _ModelPricingFieldsSection({
+    required this.builtinPricing,
+    required this.currency,
+    required this.inputController,
+    required this.outputController,
+    required this.cachedController,
+    required this.onCurrencyChanged,
+  });
+
+  final ModelPricing? builtinPricing;
+  final String currency;
+  final TextEditingController inputController;
+  final TextEditingController outputController;
+  final TextEditingController cachedController;
+  final ValueChanged<String> onCurrencyChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.moeColors;
+    final symbol = _currencySymbol(currency);
+    final inHint = builtinPricing != null
+        ? _formatEditablePrice(builtinPricing!.inputPricePerMillion)
+        : '未设';
+    final outHint = builtinPricing != null
+        ? _formatEditablePrice(builtinPricing!.outputPricePerMillion)
+        : '未设';
+    final cacheHint = builtinPricing?.cachedInputPricePerMillion != null
+        ? _formatEditablePrice(builtinPricing!.cachedInputPricePerMillion)
+        : '同输入';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '计费单价（每百万用量）',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: MoeFontWeights.emphasis,
+                  color: colors.text,
+                ),
+              ),
+            ),
+            MoeChoiceChip(
+              label: '美元 \$',
+              selected: currency == 'USD',
+              onTap: () => onCurrencyChanged('USD'),
+            ),
+            const SizedBox(width: 6),
+            MoeChoiceChip(
+              label: '人民币 ¥',
+              selected: currency == 'CNY',
+              onTap: () => onCurrencyChanged('CNY'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _formatReferenceHint(builtinPricing),
+          style: TextStyle(fontSize: 11, color: colors.textSecondary),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _ParamField(
+                controller: inputController,
+                label: '输入 ($symbol)',
+                hint: inHint,
+                helper: '每百万输入',
+                decimal: true,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ParamField(
+                controller: outputController,
+                label: '输出 ($symbol)',
+                hint: outHint,
+                helper: '每百万输出',
+                decimal: true,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ParamField(
+                controller: cachedController,
+                label: '缓存 ($symbol)',
+                hint: cacheHint,
+                helper: '缓存命中',
+                decimal: true,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

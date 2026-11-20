@@ -271,6 +271,11 @@ class ClaudeAdapter implements ProviderAdapter {
     }
 
     return ApiCallResult(
+      usage: TokenUsage.fromClaudeUsage(
+        response['usage'] is Map
+            ? Map<String, dynamic>.from(response['usage'])
+            : null,
+      ),
       text: text,
       toolResults: const [],
       toolCalls: toolCalls,

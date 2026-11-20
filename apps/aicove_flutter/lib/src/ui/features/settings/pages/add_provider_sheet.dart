@@ -191,6 +191,9 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   ApiFormat _selectedFormat = ApiFormat.openai;
   bool _submitting = false;
   bool get _isComfyUI => _selectedFormat == ApiFormat.comfyui;
+  bool get _isGeneralProtocol =>
+      const ['openai', 'claude', 'gemini'].contains(_selectedFormat.value) &&
+      _selectedFormat.asr == null;
   Map<String, dynamic> _ttsTemplate = Map<String, dynamic>.of(
     TtsRequestFormat.defaultCustomRestTemplate,
   );
@@ -242,6 +245,12 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
   }
 
   List<String> _pickDefaultVisibleModels(List<String> models) {
+    if (_category == ProviderCategory.image && _isGeneralProtocol) {
+      return models
+          .where((model) => ModelType.inferFromModelId(model) == ModelType.image)
+          .take(3)
+          .toList();
+    }
     if (_category != ProviderCategory.chat) {
       return models.take(3).toList();
     }
@@ -259,9 +268,13 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
     return selected;
   }
 
-  /// 绘图／语音只保留对应分类的模型，ComfyUI 的工作流模型不按名字过滤。
+  /// 通用协议与 ComfyUI 原样保留全部拉取到的模型，仅专用语音格式按分类过滤。
   List<String> _filterByCategory(List<String> models) {
-    if (_category == ProviderCategory.chat || _isComfyUI) return models;
+    if (_category == ProviderCategory.chat ||
+        _isComfyUI ||
+        _isGeneralProtocol) {
+      return models;
+    }
     return models
         .where(
           (model) => ModelType.inferFromModelId(model).value == _category.value,
@@ -343,6 +356,11 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         previewFailed = false;
       }
 
+      final visibleModels = _pickDefaultVisibleModels(allModels);
+      final hiddenModels = allModels
+          .where((model) => !visibleModels.contains(model))
+          .toList();
+
       await notifier.importCustomModel(
         name: null,
         apiKey: apiKey,
@@ -350,7 +368,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
         provider: format.providerId,
         displayName: displayName.isNotEmpty ? displayName : null,
         allModels: allModels,
-        visibleModels: _pickDefaultVisibleModels(allModels),
+        visibleModels: visibleModels,
+        hiddenModels: hiddenModels,
         customConfig: customConfig,
         capabilities: <String>[_category.value],
       );
@@ -363,6 +382,8 @@ class _AddProviderSheetState extends ConsumerState<AddProviderSheet> {
           '无法连接到模型服务，已先保存渠道。请检查 API 地址或 Key，可在详情页刷新模型列表。',
           type: ToastType.warning,
         );
+      } else if (visibleModels.isEmpty && allModels.isNotEmpty) {
+        MoeToast.show(context, '已保存渠道，请在详情页选择要启用的模型');
       } else {
         MoeToast.show(context, '添加成功');
       }

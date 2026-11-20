@@ -459,11 +459,11 @@ extension _ComposerViewParts on _ComposerState {
     if (!isGenerating) {
       return _buildPlainSendButton(isGenerating);
     }
-    return ValueListenableBuilder<TextEditingValue>(
-      valueListenable: _ctrl,
-      builder: (context, value, _) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _hasNonEmptyText,
+      builder: (context, hasText, _) {
         // 有字时是插话（长按排到做完后），没字时仍是停止。
-        if (value.text.trim().isEmpty) return _buildPlainSendButton(true);
+        if (!hasText) return _buildPlainSendButton(true);
         final colors = context.moeColors;
         return GestureDetector(
           onLongPress: widget.disabled

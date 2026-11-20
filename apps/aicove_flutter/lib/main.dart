@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'src/app.dart';
 import 'src/core/app_logger.dart';
+import 'src/core/services/display_refresh_rate_controller.dart';
 import 'src/core/storage/app_data_directory.dart';
 import 'src/ui/theme/tokens.dart';
 import 'src/core/frontend_error_capture.dart';
@@ -31,6 +32,7 @@ void main(List<String> args) async {
   FrontendDiagnosticsService.instance
       .setRuntimeIdentity(await readDiagnosticRuntimeIdentity());
   FrameJankRecorder.instance.install();
+  DisplayRefreshRateController.instance.install();
 
   // 安全预热液态玻璃着色器（捕获异常并自动记录，不阻断主启动流程）
   await MoeLiquidGlassService.initialize();

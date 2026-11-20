@@ -16,8 +16,13 @@ class TraceStore {
   TraceStore({
     TraceRootDirResolver? rootDirResolver,
     TraceNowProvider? nowProvider,
-  })  : _rootDirResolver = rootDirResolver ?? _defaultRootDirResolver,
-        _nowProvider = nowProvider ?? DateTime.now;
+  }) : _rootDirResolver = rootDirResolver ?? _defaultRootDirResolver,
+       _nowProvider = nowProvider ?? DateTime.now {
+    // The log viewer clears this notifier directly, retaining history on disk.
+    entries.addListener(() {
+      if (entries.value.isEmpty) unawaited(flush());
+    });
+  }
 
   static final TraceStore instance = TraceStore();
 
@@ -25,6 +30,7 @@ class TraceStore {
   static const String _traceDirName = 'trace';
   static const String _payloadDirName = 'payload';
   static const String _indexPrefix = 'index_';
+  static const _indexBatchDelay = Duration(milliseconds: 400);
 
   final TraceRootDirResolver _rootDirResolver;
   final TraceNowProvider _nowProvider;
@@ -49,7 +55,6 @@ class TraceStore {
 
   final Map<String, _TraceRuntimeState> _runtimeStates =
       <String, _TraceRuntimeState>{};
-  final List<TraceEvent> _preInitBuffer = <TraceEvent>[];
 
   Future<void> _writeChain = Future<void>.value();
   Completer<void>? _initCompleter;
@@ -57,8 +62,9 @@ class TraceStore {
   bool _storageAvailable = true;
   String? _cachedTraceDirPath;
   String? _cachedPayloadRootDirPath;
-  String? _cachedIndexFilePath;
-  int? _cachedDateKey;
+  String? _pendingIndexPath;
+  final _pendingIndexLines = StringBuffer();
+  Timer? _indexTimer;
   int _payloadFileSeq = 0;
 
   static Future<Directory> _defaultRootDirResolver() async {
@@ -74,7 +80,7 @@ class TraceStore {
     _initCompleter = completer;
 
     try {
-      await _resolveTodayIndexPath();
+      await _resolveTraceDirPath();
     } catch (e) {
       _storageAvailable = false;
       if (kDebugMode) {
@@ -84,13 +90,6 @@ class TraceStore {
       _initialized = true;
       if (!completer.isCompleted) {
         completer.complete();
-      }
-      if (_storageAvailable && _preInitBuffer.isNotEmpty) {
-        final buffered = List<TraceEvent>.from(_preInitBuffer);
-        _preInitBuffer.clear();
-        for (final event in buffered) {
-          _enqueueWrite(event);
-        }
       }
     }
   }
@@ -187,6 +186,9 @@ class TraceStore {
       meta: meta == null ? null : Map<String, dynamic>.from(meta),
     );
 
+    final pendingFailureWrite = _storageAvailable
+        ? _enqueueWrite(event, now)
+        : null;
     final list = List<TraceEvent>.from(entries.value)..add(event);
     if (list.length > 400) {
       list.removeRange(0, list.length - 400);
@@ -199,19 +201,14 @@ class TraceStore {
           .toList(growable: false);
     }
 
-    if (_storageAvailable) {
-      if (_initialized) {
-        _enqueueWrite(event);
-      } else {
-        _preInitBuffer.add(event);
-      }
-    }
+    if (pendingFailureWrite != null) await pendingFailureWrite;
 
     return event;
   }
 
   Future<List<TraceEvent>> readEventsByTraceId(String traceId) async {
     await initialize();
+    await flush();
     if (!_storageAvailable) {
       return entries.value.where((e) => e.traceId == traceId).toList()
         ..sort((a, b) => a.eventSeq.compareTo(b.eventSeq));
@@ -256,6 +253,7 @@ class TraceStore {
 
   Future<List<TraceEvent>> readRecentEvents({int maxDays = 7}) async {
     await initialize();
+    await flush();
     if (!_storageAvailable) {
       final inMemory = List<TraceEvent>.from(entries.value)
         ..sort((a, b) {
@@ -416,8 +414,11 @@ class TraceStore {
     return _resolveTraceDirPath();
   }
 
-  Future<void> waitForPendingWrites() async {
-    await _writeChain;
+  Future<void> waitForPendingWrites() => flush();
+
+  Future<void> flush() {
+    _queueIndexBatch();
+    return _writeChain;
   }
 
   @visibleForTesting
@@ -426,8 +427,11 @@ class TraceStore {
 
   @visibleForTesting
   void debugResetForTest() {
+    _indexTimer?.cancel();
+    _indexTimer = null;
+    _pendingIndexLines.clear();
+    _pendingIndexPath = null;
     _runtimeStates.clear();
-    _preInitBuffer.clear();
     entries.value = <TraceEvent>[];
     for (final notifier in _sessionEntries.values) {
       notifier.value = const <TraceEvent>[];
@@ -439,27 +443,45 @@ class TraceStore {
     _storageAvailable = true;
     _cachedTraceDirPath = null;
     _cachedPayloadRootDirPath = null;
-    _cachedIndexFilePath = null;
-    _cachedDateKey = null;
     _payloadFileSeq = 0;
   }
 
-  void _enqueueWrite(TraceEvent event) {
-    final line = '${jsonEncode(event.toJson())}\n';
-    _writeChain = _writeChain.then((_) => _appendLine(line));
+  Future<void>? _enqueueWrite(TraceEvent event, DateTime now) {
+    final day =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}'
+        '-${now.day.toString().padLeft(2, '0')}';
+    final path = '$_cachedTraceDirPath/$_indexPrefix$day.jsonl';
+    if (_pendingIndexPath != path) _queueIndexBatch();
+    _pendingIndexPath = path;
+    _pendingIndexLines.writeln(jsonEncode(event.toJson()));
+
+    // failed is the persisted error status of the trace schema.
+    if (event.status == TraceEventStatus.failed.value) {
+      _queueIndexBatch(flushToDisk: true);
+      return _writeChain;
+    }
+    _indexTimer ??= Timer(_indexBatchDelay, () => _queueIndexBatch());
+    return null;
   }
 
-  Future<void> _appendLine(String line) async {
-    try {
-      final path = await _resolveTodayIndexPath();
-      final file = File(path);
-      await file.writeAsString(line, mode: FileMode.append, flush: true);
-    } catch (e) {
-      _storageAvailable = false;
-      if (kDebugMode) {
-        debugPrint('TraceStore append failed: $e');
+  void _queueIndexBatch({bool flushToDisk = false}) {
+    _indexTimer?.cancel();
+    _indexTimer = null;
+    final path = _pendingIndexPath;
+    if (path == null) return;
+    final lines = _pendingIndexLines.toString();
+    _pendingIndexPath = null;
+    _pendingIndexLines.clear();
+    _writeChain = _writeChain.then((_) async {
+      try {
+        await File(
+          path,
+        ).writeAsString(lines, mode: FileMode.append, flush: flushToDisk);
+      } catch (e) {
+        _storageAvailable = false;
+        if (kDebugMode) debugPrint('TraceStore append failed: $e');
       }
-    }
+    });
   }
 
   Future<String> _resolveTraceDirPath() async {
@@ -513,24 +535,6 @@ class TraceStore {
   String _sanitizeFileSegment(String raw) {
     final safe = raw.trim().replaceAll(RegExp(r'[^A-Za-z0-9_\-]'), '_');
     return safe.isEmpty ? 'unknown' : safe;
-  }
-
-  Future<String> _resolveTodayIndexPath() async {
-    final now = _nowProvider();
-    final dateKey = now.year * 10000 + now.month * 100 + now.day;
-    if (_cachedDateKey != null && _cachedDateKey != dateKey) {
-      _cachedIndexFilePath = null;
-    }
-    if (_cachedIndexFilePath != null) {
-      return _cachedIndexFilePath!;
-    }
-
-    final traceDirPath = await _resolveTraceDirPath();
-    final fileName =
-        '$_indexPrefix${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}.jsonl';
-    _cachedIndexFilePath = '$traceDirPath/$fileName';
-    _cachedDateKey = dateKey;
-    return _cachedIndexFilePath!;
   }
 }
 

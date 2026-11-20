@@ -73,6 +73,7 @@ class UiModelsApi {
     List<String>? allModels,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
+    Map<String, String>? modelTypeOverrides,
   }) async {
     if (providerId != 'openai_full_compat' &&
         !ComfyUIWorkflow.isProvider(providerId, customConfig) &&
@@ -148,6 +149,7 @@ class UiModelsApi {
       hiddenModels: hiddenModels,
       capabilities: capabilities,
       customConfig: customConfig,
+      modelTypeOverrides: modelTypeOverrides,
       models: models,
     );
   }
@@ -160,6 +162,7 @@ class UiModelsApi {
     bool? enabled,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
+    Map<String, String>? modelTypeOverrides,
     List<String>? allModels,
     List<String>? visibleModels,
     List<String>? hiddenModels,
@@ -181,6 +184,7 @@ class UiModelsApi {
       enabled: enabled,
       capabilities: capabilities,
       customConfig: customConfig,
+      modelTypeOverrides: modelTypeOverrides,
       allModels: allModels,
       visibleModels: visibleModels,
       hiddenModels: hiddenModels,

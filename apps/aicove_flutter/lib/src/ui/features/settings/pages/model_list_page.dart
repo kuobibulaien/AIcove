@@ -19,6 +19,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../features/observability/token_usage_ledger.dart';
 import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/effects/smooth_clip.dart';
@@ -27,6 +28,9 @@ import '../../../../ui/shared/animations/parallax_slide_page_route.dart';
 import '../widgets/model_search_sheet.dart';
 import 'add_provider_sheet.dart';
 import 'default_model_settings_page.dart';
+import 'log_viewer/log_viewer_billing_view.dart'
+    show formatTodayUsageQuickSummary;
+import 'log_viewer_page.dart';
 import 'provider_detail_page.dart';
 
 class ModelListPage extends ConsumerStatefulWidget {
@@ -209,19 +213,50 @@ class _ModelListPageState extends ConsumerState<ModelListPage> {
                   const EdgeInsets.only(top: 12),
                 ),
                 children: [
-                  // ============ 默认模型设置 ============
+                  // ============ 默认模型与用量计费 ============
                   MoeSettingsGroup(
                     margin: EdgeInsets.zero,
                     padding: EdgeInsets.zero,
                     children: [
                       MoeSettingsRow(
                         label: '默认模型设置',
+                        showDivider: true,
                         trailingType: MoeSettingsRowTrailing.chevron,
                         onTap: () {
                           Navigator.of(context).push(
                             ParallaxSlidePageRoute(
                               page: const DefaultModelSettingsPage(),
                             ),
+                          );
+                        },
+                      ),
+                      Consumer(
+                        builder: (context, ref, _) {
+                          final todayOverview = ref
+                              .watch(
+                                tokenUsageOverviewProvider((
+                                  range: UsageTimeRange.today,
+                                  groupBy: UsageGroupBy.model,
+                                  deviceId: null,
+                                )),
+                              )
+                              .valueOrNull;
+                          return MoeSettingsRow(
+                            label: '用量与计费',
+                            detailText: formatTodayUsageQuickSummary(
+                              todayOverview,
+                            ),
+                            showDivider: false,
+                            trailingType: MoeSettingsRowTrailing.chevron,
+                            onTap: () {
+                              Navigator.of(context).push(
+                                ParallaxSlidePageRoute(
+                                  page: const LogViewerPage(
+                                    initialSection: LogCenterSection.billing,
+                                  ),
+                                ),
+                              );
+                            },
                           );
                         },
                       ),

@@ -126,12 +126,14 @@ class _TaskRunningBarState extends ConsumerState<TaskRunningBar>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                width: 10,
-                height: 10,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.5,
-                  color: color.withValues(alpha: 0.6),
+              RepaintBoundary(
+                child: SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: color.withValues(alpha: 0.6),
+                  ),
                 ),
               ),
               const SizedBox(width: 6),

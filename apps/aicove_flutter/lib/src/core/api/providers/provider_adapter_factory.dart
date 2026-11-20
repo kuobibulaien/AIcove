@@ -24,6 +24,7 @@ class ProviderAdapterFactory {
   };
 
   static const Set<String> _requestLocalOnlyKeys = <String>{
+    'priceMultiplier',
     'requestFormat',
     'apiPath',
     'extraBody',

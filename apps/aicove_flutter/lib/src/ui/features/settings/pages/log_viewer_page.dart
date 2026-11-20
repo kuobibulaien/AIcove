@@ -14,18 +14,23 @@ import '../../../../core/api_logger.dart' show ApiLogEntry, ApiLogger;
 import '../../../../core/app_logger.dart';
 import '../../../../core/media/media_store.dart';
 import '../../../../features/observability/model_request_ledger.dart';
+import '../../../../features/observability/token_usage_ledger.dart';
 import '../../../../features/observability/trace_models.dart';
 import '../../../../features/observability/frontend_diagnostics_provider.dart';
 import '../../../../features/observability/trace_query_service.dart';
 import '../../../../features/observability/trace_store.dart';
+import '../../../../features/settings/app_settings.dart';
 import '../../../../ui/theme/tokens.dart';
 import '../../../../ui/shared/widgets/index.dart';
+import 'log_viewer/log_viewer_billing_view.dart';
 import 'log_viewer/log_viewer_trace_conversation_view.dart';
 import 'log_viewer/log_viewer_unified_list.dart';
 import 'log_formatters.dart';
 import 'log_history_list_page.dart';
 import 'log_models.dart';
 import 'trace_payload_panel.dart';
+
+export 'log_models.dart' show LogCenterSection;
 
 typedef SaveLogFileCallback = Future<String?> Function({
   String? dialogTitle,
@@ -148,7 +153,12 @@ class LogViewerExportService {
 }
 
 class LogViewerPage extends ConsumerStatefulWidget {
-  const LogViewerPage({super.key});
+  const LogViewerPage({
+    super.key,
+    this.initialSection = LogCenterSection.logs,
+  });
+
+  final LogCenterSection initialSection;
 
   @override
   ConsumerState<LogViewerPage> createState() => _LogViewerPageState();
@@ -156,8 +166,7 @@ class LogViewerPage extends ConsumerStatefulWidget {
 
 class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   static const String _hideBeforeTimeKey = 'log_viewer_hide_before_time';
-  static const String _logLevelFilterKey = 'log_viewer_level_filter';
-  static const String _logTypeFilterKey = 'log_viewer_type_filter';
+  static const String _logQuickFilterKey = 'log_viewer_quick_filter';
   final ScrollController _scrollController = ScrollController();
   final Set<int> _expandedIndices = {};
   final Set<int> _selectedIndices = {};
@@ -165,8 +174,11 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   bool _isSelectionMode = false;
   DateTime? _hideBeforeTime;
   int _lastVisibleLogCount = 0;
-  LogLevelFilter _levelFilter = LogLevelFilter.all;
-  LogTypeFilter _typeFilter = LogTypeFilter.all;
+  late LogCenterSection _section;
+  LogQuickFilter _quickFilter = LogQuickFilter.all;
+  UsageTimeRange _usageRange = UsageTimeRange.days30;
+  UsageGroupBy _usageGroupBy = UsageGroupBy.model;
+  String? _usageDeviceId;
   bool _traceLoading = false;
   List<TraceEvent> _traceEvents = <TraceEvent>[];
   TraceTurnSummary? _selectedTraceTurn;
@@ -175,17 +187,30 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   bool _tracePayloadLoading = false;
   int _tracePayloadToken = 0;
   String? _localDeviceId;
+  bool _syncingOfficialPrices = false;
+
+  LogTypeFilter get _typeFilter => switch (_quickFilter) {
+    LogQuickFilter.all || LogQuickFilter.attention => LogTypeFilter.all,
+    LogQuickFilter.conversation => LogTypeFilter.conversation,
+    LogQuickFilter.api => LogTypeFilter.api,
+  };
+
+  LogLevelFilter get _levelFilter => _quickFilter == LogQuickFilter.attention
+      ? LogLevelFilter.warning
+      : LogLevelFilter.all;
 
   @override
   void initState() {
     super.initState();
+    _section = widget.initialSection;
     _loadLocalDeviceId();
     _loadHideBeforeTime();
-    _loadLevelFilter();
-    _loadTypeFilter();
+    _loadQuickFilter();
     _loadTraceEvents();
     TraceStore.instance.entries.addListener(_onTraceEntriesChanged);
-    _scheduleScrollToBottom();
+    if (_section == LogCenterSection.logs) {
+      _scheduleScrollToBottom();
+    }
   }
 
   Future<void> _loadLocalDeviceId() async {
@@ -225,39 +250,23 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
     }
   }
 
-  Future<void> _loadLevelFilter() async {
+  Future<void> _loadQuickFilter() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getInt(_logLevelFilterKey) ?? 0;
-    if (index >= 0 && index < LogLevelFilter.values.length) {
-      setState(() => _levelFilter = LogLevelFilter.values[index]);
-      if (_typeFilter != LogTypeFilter.conversation) {
-        _scheduleScrollToBottom();
-      }
-    }
-  }
-
-  Future<void> _saveLevelFilter(LogLevelFilter filter) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_logLevelFilterKey, filter.index);
-  }
-
-  Future<void> _loadTypeFilter() async {
-    final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getInt(_logTypeFilterKey) ?? 0;
-    if (index >= 0 && index < LogTypeFilter.values.length) {
-      final filter = LogTypeFilter.values[index];
-      setState(() => _typeFilter = filter);
-      if (filter == LogTypeFilter.conversation) {
+    final index = prefs.getInt(_logQuickFilterKey) ?? 0;
+    if (index >= 0 && index < LogQuickFilter.values.length) {
+      final filter = LogQuickFilter.values[index];
+      setState(() => _quickFilter = filter);
+      if (filter == LogQuickFilter.conversation) {
         _loadTraceEvents();
-      } else {
+      } else if (_section == LogCenterSection.logs) {
         _scheduleScrollToBottom();
       }
     }
   }
 
-  Future<void> _saveTypeFilter(LogTypeFilter filter) async {
+  Future<void> _saveQuickFilter(LogQuickFilter filter) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_logTypeFilterKey, filter.index);
+    await prefs.setInt(_logQuickFilterKey, filter.index);
   }
 
   void _onTraceEntriesChanged() {
@@ -513,7 +522,7 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
                 onPressed: () => Navigator.of(context).pop(),
               ),
         title: Text(
-          _isSelectionMode ? '已选择 ${_selectedIndices.length} 条' : '日志中心',
+          _isSelectionMode ? '已选择 ${_selectedIndices.length} 条' : '用量与日志',
           style: TextStyle(
             color: colors.text,
             fontSize: 18,
@@ -531,6 +540,49 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
                   tooltip: '复制选中',
                   icon: Icon(Icons.copy, color: colors.primary),
                   onPressed: _copySelected,
+                ),
+              ]
+            : _section == LogCenterSection.billing
+            ? [
+                IconButton(
+                  tooltip: '更新官方参考价',
+                  onPressed: _syncingOfficialPrices ? null : _syncOfficialPricing,
+                  icon: _syncingOfficialPrices
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: colors.muted,
+                          ),
+                        )
+                      : Icon(Icons.sync_rounded, color: colors.text),
+                ),
+                IconButton(
+                  tooltip: '导出账单明细',
+                  icon: Icon(Icons.file_download_outlined, color: colors.text),
+                  onPressed: _exportUsageCsv,
+                ),
+                Builder(
+                  builder: (menuContext) => IconButton(
+                    tooltip: '更多操作',
+                    icon: Icon(Icons.more_horiz, color: colors.text),
+                    onPressed: () => MoePopupMenu.show(
+                      menuContext,
+                      targetBox: menuContext.findRenderObject()! as RenderBox,
+                      alignToEnd: true,
+                      items: [
+                        MoePopupMenuItem(
+                          label: '更新官方参考价',
+                          onTap: _syncOfficialPricing,
+                        ),
+                        MoePopupMenuItem(
+                          label: '清空本机用量记录',
+                          onTap: _confirmClearUsage,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ]
             : [
@@ -576,6 +628,50 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   }
 
   Widget _buildBody() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+          child: MoeSegmentedControl<LogCenterSection>(
+            value: _section,
+            segments: [
+              for (final sec in LogCenterSection.values)
+                MoeSegment(value: sec, label: sec.label),
+            ],
+            onChanged: (next) {
+              setState(() {
+                _section = next;
+                if (next == LogCenterSection.billing) {
+                  _isSelectionMode = false;
+                  _selectedIndices.clear();
+                }
+              });
+              if (next == LogCenterSection.logs &&
+                  _typeFilter != LogTypeFilter.conversation) {
+                _scheduleScrollToBottom();
+              }
+            },
+          ),
+        ),
+        Expanded(
+          child: _section == LogCenterSection.billing
+              ? LogViewerBillingView(
+                  range: _usageRange,
+                  groupBy: _usageGroupBy,
+                  deviceId: _usageDeviceId,
+                  onRangeChanged: (next) => setState(() => _usageRange = next),
+                  onGroupByChanged: (next) =>
+                      setState(() => _usageGroupBy = next),
+                  onDeviceChanged: (next) =>
+                      setState(() => _usageDeviceId = next),
+                )
+              : _buildLogsSectionBody(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLogsSectionBody() {
     final remoteRuns = _filterRemoteRuns(
       ref.watch(modelRunsProvider).valueOrNull ?? const <ModelRunRecord>[],
     );
@@ -632,6 +728,7 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
       hideBeforeTime: _hideBeforeTime,
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,
+      includeModelApiInNetwork: _quickFilter == LogQuickFilter.api,
     );
     _syncVisibleLogCount(entries.length);
 
@@ -674,61 +771,27 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
   // ─────────────────────────────────────────
 
   Widget _buildFilterBar() {
-    return Column(
-      children: [
-        MoeFilterChipBar<LogTypeFilter>(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          items: [
-            for (final filter in const [
-              LogTypeFilter.all,
-              LogTypeFilter.frontend,
-              LogTypeFilter.conversation,
-              LogTypeFilter.api,
-              LogTypeFilter.system
-            ])
-              MoeFilterItem(value: filter, label: filter.label),
-          ],
-          selectedValue: _typeFilter,
-          onSelected: (filter) {
-            setState(() {
-              _typeFilter = filter;
-              _expandedIndices.clear();
-              _selectedIndices.clear();
-              _isSelectionMode = false;
-            });
-            if (filter == LogTypeFilter.conversation) {
-              _loadTraceEvents();
-            } else {
-              _scheduleScrollToBottom();
-            }
-            _saveTypeFilter(filter);
-          },
-        ),
-        if (_typeFilter != LogTypeFilter.conversation)
-          MoeFilterChipBar<LogLevelFilter>(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            items: [
-              for (final filter in const [
-                LogLevelFilter.all,
-                LogLevelFilter.error,
-                LogLevelFilter.warning,
-                LogLevelFilter.info
-              ])
-                MoeFilterItem(value: filter, label: filter.label)
-            ],
-            selectedValue: _levelFilter,
-            onSelected: (filter) {
-              setState(() {
-                _levelFilter = filter;
-                _expandedIndices.clear();
-                _selectedIndices.clear();
-                _isSelectionMode = false;
-              });
-              _scheduleScrollToBottom();
-              _saveLevelFilter(filter);
-            },
-          ),
+    return MoeFilterChipBar<LogQuickFilter>(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      items: [
+        for (final filter in LogQuickFilter.values)
+          MoeFilterItem(value: filter, label: filter.label),
       ],
+      selectedValue: _quickFilter,
+      onSelected: (filter) {
+        setState(() {
+          _quickFilter = filter;
+          _expandedIndices.clear();
+          _selectedIndices.clear();
+          _isSelectionMode = false;
+        });
+        if (filter == LogQuickFilter.conversation) {
+          _loadTraceEvents();
+        } else {
+          _scheduleScrollToBottom();
+        }
+        _saveQuickFilter(filter);
+      },
     );
   }
   // ─────────────────────────────────────────
@@ -750,15 +813,20 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
         ref.read(modelRunsProvider).valueOrNull ?? const <ModelRunRecord>[],
       );
 
-  void _selectAll() {
-    final entries = buildUnifiedEntries(
+  List<UnifiedLogEntry> _currentFilteredEntries() {
+    return buildUnifiedEntries(
       ApiLogger.entries.value,
       AppLogger.entries.value,
       remoteModelRuns: _currentRemoteRuns(),
       hideBeforeTime: _hideBeforeTime,
       levelFilter: _levelFilter,
       typeFilter: _typeFilter,
+      includeModelApiInNetwork: _quickFilter == LogQuickFilter.api,
     );
+  }
+
+  void _selectAll() {
+    final entries = _currentFilteredEntries();
     setState(() {
       if (_selectedIndices.length == entries.length) {
         _selectedIndices.clear();
@@ -777,14 +845,7 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
       return;
     }
 
-    final entries = buildUnifiedEntries(
-      ApiLogger.entries.value,
-      AppLogger.entries.value,
-      remoteModelRuns: _currentRemoteRuns(),
-      hideBeforeTime: _hideBeforeTime,
-      levelFilter: _levelFilter,
-      typeFilter: _typeFilter,
-    );
+    final entries = _currentFilteredEntries();
 
     final sortedIndices = _selectedIndices.toList()..sort();
     final buffer = StringBuffer();
@@ -809,15 +870,97 @@ class _LogViewerPageState extends ConsumerState<LogViewerPage> {
     });
   }
 
-  Future<void> _exportLogs() async {
-    var entries = buildUnifiedEntries(
-      ApiLogger.entries.value,
-      AppLogger.entries.value,
-      remoteModelRuns: _currentRemoteRuns(),
-      hideBeforeTime: _hideBeforeTime,
-      levelFilter: _levelFilter,
-      typeFilter: _typeFilter,
+  Future<void> _exportUsageCsv() async {
+    final entries = await ref
+        .read(tokenUsageLedgerProvider)
+        .entries(
+          range: _usageRange,
+          deviceId: _usageDeviceId,
+          limit: 5000,
+          settings: ref.read(appSettingsProvider).valueOrNull,
+        );
+    if (!mounted) return;
+    if (entries.isEmpty) {
+      MoeToast.info(context, '当前筛选下没有可导出的账单明细');
+      return;
+    }
+    try {
+      final csv = buildUsageCsvExport(
+        entries,
+        settings: ref.read(appSettingsProvider).valueOrNull,
+      );
+      final bytes = Uint8List.fromList(utf8.encode(csv));
+      final now = DateTime.now();
+      final yyyy = now.year.toString().padLeft(4, '0');
+      final mm = now.month.toString().padLeft(2, '0');
+      final dd = now.day.toString().padLeft(2, '0');
+      final hh = now.hour.toString().padLeft(2, '0');
+      final min = now.minute.toString().padLeft(2, '0');
+      final ss = now.second.toString().padLeft(2, '0');
+      final fileName = 'aicove_usage_$yyyy$mm${dd}_$hh$min$ss.csv';
+      final initialDirectory =
+          await LogViewerExportService.resolveInitialDirectory();
+      final pickerHandlesWrite = Platform.isAndroid || Platform.isIOS;
+      final savedPath = await FilePicker.platform.saveFile(
+        dialogTitle: '导出账单明细',
+        fileName: fileName,
+        initialDirectory: initialDirectory,
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        bytes: pickerHandlesWrite ? bytes : null,
+        lockParentWindow: true,
+      );
+      if (savedPath == null || savedPath.trim().isEmpty) return;
+      if (!pickerHandlesWrite) {
+        await File(savedPath.trim()).writeAsBytes(bytes, flush: true);
+      }
+      if (!mounted) return;
+      MoeToast.success(context, '已导出 ${entries.length} 笔账单明细\n${savedPath.trim()}');
+    } catch (e) {
+      if (!mounted) return;
+      MoeToast.error(context, '导出失败: $e');
+    }
+  }
+
+  Future<void> _syncOfficialPricing() async {
+    if (_syncingOfficialPrices) return;
+    setState(() => _syncingOfficialPrices = true);
+    try {
+      final result = await ref
+          .read(tokenUsageLedgerProvider)
+          .syncOfficialPricingCatalog();
+      if (!mounted) return;
+      MoeToast.success(
+        context,
+        '已更新 ${result.modelCount} 个模型的参考单价',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      MoeToast.error(context, '更新参考单价失败，请稍后再试');
+    } finally {
+      if (mounted) {
+        setState(() => _syncingOfficialPrices = false);
+      }
+    }
+  }
+
+  Future<void> _confirmClearUsage() async {
+    final confirmed = await showMeoTalkConfirm(
+      context: context,
+      title: '清空本机用量记录',
+      message: '清空后本机保存的历史用量和花费统计将被移除，无法恢复。确定要清空吗？',
+      cancelText: '取消',
+      confirmText: '清空',
+      isDanger: true,
     );
+    if (confirmed != true) return;
+    await ref.read(tokenUsageLedgerProvider).clearLocalUsage();
+    if (!mounted) return;
+    MoeToast.success(context, '已清空本机用量记录');
+  }
+
+  Future<void> _exportLogs() async {
+    var entries = _currentFilteredEntries();
 
     if (_typeFilter == LogTypeFilter.conversation) {
       final selected = _selectedTraceTurn;

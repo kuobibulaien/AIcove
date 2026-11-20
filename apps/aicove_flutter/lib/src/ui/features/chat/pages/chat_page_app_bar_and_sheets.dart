@@ -212,6 +212,12 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
     if (box is! RenderBox) return;
     final position = _chatMenuPosition;
     _chatMenuPosition = null;
+    final compactionState = ref.read(manualCompactionStateProvider(conv.id));
+    final compactionLabel = compactionState.preparing
+        ? '压缩上下文（整理中）'
+        : compactionState.draft != null
+        ? '压缩上下文（待确认）'
+        : '压缩上下文';
     MoePopupMenu.show(
       context,
       targetBox: box,
@@ -265,7 +271,7 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
             },
           ),
         MoePopupMenuItem(
-          label: '压缩上下文',
+          label: compactionLabel,
           onTap: () => showTopicCompactionDialog(
             context,
             ref,
@@ -531,7 +537,6 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
     required String? currentConversationId,
     required bool deferEntryShell,
     required bool isGenerating,
-    required ChatStatus chatStatus,
     required double toolbarHeight,
     required double nativeInset,
   }) {
@@ -580,27 +585,30 @@ extension _ChatPageAppBarAndSheets on _ChatPageState {
                       valueListenable: TraceStore.instance.entriesForSession(
                         currentConversationId,
                       ),
-                      builder: (context, traceEvents, _) {
-                        final name = conv?.displayName ?? '聊天';
-                        final title = resolveChatPageAppBarTitle(
-                          displayName: name,
-                          conversationId: currentConversationId,
-                          chatStatus: chatStatus,
-                          traceEvents: traceEvents,
-                        );
-                        return Text(
-                          title == name ? '' : title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: telegramChatHeaderStatusSize,
-                            height: 1.2,
-                            color: title == name
-                                ? colors.muted
-                                : colors.primary,
-                          ),
-                        );
-                      },
+                      builder: (context, traceEvents, _) => Consumer(
+                        builder: (context, ref, _) {
+                          final chatStatus = ref.watch(chatStatusProvider);
+                          final name = conv?.displayName ?? '聊天';
+                          final title = resolveChatPageAppBarTitle(
+                            displayName: name,
+                            conversationId: currentConversationId,
+                            chatStatus: chatStatus,
+                            traceEvents: traceEvents,
+                          );
+                          return Text(
+                            title == name ? '' : title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: telegramChatHeaderStatusSize,
+                              height: 1.2,
+                              color: title == name
+                                  ? colors.muted
+                                  : colors.primary,
+                            ),
+                          );
+                        },
+                      ),
                     ),
                 ],
               ),

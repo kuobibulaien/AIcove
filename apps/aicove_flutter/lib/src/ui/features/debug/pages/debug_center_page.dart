@@ -41,12 +41,16 @@ class DebugCenterPage extends StatelessWidget {
                 children: [
                   MoeSettingsRow(
                     icon: Icons.article_outlined,
-                    label: '日志中心',
-                    subtitle: '前端响应、模型对话、应用异常',
+                    label: '用量与日志',
+                    subtitle: '模型用量账单、对话过程、运行异常',
                     trailingType: MoeSettingsRowTrailing.chevron,
-                    onTap: () => Navigator.of(
-                      context,
-                    ).push(ParallaxSlidePageRoute(page: const LogViewerPage())),
+                    onTap: () => Navigator.of(context).push(
+                      ParallaxSlidePageRoute(
+                        page: const LogViewerPage(
+                          initialSection: LogCenterSection.billing,
+                        ),
+                      ),
+                    ),
                   ),
                   MoeSettingsRow(
                     icon: Icons.account_tree_outlined,

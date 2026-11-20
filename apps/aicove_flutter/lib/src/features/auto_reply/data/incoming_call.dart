@@ -10,6 +10,7 @@ import '../../chat/domain/conversation.dart';
 import '../../voice_call/application/active_voice_call.dart';
 import '../../voice_call/providers/voice_call_providers.dart';
 import 'incoming_call_notification.dart';
+import 'background_message_reprocessor.dart';
 import 'proactive_call_ledger.dart';
 import 'proactive_reply_generator.dart';
 
@@ -245,9 +246,13 @@ class IncomingCallNotificationBridge {
 
   final Ref _ref;
   bool _started = false;
+  FutureOr<void> Function(String conversationId)? _onOpenConversation;
 
   /// Listens for taps and settles what happened while the app was away.
-  Future<void> start() async {
+  Future<void> start({
+    FutureOr<void> Function(String conversationId)? onOpenConversation,
+  }) async {
+    if (onOpenConversation != null) _onOpenConversation = onOpenConversation;
     if (_started) return;
     _started = true;
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -269,6 +274,13 @@ class IncomingCallNotificationBridge {
   }
 
   Future<void> handleResponse(String? payload, String? actionId) async {
+    final conversationId = activeReplyConversationIdOf(payload);
+    if (conversationId != null) {
+      await _ref.read(backgroundMessageReprocessorProvider)
+          .reprocessRecentBackgroundMessages();
+      await _onOpenConversation?.call(conversationId);
+      return;
+    }
     final triggerId = incomingCallTriggerIdOf(payload);
     if (triggerId == null) return;
     final ledger = _ref.read(proactiveCallLedgerProvider);

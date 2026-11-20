@@ -41,6 +41,9 @@ class SmoothClipRRect extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (radius <= 0) {
+      return ClipRect(child: child);
+    }
     return ClipPath(
       clipper: SmoothRectClipper(radius: radius),
       child: child,
@@ -230,6 +233,12 @@ class MoeG2ClipRRect extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (borderRadius.topLeft.cornerRadius <= 0 &&
+        borderRadius.topRight.cornerRadius <= 0 &&
+        borderRadius.bottomLeft.cornerRadius <= 0 &&
+        borderRadius.bottomRight.cornerRadius <= 0) {
+      return ClipRect(child: child);
+    }
     return ClipPath(
       clipper: _G2RectClipper(
         borderRadius: borderRadius,

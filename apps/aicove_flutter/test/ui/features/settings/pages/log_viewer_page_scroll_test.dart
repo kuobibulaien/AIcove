@@ -178,12 +178,12 @@ void main() {
       oldestText: '/logs/0',
     );
 
-    await tester.tap(find.text('应用').first);
+    await tester.tap(find.text('全部').first);
     await _pumpFrames(tester);
     _expectShowingLatestAtBottom(
       tester,
       latestText: '系统日志 39',
-      oldestText: '系统日志 0',
+      oldestText: 'https://example.com/logs/0',
     );
   });
 
@@ -234,8 +234,6 @@ void main() {
       await tester.pumpWidget(_wrap(const LogViewerPage()));
       await _pumpFrames(tester);
       expect(tester.getRect(find.text('只看异常')).right, lessThanOrEqualTo(width));
-      await tester.tap(find.text('前端').first);
-      await _pumpFrames(tester);
       expect(find.text('聊天列表完成布局 · 累计 120ms'), findsOneWidget);
       expect(find.textContaining('test_operation_123'), findsNothing);
       await tester.tap(find.text('聊天列表完成布局 · 累计 120ms'));

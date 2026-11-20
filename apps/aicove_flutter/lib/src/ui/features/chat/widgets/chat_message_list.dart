@@ -724,47 +724,45 @@ class _ChatMessageListState extends ConsumerState<ChatMessageList> {
               ),
             ),
           ),
-        ValueListenableBuilder<bool>(
-          valueListenable: _showJumpToBottom,
-          builder: (context, show, _) {
-            if (widget.selection?.active == true) {
-              return const SizedBox.shrink();
-            }
-            return Positioned(
-              right: 14,
-              bottom: jumpToBottomBottomOffset,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DialogueOptionsBadge(
-                    key: ValueKey('dialogue_options_${widget.conversationId}'),
-                    conversationId: widget.conversationId,
-                    options: latestDialogueOptions(
-                      _stableMessages,
-                      tags: {
-                        ...defaultDialogueOptionTags,
-                        for (final entry in _tagPresentation.entries)
-                          if (entry.value.presentation ==
-                              TagPresentation.options)
-                            entry.key,
-                      },
-                      foldTags: {
-                        for (final entry in _tagPresentation.entries)
-                          if (entry.value.presentation == TagPresentation.fold)
-                            entry.key,
-                      },
-                    ),
-                    size: _kJumpToBottomButtonSize,
-                  ),
-                  if (show) ...[
-                    const SizedBox(width: 10),
-                    _buildJumpToBottomButton(context),
-                  ],
-                ],
+        if (widget.selection?.active != true)
+          ValueListenableBuilder<bool>(
+            valueListenable: _showJumpToBottom,
+            child: DialogueOptionsBadge(
+              key: ValueKey('dialogue_options_${widget.conversationId}'),
+              conversationId: widget.conversationId,
+              options: latestDialogueOptions(
+                _stableMessages,
+                tags: {
+                  ...defaultDialogueOptionTags,
+                  for (final entry in _tagPresentation.entries)
+                    if (entry.value.presentation == TagPresentation.options)
+                      entry.key,
+                },
+                foldTags: {
+                  for (final entry in _tagPresentation.entries)
+                    if (entry.value.presentation == TagPresentation.fold)
+                      entry.key,
+                },
               ),
-            );
-          },
-        ),
+              size: _kJumpToBottomButtonSize,
+            ),
+            builder: (context, show, badge) {
+              return Positioned(
+                right: 14,
+                bottom: jumpToBottomBottomOffset,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    badge!,
+                    if (show) ...[
+                      const SizedBox(width: 10),
+                      _buildJumpToBottomButton(context),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
       ],
     );
     return ChatSelectionRegion(

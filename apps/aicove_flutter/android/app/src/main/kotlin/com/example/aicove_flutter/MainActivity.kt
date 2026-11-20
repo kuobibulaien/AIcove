@@ -20,39 +20,54 @@ class MainActivity : FlutterActivity() {
     }
 
     private var keepAliveChannel: MethodChannel? = null
+    private var displayRateChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.attributes.layoutInDisplayCutoutMode =
+            val params = window.attributes
+            params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            window.attributes = params
+        }
+    }
 
-            val display = display
-            if (display != null) {
-                val modes = display.supportedModes
-                val highestMode = modes.maxByOrNull { it.refreshRate }
-                if (highestMode != null) {
-                    val params = window.attributes
-                    params.preferredDisplayModeId = highestMode.modeId
-                    window.attributes = params
-                }
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            @Suppress("DEPRECATION")
-            val display = windowManager.defaultDisplay
-            val modes = display.supportedModes
-            val highestMode = modes.maxByOrNull { it.refreshRate }
-            if (highestMode != null) {
-                val params = window.attributes
-                params.preferredDisplayModeId = highestMode.modeId
-                window.attributes = params
-            }
+    private fun applyHighRefreshRate(enabled: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        @Suppress("DEPRECATION")
+        val currentDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display
+        } else {
+            windowManager.defaultDisplay
+        }
+        val highestMode = currentDisplay?.supportedModes?.maxByOrNull { it.refreshRate }
+            ?: return
+        if (highestMode.refreshRate <= 65f) return
+
+        val targetModeId = if (enabled) highestMode.modeId else 0
+        val params = window.attributes
+        if (params.preferredDisplayModeId != targetModeId) {
+            params.preferredDisplayModeId = targetModeId
+            window.attributes = params
         }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        displayRateChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "aicove/display_rate")
+            .apply {
+                setMethodCallHandler { call, result ->
+                    if (call.method != "setHighRefreshRate") {
+                        return@setMethodCallHandler result.notImplemented()
+                    }
+                    val enabled = call.argument<Boolean>("enabled")
+                        ?: return@setMethodCallHandler result.error("bad_args", "enabled", null)
+                    applyHighRefreshRate(enabled)
+                    result.success(null)
+                }
+            }
 
         // 只读自身构建/运行身份，无导出组件、无新系统权限。
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.example.aicove_flutter/diagnostic_identity")
@@ -121,6 +136,9 @@ class MainActivity : FlutterActivity() {
             channel.setMethodCallHandler(null)
         }
         keepAliveChannel = null
+        displayRateChannel?.setMethodCallHandler(null)
+        displayRateChannel = null
+        applyHighRefreshRate(false)
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

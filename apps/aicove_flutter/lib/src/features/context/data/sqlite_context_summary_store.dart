@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 
 import '../../../core/app_logger.dart';
 import '../../../core/database/database.dart' as db;
+import '../../../core/database/repositories/message_repository.dart';
 import '../../../core/sync/cloud_local_write.dart';
 import '../../chat/domain/message.dart';
 import '../domain/context_summary.dart';
@@ -15,7 +16,12 @@ class SqliteContextSummaryStore
         ContextSummaryStorePort,
         ContextSummaryManagementStorePort,
         VoiceBriefStorePort {
-  SqliteContextSummaryStore(this.database, this.loadMessages);
+  SqliteContextSummaryStore(
+    this.database,
+    this.loadMessages, {
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+  final DateTime Function() _now;
   final db.AppDatabase database;
   final Future<List<Message>> Function(String ownerId) loadMessages;
 
@@ -58,10 +64,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   );
 
   bool _valid(ContextSummary record, List<Message> all) {
+    if (!all.any((m) => m.id == record.boundaryId)) return false;
+    if (record.kind == ContextSummaryKind.manual) return true;
     final ids = record.sourceIds.toSet();
     final sources = all.where((m) => ids.contains(m.id)).toList();
-    return all.any((m) => m.id == record.boundaryId) &&
-        sources.length == ids.length &&
+    return sources.length == ids.length &&
         contextSourceDigest(sources) == record.sourceDigest;
   }
 
@@ -220,9 +227,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     if (all.isEmpty) {
       throw const ContextCompactionException('当前没有可整理的聊天记录。');
     }
-    if (all.any((m) => m.status == 'sending')) {
-      throw const ContextCompactionException('请等本轮回复结束后再压缩。');
-    }
     final previous = await _manualRecord(ownerId, owner.contextStartMessageId);
     if (previous != null && !_valid(previous, all)) {
       throw const ContextCompactionException('旧摘要的来源已被编辑，请先撤销上次压缩，再重新整理。');
@@ -235,12 +239,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       }
       start = index + 1;
     }
-    final messages = all
-        .skip(start)
+    final currentTopic = all.skip(start).toList(growable: false);
+    final activeSendingCutoff = _now().subtract(
+      kInterruptedSendRecoveryThreshold,
+    );
+    if (currentTopic.any(
+      (m) =>
+          m.status == 'sending' && !m.createdAt.isBefore(activeSendingCutoff),
+    )) {
+      throw const ContextCompactionException('请等本轮回复结束后再压缩。');
+    }
+    final messages = currentTopic
         .where(
           (m) =>
               (m.role == 'user' || m.role == 'assistant') &&
-              m.status != 'failed',
+              m.status != 'failed' &&
+              m.status != 'sending',
         )
         .toList();
     if (messages.isEmpty) {

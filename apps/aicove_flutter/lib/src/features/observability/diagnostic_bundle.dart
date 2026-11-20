@@ -32,6 +32,16 @@ Map<String, Object?>? sanitizeDiagnosticEntry(Object? entry, String name) {
     }
   }
 
+  void usageFields(Map source, Map<String, Object?> target) {
+    for (final key in const ['inputTokens', 'outputTokens', 'cachedInputTokens',
+      'cacheWriteTokens', 'reasoningTokens']) {
+      if (_isNumber(source[key])) target[key] = source[key];
+    }
+    if (source['usageEstimated'] is bool) {
+      target['usageEstimated'] = source['usageEstimated'];
+    }
+  }
+
   atoms(entry, result, ['level']);
   final meta = entry['metadata'];
   if (meta is Map && meta['category'] == 'frontend') {
@@ -142,12 +152,19 @@ Map<String, Object?>? sanitizeDiagnosticEntry(Object? entry, String name) {
     result['metadata'] = safe;
     atoms(entry, result, ['source']);
   } else if (name.startsWith('trace')) {
+    usageFields(entry, result);
+    if (entry['meta'] is Map) {
+      final safeMeta = <String, Object?>{};
+      usageFields(entry['meta'] as Map, safeMeta);
+      if (safeMeta.isNotEmpty) result['meta'] = safeMeta;
+    }
     atoms(entry, result,
         ['traceId', 'sessionId', 'turnId', 'stage', 'status', 'source']);
     for (final key in ['roundIndex', 'eventSeq', 'durationMs']) {
       if (entry[key] is int) result[key] = entry[key];
     }
   } else if (name.startsWith('api_')) {
+    usageFields(entry, result);
     atoms(entry, result, ['sessionId', 'turnId']);
     for (final key in [
       'ok',

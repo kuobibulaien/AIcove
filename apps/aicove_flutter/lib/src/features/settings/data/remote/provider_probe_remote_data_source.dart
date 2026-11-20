@@ -13,9 +13,12 @@ import '../../../../core/network/json_http_client.dart';
 import '../../../../core/api/image_providers/comfyui_workflow.dart';
 import '../../../../core/api/image_providers/comfyui_image_adapter.dart';
 import '../../../../core/api/agent_api.dart';
+import '../../../../core/app_logger.dart';
 import '../../../plugins/tts/tts_request_format.dart';
 import '../../../voice_call/domain/asr_request_format.dart';
 import '../../settings_models.dart';
+import '../../../observability/token_usage_ledger.dart';
+import '../../../observability/usage/model_pricing_catalog.dart';
 import '../support/ui_models_store_support.dart';
 
 /// 渠道没有列模型的接口，只能手动添加模型。
@@ -30,6 +33,7 @@ class ProviderModelListUnsupported implements Exception {
 /// 只负责模型列表预览和单模型连通性测试。
 class ProviderProbeRemoteDataSource {
   const ProviderProbeRemoteDataSource({http.Client? httpClient})
+    // ignore: prefer_initializing_formals
     : _httpClient = httpClient;
 
   final http.Client? _httpClient;
@@ -189,6 +193,7 @@ class ProviderProbeRemoteDataSource {
             )
           : adapter.buildHeaders(apiKey);
 
+      final requestStartedAt = DateTime.now();
       final response = await _post(
         uri,
         headers: headers,
@@ -204,6 +209,19 @@ class ProviderProbeRemoteDataSource {
 
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final result = adapter.parseResponse(data);
+      await TokenUsageLedger.instance.recordHttpRound(
+        requestId: 'probe:$providerId:$modelId:${requestStartedAt.microsecondsSinceEpoch}',
+        providerId: providerId,
+        model: modelId,
+        usage: result.usage ?? TokenUsage.estimate(
+          messages: [{'role': 'user', 'content': 'hi'}],
+          outputText: result.text,
+          reasoningText: result.reasoning,
+          toolCalls: result.toolCalls,
+        ),
+        durationMs: DateTime.now().difference(requestStartedAt).inMilliseconds,
+        purpose: 'probe',
+      );
       return result.text.isNotEmpty ? result.text : '(模型响应成功，无文本内容)';
     } catch (e) {
       throw Exception('模型测试失败: $e');
@@ -455,12 +473,29 @@ class ProviderProbeRemoteDataSource {
       models.add(normalized);
     }
 
+    final prices = <String, Map>{};
     final dataList = data['data'];
     if (dataList is List) {
       for (final item in dataList) {
         if (item is! Map) continue;
-        addModel(item['id']?.toString() ?? '');
+        final modelId = item['id']?.toString() ?? '';
+        addModel(modelId);
+        final pricing = item['pricing'];
+        if (modelId.trim().isNotEmpty && pricing is Map) {
+          prices[modelId] = pricing;
+        }
       }
+    }
+    if (prices.isNotEmpty) {
+      unawaited(
+        ModelPricingCatalog.cacheProviderPricing(providerId, prices).catchError(
+          (Object error) => AppLogger.warning(
+            'ModelPricingCatalog',
+            '保存渠道模型价格失败',
+            metadata: {'error': '$error'},
+          ),
+        ),
+      );
     }
 
     final geminiModels = data['models'];

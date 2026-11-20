@@ -216,7 +216,7 @@ void main() {
         expect(find.text('已选 2 条消息'), findsOneWidget);
         await tester.tap(find.byTooltip('删除'));
         await tester.pumpAndSettle();
-        expect(find.textContaining('不影响原始历史'), findsOneWidget);
+        expect(find.textContaining('AI 也会忘记'), findsOneWidget);
         await tester.tap(find.text('取消'));
         await tester.pumpAndSettle();
         expect(selection.count, 2);

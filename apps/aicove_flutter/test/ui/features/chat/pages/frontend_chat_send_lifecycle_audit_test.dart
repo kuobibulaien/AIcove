@@ -165,6 +165,7 @@ void main() {
           resolvedConversationByIdProvider(
             conversation.id,
           ).overrideWith((ref) => conversation),
+          conversationSnapshotByIdProvider(conversation.id).overrideWith((ref) => conversation),
           conversationMessagesProvider(
             conversation.id,
           ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
@@ -226,6 +227,7 @@ void main() {
             resolvedConversationByIdProvider(
               conversation.id,
             ).overrideWith((ref) => conversation),
+            conversationSnapshotByIdProvider(conversation.id).overrideWith((ref) => conversation),
             conversationMessagesProvider(
               conversation.id,
             ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
@@ -307,6 +309,7 @@ void main() {
             resolvedConversationByIdProvider(
               conversation.id,
             ).overrideWith((ref) => conversation),
+            conversationSnapshotByIdProvider(conversation.id).overrideWith((ref) => conversation),
             conversationMessagesProvider(
               conversation.id,
             ).overrideWith((ref) => const AsyncValue.data(<Message>[])),
@@ -316,6 +319,7 @@ void main() {
             resolvedConversationByIdProvider(
               other.id,
             ).overrideWith((ref) => other),
+            conversationSnapshotByIdProvider(other.id).overrideWith((ref) => other),
             conversationMessagesProvider(
               other.id,
             ).overrideWith((ref) => const AsyncValue.data(<Message>[])),

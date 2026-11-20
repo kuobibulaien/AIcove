@@ -27,10 +27,10 @@ const _objective = '''你是长期记忆整理员，不是对话中的角色。�
 - core（核心印象）：每次聊天都会带给角色，只放最稳定、长期有效的信息，例如用户的称呼、身份、长期偏好、重要约定、关系定位与相处方式。总量很小，要精炼。
 - archive（往事日记）：以日记形式记录这轮对话发生的往事、具体事件、情绪变化、聊到的细节或剧情进展，需要时按话题检索。
 规则：
-- 输入 JSON 的 round_date 是本轮对话所在的本地日期（YYYY-MM-DD），每条消息的 date 也采用本地时间。
-- 新增 archive 时标题必须以「YYYY-MM-DD 」（本轮日期加空格）开头，后跟一句话主题，例如「2026-05-12 买大疆 Pocket 4 与毕业旅行计划」，标题不超过 30 字。
-- archive 正文用自然、平实的日记体，100～250 字，不超过 300 字，记录聊了什么及值得记住的人名、物品、地点、心情、约定等具体细节。多个独立事件可写 1～3 篇；纯寒暄（如单句早安或测试）可不新增日记。
-- 跨日的旧 archive 写下后即为历史记录，不得用 update 或 delete 修改或删除旧日期的日记；update 和 delete 主要用于 core 的更正或淘汰，或同日日记的补充。
+- 输入 JSON 的 round_dates 是本批对话涵盖的本地日期列表（YYYY-MM-DD），每条消息的 date 也采用本地时间。
+- 新增 archive 时标题必须以对应事件发生当日的「YYYY-MM-DD 」（对应消息本地日期加空格）开头，后跟一句话主题，例如「2026-05-12 买大疆 Pocket 4 与毕业旅行计划」，标题不超过 30 字；跨多日的消息按各自日期分别成篇，不要把不同日期的事混进同一篇日记。
+- archive 正文用自然、平实的日记体，100～250 字，不超过 300 字，记录聊了什么及值得记住的人名、物品、地点、心情、约定等具体细节。同一天多个独立事件可写 1～3 篇，跨多日时按有实质内容的日期分别写；纯寒暄（如单句早安或测试）可不新增日记。
+- 不属于本批 round_dates 的旧 archive 写下后即为历史记录，不得用 update 或 delete 修改或删除；update 和 delete 主要用于 core 的更正或淘汰，或本批所涉日期内日记的补充。
 - 只记录有原文依据的内容，source_ids 填对应消息 id；不要把猜测或剧情台词当成现实事实，剧情内容写成「在剧情中……」。
 - 新信息与已有记忆重复就不动；补充或更正用 update（写完整的新正文）；明确推翻或失效的用 delete。
 - locked 为 true 的记忆只能参考，不能 update 或 delete。
@@ -105,9 +105,14 @@ class BackgroundMemoryAgentAdapter implements MemoryAgentPort {
         return jsonEncode(hits.map(_itemJson).toList());
       },
     );
-    final roundDate = formatMemoryRoundDate(messages.first.createdAt);
+    final sourceDates = {
+      for (final m in messages) m.id: formatMemoryRoundDate(m.createdAt),
+    };
+    final roundDates = sourceDates.values.toSet().toList();
+    final roundDate = roundDates.first;
     final payload = jsonEncode({
       'round_date': roundDate,
+      'round_dates': roundDates,
       'core': core.map(_itemJson).toList(),
       'related': related.map(_itemJson).toList(),
       'messages': [
@@ -175,10 +180,11 @@ class BackgroundMemoryAgentAdapter implements MemoryAgentPort {
       },
       sourceIds: messages.map((m) => m.id).toSet(),
       defaultArchiveDate: roundDate,
+      sourceDates: sourceDates,
       protectedArchiveIds: {
         for (final item in known.values)
           if (item.layer == MemoryLayer.archive &&
-              !item.title.startsWith(roundDate))
+              !roundDates.any((d) => item.title.startsWith(d)))
             item.id,
       },
     );
@@ -206,6 +212,7 @@ List<MemoryOp> parseMemoryOps(
   required Set<String> lockedIds,
   required Set<String> sourceIds,
   String? defaultArchiveDate,
+  Map<String, String> sourceDates = const {},
   Set<String> protectedArchiveIds = const {},
 }) {
   var text = raw.trim();
@@ -249,10 +256,11 @@ List<MemoryOp> parseMemoryOps(
         if (title == null || content == null || ids.isEmpty) continue;
         final targetLayer = layer(op['layer']) ?? MemoryLayer.archive;
         if (targetLayer == MemoryLayer.archive &&
-            defaultArchiveDate != null &&
-            defaultArchiveDate.isNotEmpty &&
             !RegExp(r'^\d{4}-\d{2}-\d{2}\b').hasMatch(title)) {
-          title = '$defaultArchiveDate $title';
+          final archiveDate = sourceDates[ids.first] ?? defaultArchiveDate;
+          if (archiveDate != null && archiveDate.isNotEmpty) {
+            title = '$archiveDate $title';
+          }
         }
         result.add(
           AddMemory(

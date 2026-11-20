@@ -51,14 +51,15 @@ class LogViewerUnifiedList extends StatelessWidget {
         .length;
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
         child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              '当前运行 · ${entries.length} 条记录 · $attentionCount 条需要关注\n'
-              '“进入后／累计”是时间点，不代表动画耗时；展开查看阶段统计。',
+              attentionCount > 0
+                  ? '共 ${entries.length} 条记录 · $attentionCount 条异常或提醒'
+                  : '共 ${entries.length} 条记录',
               style: TextStyle(
-                  color: colors.textSecondary, fontSize: 12, height: 1.5),
+                  color: colors.textSecondary, fontSize: 12, height: 1.4),
             )),
       ),
       Expanded(

@@ -259,6 +259,16 @@ class OpenAIAdapter implements ProviderAdapter {
     }
 
     return ApiCallResult(
+      usage: TokenUsage.fromOpenAiUsage(
+        (response['usage'] ??
+                (response['response'] is Map
+                    ? response['response']['usage']
+                    : null)) is Map
+            ? Map<String, dynamic>.from(
+                response['usage'] ?? response['response']['usage'],
+              )
+            : null,
+      ),
       text: text,
       toolResults: const [],
       toolCalls: toolCalls,

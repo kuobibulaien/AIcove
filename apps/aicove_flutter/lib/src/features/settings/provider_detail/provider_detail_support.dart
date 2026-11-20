@@ -4,6 +4,38 @@ import '../../../core/api/providers/provider_chat_api_path.dart';
 import '../../plugins/tts/tts_request_format.dart';
 import '../app_settings.dart';
 
+const providerPriceMultiplierField = 'priceMultiplier';
+
+/// 渠道倍率只影响本地计费，不参与上游请求。
+double providerPriceMultiplier(ProviderAuth provider) {
+  final raw = provider.customConfig[providerPriceMultiplierField];
+  final value = raw is num ? raw.toDouble() : double.tryParse('$raw');
+  return value != null && value.isFinite && value > 0 ? value : 1.0;
+}
+
+double resolveProviderPriceMultiplier(ProviderAuth provider) =>
+    providerPriceMultiplier(provider);
+
+Map<String, dynamic> buildProviderCustomConfigForPriceMultiplier({
+  required ProviderAuth provider,
+  required double? multiplier,
+}) {
+  final customConfig = Map<String, dynamic>.of(provider.customConfig);
+  if (multiplier == null || (multiplier - 1).abs() < 1e-9) {
+    customConfig.remove(providerPriceMultiplierField);
+    return customConfig;
+  }
+  if (!multiplier.isFinite || multiplier <= 0) {
+    throw ArgumentError.value(
+      multiplier,
+      'multiplier',
+      'Must be finite and positive',
+    );
+  }
+  customConfig[providerPriceMultiplierField] = multiplier;
+  return customConfig;
+}
+
 const providerMultiKeyEnabledField = 'multi_key_enabled';
 const providerMultiKeyStrategyField = 'multi_key_strategy';
 const providerMultiKeyItemsField = 'multi_key_items';
@@ -76,20 +108,22 @@ class ProviderDetailRequestFormat {
     if (current == ProviderDetailRequestFormat.novelai || current == comfyui) {
       return imageFormats;
     }
-    if (settings == null) {
-      return chatFormats;
-    }
-    final imageModels = settings.getProviderModelsByType(
-      provider.id,
-      type: ModelType.image,
-    );
-    final hasImageModel = imageModels.isNotEmpty;
-    final hasNonImageModel = provider.models.any((modelId) {
-      final modelRef = settings.buildModelRef(provider.id, modelId);
-      return settings.getModelType(modelRef) != ModelType.image;
-    });
-    final isImageProvider = hasImageModel && !hasNonImageModel;
-    return isImageProvider ? imageFormats : chatFormats;
+    final effectiveModels = provider.visibleModels.isNotEmpty
+        ? provider.visibleModels
+        : provider.models;
+    final allImage = effectiveModels.isNotEmpty
+        ? effectiveModels.every((model) =>
+            (settings == null
+                ? resolveEffectiveModelType(
+                    providerId: provider.id,
+                    rawModelId: model,
+                    defaultType: providerDefaultModelType(provider),
+                  )
+                : settings.getModelType(settings.buildModelRef(provider.id, model))) ==
+            ModelType.image)
+        : provider.capabilities.isNotEmpty &&
+            provider.capabilities.every((c) => c == 'image');
+    return allImage ? imageFormats : chatFormats;
   }
 
   static ProviderDetailRequestFormat? fromRaw(String? raw) {

@@ -7,11 +7,324 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aicove_flutter/src/core/api/providers/google_api_mode.dart';
 import 'package:aicove_flutter/src/features/settings/app_settings.dart';
+import 'package:aicove_flutter/src/features/settings/data/local/ui_models_store_local_data_source.dart';
 import 'package:aicove_flutter/src/features/settings/data/support/ui_models_store_support.dart';
 import 'package:aicove_flutter/src/ui/theme/moe_glass_theme.dart';
+import 'package:aicove_flutter/src/features/settings/provider_detail/provider_detail_actions.dart';
+import 'package:aicove_flutter/src/features/settings/provider_detail/provider_detail_support.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('colon model IDs keep their provider and persisted type', () async {
+    const models = ['gemini:2.5-flash-image', 'openai:gpt-image-1',
+      'openai__2:own-model'];
+    SharedPreferences.setMockInitialValues({
+      kUiModelsStoreKey: jsonEncode({
+        'providers': [
+          for (final id in ['gemini', 'openai', 'openai__2'])
+            {
+              'id': id,
+              'enabled': true,
+              'models': id == 'openai__2' ? models : <String>[],
+              'visible_models': id == 'openai__2' ? models : <String>[],
+              'capabilities': ['chat'],
+            },
+        ],
+      }),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final settings = await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+    for (final model in models) {
+      final ref = 'openai__2:$model';
+      expect(settings.buildModelRef('openai__2', model), ref);
+      expect(settings.getRawModelId(model), model);
+      expect(settings.getRawModelId(ref), model);
+      expect(settings.getModelProviderId(ref), 'openai__2');
+      expect(settings.getModelProviderId(model), 'openai__2');
+      expect(settings.buildModelRef('openai__2', ref), ref);
+      await notifier.setModelType(modelId: ref, type: ModelType.image);
+      final stored = await notifier.readStored();
+      expect(stored.modelTypes[ref], 'image');
+      expect(stored.getModelType(ref), ModelType.image);
+    }
+    final reloaded = ProviderContainer();
+    addTearDown(reloaded.dispose);
+    final restored = await reloaded.read(appSettingsProvider.future);
+    for (final model in models) {
+      expect(restored.getModelType('openai__2:$model'), ModelType.image);
+    }
+  });
+
+  test('image format switching removes channel default for generic format', () async {
+    SharedPreferences.setMockInitialValues({
+      kUiModelsStoreKey: jsonEncode({
+        'providers': [
+          {
+            'id': 'paint',
+            'enabled': true,
+            'models': ['custom-paint'],
+            'visible_models': ['custom-paint'],
+            'capabilities': ['image'],
+            'custom_config': {
+              'requestFormat': 'comfyui',
+              'defaultModelType': 'image',
+              'apiPath': '/chat/completions',
+            },
+          },
+        ],
+      }),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final settings = await container.read(appSettingsProvider.future);
+    await container.read(providerDetailActionsProvider).updateRequestFormat(
+      settings.getProvider('paint')!,
+      ProviderDetailRequestFormat.openai,
+      '/chat/completions',
+    );
+    final saved = await container.read(appSettingsProvider.notifier).readStored();
+    final provider = saved.getProvider('paint')!;
+    expect(provider.customConfig.containsKey('apiPath'), isFalse);
+    expect(provider.customConfig['requestFormat'], 'openai');
+    expect(provider.customConfig['defaultModelType'], isNull);
+    expect(saved.getModelType('paint:custom-paint'), ModelType.chat);
+  });
+
+  test('mixed channel retains chat path while dedicated image formats remove it', () async {
+    SharedPreferences.setMockInitialValues({
+      kUiModelsStoreKey: jsonEncode({
+        'providers': [{
+          'id': 'mixed',
+          'enabled': true,
+          'models': ['gpt-4o', 'custom-paint'],
+          'visible_models': ['gpt-4o', 'custom-paint'],
+          'custom_config': {'requestFormat': 'openai'},
+        }],
+        'model_types': {'mixed:custom-paint': 'image'},
+      }),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+    final actions = container.read(providerDetailActionsProvider);
+    var provider = (await notifier.readStored()).getProvider('mixed')!;
+    await actions.updateRequestFormat(provider, ProviderDetailRequestFormat.openai,
+        '/chat/completions');
+    provider = (await notifier.readStored()).getProvider('mixed')!;
+    expect(provider.customConfig['apiPath'], '/chat/completions');
+    for (final format in [ProviderDetailRequestFormat.comfyui,
+        ProviderDetailRequestFormat.novelai]) {
+      await actions.updateRequestFormat(provider, format, '/chat/completions');
+      provider = (await notifier.readStored()).getProvider('mixed')!;
+      expect(provider.customConfig.containsKey('apiPath'), isFalse);
+    }
+  });
+
+  test('setting chat preserves another provider legacy bare override', () async {
+    SharedPreferences.setMockInitialValues({
+      kUiModelsStoreKey: jsonEncode({
+        'providers': [
+          for (final id in ['first', 'second'])
+            {
+              'id': id,
+              'enabled': true,
+              'models': ['shared-model'],
+              'visible_models': ['shared-model'],
+              'capabilities': ['chat'],
+              'custom_config': {'requestFormat': 'openai', 'apiPath': '/chat/completions'},
+            },
+        ],
+        'model_types': {'shared-model': 'image'},
+      }),
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    await container.read(appSettingsProvider.future);
+    final notifier = container.read(appSettingsProvider.notifier);
+    await notifier.setModelType(modelId: 'first:shared-model', type: ModelType.chat);
+    final saved = await notifier.readStored();
+    expect(saved.getModelType('first:shared-model'), ModelType.chat);
+    expect(saved.modelTypes['first:shared-model'], 'chat');
+    expect(saved.modelTypes['shared-model'], 'image');
+    expect(saved.getModelType('second:shared-model'), ModelType.image);
+    await notifier.setModelType(modelId: 'shared-model', type: ModelType.chat);
+    final cleared = await notifier.readStored();
+    expect(cleared.modelTypes.containsKey('shared-model'), isFalse);
+    expect(cleared.getModelType('first:shared-model'), ModelType.chat);
+  });
+
+  test('media normalization and import respect bare overrides behind empty scoped keys', () async {
+    for (final capability in ['tts', 'stt', 'image']) {
+      final raw = <String, dynamic>{
+        'providers': [{
+          'id': 'media',
+          'models': ['custom-model'],
+          'visible_models': ['custom-model'],
+          'capabilities': [capability],
+          'custom_config': {'requestFormat': capability == 'tts' ? 'openai_tts' : 'openai'},
+        }],
+        'model_types': {'media:custom-model': '  ', 'custom-model': 'chat'},
+      };
+      final normalized = mapUiModelsToAppSettings(normalizeUiModelsStoreData(raw));
+      expect(normalized.getModelType('media:custom-model'), ModelType.chat);
+      SharedPreferences.setMockInitialValues({kUiModelsStoreKey: jsonEncode(raw)});
+      final imported = await const UiModelsStoreLocalDataSource().importProvider(
+        providerId: 'media',
+        apiKey: '',
+        apiBaseUrl: 'https://example.invalid/v1',
+        capabilities: [capability],
+        models: ['custom-model'],
+      );
+      expect(mapUiModelsToAppSettings(imported).getModelType('media:custom-model'), ModelType.chat);
+    }
+    final mixed = normalizeUiModelsStoreData({
+      'providers': [{
+        'id': 'voice',
+        'models': ['custom-model'],
+        'visible_models': ['custom-model'],
+        'capabilities': ['chat', 'tts'],
+        'custom_config': {'requestFormat': 'openai_tts'},
+      }],
+      'model_types': {'voice:custom-model': '', 'custom-model': 'tts'},
+    });
+    expect(mapUiModelsToAppSettings(mixed).getModelType('voice:custom-model'), ModelType.tts);
+  });
+
+  group('per-model purpose selection', () {
+    Future<ProviderContainer> loadChatProvider({
+      List<String> models = const ['gpt-4o'],
+      Map<String, String> modelTypes = const {},
+    }) async {
+      SharedPreferences.setMockInitialValues({
+        kUiModelsStoreKey: jsonEncode({
+          'providers': [{
+            'id': 'openai',
+            'enabled': true,
+            'models': models,
+            'visible_models': models,
+            'capabilities': ['chat'],
+            'custom_config': {'requestFormat': 'openai'},
+          }],
+          'model_types': modelTypes,
+        }),
+      });
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await container.read(appSettingsProvider.future);
+      return container;
+    }
+
+    void expectMixed(AppSettings settings) {
+      final provider = settings.getProvider('openai')!;
+      expect(provider.capabilities, unorderedEquals(['chat', 'image']));
+      expect(provider.customConfig['defaultModelType'], isNull);
+      expect(settings.getModelType('openai:gpt-4o'), ModelType.chat);
+      expect(settings.getModelType('openai:my-custom-paint'), ModelType.image);
+      expect(settings.getProviderVisibleModelsByType('openai', type: ModelType.chat), ['gpt-4o']);
+      expect(settings.getProviderVisibleModelsByType('openai', type: ModelType.image), ['my-custom-paint']);
+      expect(settings.modelList, contains('openai:gpt-4o'));
+      expect(settings.modelList, isNot(contains('openai:my-custom-paint')));
+      expect(ProviderDetailRequestFormat.forProvider(provider, settings: settings),
+          ProviderDetailRequestFormat.chatFormats);
+    }
+
+    test('selected image purpose keeps mixed chat and image capabilities', () async {
+      final container = await loadChatProvider();
+      final notifier = container.read(appSettingsProvider.notifier);
+      await notifier.updateProviderModels(
+        providerId: 'openai',
+        allModels: const ['gpt-4o', 'my-custom-paint'],
+        visibleModels: const ['gpt-4o', 'my-custom-paint'],
+        selectedModelTypes: const {'my-custom-paint': ModelType.image},
+      );
+      expectMixed(container.read(appSettingsProvider).requireValue);
+      expectMixed(await notifier.readStored());
+      await notifier.updateProviderModels(
+        providerId: 'openai',
+        allModels: const ['gpt-4o', 'my-custom-paint'],
+        visibleModels: const ['my-custom-paint'],
+        hiddenModels: const ['gpt-4o'],
+      );
+      final hidden = await notifier.readStored();
+      final provider = hidden.getProvider('openai')!;
+      expect(provider.capabilities, ['image']);
+      expect(hidden.getProviderVisibleModelsByType('openai', type: ModelType.chat), isEmpty);
+      expect(hidden.getProviderVisibleModelsByType('openai', type: ModelType.image), ['my-custom-paint']);
+      expect(hidden.modelList.where((id) => id.startsWith('openai:')), isEmpty);
+      expect(ProviderDetailRequestFormat.forProvider(provider, settings: hidden),
+          ProviderDetailRequestFormat.imageFormats);
+    });
+
+    test('addCustomModel atomically publishes image type without changing chat', () async {
+      final container = await loadChatProvider();
+      final subscription = container.listen(appSettingsProvider, (previous, next) {
+        final settings = next.value;
+        if (settings?.getProvider('openai')?.visibleModels.contains('my-custom-paint') ?? false) {
+          expectMixed(settings!);
+        }
+      });
+      addTearDown(subscription.close);
+      final notifier = container.read(appSettingsProvider.notifier);
+      await notifier.addCustomModel(
+        providerId: 'openai',
+        modelId: 'my-custom-paint',
+        modelType: ModelType.image,
+      );
+      expectMixed(await notifier.readStored());
+    });
+
+    test('OpenAI with only STT can later add a chat model', () async {
+      final container = await loadChatProvider(models: const ['whisper-1']);
+      final notifier = container.read(appSettingsProvider.notifier);
+      expect(container.read(appSettingsProvider).requireValue.getProvider('openai')!.capabilities, ['stt']);
+      await notifier.addCustomModel(providerId: 'openai', modelId: 'gpt-4o');
+      final saved = await notifier.readStored();
+      expect(saved.getProvider('openai')!.customConfig['defaultModelType'], isNull);
+      expect(saved.getModelType('openai:whisper-1'), ModelType.stt);
+      expect(saved.getModelType('openai:gpt-4o'), ModelType.chat);
+      expect(saved.getProvider('openai')!.capabilities, unorderedEquals(['stt', 'chat']));
+      expect(saved.modelList, contains('openai:gpt-4o'));
+    });
+
+    test('bare ID chat restores a name-inferred image model after reload', () async {
+      final container = await loadChatProvider(
+        models: const ['gpt-image-1'],
+        modelTypes: const {'gpt-image-1': 'chat'},
+      );
+      final notifier = container.read(appSettingsProvider.notifier);
+      await notifier.setModelType(modelId: 'gpt-image-1', type: ModelType.chat);
+      final saved = await notifier.readStored();
+      expect(saved.getModelType('openai:gpt-image-1'), ModelType.chat);
+      expect(saved.modelList, contains('openai:gpt-image-1'));
+      final reloaded = ProviderContainer();
+      addTearDown(reloaded.dispose);
+      final restored = await reloaded.read(appSettingsProvider.future);
+      expect(restored.getModelType('openai:gpt-image-1'), ModelType.chat);
+    });
+
+    test('importCustomModel persists explicit type overrides before classification', () async {
+      SharedPreferences.setMockInitialValues({});
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      await container.read(appSettingsProvider.future);
+      final notifier = container.read(appSettingsProvider.notifier);
+      await notifier.importCustomModel(
+        name: null,
+        apiKey: 'k',
+        apiBaseUrl: 'https://example.invalid/v1',
+        provider: 'openai',
+        allModels: const ['gpt-4o', 'my-custom-paint'],
+        visibleModels: const ['gpt-4o', 'my-custom-paint'],
+        customConfig: const {'requestFormat': 'openai'},
+        modelTypeOverrides: const {'my-custom-paint': 'image'},
+      );
+      expectMixed(await notifier.readStored());
+    });
+  });
 
   group('visible default chat models', () {
     Map<String, dynamic> provider(String id, List<String> models,

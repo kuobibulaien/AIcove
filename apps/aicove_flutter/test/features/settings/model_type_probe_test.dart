@@ -1,12 +1,14 @@
 import 'dart:convert';
 
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
+import 'package:aicove_flutter/src/features/observability/usage/model_pricing_catalog.dart';
 import 'package:aicove_flutter/src/features/plugins/tts/tts_model_probe.dart';
 import 'package:aicove_flutter/src/features/settings/settings_models.dart';
 import 'package:aicove_flutter/src/features/settings/ui_models_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // 1x1 transparent PNG
 const _png =
@@ -50,6 +52,108 @@ AppSettings _settingsWith(ProviderAuth provider) => AppSettings(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    resetModelPricingCachesForTesting();
+  });
+  tearDown(resetModelPricingCachesForTesting);
+
+  test(
+    'preview reads standard per-token prices and skips placeholders',
+    () async {
+      final client = MockClient((request) async {
+        expect(request.url.toString(), 'https://openrouter.ai/api/v1/models');
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'id': 'vendor/channel-model',
+                'pricing': {
+                  'prompt': '0.00000125',
+                  'completion': '0.00001',
+                  'input_cache_read': '0.0000005',
+                  'input_cache_write': '0',
+                },
+              },
+              {
+                'id': 'vendor/cache-write-model',
+                'pricing': {
+                  'prompt': 0,
+                  'completion': 0,
+                  'input_cache_write': 0,
+                },
+              },
+              {
+                'id': 'openrouter/auto',
+                'pricing': {'prompt': '-1', 'completion': '-1'},
+              },
+              {
+                'id': 'bad-high',
+                'pricing': {'prompt': 0.050001, 'completion': 0},
+              },
+              {
+                'id': 'bad-completion',
+                'pricing': {'prompt': 0, 'completion': 'Infinity'},
+              },
+              {
+                'id': 'missing-completion',
+                'pricing': {'prompt': 0},
+              },
+            ],
+          }),
+          200,
+        );
+      });
+      addTearDown(client.close);
+      final models = await UiModelsApi(httpClient: client).previewProvider(
+        providerId: 'openrouter',
+        apiKey: 'test',
+        apiBaseUrl: 'https://openrouter.ai/api/v1',
+      );
+      expect(models, hasLength(6));
+
+      ModelPricing? price(String id) =>
+          lookupBuiltinModelPricing(id, providerId: 'openrouter');
+      final channel = price('Vendor/Channel_Model:exacto')!;
+      expect(channel.inputPricePerMillion, 1.25);
+      expect(channel.outputPricePerMillion, 10);
+      expect(channel.cachedInputPricePerMillion, .5);
+      expect(channel.cacheWritePricePerMillion, isNull);
+      expect(channel.currency, 'USD');
+      expect(price('cache-write-model')!.cacheWritePricePerMillion, 0);
+      expect(
+        lookupBuiltinModelPricing('channel-model', providerId: 'other'),
+        isNull,
+      );
+      for (final id in [
+        'openrouter/auto',
+        'bad-high',
+        'bad-completion',
+        'missing-completion',
+      ]) {
+        expect(price(id), isNull, reason: id);
+      }
+
+      // Allow the preview's asynchronous preferences write to complete.
+      await Future<void>.delayed(Duration.zero);
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        jsonDecode(
+              prefs.getString(
+                'aicove.observability.provider_pricing_cache.v1',
+              )!,
+            )
+            as Map,
+        contains('openrouter:channel-model'),
+      );
+      resetModelPricingCachesForTesting();
+      expect(price('channel-model'), isNull);
+      await ModelPricingCatalog.loadLocalCaches();
+      expect(price('channel-model')!.inputPricePerMillion, 1.25);
+    },
+  );
+
   test('image model test generates through the image endpoint', () async {
     final requests = <http.Request>[];
     final api = UiModelsApi(
@@ -100,13 +204,13 @@ void main() {
 
   test('tts model test synthesizes a short line via the speech endpoint',
       () async {
-    final provider = ProviderAuth(
+    const provider = ProviderAuth(
       id: 'speech_relay',
-      apiKeys: const ['sk-test'],
+      apiKeys: ['sk-test'],
       apiBaseUrl: 'https://tts.example.com/v1',
-      models: const ['tts-1'],
-      visibleModels: const ['tts-1'],
-      capabilities: const ['tts'],
+      models: ['tts-1'],
+      visibleModels: ['tts-1'],
+      capabilities: ['tts'],
     );
     final requests = <http.Request>[];
     final result = await http.runWithClient(

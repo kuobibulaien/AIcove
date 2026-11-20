@@ -199,7 +199,7 @@ class Providers extends Table {
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
-  AppDatabase.forTesting(QueryExecutor executor) : super(executor);
+  AppDatabase.forTesting(super.executor);
 
   @override
   int get schemaVersion => 26;
@@ -214,6 +214,7 @@ class AppDatabase extends _$AppDatabase {
         await _ensureMessageStateTable();
         await _ensureVoiceCallTables();
         await _ensureAgentTaskTables();
+        await _ensureTokenUsageTables();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // v1 -> v2 的旧记忆表已随 v18 退役（ADR0038），不再创建。
@@ -338,6 +339,7 @@ class AppDatabase extends _$AppDatabase {
         await _ensureChatEntryIndexes();
         await _ensureAutoReplyClaimCompletion();
         await _ensureProactiveCallTable();
+        await _ensureTokenUsageTables();
         await _runWithBusyRetry(
           () => customStatement('''
 CREATE TRIGGER IF NOT EXISTS memory_items_delete_fts
@@ -596,6 +598,53 @@ CREATE TABLE IF NOT EXISTS proactive_calls (
       }
     }
   }
+
+  /// Local billing rows are shared by foreground and headless connections.
+  Future<void> _ensureTokenUsageTables() => _runWithBusyRetry(
+    () => transaction(() async {
+      await customStatement('''CREATE TABLE IF NOT EXISTS token_usage_entries (
+        id TEXT PRIMARY KEY NOT NULL, device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL, conversation_id TEXT, turn_id TEXT,
+        round_index INTEGER, purpose TEXT NOT NULL, provider_id TEXT NOT NULL,
+        model TEXT NOT NULL, input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL, cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        is_estimated INTEGER NOT NULL DEFAULT 0, priced INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'USD', cost_micros INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER, created_at INTEGER NOT NULL
+      )''');
+      await customStatement('CREATE INDEX IF NOT EXISTS token_usage_entries_time '
+          'ON token_usage_entries(created_at)');
+      await customStatement('CREATE INDEX IF NOT EXISTS token_usage_entries_model_time '
+          'ON token_usage_entries(provider_id,model,created_at)');
+      await customStatement('CREATE INDEX IF NOT EXISTS token_usage_entries_conv_time '
+          'ON token_usage_entries(conversation_id,created_at)');
+      await customStatement('''CREATE TABLE IF NOT EXISTS token_usage_archives (
+        bucket_key TEXT PRIMARY KEY NOT NULL, device_id TEXT NOT NULL,
+        device_name TEXT NOT NULL, period TEXT NOT NULL, period_start_ms INTEGER NOT NULL,
+        provider_id TEXT NOT NULL, model TEXT NOT NULL, purpose TEXT NOT NULL,
+        conversation_id TEXT NOT NULL DEFAULT '', request_count INTEGER NOT NULL,
+        input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+        estimated_count INTEGER NOT NULL DEFAULT 0,
+        priced_usd_micros INTEGER NOT NULL DEFAULT 0,
+        priced_cny_micros INTEGER NOT NULL DEFAULT 0,
+        unpriced_input_tokens INTEGER NOT NULL DEFAULT 0,
+        unpriced_output_tokens INTEGER NOT NULL DEFAULT 0,
+        unpriced_cached_tokens INTEGER NOT NULL DEFAULT 0,
+        unpriced_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        price_currency TEXT, is_priced INTEGER NOT NULL DEFAULT 0,
+        period_end_ms INTEGER, components TEXT
+      )''');
+    }),
+  );
+
+  /// Retry the complete transaction, never a partially applied billing write.
+  Future<void> tokenUsageTransaction(Future<void> Function() action) =>
+      _runWithBusyRetry(() => transaction(action));
 
   Future<void> _runWithBusyRetry(Future<void> Function() action) async {
     // 前后台连接同时打开时，事务先回滚释放锁，再有界异步重试。

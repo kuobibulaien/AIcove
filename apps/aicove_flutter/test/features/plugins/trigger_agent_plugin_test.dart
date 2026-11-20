@@ -45,7 +45,7 @@ void main() {
     expect(TriggerRequestScope(plugin, conversationId: 'allowed').active, isTrue);
     expect(TriggerRequestScope(plugin, conversationId: 'other').active, isFalse);
     expect(TriggerRequestScope(plugin).active, isFalse);
-    expect(plugin.getTools(conversationId: 'allowed'), hasLength(4));
+    expect(plugin.getTools(conversationId: 'allowed').map((t) => t.name), ['reminder']);
     expect(plugin.getTools(conversationId: 'other'), isEmpty);
     // Legacy response processors have no conversation scope. A role-only
     // native-tool opt-in must not enable their global execution path.
@@ -90,7 +90,7 @@ void main() {
         .single;
     expect(scope.tools().map((t) => t.name),
         plugin.getTools().map((t) => t.name));
-    expect(scope.tools(), hasLength(4));
+    expect(scope.tools().map((t) => t.name), ['reminder']);
     // Reminders go through native tool calls; no prompt is injected.
     expect(
       await scope.prompt(const PluginRequestContext(

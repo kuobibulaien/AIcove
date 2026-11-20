@@ -151,6 +151,7 @@ class _StreamPlaceholderDelivery {
   bool _dirty = false;
   bool _disposed = false;
   bool _receivedDelta = false;
+  String _partialTtsClose = '';
   bool _fallbackTriggered = false;
   bool _fallbackObserved = false;
   bool _thinkingPlaceholderElapsed = false;
@@ -171,8 +172,10 @@ class _StreamPlaceholderDelivery {
     _receivedDelta = true;
     _dirty = true;
     var shouldFlushNow = false;
-    if (enableTtsPlaceholders && delta.contains('>')) {
-      final readyCount = _countReadyPendingAudioDescriptors(_rawStreamText.toString());
+    if (enableTtsPlaceholders && _containsNewTtsClose(delta)) {
+      final readyCount = _countReadyPendingAudioDescriptors(
+        _rawStreamText.toString(),
+      );
       shouldFlushNow = readyCount > _lastReadyPendingAudioCount;
       _lastReadyPendingAudioCount = readyCount;
     }
@@ -192,6 +195,7 @@ class _StreamPlaceholderDelivery {
     _finalizedRawText = null;
     _thinkingPlaceholderElapsed = false;
     _rawStreamText.clear();
+    _partialTtsClose = '';
     _lastReadyPendingAudioCount = 0;
     _parsedRawText = null;
     _parsedTimeline = null;
@@ -266,6 +270,7 @@ class _StreamPlaceholderDelivery {
     _currentTimelineMessages.clear();
     _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
+    _partialTtsClose = '';
     _lastReadyPendingAudioCount = 0;
     _parsedRawText = null;
     _parsedTimeline = null;
@@ -320,6 +325,7 @@ class _StreamPlaceholderDelivery {
     _currentTimelineMessages.clear();
     _stablePendingAudioMessages.clear();
     _rawStreamText.clear();
+    _partialTtsClose = '';
     _lastReadyPendingAudioCount = 0;
     _parsedRawText = null;
     _parsedTimeline = null;

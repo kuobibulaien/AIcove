@@ -75,6 +75,8 @@ class _Settings extends AppSettingsNotifier {
 class _Summary implements ContextSummarizerPort {
   String text = '- 周五一起去看海，用户怕冷。';
   bool fail = false;
+  int calls = 0;
+  Object? error;
   Completer<void>? gate;
   ContextSnapshot? seen;
   ContextSummaryKind? kind;
@@ -85,9 +87,11 @@ class _Summary implements ContextSummarizerPort {
     required void Function(int, int) onProgress,
     required bool Function() isCancelled,
   }) async {
+    calls++;
     seen = snapshot;
     this.kind = kind;
     if (gate != null) await gate!.future;
+    if (error != null) throw error!;
     if (fail) throw StateError('fake network unavailable');
     onProgress(1, 1);
     return text;
@@ -96,6 +100,7 @@ class _Summary implements ContextSummarizerPort {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  manualCompactionSessionTests();
   late Directory root;
   late db.AppDatabase database;
   late ProviderContainer container;
@@ -142,12 +147,16 @@ void main() {
   Future<String?> boundary(String owner) async =>
       (await container.read(conversationRepositoryProvider).getById(owner))
           ?.contextStartMessageId;
-  ContextManager createService() => ContextManager(
+  ContextManager createService({
+    DateTime Function()? now,
+    Future<ContextSummarizerPort> Function()? factory,
+  }) => ContextManager(
+    now: now,
     store: store,
     loadMessages: (owner) =>
         container.read(chatHistoryStoreProvider).loadAllRawMessages(owner),
     readBoundary: boundary,
-    summarizerFactory: () async => summary,
+    summarizerFactory: factory ?? () async => summary,
     publishBoundary: (_) async {},
     ensureIdle: (_) {
       if (sending) throw const ContextCompactionException('生成中');
@@ -218,6 +227,116 @@ void main() {
     PathProviderPlatform.instance = oldPaths;
     await root.delete(recursive: true);
   });
+
+  for (final oldAge in [const Duration(hours: 1), const Duration(minutes: 1)]) {
+    test('旧话题 sending 不阻塞当前话题整理：$oldAge', () async {
+      final now = DateTime.now();
+      final at = now.subtract(oldAge).millisecondsSinceEpoch;
+      await owner('a', start: 'boundary');
+      await message(
+        'old-placeholder',
+        role: 'assistant',
+        status: 'sending',
+        at: at,
+      );
+      await message('boundary', at: at + 1);
+      await message('current', at: at + 2);
+      final snapshot = await store.manualSnapshot('a');
+      expect(snapshot.messages.map((m) => m.id), ['current']);
+      await store.commitManual(snapshot, '- 当前话题事实');
+    });
+  }
+
+  test('手动 prepare 先清理旧占位再整理并提交', () async {
+    await owner('a', start: 'boundary');
+    await message('old-placeholder', role: 'assistant', status: 'sending');
+    await message('boundary', at: 2);
+    await message('current', at: 3);
+    final manager = container.read(contextManagerProvider);
+    final draft = await manager.prepare(
+      'a',
+      onProgress: (_, __) {},
+      isCancelled: () => false,
+    );
+    expect(draft.snapshot.messages.map((m) => m.id), ['current']);
+    final orphan = await container
+        .read(messageRepositoryProvider)
+        .getById('old-placeholder');
+    expect(orphan?.status, 'failed');
+    expect(orphan?.deletedAt, isNotNull);
+    await manager.commit(draft, draft.summary);
+    expect(await boundary('a'), 'current');
+  });
+
+  test('当前话题新 sending 仍阻塞手动整理', () async {
+    await owner('a');
+    await message('normal');
+    await message(
+      'active',
+      role: 'assistant',
+      status: 'sending',
+      at: DateTime.now().millisecondsSinceEpoch,
+    );
+    await expectLater(
+      store.manualSnapshot('a'),
+      throwsA(
+        isA<ContextCompactionException>().having(
+          (e) => e.message,
+          'message',
+          '请等本轮回复结束后再压缩。',
+        ),
+      ),
+    );
+  });
+
+  test('当前话题超时 sending 不阻塞也不进入待整理原文', () async {
+    await owner('a');
+    await message('normal');
+    await message('dead', role: 'assistant', status: 'sending', at: 2);
+    final snapshot = await store.manualSnapshot('a');
+    expect(snapshot.messages.map((m) => m.id), ['normal']);
+    await store.commitManual(snapshot, '- 正常消息事实');
+  });
+
+  for (final role in ['user', 'assistant']) {
+    for (final offset in [-1, 0, 1]) {
+      test('当前话题 $role sending 阈值边界 ${offset}ms', () async {
+        final now = DateTime.utc(2030);
+        final timedStore = SqliteContextSummaryStore(
+          database,
+          container.read(chatHistoryStoreProvider).loadAllRawMessages,
+          now: () => now,
+        );
+        await owner('a');
+        await message('normal');
+        await message(
+          'in-flight',
+          role: role,
+          status: 'sending',
+          at:
+              now.subtract(const Duration(minutes: 30)).millisecondsSinceEpoch +
+              offset,
+        );
+        if (offset >= 0) {
+          await expectLater(
+            timedStore.manualSnapshot('a'),
+            throwsA(
+              isA<ContextCompactionException>().having(
+                (e) => e.message,
+                'message',
+                '请等本轮回复结束后再压缩。',
+              ),
+            ),
+          );
+        } else {
+          expect(
+            (await timedStore.manualSnapshot('a')).messages.map((m) => m.id),
+            ['normal'],
+          );
+        }
+      });
+    }
+  }
 
   test('新话题边界恰是最后一条 raw 时，不回流整个旧话题', () async {
     await owner('a', start: 'm1');
@@ -346,18 +465,16 @@ void main() {
     expect(await boundary('a'), isNull);
   });
 
-  test('边界存在但没有摘要：发送前补整理边界前的原文并保存；失败则阻止发送', () async {
+  test('边界存在但没有摘要：补整理失败放行，成功后保存复用', () async {
     await owner('a', start: 'm2');
     await message('m1');
     await message('m2', role: 'assistant', at: 2);
     await message('m3', at: 3);
     summary.fail = true;
-    await expectLater(
-      service.manualSummary('a', 'm2', []),
-      throwsA(isA<ContextCompactionException>()),
-    );
+    expect(await service.manualSummary('a', 'm2', []), isNull);
     expect(compacted, isEmpty);
     summary.fail = false;
+    service = createService();
     final recovered = (await service.manualSummary('a', 'm2', []))!;
     expect(summary.kind, ContextSummaryKind.manual);
     expect(summary.seen!.messages.map((m) => m.id), ['m1', 'm2']);
@@ -381,6 +498,116 @@ void main() {
     );
   });
 
+  test('补整理失败冷却十分钟，期满重试成功，已有摘要直接复用', () async {
+    await owner('a', start: 'm1');
+    await message('m1');
+    var now = DateTime(2030);
+    var requests = 0;
+    service = createService(
+      now: () => now,
+      factory: () async {
+        requests++;
+        return summary;
+      },
+    );
+    summary.fail = true;
+    expect(await service.manualSummary('a', 'm1', []), isNull);
+    now = now.add(const Duration(minutes: 9, seconds: 59));
+    expect(await service.manualSummary('a', 'm1', []), isNull);
+    expect(requests, 1);
+    now = now.add(const Duration(seconds: 1));
+    summary.fail = false;
+    final record = await service.manualSummary('a', 'm1', []);
+    expect(record, isNotNull);
+    expect(requests, 2);
+    expect(compacted, ['a']);
+    expect((await service.manualSummary('a', 'm1', []))?.id, record!.id);
+    expect(requests, 2);
+  });
+
+  test('冷却中同步来的手动摘要直接生效，损坏边界仍拒绝发送', () async {
+    await owner('a', start: 'm1');
+    await message('m1');
+    summary.fail = true;
+    expect(await service.manualSummary('a', 'm1', []), isNull);
+    final all = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    final record = await store.saveRecoveredManual(
+      ContextSnapshot(
+        ownerId: 'a',
+        previousBoundaryId: null,
+        allMessages: all,
+        messages: all,
+        previous: null,
+      ),
+      '- 对端摘要',
+    );
+    expect((await service.manualSummary('a', 'm1', []))?.id, record.id);
+    expect(summary.calls, 1);
+    await database.customStatement('DELETE FROM context_summaries');
+    summary.fail = false;
+    expect(await service.manualSummary('a', 'm1', []), isNotNull);
+    expect(summary.calls, 2);
+    await (database.delete(database.messages)).go();
+    await expectLater(
+      service.manualSummary('a', 'm1', []),
+      throwsA(
+        isA<ContextCompactionException>().having(
+          (e) => e.message,
+          'message',
+          '话题边界已失效，请先恢复或撤销上次压缩，本轮未发送。',
+        ),
+      ),
+    );
+  });
+
+  test('整理中再次发送跳过补整理，不抛忙异常或重复请求', () async {
+    await owner('a', start: 'm1');
+    await message('m1');
+    final started = Completer<void>();
+    service = createService(
+      factory: () async {
+        started.complete();
+        return summary;
+      },
+    );
+    summary.gate = Completer<void>();
+    final running = service.manualSummary('a', 'm1', []);
+    await started.future;
+    expect(await service.manualSummary('a', 'm1', []), isNull);
+    expect(summary.calls, 1);
+    summary.gate!.complete();
+    expect(await running, isNotNull);
+  });
+
+  for (final failure in ['factory', 'summary', 'save']) {
+    test('补整理 $failure 抛异常也放行并进入冷却', () async {
+      await owner('a', start: 'm1');
+      await message('m1');
+      var requests = 0;
+      service = createService(
+        factory: () async {
+          requests++;
+          if (failure == 'factory') throw StateError('HTTP 403 forbidden');
+          return summary;
+        },
+      );
+      if (failure == 'summary') {
+        summary.error = const ContextCompactionException('摘要模型超时');
+      }
+      if (failure == 'save') {
+        await database.customStatement(
+          "CREATE TRIGGER fail_recovery BEFORE INSERT ON context_summaries BEGIN SELECT RAISE(ABORT, 'save failed'); END",
+        );
+      }
+      expect(await service.manualSummary('a', 'm1', []), isNull);
+      expect(await service.manualSummary('a', 'm1', []), isNull);
+      expect(requests, 1);
+      expect(compacted, isEmpty);
+    });
+  }
+
   test('边界原文缺失时阻止发送，不请求摘要模型', () async {
     await owner('a', start: 'missing');
     await message('m1');
@@ -392,18 +619,122 @@ void main() {
     expect(compacted, isEmpty);
   });
 
-  test('来源编辑后旧摘要不再注入，必须先撤销再整理', () async {
+  test('已提交手动摘要绑定边界，旧消息删改及历史指纹不影响连续压缩', () async {
     await owner('a');
-    await message('m1');
+    await message('m0');
+    await message('m1', at: 2);
     final draft = await prepare();
-    await service.commit(draft, draft.summary);
+    final record = await service.commit(draft, draft.summary);
+    await database.customStatement(
+      "UPDATE context_summaries SET source_digest = 'legacy-device-digest'",
+    );
+    await (database.delete(
+      database.messages,
+    )..where((m) => m.id.equals('m0'))).go();
     await (database.update(database.messages)..where((m) => m.id.equals('m1')))
         .write(const db.MessagesCompanion(content: Value('纠正旧事实')));
-    expect(await service.current('a'), isNull);
-    await message('m2', at: 2);
-    await expectLater(prepare(), throwsA(isA<ContextCompactionException>()));
+    expect((await service.current('a'))?.id, record.id);
+    await message('m2', at: 3);
+    final next = await prepare();
+    expect(next.snapshot.previous?.id, record.id);
+    await service.commit(next, next.summary);
     await service.undo('a');
-    expect(await boundary('a'), isNull);
+    await (database.delete(
+      database.messages,
+    )..where((m) => m.id.equals('m1'))).go();
+    expect(await service.current('a'), isNull);
+  });
+
+  test('补整理失败不阻塞 prepareApiConfig 正常发送', () async {
+    await owner('a', start: 'm1');
+    await message('m1');
+    await message('m2', text: '继续聊天', at: 2);
+    summary.fail = true;
+    final conv = ConversationConverter.fromDb(
+      (await container.read(conversationRepositoryProvider).getById('a'))!,
+    );
+    final history = await container
+        .read(chatHistoryStoreProvider)
+        .loadCanonicalContextMessages('a');
+    final config = await container
+        .read(chatSendServiceProvider)
+        .prepareApiConfig(conv: conv, history: history, userText: '继续聊天');
+    expect(jsonEncode(config.messages), contains('继续聊天'));
+    expect(summary.calls, 1);
+    expect(compacted, isEmpty);
+  });
+
+  test('媒体路径与播放状态及内部生图块不使自动摘要失效，正文编辑仍失效', () async {
+    await owner('a');
+    await message('m1');
+    Future<void> blocks({required bool changed, String text = '事实'}) async {
+      final values = <MessageBlock>[
+        TextBlock(id: 'text', messageId: 'm1', content: text),
+        EmojiBlock(
+          id: 'emoji',
+          messageId: 'm1',
+          emojiId: 'e',
+          path: changed ? '/device-b/emoji.gif' : '/device-a/emoji.gif',
+          matchedTag: '开心',
+          originalText: '笑',
+        ),
+        AudioBlock(
+          id: 'audio',
+          messageId: 'm1',
+          text: '你好',
+          url: changed ? 'aicove-media://audio' : '/device-a/audio.wav',
+          unread: !changed,
+        ),
+        ImageBlock(
+          id: 'image',
+          messageId: 'm1',
+          prompt: '海边',
+          localPath: changed ? '/device-b/image.png' : '/device-a/image.png',
+          url: changed ? 'aicove-media://image' : 'https://example.com/image',
+          base64: changed ? null : 'old-base64',
+          versions: changed
+              ? [
+                  ImageVersionEntry(localPath: '/device-b/v1.png'),
+                  ImageVersionEntry(localPath: '/device-b/v2.png'),
+                ]
+              : const [],
+          activeVersionIndex: changed ? 1 : 0,
+        ),
+        if (changed)
+          ToolBlock(
+            id: 'hidden',
+            messageId: 'm1',
+            toolName: 'image_context',
+            result: {'error': 'failed'},
+          ),
+      ];
+      await (database.delete(database.messageBlocks)).go();
+      for (var i = 0; i < values.length; i++) {
+        await database
+            .into(database.messageBlocks)
+            .insert(MessageBlockConverter.toCompanion(values[i], 'm1', i));
+      }
+    }
+
+    await blocks(changed: false);
+    final snapshot = await store.manualSnapshot('a');
+    final auto = await store.saveAuto(snapshot, '- 自动事实');
+    final manual = await store.commitManual(snapshot, '- 手动事实');
+    await blocks(changed: true);
+    final raw = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    expect(contextSourceDigest(raw), snapshot.sourceDigest);
+    expect((await store.loadAuto('a', null, raw))?.id, auto.id);
+    expect((await service.current('a'))?.id, manual.id);
+    await message('m2', at: 2);
+    expect((await prepare()).snapshot.previous?.id, manual.id);
+    await blocks(changed: true, text: '修改事实');
+    final edited = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    expect(await store.loadAuto('a', null, edited), isNull);
+    expect((await service.current('a'))?.id, manual.id);
   });
 
   test('重复提交、生成中、空新话题、超限摘要、删除角色均拒绝', () async {
@@ -1723,6 +2054,41 @@ void main() {
     expect(calls, 2);
   });
 
+  test('无块消息单独补挂内部生图隐藏块后摘要指纹不变', () async {
+    await owner('a');
+    await message('m', text: '原始正文');
+    final before = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    expect(before.single.blocks, isNull);
+    final digest = contextSourceDigest(before);
+    await database
+        .into(database.messageBlocks)
+        .insert(
+          MessageBlockConverter.toCompanion(
+            ToolBlock(
+              id: 'hidden',
+              messageId: 'm',
+              toolName: 'image_context',
+              result: {'error': 'failed'},
+            ),
+            'm',
+            0,
+          ),
+        );
+    final after = await container
+        .read(chatHistoryStoreProvider)
+        .loadAllRawMessages('a');
+    expect(after.single.blocks, hasLength(1));
+    expect(contextSourceDigest(after), digest);
+    expect(
+      contextSourceDigest([
+        before.single.copyWith(blocks: const <MessageBlock>[]),
+      ]),
+      digest,
+    );
+  });
+
   test('真实数据库内容块重复读取不应使摘要来源变化，实际块编辑仍拒绝', () async {
     await owner('a');
     await message('m', text: '原始正文');
@@ -1763,5 +2129,498 @@ void main() {
       store.commitManual(stale, '- 过期摘要'),
       throwsA(isA<ContextCompactionException>()),
     );
+  });
+}
+
+class _ManualSessionPort implements ManualCompactionPort {
+  final pending = <String, Completer<ManualCompactionDraft>>{};
+  final cancelled = <String, bool Function()>{};
+  final progress = <String, void Function(int, int)>{};
+  int prepareCalls = 0;
+  Future<ContextSummary?> Function(String)? onCurrent;
+  Future<ContextSummary> Function(ManualCompactionDraft, String)? onCommit;
+  Future<void> Function(String)? onUndo;
+
+  @override
+  Future<ManualCompactionDraft> prepare(
+    String ownerId, {
+    required void Function(int, int) onProgress,
+    required bool Function() isCancelled,
+  }) {
+    prepareCalls++;
+    cancelled[ownerId] = isCancelled;
+    progress[ownerId] = onProgress;
+    return (pending[ownerId] = Completer<ManualCompactionDraft>()).future;
+  }
+
+  @override
+  Future<ContextSummary?> current(String ownerId) async =>
+      onCurrent == null ? null : await onCurrent!(ownerId);
+
+  @override
+  Future<ContextSummary> commit(ManualCompactionDraft draft, String summary) =>
+      onCommit!(draft, summary);
+
+  @override
+  Future<void> undo(String ownerId) async => onUndo?.call(ownerId);
+}
+
+ManualCompactionDraft _sessionDraft([String ownerId = 'a']) =>
+    ManualCompactionDraft(
+      snapshot: ContextSnapshot(
+        ownerId: ownerId,
+        previousBoundaryId: null,
+        allMessages: const [],
+        messages: const [],
+        previous: null,
+      ),
+      summary: '- $ownerId 的摘要',
+    );
+
+ContextSummary _sessionSummary([String ownerId = 'a', String text = '- 已保存']) =>
+    ContextSummary(
+      id: 'saved-$ownerId',
+      ownerId: ownerId,
+      kind: ContextSummaryKind.manual,
+      boundaryId: 'boundary-$ownerId',
+      topicBoundary: null,
+      summary: text,
+      sourceIds: const [],
+      sourceDigest: '',
+      createdAt: DateTime(2026),
+    );
+
+void manualCompactionSessionTests() {
+  group('手动压缩应用层会话', () {
+    late _ManualSessionPort port;
+    late ManualCompactionSessionStore sessions;
+    late List<String> changes;
+
+    setUp(() {
+      port = _ManualSessionPort();
+      sessions = ManualCompactionSessionStore.fromPort(port);
+      changes = [];
+      sessions.addListener(changes.add);
+    });
+    tearDown(() => sessions.dispose());
+
+    test('构造与同步读取状态不解析端口，空值可显式清除', () async {
+      var resolved = 0;
+      final lazy = ManualCompactionSessionStore(() {
+        resolved++;
+        return port;
+      });
+      addTearDown(lazy.dispose);
+      expect(lazy.stateOf('a').draft, isNull);
+      expect(lazy.stateOf('b').preparing, isFalse);
+      expect(resolved, 0);
+      await lazy.loadCurrent('a');
+      expect(resolved, 1);
+
+      final state = ManualCompactionSessionState(
+        currentSummary: _sessionSummary(),
+        draft: _sessionDraft(),
+        error: '错误',
+        notice: const ManualCompactionNotice(
+          id: 1,
+          message: '完成',
+          isError: false,
+        ),
+      );
+      expect(state.copyWith().currentSummary, same(state.currentSummary));
+      final cleared = state.copyWith(
+        currentSummary: null,
+        draft: null,
+        error: null,
+        notice: null,
+      );
+      expect(cleared.currentSummary, isNull);
+      expect(cleared.draft, isNull);
+      expect(cleared.error, isNull);
+      expect(cleared.notice, isNull);
+    });
+
+    test('后台继续整理与更新进度，成功通知只消费一次', () async {
+      final work = sessions.prepare('a');
+      expect(sessions.stateOf('a').progress, '正在读取原始聊天…');
+      await sessions.prepare('a');
+      expect(port.prepareCalls, 1);
+      sessions.enterBackground('a');
+      expect(sessions.stateOf('a').backgrounded, isTrue);
+      expect(port.cancelled['a']!(), isFalse);
+      port.progress['a']!(2, 3);
+      expect(sessions.stateOf('a').progress, '整理内容 2 / 3');
+      expect(changes, ['a', 'a', 'a']);
+      final draft = _sessionDraft();
+      port.pending['a']!.complete(draft);
+      await work;
+      final state = sessions.stateOf('a');
+      expect(state.draft, same(draft));
+      expect(state.draftText, draft.summary);
+      expect(state.preparing, isFalse);
+      expect(state.backgrounded, isFalse);
+      expect(state.progress, '');
+      expect(state.error, isNull);
+      final notice = state.notice!;
+      expect(notice.message, '摘要已整理好，打开「更多 → 压缩上下文」即可确认开启。');
+      expect(notice.isError, isFalse);
+      sessions.clearNotice('a', notice.id + 1);
+      expect(sessions.stateOf('a').notice, same(notice));
+      sessions.clearNotice('a', notice.id);
+      final count = changes.length;
+      sessions.clearNotice('a', notice.id);
+      expect(sessions.stateOf('a').notice, isNull);
+      expect(changes, hasLength(count));
+    });
+
+    test('前台完成与后台返回前台后完成都不发通知', () async {
+      for (final backgroundFirst in [false, true]) {
+        final work = sessions.prepare('a');
+        if (backgroundFirst) {
+          sessions.enterBackground('a');
+          sessions.markForeground('a');
+          expect(port.cancelled['a']!(), isFalse);
+        }
+        port.pending['a']!.complete(_sessionDraft());
+        await work;
+        expect(sessions.stateOf('a').notice, isNull);
+        expect(sessions.stateOf('a').draft, isNotNull);
+      }
+    });
+
+    test('仅后台失败发错误通知，通知编号递增，回前台清除通知', () async {
+      var lastId = 0;
+      for (final failure in [
+        const ContextCompactionException('原始聊天发生变化，请重新整理。'),
+        StateError('network unavailable'),
+      ]) {
+        for (final backgrounded in [false, true]) {
+          final work = sessions.prepare('a');
+          if (backgrounded) sessions.enterBackground('a');
+          port.pending['a']!.completeError(failure);
+          await work;
+          final state = sessions.stateOf('a');
+          final message = failure is ContextCompactionException
+              ? failure.message
+              : '整理或保存失败，请检查模型/网络后重试。确认前原话题不会改变。';
+          expect(state.error, message);
+          expect(state.preparing, isFalse);
+          expect(state.backgrounded, isFalse);
+          expect(state.progress, '');
+          if (backgrounded) {
+            expect(state.notice!.message, message);
+            expect(state.notice!.isError, isTrue);
+            expect(state.notice!.id, greaterThan(lastId));
+            lastId = state.notice!.id;
+            sessions.markForeground('a');
+            expect(sessions.stateOf('a').notice, isNull);
+          } else {
+            expect(state.notice, isNull);
+          }
+        }
+      }
+    });
+
+    test('取消立即生效，迟到进度、成功及异常都不覆盖新一轮', () async {
+      for (final failLate in [false, true]) {
+        final oldWork = sessions.prepare('a');
+        final oldResult = port.pending['a']!;
+        final oldProgress = port.progress['a']!;
+        final oldCancelled = port.cancelled['a']!;
+        sessions.enterBackground('a');
+        sessions.cancelPrepare('a');
+        expect(oldCancelled(), isTrue);
+        expect(sessions.stateOf('a').preparing, isFalse);
+        expect(sessions.stateOf('a').backgrounded, isFalse);
+        expect(sessions.stateOf('a').progress, '');
+        expect(sessions.stateOf('a').error, isNull);
+        expect(sessions.stateOf('a').notice, isNull);
+        final newWork = sessions.prepare('a');
+        final current = sessions.stateOf('a');
+        oldProgress(9, 10);
+        if (failLate) {
+          oldResult.completeError(StateError('late failure'));
+        } else {
+          oldResult.complete(_sessionDraft());
+        }
+        await oldWork;
+        expect(sessions.stateOf('a'), same(current));
+        expect(port.cancelled['a']!(), isFalse);
+        port.pending['a']!.complete(_sessionDraft());
+        await newWork;
+      }
+    });
+
+    test('提交冲突保留草稿和编辑内容，重试成功刷新摘要并清空会话', () async {
+      expect(await sessions.commit('a', '无草稿'), isFalse);
+      final draft = _sessionDraft();
+      final work = sessions.prepare('a');
+      port.pending['a']!.complete(draft);
+      await work;
+      final beforeEdit = changes.length;
+      sessions.updateDraftText('a', '- 用户编辑');
+      sessions.updateDraftText('a', '- 用户编辑');
+      expect(sessions.stateOf('a').draftText, '- 用户编辑');
+      expect(changes, hasLength(beforeEdit));
+      port.onCommit = (received, text) async {
+        expect(received, same(draft));
+        expect(text, '- 用户编辑');
+        throw const ContextCompactionException('聊天已变化，请重新整理。');
+      };
+      expect(await sessions.commit('a', '- 用户编辑'), isFalse);
+      expect(sessions.stateOf('a').draft, same(draft));
+      expect(sessions.stateOf('a').draftText, '- 用户编辑');
+      expect(sessions.stateOf('a').error, '聊天已变化，请重新整理。');
+      expect(sessions.stateOf('a').committing, isFalse);
+      expect(sessions.stateOf('a').progress, '');
+
+      final result = Completer<ContextSummary>();
+      port.onCommit = (_, __) => result.future;
+      final save = sessions.commit('a', '- 最终编辑');
+      expect(sessions.stateOf('a').committing, isTrue);
+      expect(sessions.stateOf('a').draftText, '- 最终编辑');
+      expect(sessions.stateOf('a').progress, '正在保存内容交接…');
+      expect(sessions.stateOf('a').error, isNull);
+      expect(await sessions.commit('a', '重复'), isFalse);
+      expect(await sessions.undo('a'), isFalse);
+      final calls = port.prepareCalls;
+      await sessions.prepare('a');
+      expect(port.prepareCalls, calls);
+      final saved = _sessionSummary('a', '- 最终编辑');
+      result.complete(saved);
+      expect(await save, isTrue);
+      final state = sessions.stateOf('a');
+      expect(state.currentSummary, same(saved));
+      expect(state.draft, isNull);
+      expect(state.draftText, '');
+      expect(state.committing, isFalse);
+      expect(state.preparing, isFalse);
+      expect(state.backgrounded, isFalse);
+      expect(state.progress, '');
+      expect(state.error, isNull);
+      expect(state.notice, isNull);
+    });
+
+    test('不同角色的整理、进度、取消、草稿、通知与提交互不影响', () async {
+      final a = sessions.prepare('a');
+      final b = sessions.prepare('b');
+      sessions.enterBackground('b');
+      port.progress['a']!(1, 2);
+      port.progress['b']!(3, 4);
+      expect(sessions.stateOf('a').progress, '整理内容 1 / 2');
+      expect(sessions.stateOf('b').progress, '整理内容 3 / 4');
+      sessions.cancelPrepare('a');
+      expect(port.cancelled['a']!(), isTrue);
+      expect(port.cancelled['b']!(), isFalse);
+      port.pending['a']!.complete(_sessionDraft('a'));
+      final bDraft = _sessionDraft('b');
+      port.pending['b']!.complete(bDraft);
+      await Future.wait([a, b]);
+      expect(sessions.stateOf('a').draft, isNull);
+      expect(sessions.stateOf('a').notice, isNull);
+      expect(sessions.stateOf('b').draft, same(bDraft));
+      expect(sessions.stateOf('b').notice, isNotNull);
+      sessions.updateDraftText('a', '独立编辑');
+      sessions.discardDraft('a');
+      expect(sessions.stateOf('b').draftText, bDraft.summary);
+      final saved = _sessionSummary('b');
+      port.onCommit = (draft, _) async {
+        expect(draft.snapshot.ownerId, 'b');
+        return saved;
+      };
+      expect(await sessions.commit('b', 'b编辑'), isTrue);
+      expect(sessions.stateOf('b').currentSummary, same(saved));
+      expect(sessions.stateOf('a').currentSummary, isNull);
+    });
+
+    test('加载只接纳同角色最新代数，失败静默清除当前摘要', () async {
+      final first = Completer<ContextSummary?>();
+      final second = Completer<ContextSummary?>();
+      final other = _sessionSummary('b');
+      var calls = 0;
+      port.onCurrent = (ownerId) => ownerId == 'b'
+          ? Future.value(other)
+          : (++calls == 1 ? first.future : second.future);
+      final oldLoad = sessions.loadCurrent('a');
+      final newLoad = sessions.loadCurrent('a');
+      await sessions.loadCurrent('b');
+      final latest = _sessionSummary();
+      second.complete(latest);
+      await newLoad;
+      first.completeError(StateError('stale load failed'));
+      await oldLoad;
+      expect(sessions.stateOf('a').currentSummary, same(latest));
+      expect(sessions.stateOf('b').currentSummary, same(other));
+      port.onCurrent = (_) async => throw StateError('unavailable');
+      await sessions.loadCurrent('a');
+      expect(sessions.stateOf('a').currentSummary, isNull);
+      expect(sessions.stateOf('a').error, isNull);
+    });
+
+    test('丢弃草稿清除编辑、错误和通知，保留当前摘要', () async {
+      final current = _sessionSummary();
+      port.onCurrent = (_) async => current;
+      await sessions.loadCurrent('a');
+      final work = sessions.prepare('a');
+      sessions.enterBackground('a');
+      port.pending['a']!.complete(_sessionDraft());
+      await work;
+      port.onCommit = (_, __) async => throw StateError('save failed');
+      await sessions.commit('a', '编辑');
+      expect(sessions.stateOf('a').error, isNotNull);
+      sessions.discardDraft('a');
+      final state = sessions.stateOf('a');
+      expect(state.currentSummary, same(current));
+      expect(state.draft, isNull);
+      expect(state.draftText, '');
+      expect(state.error, isNull);
+      expect(state.notice, isNull);
+    });
+
+    test('撤销失败保留草稿，成功重新加载摘要，重读失败仍完成撤销', () async {
+      final work = sessions.prepare('a');
+      sessions.enterBackground('a');
+      final draft = _sessionDraft();
+      port.pending['a']!.complete(draft);
+      await work;
+      sessions.updateDraftText('a', '编辑');
+      port.onUndo = (_) async => throw const ContextCompactionException('忙碌中');
+      expect(await sessions.undo('a'), isFalse);
+      expect(sessions.stateOf('a').error, '忙碌中');
+      expect(sessions.stateOf('a').draft, same(draft));
+      expect(sessions.stateOf('a').draftText, '编辑');
+      expect(sessions.stateOf('a').committing, isFalse);
+      expect(sessions.stateOf('a').progress, '');
+      final gate = Completer<void>();
+      port.onUndo = (ownerId) {
+        expect(ownerId, 'a');
+        return gate.future;
+      };
+      final previous = _sessionSummary();
+      port.onCurrent = (_) async => previous;
+      final undo = sessions.undo('a');
+      expect(sessions.stateOf('a').committing, isTrue);
+      expect(sessions.stateOf('a').progress, '正在恢复…');
+      gate.complete();
+      expect(await undo, isTrue);
+      final state = sessions.stateOf('a');
+      expect(state.currentSummary, same(previous));
+      expect(state.draft, isNull);
+      expect(state.draftText, '');
+      expect(state.error, isNull);
+      expect(state.notice, isNull);
+      expect(state.committing, isFalse);
+      expect(state.progress, '');
+      port.onCurrent = (_) async => throw StateError('reload failed');
+      expect(await sessions.undo('a'), isTrue);
+      expect(sessions.stateOf('a').currentSummary, isNull);
+      expect(sessions.stateOf('a').error, isNull);
+    });
+
+    test('移除监听者和销毁后不通知，销毁取消在途整理与加载', () async {
+      var removedCalls = 0;
+      void removed(String _) => removedCalls++;
+      sessions.addListener(removed);
+      sessions.removeListener(removed);
+      final loadResult = Completer<ContextSummary?>();
+      port.onCurrent = (_) => loadResult.future;
+      final load = sessions.loadCurrent('a');
+      final work = sessions.prepare('a');
+      final state = sessions.stateOf('a');
+      final count = changes.length;
+      sessions.dispose();
+      expect(port.cancelled['a']!(), isTrue);
+      port.progress['a']!(1, 1);
+      port.pending['a']!.complete(_sessionDraft());
+      loadResult.complete(_sessionSummary());
+      await Future.wait([load, work]);
+      expect(sessions.stateOf('a'), same(state));
+      expect(changes, hasLength(count));
+      expect(removedCalls, 0);
+    });
+
+    test('销毁后丢弃提交与撤销的迟到状态', () async {
+      final work = sessions.prepare('a');
+      port.pending['a']!.complete(_sessionDraft());
+      await work;
+      final result = Completer<ContextSummary>();
+      port.onCommit = (_, __) => result.future;
+      final save = sessions.commit('a', '编辑');
+      final state = sessions.stateOf('a');
+      sessions.dispose();
+      result.complete(_sessionSummary());
+      expect(await save, isFalse);
+      expect(sessions.stateOf('a'), same(state));
+
+      final undoSessions = ManualCompactionSessionStore.fromPort(port);
+      addTearDown(undoSessions.dispose);
+      final gate = Completer<void>();
+      port.onUndo = (_) => gate.future;
+      var reads = 0;
+      port.onCurrent = (_) async {
+        reads++;
+        return _sessionSummary();
+      };
+      final undo = undoSessions.undo('a');
+      final undoState = undoSessions.stateOf('a');
+      undoSessions.dispose();
+      gate.complete();
+      expect(await undo, isFalse);
+      expect(reads, 0);
+      expect(undoSessions.stateOf('a'), same(undoState));
+    });
+
+    test('首次订阅状态不构造压缩端口或数据库，变更仅刷新对应角色', () async {
+      var portBuilds = 0;
+      var databaseBuilds = 0;
+      final providers = ProviderContainer(
+        overrides: [
+          manualCompactionProvider.overrideWith((ref) {
+            portBuilds++;
+            return port;
+          }),
+          databaseProvider.overrideWith((ref) {
+            databaseBuilds++;
+            throw StateError('state reads must not initialize the database');
+          }),
+        ],
+      );
+      addTearDown(providers.dispose);
+      var aChanges = 0;
+      var bChanges = 0;
+      final a = providers.listen(manualCompactionStateProvider('a'), (_, __) {
+        aChanges++;
+      });
+      final b = providers.listen(manualCompactionStateProvider('b'), (_, __) {
+        bChanges++;
+      });
+      expect(a.read().preparing, isFalse);
+      expect(b.read().draft, isNull);
+      expect(portBuilds, 0);
+      expect(databaseBuilds, 0);
+      final store = providers.read(manualCompactionSessionProvider);
+      final work = store.prepare('a');
+      expect(portBuilds, 1);
+      expect(a.read().preparing, isTrue);
+      expect(aChanges, 1);
+      expect(bChanges, 0);
+      store.enterBackground('a');
+      expect(a.read().backgrounded, isTrue);
+      port.pending['a']!.complete(_sessionDraft());
+      await work;
+      expect(a.read().draft, isNotNull);
+      expect(a.read().notice, isNotNull);
+      expect(b.read().draft, isNull);
+      expect(bChanges, 0);
+      expect(databaseBuilds, 0);
+      a.close();
+      b.close();
+
+      final pending = store.prepare('b');
+      providers.dispose();
+      expect(port.cancelled['b']!(), isTrue);
+      port.pending['b']!.complete(_sessionDraft('b'));
+      await pending;
+    });
   });
 }

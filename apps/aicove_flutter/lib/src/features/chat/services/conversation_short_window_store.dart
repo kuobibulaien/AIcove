@@ -118,6 +118,12 @@ class ConversationTimelineCache {
   /// override 该 provider。
   ImageDimensionProbe get _probe => _ref.read(imageDimensionProbeProvider);
 
+  Set<String> get loadedConversationIds =>
+      Set<String>.unmodifiable({
+        ..._snapshotsByConversation.keys,
+        ..._conversationTasks.keys,
+      });
+
   ConversationTimelineWindowState? peekWindow({
     required String conversationId,
     required int limit,
@@ -577,11 +583,6 @@ class ConversationTimelineCache {
       return olderPage.loadedRawMessageCount;
     });
   }
-
-  Set<String> get loadedConversationIds => {
-    ..._snapshotsByConversation.keys,
-    ..._conversationTasks.keys,
-  };
 
   /// Old history imported below a warm window cannot change that window.
   /// Existing anchors still refresh on edit/deletion, regardless of timestamp.

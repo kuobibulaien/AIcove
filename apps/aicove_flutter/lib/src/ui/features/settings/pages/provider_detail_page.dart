@@ -17,7 +17,6 @@ import 'dart:collection';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:aicove_flutter/src/ui/shared/widgets/form/moe_input_decoration.dart';
 import 'package:aicove_flutter/src/ui/shared/animations/parallax_slide_page_route.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -235,6 +234,96 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
     return keys.join('、');
   }
 
+  String _priceMultiplierSummary(ProviderAuth provider) {
+    final value = resolveProviderPriceMultiplier(provider);
+    if ((value - 1.0).abs() < 1e-6) return '1.0x（原价）';
+    final formatted = value
+        .toStringAsFixed(3)
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+    return '${formatted}x';
+  }
+
+  Future<void> _editPriceMultiplier(ProviderAuth provider) async {
+    final initial = resolveProviderPriceMultiplier(provider);
+    final controller = TextEditingController(
+      text: (initial - 1.0).abs() < 1e-6
+          ? ''
+          : initial
+              .toStringAsFixed(3)
+              .replaceFirst(RegExp(r'0+$'), '')
+              .replaceFirst(RegExp(r'\.$'), ''),
+    );
+    const presets = <double>[0.2, 0.5, 1.0, 1.5, 2.0];
+
+    await showMoeBottomSheet<void>(
+      context: context,
+      title: '渠道计费倍率',
+      showCloseButton: true,
+      builder: (context) => MoeAutoSaveForm(
+        disposeFields: true,
+        fields: [controller],
+        snapshot: () => controller.text.trim(),
+        save: () async {
+          final text = controller.text.trim();
+          if (text.isEmpty) {
+            await _actions.savePriceMultiplier(provider, null);
+            return;
+          }
+          final parsed = double.tryParse(text);
+          if (parsed == null || !parsed.isFinite || parsed <= 0) {
+            throw const FormatException('计费倍率请输入大于 0 的数字');
+          }
+          await _actions.savePriceMultiplier(provider, parsed);
+        },
+        builder: (context, setSheetState) {
+          final colors = context.moeColors;
+          final currentVal = double.tryParse(controller.text.trim()) ?? 1.0;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '如果这家渠道按官方价打折或加倍计费（例如 0.5 倍率），填写后该渠道下所有模型都会自动按此倍率换算花费。',
+                  style: TextStyle(fontSize: 13, height: 1.5, color: colors.muted),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final preset in presets)
+                      MoeChoiceChip(
+                        label: preset == 1.0 ? '1.0x 原价' : '${preset}x',
+                        selected: (currentVal - preset).abs() < 1e-6 &&
+                            (preset != 1.0 || controller.text.trim().isEmpty || controller.text.trim() == '1' || controller.text.trim() == '1.0'),
+                        onTap: () {
+                          setSheetState(() {
+                            controller.text = preset == 1.0 ? '' : '$preset';
+                          });
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                MoeTextField(
+                  controller: controller,
+                  label: '自定义倍率',
+                  hint: '1.0（留空表示原价）',
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _editExtraBody(ProviderAuth provider) async {
     final extraBody = await showProviderExtraBodyEditor(
       context,
@@ -421,54 +510,44 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
   }
 
   Future<void> _showAddCustomModelDialog(ProviderAuth provider) async {
-    final modelController = TextEditingController();
-    final displayNameController = TextEditingController();
+    final fixedDefault = providerDefaultModelType(provider);
+    var modelId = '';
+    var displayName = '';
+    var selectedType = fixedDefault ?? ModelType.chat;
 
     final confirmed = await showMeoTalkDialog(
       context: context,
       title: '添加自定义模型',
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: modelController,
-            decoration: const InputDecoration(
-              labelText: '模型 ID',
-              hintText: '例如: gpt-4o-mini',
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: displayNameController,
-            decoration: const InputDecoration(
-              labelText: '显示名称（可选）',
-              hintText: '例如: GPT-4o Mini',
-            ),
-          ),
-        ],
+      content: _AddCustomModelDialogContent(
+        fixedDefault: fixedDefault,
+        initialType: selectedType,
+        onModelIdChanged: (value) => modelId = value,
+        onDisplayNameChanged: (value) => displayName = value,
+        onTypeChanged: (type) => selectedType = type,
       ),
       confirmText: '添加',
       cancelText: '取消',
     );
 
     if (confirmed == true && mounted) {
-      final modelId = modelController.text.trim();
-      if (modelId.isEmpty) {
+      final trimmedModelId = modelId.trim();
+      if (trimmedModelId.isEmpty) {
         MoeToast.show(context, '请输入模型 ID', type: ToastType.error);
         return;
       }
 
-      final displayName = displayNameController.text.trim();
+      final trimmedDisplayName = displayName.trim();
 
-      // 添加自定义模型到供应商
+      // 添加自定义模型到供应商并同步写入指定用途
       await _actions.addCustomModel(
         provider: provider,
-        modelId: modelId,
-        displayName: displayName.isNotEmpty ? displayName : null,
+        modelId: trimmedModelId,
+        displayName: trimmedDisplayName.isNotEmpty ? trimmedDisplayName : null,
+        modelType: selectedType,
       );
 
       if (mounted) {
-        MoeToast.show(context, '已添加模型: $modelId');
+        MoeToast.show(context, '已添加模型: $trimmedModelId');
       }
     }
   }
@@ -716,11 +795,14 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
         provider.capabilities.every((item) => item == ModelType.stt.value);
     final showChatApiPath =
         !isTtsProvider &&
-            (settings
-                    ?.getProviderModelsByType(provider.id, type: ModelType.chat)
+        ((settings
+                    ?.getProviderVisibleModelsByType(
+                      provider.id,
+                      type: ModelType.chat,
+                    )
                     .isNotEmpty ??
                 false) ||
-        provider.capabilities.contains(ModelType.chat.value);
+            provider.capabilities.contains(ModelType.chat.value));
 
     // 因为 resizeToAvoidBottomInset: false，不需要监听键盘高度
     // 为底部悬浮操作区预留可滚动空间，避免内容被遮挡
@@ -876,6 +958,13 @@ class _ProviderDetailPageState extends ConsumerState<ProviderDetailPage>
                   label: '多 Key 管理',
                   trailingType: MoeSettingsRowTrailing.chevron,
                   onTap: () => _openMultiKeyManager(provider),
+                ),
+              if (showChatApiPath)
+                MoeSettingsRow(
+                  label: '计费倍率',
+                  detailText: _priceMultiplierSummary(provider),
+                  trailingType: MoeSettingsRowTrailing.text,
+                  onTap: () => _editPriceMultiplier(provider),
                 ),
               if (showChatApiPath)
                 MoeSettingsRow(
@@ -1166,6 +1255,103 @@ class _ActionButton extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 添加自定义模型弹窗内容，由独立 State 持有控制器，避免退场动画期间提前释放。
+class _AddCustomModelDialogContent extends StatefulWidget {
+  const _AddCustomModelDialogContent({
+    required this.fixedDefault,
+    required this.initialType,
+    required this.onModelIdChanged,
+    required this.onDisplayNameChanged,
+    required this.onTypeChanged,
+  });
+
+  final ModelType? fixedDefault;
+  final ModelType initialType;
+  final ValueChanged<String> onModelIdChanged;
+  final ValueChanged<String> onDisplayNameChanged;
+  final ValueChanged<ModelType> onTypeChanged;
+
+  @override
+  State<_AddCustomModelDialogContent> createState() =>
+      _AddCustomModelDialogContentState();
+}
+
+class _AddCustomModelDialogContentState
+    extends State<_AddCustomModelDialogContent> {
+  final _modelController = TextEditingController();
+  final _displayNameController = TextEditingController();
+  late ModelType _selectedType = widget.initialType;
+  bool _manualTypePicked = false;
+
+  @override
+  void dispose() {
+    _modelController.dispose();
+    _displayNameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        MoeTextField(
+          controller: _modelController,
+          label: '模型 ID',
+          hint: '例如: gpt-4o-mini',
+          autofocus: true,
+          onChanged: (value) {
+            widget.onModelIdChanged(value);
+            if (_manualTypePicked || widget.fixedDefault != null) return;
+            final inferred = ModelType.inferFromModelId(value);
+            if (inferred != _selectedType) {
+              setState(() => _selectedType = inferred);
+              widget.onTypeChanged(inferred);
+            }
+          },
+        ),
+        const SizedBox(height: 12),
+        MoeTextField(
+          controller: _displayNameController,
+          label: '显示名称（可选）',
+          hint: '例如: GPT-4o Mini',
+          onChanged: widget.onDisplayNameChanged,
+        ),
+        const SizedBox(height: 16),
+        Text(
+          '模型用途',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: MoeFontWeights.emphasis,
+            color: context.moeColors.text,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: ModelType.values.map((type) {
+            return MoeChoiceChip(
+              label: type.label,
+              icon: type.icon,
+              size: MoeChoiceChipSize.sm,
+              selected: type == _selectedType,
+              onTap: () {
+                setState(() {
+                  _selectedType = type;
+                  _manualTypePicked = true;
+                });
+                widget.onTypeChanged(type);
+              },
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
 }

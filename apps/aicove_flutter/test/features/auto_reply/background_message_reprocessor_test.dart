@@ -55,6 +55,7 @@ class _Send extends ChatSendService {
   int calls = 0;
   bool fail = false;
   bool image = false;
+  bool emptyProjection = false;
   Future<void> Function()? duringProcessing;
   @override
   Future<ApiCallResult> processAssistantReplyWithPlugins({
@@ -67,19 +68,21 @@ class _Send extends ChatSendService {
     return ApiCallResult(
       rawReplyText: rawReplyText,
       replyText: rawReplyText,
-      processedText: '正文晚饭吃了吗',
+      processedText: emptyProjection ? '' : '正文晚饭吃了吗',
       pluginEvents: [
-        if (image)
+        if (!emptyProjection) ...[
+          if (image)
+            PluginEvent(
+              pluginId: 'image',
+              type: 'image_generate',
+              data: {'prompt': '月亮'},
+            ),
           PluginEvent(
-            pluginId: 'image',
-            type: 'image_generate',
-            data: {'prompt': '月亮'},
+            pluginId: 'tts',
+            type: 'tts_convert',
+            data: {'text': '抱抱你'},
           ),
-        PluginEvent(
-          pluginId: 'tts',
-          type: 'tts_convert',
-          data: {'text': '抱抱你'},
-        ),
+        ],
       ],
       toolResults: [],
     );
@@ -214,6 +217,107 @@ void main() {
       }
     }
     return projections;
+  }
+
+
+  Future<void> insertExternal(String id, {String content = '外部消息'}) =>
+      database.customStatement(
+        'INSERT INTO messages (id, conversation_id, role, content, created_at) '
+        'VALUES (?, ?, ?, ?, ?)',
+        [id, 'c', 'assistant', content, at],
+      );
+
+  void expectWarmContains(ConversationTimelineCache cache, String id) {
+    expect(
+      cache.peekWindow(conversationId: 'c', limit: 50)!.messages
+          .any((m) => m.sourceMessageIdOrSelf == id),
+      true,
+    );
+  }
+
+  test('concurrent sweep reruns for a committed background arrival', () async {
+    container.read(chatSendServiceProvider);
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    send.duringProcessing = () async {
+      if (!entered.isCompleted) {
+        entered.complete();
+        await release.future;
+      }
+    };
+    final first = sweep();
+    await entered.future.timeout(const Duration(seconds: 3));
+    final cache = container.read(conversationTimelineCacheProvider);
+    await cache.loadCachedMessages('c');
+    await insertExternal('bg_trigger_2', content: _body);
+    await database.customStatement(
+      'UPDATE messages SET raw_payload=? WHERE id=?',
+      [jsonEncode({
+        'version': 1, 'bg_origin_device_id': 'phone',
+        'rawReplyText': _body, 'displayReplyText': _body,
+      }), 'bg_trigger_2'],
+    );
+    final second = sweep();
+    release.complete();
+    await second;
+    await first;
+    final row = await (database.select(database.messages)
+      ..where((t) => t.id.equals('bg_trigger_2'))).getSingle();
+    expect(jsonDecode(row.rawPayload!)['bg_reprocessed'], true);
+    expect((await cache.loadCachedMessages('c'))
+        .any((m) => m.sourceMessageIdOrSelf == 'bg_trigger_2'), true);
+    expectWarmContains(cache, 'bg_trigger_2');
+  });
+
+  test('external non-bg SQLite arrival refreshes warm cache and retains draft', () async {
+    await database.customStatement('DELETE FROM messages');
+    await insertExternal('raw_msg_1');
+    final cache = container.read(conversationTimelineCacheProvider);
+    await cache.loadCachedMessages('c');
+    await cache.replaceMessagesTransient(
+      conversationId: 'c',
+      messages: [model.Message(
+        id: 'draft', sourceMessageId: 'inflight', role: 'assistant',
+        content: 'still streaming', createdAt: DateTime.now(),
+      )],
+    );
+    await insertExternal('raw_msg_alarm_2');
+    await sweep();
+    final cached = await cache.loadCachedMessages('c');
+    expect(cached.any((m) => m.sourceMessageIdOrSelf == 'raw_msg_alarm_2'), true);
+    expect(cached.any((m) => m.id == 'draft'), true);
+    expectWarmContains(cache, 'raw_msg_alarm_2');
+    expectWarmContains(cache, 'inflight');
+  });
+
+  for (final (body, expected) in [
+    ('<sticker tag="未知表情"/>', '[表情：未知表情]'),
+    ('<sticker tag="  "/>', '[表情]'),
+    ('<emoji tag="未知表情"/>', '[表情：未知表情]'),
+    ('<tts> </tts>', '[消息]'),
+  ]) {
+    test('empty media projection commits visible fallback on its first sweep: $body', () async {
+      await database.customStatement(
+        'UPDATE messages SET content=?, raw_payload=? WHERE id=?',
+        [body, jsonEncode({
+          'version': 1, 'bg_origin_device_id': 'phone',
+          'rawReplyText': body, 'displayReplyText': body == '<tts> </tts>' ? '' : body,
+        }), _id],
+      );
+      container.read(chatSendServiceProvider);
+      send.emptyProjection = true;
+      final cache = container.read(conversationTimelineCacheProvider);
+      await cache.loadCachedMessages('c');
+      await expectLater(sweep(), completes);
+      final row = await database.select(database.messages).getSingle();
+      expect(jsonDecode(row.rawPayload!)['bg_reprocessed'], true);
+      expect(send.calls, 1);
+      final projections = await projectCanonicalRaw();
+      expect(projections.single.displayText, expected);
+      expect((await cache.loadCachedMessages('c')).single.displayText, expected);
+      expect(cache.peekWindow(conversationId: 'c', limit: 20)!.messages.single.displayText,
+          expected);
+    });
   }
 
   test('unprocessed origin-device media older than 48 hours is still enriched', () async {

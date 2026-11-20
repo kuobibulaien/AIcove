@@ -4,6 +4,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aicove_flutter/src/features/auto_reply/data/incoming_call_notification.dart';
+
+import 'package:aicove_flutter/src/features/chat/domain/message.dart' as model;
+import 'package:aicove_flutter/src/features/chat/services/chat_frontend_message_projection_service.dart';
+
 import 'package:aicove_flutter/src/core/database/database.dart';
 import 'package:aicove_flutter/src/core/media/media_store.dart';
 import 'package:aicove_flutter/src/core/sync/cloud_setting_policy.dart';
@@ -14,6 +19,8 @@ import 'package:aicove_flutter/src/features/auto_reply/data/conversation_proacti
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+// Test-only platform fake; production uses the direct path_provider dependency.
+// ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -83,6 +90,48 @@ Future<String?> _status() async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+
+  for (final (reply, expected) in [
+    ('<sticker tag="开心"/>', '[表情：开心]'),
+    ('<sticker/>', '[表情]'),
+    ('<emoji tag="开心"/>', '[表情：开心]'),
+    ('<tts>早安</tts><sticker tag="开心"/>', '早安'),
+  ]) {
+    test('background display is readable for $reply', () {
+      final payload = buildBackgroundAssistantStoragePayload(reply);
+      expect(payload.displayText, expected);
+      expect(payload.rawPayload['displayReplyText'], expected);
+    });
+    test('background raw payload is visible before enrichment for $reply', () {
+      final payload = buildBackgroundAssistantStoragePayload(reply);
+      final projected = const ChatFrontendMessageProjectionService().projectMessage(
+        model.Message(
+          id: 'bg_sticker', role: 'assistant', content: reply,
+          createdAt: DateTime(2026), rawPayload: payload.rawPayload,
+        ),
+      );
+      expect(projected, hasLength(1));
+      expect(projected.single.role, 'assistant');
+      expect(projected.single.displayText, expected);
+    });
+  }
+
+
+  test('active reply payload accepts only a nonempty trimmed conversation id', () {
+    expect(activeReplyConversationIdOf('active_reply: conv_target '), 'conv_target');
+    for (final payload in [null, '', 'active_reply:', 'active_reply:  ',
+      'incoming_call:conv_target', 'other:conv_target']) {
+      expect(activeReplyConversationIdOf(payload), isNull);
+    }
+  });
+
+  test('active reply notification ids are stable and separate from call ids', () {
+    expect(activeReplyNotificationId('trigger'), activeReplyNotificationId('trigger'));
+    expect(activeReplyNotificationId('trigger'),
+        0x20000000 | ('trigger'.hashCode & 0x0FFFFFFF));
+    expect(activeReplyNotificationId('trigger'), isNot(incomingCallNotificationId('trigger')));
+  });
 
   late Directory root;
   late PathProviderPlatform oldPaths;

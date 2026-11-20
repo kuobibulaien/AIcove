@@ -48,6 +48,7 @@ PRIVATE_FIXTURE_DIRS = (
     'test/fixtures/preset_tags',
 )
 PRIVATE_FIXTURE_REF = re.compile(r'fixtures/preset_runtime|fixtures/preset_tags|kemini_fixture|opusdocs')
+DART_RELATIVE_IMPORT = re.compile(r"^(?:import|export|part)\s+'(?!package:|dart:)([^']+)'", re.M)
 MACHO_MAGIC = {b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe',
                b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca', b'\xca\xfe\xba\xbf', b'\xbf\xba\xfe\xca'}
 
@@ -198,10 +199,21 @@ class Release:
             if (self.export / relative).exists():
                 shutil.rmtree(self.export / relative)
                 removed.append(relative)
-        for path in self.export.rglob('*.dart'):
-            if PRIVATE_FIXTURE_REF.search(path.read_text(encoding='utf-8')):
-                path.unlink()
-                removed.append(str(path.relative_to(self.export)))
+        # Drop files that reference private fixtures, then anything importing a
+        # dropped file (e.g. tests using a support helper built on the fixtures).
+        dropped = set()
+        changed = True
+        while changed:
+            changed = False
+            for path in self.export.rglob('*.dart'):
+                text = path.read_text(encoding='utf-8')
+                imports = {(path.parent / target).resolve()
+                           for target in DART_RELATIVE_IMPORT.findall(text)}
+                if PRIVATE_FIXTURE_REF.search(text) or imports & dropped:
+                    dropped.add(path.resolve())
+                    path.unlink()
+                    removed.append(str(path.relative_to(self.export)))
+                    changed = True
         sanitized = []
         for path in self.export.rglob('*'):
             if not path.is_file() or path.is_symlink():

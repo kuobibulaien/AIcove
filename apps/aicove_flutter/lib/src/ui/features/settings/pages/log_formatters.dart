@@ -818,9 +818,39 @@ String truncateSystemPromptsInJson(String jsonStr) {
 //  实时日志相关的格式化
 // ─────────────────────────────────────────────
 
+/// 格式化单次请求的 Token 用量简述
+String? formatTokenUsageInline({
+  int? inputTokens,
+  int? outputTokens,
+  int? cachedInputTokens,
+  int? reasoningTokens,
+  bool? usageEstimated,
+}) {
+  if ((inputTokens ?? 0) <= 0 && (outputTokens ?? 0) <= 0) return null;
+  final inCount = inputTokens ?? 0;
+  final outCount = outputTokens ?? 0;
+  final cached = cachedInputTokens ?? 0;
+  final reasoning = reasoningTokens ?? 0;
+  final cacheNote = cached > 0 ? '（缓存 $cached）' : '';
+  final reasonNote = reasoning > 0 ? '（思考 $reasoning）' : '';
+  final estNote = usageEstimated == true ? ' · 估算' : '';
+  return '输入 $inCount$cacheNote · 输出 $outCount$reasonNote$estNote';
+}
+
 /// 对话日志的额外内容
 String? formatConversationExtra(ApiLogEntry log) {
   final parts = <String>[];
+
+  final usageLine = formatTokenUsageInline(
+    inputTokens: log.inputTokens,
+    outputTokens: log.outputTokens,
+    cachedInputTokens: log.cachedInputTokens,
+    reasoningTokens: log.reasoningTokens,
+    usageEstimated: log.usageEstimated,
+  );
+  if (usageLine != null) {
+    parts.add('用量: $usageLine');
+  }
 
   if (log.rawAiResponse != null && log.rawAiResponse!.isNotEmpty) {
     final preview = log.rawAiResponse!.length > 200
@@ -872,6 +902,16 @@ String formatApiLogFull(ApiLogEntry log) {
       if (hasText(log.eventType)) '事件: ${log.eventType}',
     ];
     buffer.writeln(summaryParts.join(' | '));
+    final usageLine = formatTokenUsageInline(
+      inputTokens: log.inputTokens,
+      outputTokens: log.outputTokens,
+      cachedInputTokens: log.cachedInputTokens,
+      reasoningTokens: log.reasoningTokens,
+      usageEstimated: log.usageEstimated,
+    );
+    if (usageLine != null) {
+      buffer.writeln('用量: $usageLine');
+    }
 
     final traceParts = <String>[
       if (hasText(log.sessionId)) 'session=${log.sessionId}',
@@ -1044,13 +1084,14 @@ List<ConversationTurnLog> buildConversationTurns(
 
 String _modelRunPurposeLabel(String purpose) => switch (purpose) {
       'chat' => '对话回复',
-      'proactive_analyze' => '主动关心判断',
+      'proactive_analyze' || 'proactive_plan' => '主动关心判断',
       'proactive_reply' => '主动发消息',
-      'context_compact' => '对话摘要整理',
-      'memory_consolidate' => '长期记忆整理',
-      'voice_brief' => '通话前情准备',
+      'context_compact' || 'compaction' => '对话摘要整理',
+      'memory_consolidate' || 'memory' => '长期记忆整理',
+      'voice_brief' || 'voice_summary' => '通话内容整理',
       'task_agent' => '后台任务',
-      'webapp_ai' => '小应用生成',
+      'webapp_ai' || 'webapp' => '小应用生成',
+      'probe' => '连接测试',
       _ => '模型请求',
     };
 
@@ -1071,6 +1112,7 @@ List<UnifiedLogEntry> buildUnifiedEntries(
   DateTime? hideBeforeTime,
   LogLevelFilter levelFilter = LogLevelFilter.all,
   LogTypeFilter typeFilter = LogTypeFilter.all,
+  bool includeModelApiInNetwork = false,
 }) {
   final entries = <UnifiedLogEntry>[];
   final minLevel = levelFilter.minLevel;
@@ -1080,7 +1122,11 @@ List<UnifiedLogEntry> buildUnifiedEntries(
 
     final isConversation = log.isConversation;
     if (typeFilter == LogTypeFilter.conversation && !isConversation) continue;
-    if (typeFilter == LogTypeFilter.api && isConversation) continue;
+    if (typeFilter == LogTypeFilter.api &&
+        isConversation &&
+        !includeModelApiInNetwork) {
+      continue;
+    }
     if (typeFilter == LogTypeFilter.system ||
         typeFilter == LogTypeFilter.frontend) {
       continue;
@@ -1088,8 +1134,11 @@ List<UnifiedLogEntry> buildUnifiedEntries(
     final level = log.ok ? LogLevel.info : LogLevel.error;
     if (minLevel != null && level.value < minLevel.value) continue;
 
+    final usageBrief = (log.inputTokens ?? 0) + (log.outputTokens ?? 0) > 0
+        ? ' · ${(log.inputTokens ?? 0) + (log.outputTokens ?? 0)} 用量'
+        : '';
     final title = '${isConversation ? '模型请求' : '网络请求'}'
-        '${log.ok ? '成功' : '失败'} · ${log.durationMs}ms · ${shortenUrl(log.url)}';
+        '${log.ok ? '成功' : '失败'} · ${log.durationMs}ms$usageBrief · ${shortenUrl(log.url)}';
 
     final extra =
         isConversation ? formatConversationExtra(log) : formatApiLogExtra(log);
@@ -1119,9 +1168,17 @@ List<UnifiedLogEntry> buildUnifiedEntries(
           run.durationMs != null ? ' · ${run.durationMs}ms' : '';
       final title =
           '来自 ${run.deviceName} · $purposeLabel$statusLabel$durationText';
+      final remoteUsageLine = formatTokenUsageInline(
+        inputTokens: run.inputTokens,
+        outputTokens: run.outputTokens,
+        cachedInputTokens: run.cachedInputTokens,
+        reasoningTokens: run.reasoningTokens,
+        usageEstimated: run.usageEstimated,
+      );
       final details = <String>[
         '设备：${run.deviceName}',
         '模型：${run.model}',
+        if (remoteUsageLine != null) '用量：$remoteUsageLine',
         if (run.attempt > 1) '重试：第 ${run.attempt} 次',
         if (run.errorBrief != null && run.errorBrief!.trim().isNotEmpty)
           '原因：${run.errorBrief!.trim()}',

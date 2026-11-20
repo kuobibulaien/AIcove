@@ -82,10 +82,34 @@ class _MoeContentSurfaceState extends State<MoeContentSurface> {
         child: content,
       );
     }
+    final effectiveCorners =
+        widget.borderRadius ?? BorderRadius.circular(widget.radius);
+    final maxCorner = [
+      effectiveCorners.topLeft.x,
+      effectiveCorners.topRight.x,
+      effectiveCorners.bottomLeft.x,
+      effectiveCorners.bottomRight.x,
+    ].reduce((a, b) => a > b ? a : b);
     final shape = moeG2Shape(
       radius: widget.radius,
       borderRadius: widget.borderRadius,
       side: widget.border,
+    );
+    final stack = Stack(
+      fit: StackFit.passthrough,
+      children: [
+        if (fill.filter != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                backdropGroupKey: MoeSharedBackdrop.keyOf(context),
+                filter: fill.filter!,
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+        Material(color: fill.color, shape: shape, child: content),
+      ],
     );
 
     return DecoratedBox(
@@ -96,25 +120,12 @@ class _MoeContentSurfaceState extends State<MoeContentSurface> {
         ),
         shadows: widget.shadows,
       ),
-      child: ClipPath(
-        clipper: ShapeBorderClipper(shape: shape),
-        child: Stack(
-          fit: StackFit.passthrough,
-          children: [
-            if (fill.filter != null)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: BackdropFilter(
-                    backdropGroupKey: MoeSharedBackdrop.keyOf(context),
-                    filter: fill.filter!,
-                    child: const SizedBox.expand(),
-                  ),
-                ),
-              ),
-            Material(color: fill.color, shape: shape, child: content),
-          ],
-        ),
-      ),
+      child: maxCorner <= 0
+          ? ClipRect(child: stack)
+          : ClipPath(
+              clipper: ShapeBorderClipper(shape: shape),
+              child: stack,
+            ),
     );
   }
 }

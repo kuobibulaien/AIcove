@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
+import 'package:aicove_flutter/src/features/chat/domain/chat_timeline_deletion.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/core/utils/message_formatter.dart';
 import 'package:aicove_flutter/src/core/models/block_status.dart';
@@ -1671,7 +1672,9 @@ void main() {
     final controllerAfter =
         tester.widget<CustomScrollView>(listFinder).controller!;
     final bottomChunkFinder = find.byKey(
-      const ValueKey<String>('message_bubble_${tailMessageId}_chunk_2'),
+      ValueKey<String>(
+        'message_bubble_${ChatTimelinePieceId.compose(tailMessageId, 'body_2')}',
+      ),
     );
     expect(bottomChunkFinder, findsOneWidget);
 

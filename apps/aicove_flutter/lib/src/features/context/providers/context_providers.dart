@@ -34,12 +34,13 @@ Future<String> _legacySummarizeModel(AppSettings settings) async {
   }
 }
 
-/// 压缩模型：设置值 → 旧总结模型 → 默认聊天模型。
+/// 压缩模型：优先使用显式设置，仅未配置时尝试旧总结模型。
 Future<String> resolveCompactionModel(AppSettings settings) async {
   final configured = settings.compactionModel.trim();
-  if (configured.isNotEmpty) return configured;
-  final legacy = await _legacySummarizeModel(settings);
-  if (legacy.isNotEmpty) return legacy;
+  final resolved = settings.resolveAvailableChatModelRef(
+    configured.isNotEmpty ? configured : await _legacySummarizeModel(settings),
+  );
+  if (resolved != null) return resolved;
   return settings.defaultChatModels.isNotEmpty
       ? settings.defaultChatModels.first
       : settings.defaultModelName;
@@ -47,10 +48,8 @@ Future<String> resolveCompactionModel(AppSettings settings) async {
 
 /// 记忆模型：设置值 → 压缩模型。
 Future<String> resolveMemoryModel(AppSettings settings) async {
-  final configured = settings.memoryModel.trim();
-  return configured.isNotEmpty
-      ? configured
-      : await resolveCompactionModel(settings);
+  return settings.resolveAvailableChatModelRef(settings.memoryModel) ??
+      await resolveCompactionModel(settings);
 }
 
 final contextSummaryStoreProvider = Provider<ContextSummaryStorePort>(
@@ -118,6 +117,12 @@ final contextManagerProvider = Provider<ContextManager>((ref) {
             ?.contextStartMessageId,
     summarizerFactory: () => ref.read(contextSummarizerProvider.future),
     publishBoundary: publish,
+    beforeManualPrepare: (owner) => ref
+        .read(chatHistoryStoreProvider)
+        .recoverInterruptedUserMessages(
+          owner,
+          isActiveSend: (_) => ref.read(conversationSendingProvider(owner)),
+        ),
     ensureIdle: (owner) {
       if (ref.read(conversationSendingProvider(owner))) {
         throw const ContextCompactionException('请等当前回复结束后再压缩。');
@@ -131,6 +136,28 @@ final contextManagerProvider = Provider<ContextManager>((ref) {
 final manualCompactionProvider = Provider<ManualCompactionPort>(
   (ref) => _ClaimingManualCompaction(ref.watch(contextManagerProvider)),
 );
+
+final manualCompactionSessionProvider = Provider<ManualCompactionSessionStore>((
+  ref,
+) {
+  final store = ManualCompactionSessionStore(
+    () => ref.read(manualCompactionProvider),
+  );
+  ref.onDispose(store.dispose);
+  return store;
+});
+
+final manualCompactionStateProvider =
+    Provider.family<ManualCompactionSessionState, String>((ref, ownerId) {
+      final store = ref.watch(manualCompactionSessionProvider);
+      void onChanged(String changedOwnerId) {
+        if (changedOwnerId == ownerId) ref.invalidateSelf();
+      }
+
+      store.addListener(onChanged);
+      ref.onDispose(() => store.removeListener(onChanged));
+      return store.stateOf(ownerId);
+    });
 
 class _ClaimingManualCompaction implements ManualCompactionPort {
   _ClaimingManualCompaction(this.delegate);

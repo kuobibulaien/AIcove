@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/app_logger.dart';
+import '../../core/api/providers/token_usage.dart';
 import '../../core/media/media_store.dart';
 import '../../core/sync/cloud_local_write.dart';
 import '../../core/sync/cloud_setting_policy.dart';
@@ -34,13 +35,42 @@ class ModelRunRecord {
     this.durationMs,
     required this.leaseUntilMs,
     this.errorBrief,
+    this.inputTokens,
+    this.outputTokens,
+    this.cachedInputTokens,
+    this.cacheWriteTokens,
+    this.reasoningTokens,
+    this.usageEstimated,
   });
   final String runId, deviceId, deviceName, purpose, providerId, model, status;
   final String? conversationId, turnId, errorBrief;
   final int attempt, stageSeq, startedAtMs, updatedAtMs, leaseUntilMs;
   final int? endedAtMs, durationMs;
+  final int? inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      cacheWriteTokens,
+      reasoningTokens;
+  final bool? usageEstimated;
+  TokenUsage? get usage => inputTokens == null && outputTokens == null
+      ? null
+      : TokenUsage(
+          inputTokens: inputTokens ?? 0,
+          outputTokens: outputTokens ?? 0,
+          cachedInputTokens: cachedInputTokens ?? 0,
+          cacheWriteTokens: cacheWriteTokens ?? 0,
+          reasoningTokens: reasoningTokens ?? 0,
+          isEstimated: usageEstimated ?? false,
+        );
 
   Map<String, dynamic> toJson() => {
+    if (usage != null) 'usage': usage!.toJson(),
+    if (inputTokens != null) 'input_tokens': inputTokens,
+    if (outputTokens != null) 'output_tokens': outputTokens,
+    if (cachedInputTokens != null) 'cached_input_tokens': cachedInputTokens,
+    if (reasoningTokens != null) 'reasoning_tokens': reasoningTokens,
+    if (cacheWriteTokens != null) 'cache_write_tokens': cacheWriteTokens,
+    if (usageEstimated != null) 'usage_estimated': usageEstimated,
     'run_id': runId,
     'device_id': deviceId,
     'device_name': deviceName,
@@ -62,6 +92,21 @@ class ModelRunRecord {
         : sanitizeModelRunError(errorBrief!),
   };
   factory ModelRunRecord.fromJson(Map<String, dynamic> j) => ModelRunRecord(
+    inputTokens:
+        (j['input_tokens'] ?? (j['usage'] as Map?)?['inputTokens']) as int?,
+    outputTokens:
+        (j['output_tokens'] ?? (j['usage'] as Map?)?['outputTokens']) as int?,
+    cachedInputTokens:
+        (j['cached_input_tokens'] ?? (j['usage'] as Map?)?['cachedInputTokens'])
+            as int?,
+    cacheWriteTokens:
+        (j['cache_write_tokens'] ?? (j['usage'] as Map?)?['cacheWriteTokens'])
+            as int?,
+    reasoningTokens:
+        (j['reasoning_tokens'] ?? (j['usage'] as Map?)?['reasoningTokens'])
+            as int?,
+    usageEstimated:
+        (j['usage_estimated'] ?? (j['usage'] as Map?)?['isEstimated']) as bool?,
     runId: j['run_id'] as String,
     deviceId: j['device_id'] as String,
     deviceName: j['device_name'] as String,
@@ -82,26 +127,36 @@ class ModelRunRecord {
         ? null
         : sanitizeModelRunError(j['error_brief'] as String),
   );
-  ModelRunRecord advance(String status, int now, {String? error}) =>
-      ModelRunRecord(
-        runId: runId,
-        deviceId: deviceId,
-        deviceName: deviceName,
-        conversationId: conversationId,
-        turnId: turnId,
-        purpose: purpose,
-        providerId: providerId,
-        model: model,
-        attempt: attempt,
-        status: status,
-        stageSeq: status == 'running' ? (stageSeq + 1).clamp(1, 999) : 1000,
-        startedAtMs: startedAtMs,
-        updatedAtMs: now,
-        endedAtMs: status == 'running' ? null : now,
-        durationMs: status == 'running' ? null : now - startedAtMs,
-        leaseUntilMs: now + 180000,
-        errorBrief: error == null ? null : sanitizeModelRunError(error),
-      );
+  ModelRunRecord advance(
+    String status,
+    int now, {
+    String? error,
+    TokenUsage? usage,
+  }) => ModelRunRecord(
+    inputTokens: usage?.inputTokens ?? inputTokens,
+    outputTokens: usage?.outputTokens ?? outputTokens,
+    cachedInputTokens: usage?.cachedInputTokens ?? cachedInputTokens,
+    cacheWriteTokens: usage?.cacheWriteTokens ?? cacheWriteTokens,
+    reasoningTokens: usage?.reasoningTokens ?? reasoningTokens,
+    usageEstimated: usage?.isEstimated ?? usageEstimated,
+    runId: runId,
+    deviceId: deviceId,
+    deviceName: deviceName,
+    conversationId: conversationId,
+    turnId: turnId,
+    purpose: purpose,
+    providerId: providerId,
+    model: model,
+    attempt: attempt,
+    status: status,
+    stageSeq: status == 'running' ? (stageSeq + 1).clamp(1, 999) : 1000,
+    startedAtMs: startedAtMs,
+    updatedAtMs: now,
+    endedAtMs: status == 'running' ? null : now,
+    durationMs: status == 'running' ? null : now - startedAtMs,
+    leaseUntilMs: now + 180000,
+    errorBrief: error == null ? null : sanitizeModelRunError(error),
+  );
 }
 
 String sanitizeModelRunError(String error) {

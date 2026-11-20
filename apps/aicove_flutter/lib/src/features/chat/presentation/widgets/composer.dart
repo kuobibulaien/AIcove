@@ -109,6 +109,9 @@ class _ComposerState extends ConsumerState<Composer> {
 
   final _rootKey = GlobalKey();
   final _ctrl = TextEditingController();
+  late final ValueNotifier<bool> _hasNonEmptyText = ValueNotifier<bool>(
+    _ctrl.text.trim().isNotEmpty,
+  );
   final _inputFocus = FocusNode();
   Timer? _draftSaveTimer;
   AppLifecycleListener? _appLifecycleListener;
@@ -164,6 +167,7 @@ class _ComposerState extends ConsumerState<Composer> {
     }
     // 监听输入变化，自动保存草稿
     _ctrl.addListener(_onTextChanged);
+    _ctrl.addListener(_syncNonEmptyText);
     _appLifecycleListener = AppLifecycleListener(
       onStateChange: (state) {
         switch (state) {
@@ -279,6 +283,13 @@ class _ComposerState extends ConsumerState<Composer> {
     onHeightChanged(height);
   }
 
+  void _syncNonEmptyText() {
+    final hasText = _ctrl.text.trim().isNotEmpty;
+    if (_hasNonEmptyText.value != hasText) {
+      _hasNonEmptyText.value = hasText;
+    }
+  }
+
   @override
   void dispose() {
     _keyboardGuardTimer?.cancel();
@@ -291,6 +302,8 @@ class _ComposerState extends ConsumerState<Composer> {
     );
     _appLifecycleListener?.dispose();
     _ctrl.removeListener(_onTextChanged);
+    _ctrl.removeListener(_syncNonEmptyText);
+    _hasNonEmptyText.dispose();
     _inputFocus.removeListener(_onDesktopFocusChange);
     _ctrl.dispose();
     _inputFocus.dispose();

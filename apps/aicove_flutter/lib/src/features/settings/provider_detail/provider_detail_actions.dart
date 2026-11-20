@@ -93,6 +93,19 @@ class ProviderDetailActions {
     );
   }
 
+  Future<void> savePriceMultiplier(ProviderAuth provider, double? multiplier) =>
+      setPriceMultiplier(provider, multiplier);
+
+  Future<void> setPriceMultiplier(ProviderAuth provider, double? multiplier) {
+    return _notifier.editProvider(
+      providerId: provider.id,
+      customConfig: buildProviderCustomConfigForPriceMultiplier(
+        provider: provider,
+        multiplier: multiplier,
+      ),
+    );
+  }
+
   Future<void> deleteProvider(String providerId) {
     return _notifier.deleteProvider(providerId);
   }
@@ -157,10 +170,30 @@ class ProviderDetailActions {
             Map<String, dynamic>.of(TtsRequestFormat.defaultCustomRestTemplate),
       );
     }
-    customConfig = copyCustomConfigWithProviderChatApiPath(
-      customConfig,
-      apiPath,
-    );
+    final settings = _settings;
+    final hasChatModel = provider.models.any((model) =>
+        (settings == null
+            ? resolveEffectiveModelType(
+                providerId: provider.id,
+                rawModelId: model,
+                defaultType: providerDefaultModelType(provider),
+              )
+            : settings.getModelType(settings.buildModelRef(provider.id, model))) ==
+        ModelType.chat);
+    final isDedicatedImageFormat =
+        format == ProviderDetailRequestFormat.novelai ||
+        format == ProviderDetailRequestFormat.comfyui;
+    if (isDedicatedImageFormat) {
+      customConfig.remove('apiPath');
+    } else {
+      customConfig = copyCustomConfigWithProviderChatApiPath(
+        customConfig,
+        format == ProviderDetailRequestFormat.openai &&
+                !hasChatModel && !provider.capabilities.contains('chat')
+            ? ''
+            : apiPath,
+      );
+    }
     return _notifier.editProvider(
       providerId: provider.id,
       customConfig: customConfig,
@@ -283,11 +316,13 @@ class ProviderDetailActions {
     required ProviderAuth provider,
     required String modelId,
     String? displayName,
+    ModelType? modelType,
   }) {
     return _notifier.addCustomModel(
       providerId: provider.id,
       modelId: modelId,
       displayName: displayName,
+      modelType: modelType,
     );
   }
 }

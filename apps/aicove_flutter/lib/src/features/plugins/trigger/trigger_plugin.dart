@@ -31,32 +31,6 @@ action=create：创建提醒，必须提供 title 和 time，可用 prompt 指�
 action=list：查询提醒；提供非空 query 时搜索，否则列出提醒，可用 include_completed 和 limit 控制结果。
 action=delete：取消提醒，优先提供 id，不知道 id 时提供 query。''';
 
-  static const String defaultCreateReminderDescription = '''
-创建一个定时提醒。当用户明确要求设置提醒、闹钟、定时任务时调用此工具。
-使用场景：
-- "明天早上8点叫我起床"
-- "2小时后提醒我喝水"
-- "下午3点提醒我开会"
-
-不要在用户没有明确要求时调用此工具。''';
-  static const String defaultDeleteReminderDescription = '''
-删除一个已存在的提醒。当用户要求取消、删除某个提醒时调用。
-使用场景：
-- "取消明天的闹钟"
-- "不用提醒我了"
-- "把那个提醒删掉"
-
-参数规则：
-- 优先传 id（最准确）
-- 如果没有 id，请传 query（例如 "明天早上叫我起床" / "起床闹钟"），工具内部会 search
-''';
-  static const String defaultListRemindersDescription = '''
-列出提醒列表（触发器列表）。当用户问“我有哪些提醒/闹钟/待办”时调用。
-返回 JSON 数组，包含每条提醒的 id/title/next_fire_at/status/priority 等。''';
-  static const String defaultSearchRemindersDescription = '''
-搜索提醒列表。适用于：用户说“把那个起床提醒删掉”“取消明天的闹钟”，但没有 id。
-返回 JSON 数组，包含候选提醒的 id/title/next_fire_at 等。''';
-
   // (注释已丢失)
   static final _metadata = PluginMetadata(
     id: 'trigger',
@@ -138,12 +112,13 @@ action=delete：取消提醒，优先提供 id，不知道 id 时提供 query。
     if (!enabledForConversation(conversationId)) return [];
 
     final boundId = conversationId?.trim();
-    return [_reminderTool(boundId)];
+    return [_reminderTool(boundId, prompts ?? const PluginPrompts())];
   }
 
-  AITool _reminderTool(String? conversationId) => AITool(
+  AITool _reminderTool(String? conversationId, PluginPrompts prompts) =>
+      AITool(
     name: 'reminder',
-    description: defaultReminderDescription,
+    description: prompts.of(PluginPromptSlot.reminderTool),
     parameters: const {
       'action': ToolParameter(
         type: 'string',

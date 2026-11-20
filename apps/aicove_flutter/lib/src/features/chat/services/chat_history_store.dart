@@ -301,32 +301,67 @@ class ChatHistoryStore {
     return _buildRawMessagesFromDb(dbMessages);
   }
 
+  Future<List<Message>> loadRawMessagesForContext(
+    String conversationId, {
+    String? contextStartMessageId,
+  }) async {
+    final boundary = contextStartMessageId?.trim() ?? '';
+    if (boundary.isEmpty) return loadAllRawMessages(conversationId);
+    final dbMessages = await _ref
+        .read(messageRepositoryProvider)
+        .getByConversationAfterBoundaryOrderedStable(
+          conversationId,
+          boundaryMessageId: boundary,
+        );
+    return _buildRawMessagesFromDb(dbMessages);
+  }
+
   Future<void> recoverInterruptedUserMessages(
     String conversationId, {
     required bool Function(String messageId) isActiveSend,
   }) async {
-    final recovered = await _ref
-        .read(messageRepositoryProvider)
-        .recoverInterruptedUserMessages(
-          conversationId,
-          isActiveSend: isActiveSend,
-        );
+    final msgRepo = _ref.read(messageRepositoryProvider);
+    final recovered = await msgRepo.recoverInterruptedUserMessages(
+      conversationId,
+      isActiveSend: isActiveSend,
+    );
     if (recovered.isEmpty) return;
 
     // Patch only affected messages: reloading the entire timeline would drop
     // a different, still-live send's transient assistant placeholders.
     final messages = <Message>[];
+    final deletedRawIds = <String>{};
     for (final id in recovered) {
-      messages.addAll(await _loadFrontendMessagesForMessageId(
-        id,
+      final dbMessage = await msgRepo.getById(id);
+      if (dbMessage == null ||
+          dbMessage.deletedAt != null ||
+          dbMessage.replacedBy != null) {
+        deletedRawIds.add(id);
+        continue;
+      }
+      messages.addAll(
+        await _loadFrontendMessagesForMessageId(
+          id,
+          conversationId: conversationId,
+        ),
+      );
+    }
+    if (deletedRawIds.isNotEmpty) {
+      await _removeMessagesFromShortWindowByRawIds(
         conversationId: conversationId,
-      ));
+        rawMessageIds: deletedRawIds,
+      );
+      await _ref
+          .read(conversationTimelineCacheProvider)
+          .clearHiddenEntriesForRawMessages(
+            conversationId: conversationId,
+            rawMessageIds: deletedRawIds,
+          );
     }
     if (messages.isNotEmpty) {
-      await _ref.read(conversationTimelineCacheProvider).upsertMessages(
-            conversationId: conversationId,
-            messages: messages,
-          );
+      await _ref
+          .read(conversationTimelineCacheProvider)
+          .upsertMessages(conversationId: conversationId, messages: messages);
     }
   }
 

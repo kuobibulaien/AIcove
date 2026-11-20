@@ -52,6 +52,61 @@ void main() {
       await db.close();
     });
 
+    test('边界查询严格排除锚点及此前同毫秒消息，并拒绝无效锚点', () async {
+      const conversationId = 'conv_stable_order';
+      final time = DateTime(2026, 4, 4);
+      for (final id in [
+        'before',
+        'anchor',
+        'z_after',
+        'a_after',
+        'deleted',
+        'replaced',
+      ]) {
+        await _insertMessage(
+          db,
+          id: id,
+          conversationId: conversationId,
+          role: 'user',
+          createdAt: time,
+        );
+      }
+      await db.customStatement(
+        "UPDATE messages SET deleted_at = 1 WHERE id = 'deleted'",
+      );
+      await db.customStatement(
+        "UPDATE messages SET replaced_by = 'a_after' WHERE id = 'replaced'",
+      );
+      await _insertConversation(db, 'other');
+      await _insertMessage(
+        db,
+        id: 'foreign',
+        conversationId: 'other',
+        role: 'user',
+        createdAt: time,
+      );
+      final rows = await repository.getByConversationAfterBoundaryOrderedStable(
+        conversationId,
+        boundaryMessageId: 'anchor',
+      );
+      expect(rows.map((row) => row.id), ['z_after', 'a_after']);
+      for (final invalid in ['missing', 'deleted', 'replaced', 'foreign']) {
+        await expectLater(
+          repository.getByConversationAfterBoundaryOrderedStable(
+            conversationId,
+            boundaryMessageId: invalid,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              '话题边界已失效，请先恢复或撤销上次压缩，本轮未发送。',
+            ),
+          ),
+        );
+      }
+    });
+
     test('全量升序读取在同一时间戳下应保留真实入库顺序', () async {
       final createdAt = DateTime(2026, 4, 4, 12, 0, 0);
 

@@ -146,46 +146,57 @@ class _MoeFloatingSurfaceState extends State<MoeFloatingSurface> {
       child: content,
     );
 
+    final stack = Stack(
+      fit: StackFit.passthrough,
+      children: [
+        // Frosted keeps its filter at zero blur: the vibrancy matrix
+        // still follows the fill.
+        if (isBlurEnabled &&
+            (isFrosted || baseline.blurSigma(effectiveSigma) > 0))
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                backdropGroupKey: MoeSharedBackdrop.keyOf(context),
+                filter: isFrosted
+                    ? MoeFrostedMaterial.surfaceFilter(
+                        brightness,
+                        sigma: effectiveSigma,
+                        fill: tintFill,
+                      )
+                    : ui.ImageFilter.blur(
+                        sigmaX: baseline.blurSigma(effectiveSigma),
+                        sigmaY: baseline.blurSigma(effectiveSigma),
+                      ),
+                child: const SizedBox.expand(),
+              ),
+            ),
+          ),
+        // Keep nested liquid surfaces outside the blur's compositing pass.
+        // Its backdrop texture origin can differ from screen coordinates.
+        surfaceMaterial,
+      ],
+    );
+
+    final Widget clipped;
+    if (maxCorner <= 0) {
+      clipped = ClipRect(child: stack);
+    } else if (surfaceShape is RoundedRectangleBorder) {
+      clipped = ClipRRect(borderRadius: effectiveRadius, child: stack);
+    } else {
+      clipped = ClipPath(
+        clipper: ShapeBorderClipper(
+          shape: surfaceShape.copyWith(side: BorderSide.none),
+        ),
+        child: stack,
+      );
+    }
+
     return DecoratedBox(
       decoration: ShapeDecoration(
         shape: surfaceShape.copyWith(side: BorderSide.none),
         shadows: shadows ?? colors.floatingShadows,
       ),
-      child: ClipPath(
-        clipper: ShapeBorderClipper(
-          shape: surfaceShape.copyWith(side: BorderSide.none),
-        ),
-        child: Stack(
-          fit: StackFit.passthrough,
-          children: [
-            // Frosted keeps its filter at zero blur: the vibrancy matrix
-            // still follows the fill.
-            if (isBlurEnabled &&
-                (isFrosted || baseline.blurSigma(effectiveSigma) > 0))
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: BackdropFilter(
-                    backdropGroupKey: MoeSharedBackdrop.keyOf(context),
-                    filter: isFrosted
-                        ? MoeFrostedMaterial.surfaceFilter(
-                            brightness,
-                            sigma: effectiveSigma,
-                            fill: tintFill,
-                          )
-                        : ui.ImageFilter.blur(
-                            sigmaX: baseline.blurSigma(effectiveSigma),
-                            sigmaY: baseline.blurSigma(effectiveSigma),
-                          ),
-                    child: const SizedBox.expand(),
-                  ),
-                ),
-              ),
-            // Keep nested liquid surfaces outside the blur's compositing pass.
-            // Its backdrop texture origin can differ from screen coordinates.
-            surfaceMaterial,
-          ],
-        ),
-      ),
+      child: clipped,
     );
   }
 }

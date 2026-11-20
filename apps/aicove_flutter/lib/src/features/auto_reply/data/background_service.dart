@@ -1,6 +1,7 @@
 // ignore_for_file: avoid_print
 // 注意：此文件在后台 isolate 中运行，无法使用 AppLogger（依赖 Flutter framework）。
 // 这里的 print 语句仅用于后台调试，在 release 模式下不会输出。
+import '../../observability/token_usage_ledger.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -69,9 +70,15 @@ BackgroundAssistantStoragePayload buildBackgroundAssistantStoragePayload(
   String reply,
 ) {
   final rawText = reply.trim();
-  final processedText = chatMessageProcessor.stripPluginTags(rawText).trim();
+  // Legacy emoji markup is not registered by the first-party scanner.
+  // Normalize only the display input; preserve the original model reply.
+  final displayInput = rawText.replaceAllMapped(
+    RegExp(r'<(/?)emoji(?=[\s/>])', caseSensitive: false),
+    (match) => '<${match[1]}sticker',
+  );
+  final processedText = chatMessageProcessor.stripPluginTags(displayInput).trim();
   final displayText = _resolveBackgroundDisplayText(
-    rawText: rawText,
+    rawText: displayInput,
     processedText: processedText,
   );
   final payloadProcessedText = processedText.isNotEmpty
@@ -80,7 +87,7 @@ BackgroundAssistantStoragePayload buildBackgroundAssistantStoragePayload(
   final rawPayload = ChatMessageProjectionCodec.buildRawAssistantPayload(
     apiResult: ApiCallResult(
       rawReplyText: rawText,
-      replyText: rawText,
+      replyText: displayText,
       processedText: payloadProcessedText,
       pluginEvents: const [],
       toolResults: const [],
@@ -352,6 +359,7 @@ Future<AppDatabase> _taskDatabase() async {
     await db.close();
     return raced;
   }
+  TokenUsageLedger.instance.bindDatabase(db, isBackgroundIsolate: true);
   return _taskDb = db;
 }
 
@@ -364,6 +372,7 @@ Future<void> _runActiveReplyTask(Map<String, dynamic> data) async {
     _taskDb = null;
     _taskClock = null;
     try {
+      if (db != null) TokenUsageLedger.instance.unbindDatabase(db);
       await db?.close();
     } finally {
       await _syncBackgroundTriggerAlarm();
@@ -403,15 +412,14 @@ String _resolveBackgroundDisplayText({
   if (processedText.isNotEmpty) {
     return processedText;
   }
-  if (firstPartyContentTagScanner
-      .scan(rawText)
-      .any(
-        (segment) =>
-            segment is ContentTagElement &&
-            segment.closed &&
-            ImagePlugin.isInlineImageElement(segment),
-      )) {
-    return '[图片]';
+  final segments = firstPartyContentTagScanner.scan(rawText);
+  for (final segment in segments) {
+    if (segment is! ContentTagElement || !segment.closed) continue;
+    if (ImagePlugin.isInlineImageElement(segment)) return '[图片]';
+    if (segment.spec.name == 'sticker' || segment.spec.name == 'emoji') {
+      final tag = (segment.attributes['tag'] ?? segment.inner).trim();
+      return tag.isEmpty ? '[表情]' : '[表情：$tag]';
+    }
   }
   return rawText;
 }
@@ -472,6 +480,7 @@ Future<void> proactiveAlarmEntrypoint() async {
     DartPluginRegistrant.ensureInitialized();
     ModelRequestLedger.useBackgroundLane = true;
     db = AppDatabase();
+    TokenUsageLedger.instance.bindDatabase(db, isBackgroundIsolate: true);
     container = ProviderContainer(overrides: [
       databaseProvider.overrideWithValue(db),
     ]);
@@ -493,6 +502,7 @@ Future<void> proactiveAlarmEntrypoint() async {
       try {
         container?.dispose();
       } finally {
+        if (db != null) TokenUsageLedger.instance.unbindDatabase(db);
         await db?.close();
       }
     } finally {
@@ -1033,7 +1043,12 @@ Future<void> _handleActiveReplyTask(Map<String, dynamic> data) async {
   );
   try {
     if (mayNotify) {
-      await _showNotification(characterName, storagePayload.displayText);
+      await _showNotification(
+        characterName,
+        storagePayload.displayText,
+        conversationId: convId,
+        triggerId: triggerId,
+      );
     }
   } catch (e) {
     await _appendHistoryLog(
@@ -1496,7 +1511,12 @@ Future<bool> _handleClaimLost({
   }
 }
 
-Future<void> _showNotification(String title, String body) async {
+Future<void> _showNotification(
+  String title,
+  String body, {
+  String? conversationId,
+  String? triggerId,
+}) async {
   final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
   const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
   const initSettings = InitializationSettings(android: androidSettings);
@@ -1505,7 +1525,9 @@ Future<void> _showNotification(String title, String body) async {
   await flutterLocalNotificationsPlugin.initialize(initSettings);
 
   await flutterLocalNotificationsPlugin.show(
-    Random().nextInt(100000), // ID
+    triggerId?.trim().isNotEmpty == true
+        ? activeReplyNotificationId(triggerId!.trim())
+        : Random().nextInt(100000),
     title,
     body,
     const NotificationDetails(
@@ -1518,6 +1540,9 @@ Future<void> _showNotification(String title, String body) async {
         styleInformation: BigTextStyleInformation(''), // 支持长文本
       ),
     ),
+    payload: conversationId?.trim().isNotEmpty == true
+        ? '$activeReplyPayloadPrefix${conversationId!.trim()}'
+        : null,
   );
 }
 

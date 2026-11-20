@@ -75,6 +75,26 @@ class ConversationTurnLog {
   });
 }
 
+/// 用量与日志页面顶层分栏
+enum LogCenterSection {
+  billing('用量账单'),
+  logs('运行日志');
+
+  const LogCenterSection(this.label);
+  final String label;
+}
+
+/// 精简后的运行日志单排筛选视图
+enum LogQuickFilter {
+  all('全部'),
+  conversation('对话'),
+  api('网络'),
+  attention('只看异常');
+
+  const LogQuickFilter(this.label);
+  final String label;
+}
+
 /// 日志类型筛选选项
 enum LogTypeFilter {
   all('全部'),

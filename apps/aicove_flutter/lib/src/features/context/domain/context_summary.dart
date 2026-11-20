@@ -78,27 +78,46 @@ class ContextSnapshot {
       .toString();
 }
 
-/// 原文指纹：原文被编辑、删除后，基于它的摘要自动失效。
+/// 原文语义指纹：用于草稿并发检查及自动摘要来源校验。
 String contextSourceDigest(Iterable<Message> messages) => sha256
     .convert(
       utf8.encode(
         jsonEncode(
-          messages
-              .map(
-                (m) => [
-                  m.id, m.role, m.content,
-                  m.createdAt.millisecondsSinceEpoch, m.status,
-                  // 块反序列化会重建 createdAt；排除块的派生时间，保留其余内容。
-                  m.blocks
-                      ?.map(
-                        (b) => Map<String, dynamic>.of(b.toJson())
-                          ..remove('createdAt')
-                          ..remove('updatedAt'),
-                      )
-                      .toList(),
-                ],
-              )
-              .toList(),
+          messages.map((m) {
+            // 排除设备路径、播放状态和内部生图记录，保留语义内容。
+            final blocks = m.blocks
+                ?.map((b) => Map<String, dynamic>.of(b.toJson()))
+                .where(
+                  (b) =>
+                      !(b['type'] == 'tool' &&
+                          b['toolName'] == 'image_context'),
+                )
+                .map(
+                  (b) => b
+                    ..removeWhere(
+                      (key, _) => const {
+                        'createdAt',
+                        'updatedAt',
+                        'unread',
+                        'path',
+                        'localPath',
+                        'url',
+                        'base64',
+                        'versions',
+                        'activeVersionIndex',
+                      }.contains(key),
+                    ),
+                )
+                .toList();
+            return [
+              m.id,
+              m.role,
+              m.content,
+              m.createdAt.millisecondsSinceEpoch,
+              m.status,
+              blocks == null || blocks.isEmpty ? null : blocks,
+            ];
+          }).toList(),
         ),
       ),
     )
@@ -142,7 +161,7 @@ abstract interface class ContextSummaryStorePort {
   /// 当前话题（边界之后）的手动压缩快照。
   Future<ContextSnapshot> manualSnapshot(String ownerId);
 
-  /// 边界正好对应的有效手动摘要；来源被改动过则返回 null。
+  /// 边界正好对应的手动摘要；边界消息不存在则返回 null。
   Future<ContextSummary?> manualFor(String ownerId, String? boundaryId);
 
   Future<ContextSummary> commitManual(ContextSnapshot snapshot, String summary);

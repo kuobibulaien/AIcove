@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:image/image.dart' as img;
+import 'package:aicove_flutter/src/core/database/converters/database_converters.dart';
+import 'package:aicove_flutter/src/core/models/message_block.dart';
 import 'package:aicove_flutter/src/features/chat/domain/conversation.dart';
 import 'package:aicove_flutter/src/features/chat/domain/message.dart';
 import 'package:aicove_flutter/src/features/context/application/context_manager.dart';
@@ -350,6 +353,128 @@ void main() {
       expect(await keeper.pendingMessages('role'), isEmpty);
     },
   );
+
+  test('LAN 媒体块跨设备改写路径后直接命中手动与自动摘要，不重跑模型', () async {
+    await fixture.seedLan(a);
+    final png = img.encodePng(img.Image(width: 1, height: 1));
+    final image = File('${root.path}/image.png')..writeAsBytesSync(png);
+    final audio = File('${root.path}/audio.wav')
+      ..writeAsBytesSync(List.filled(64, 0));
+    final emoji = File('${root.path}/emoji.png')..writeAsBytesSync(png);
+    final blocks = <MessageBlock>[
+      EmojiBlock(
+        id: 'e',
+        messageId: 'message',
+        emojiId: 'emoji',
+        path: emoji.path,
+        matchedTag: '开心',
+      ),
+      AudioBlock(
+        id: 'a',
+        messageId: 'message',
+        url: audio.path,
+        text: '你好',
+        unread: true,
+      ),
+      ImageBlock(
+        id: 'i',
+        messageId: 'message',
+        localPath: image.path,
+        prompt: '海边',
+      ),
+    ];
+    for (var i = 0; i < blocks.length; i++) {
+      await a.local.db
+          .into(a.local.db.messageBlocks)
+          .insert(MessageBlockConverter.toCompanion(blocks[i], 'message', i));
+    }
+    Future<List<Message>> load(fixture.LanTestDevice device, String _) async {
+      final messages = await device.local.db
+          .select(device.local.db.messages)
+          .get();
+      final rows = await device.local.db
+          .select(device.local.db.messageBlocks)
+          .get();
+      rows.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+      return [
+        for (final m in messages)
+          MessageConverter.fromDb(
+            m,
+            blocks: [
+              for (final row in rows.where((b) => b.messageId == m.id))
+                MessageBlockConverter.fromDb(row)!,
+            ],
+          ),
+      ];
+    }
+
+    final storeA = SqliteContextSummaryStore(
+      a.local.db,
+      (owner) => load(a, owner),
+    );
+    final snapshot = await storeA.manualSnapshot('role');
+    final manual = await storeA.commitManual(snapshot, '媒体手动摘要');
+    final autoSnapshot = ContextSnapshot(
+      ownerId: 'role',
+      previousBoundaryId: manual.boundaryId,
+      allMessages: snapshot.allMessages,
+      messages: snapshot.messages,
+      previous: null,
+    );
+    final auto = await storeA.saveAuto(autoSnapshot, '媒体自动摘要');
+    await a.repo.capture();
+    await for (final record in a.media.records()) {
+      await b.media.receive(record.asset, now: DateTime.now(), download: false);
+    }
+    final page = await a.repo.manifestForPeer(
+      after: '',
+      includeContextMemory: true,
+    );
+    for (final item in page['items'] as List) {
+      for (final hash in (item['hashes'] as List).cast<String>()) {
+        await b.repo.receive(await a.repo.revision(hash));
+      }
+    }
+    final received = await load(b, 'role');
+    expect(received.single.blocks, hasLength(3));
+    expect(
+      received.single.blocks!.whereType<EmojiBlock>().single.path,
+      isNot(emoji.path),
+    );
+    expect(
+      received.single.blocks!.whereType<AudioBlock>().single.url,
+      isNot(audio.path),
+    );
+    expect(
+      received.single.blocks!.whereType<ImageBlock>().single.localPath,
+      isNot(image.path),
+    );
+    final storeB = SqliteContextSummaryStore(
+      b.local.db,
+      (owner) => load(b, owner),
+    );
+    var modelRequests = 0;
+    final manager = ContextManager(
+      store: storeB,
+      loadMessages: (owner) => load(b, owner),
+      readBoundary: (_) async => manual.boundaryId,
+      summarizerFactory: () async {
+        modelRequests++;
+        throw StateError('must reuse');
+      },
+      publishBoundary: (_) async {},
+      ensureIdle: (_) {},
+    );
+    expect(
+      (await manager.manualSummary('role', manual.boundaryId, []))?.id,
+      manual.id,
+    );
+    expect(
+      (await manager.loadAuto('role', manual.boundaryId, received))?.id,
+      auto.id,
+    );
+    expect(modelRequests, 0);
+  });
 
   test('paired LAN negotiates old listings and syncs an empty device', () async {
     await fixture.seedLan(a);

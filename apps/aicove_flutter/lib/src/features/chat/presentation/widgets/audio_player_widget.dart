@@ -5,7 +5,6 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../ui/theme/tokens.dart';
-import '../../../../ui/shared/effects/smooth_clip.dart';
 import '../../../../core/models/message_block.dart';
 import '../../../../core/models/block_status.dart';
 import '../../../observability/frontend_diagnostics_port.dart';
@@ -251,48 +250,50 @@ class _AnimatedWaveformState extends State<_AnimatedWaveform>
     // 降低波形高度以匹配文本消息高度
     const double height = 20.0;
 
-    return SizedBox(
-      height: height,
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          return Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: List.generate(widget.barCount, (index) {
-              // 波形动画逻辑
-              double heightFactor = 0.4; // 默认静止高度
+    return RepaintBoundary(
+      child: SizedBox(
+        height: height,
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, child) {
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: List.generate(widget.barCount, (index) {
+                // 波形动画逻辑
+                double heightFactor = 0.4; // 默认静止高度
 
-              if (widget.isPlaying) {
-                // 使用正弦波 + 随机种子产生波动效果
-                final progress = _controller.value;
-                final offset = index / widget.barCount;
-                final wave = sin((progress + offset) * 2 * pi);
-                // 归一化到 0.3 ~ 1.0
-                heightFactor =
-                    0.3 +
-                    ((wave + 1) / 2) *
-                        0.7 *
-                        _randomSeeds[index % _randomSeeds.length];
-              } else {
-                // 静止时也保留一点随机高度，看起来像真实的波形
-                heightFactor =
-                    0.3 + 0.4 * _randomSeeds[index % _randomSeeds.length];
-              }
+                if (widget.isPlaying) {
+                  // 使用正弦波 + 随机种子产生波动效果
+                  final progress = _controller.value;
+                  final offset = index / widget.barCount;
+                  final wave = sin((progress + offset) * 2 * pi);
+                  // 归一化到 0.3 ~ 1.0
+                  heightFactor =
+                      0.3 +
+                      ((wave + 1) / 2) *
+                          0.7 *
+                          _randomSeeds[index % _randomSeeds.length];
+                } else {
+                  // 静止时也保留一点随机高度，看起来像真实的波形
+                  heightFactor =
+                      0.3 + 0.4 * _randomSeeds[index % _randomSeeds.length];
+                }
 
-              return Container(
-                width: 3,
-                height: height * heightFactor,
-                decoration: MoeG2Decoration(
-                  radius: 1.5,
-                  color: widget.color.withValues(
-                    alpha: widget.isPlaying ? 0.9 : 0.6,
+                return Container(
+                  width: 3,
+                  height: height * heightFactor,
+                  decoration: BoxDecoration(
+                    borderRadius: const BorderRadius.all(Radius.circular(1.5)),
+                    color: widget.color.withValues(
+                      alpha: widget.isPlaying ? 0.9 : 0.6,
+                    ),
                   ),
-                ),
-              );
-            }),
-          );
-        },
+                );
+              }),
+            );
+          },
+        ),
       ),
     );
   }

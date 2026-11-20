@@ -98,10 +98,50 @@ class _AgentApiDirectChatSupport {
       'promptPreview': promptPreview.preview,
     });
 
+    final sw = Stopwatch();
+    final receivedBytes = <int>[];
+    int? responseStatus;
+    TokenUsage? usage;
+    var usageRecorded = false;
+    DateTime? requestSentAt;
+    Future<void> recordUsage({
+      String output = '',
+      String reasoning = '',
+      List<ToolCall> calls = const [],
+    }) async {
+      if (usageRecorded ||
+          responseStatus == null ||
+          responseStatus < 200 ||
+          responseStatus >= 300) {
+        return;
+      }
+      usage ??= TokenUsage.estimate(
+        messages: chatMessages,
+        tools: tools,
+        outputText: output,
+        reasoningText: reasoning,
+        toolCalls: calls,
+      );
+      await TokenUsageLedger.instance.recordHttpRound(
+        requestId:
+            '${traceId ?? turnId ?? sessionId}:$round:${requestSentAt!.microsecondsSinceEpoch}',
+        providerId: provider,
+        model: model,
+        usage: usage!,
+        occurredAt: requestSentAt,
+        conversationId:
+            TokenUsageCaptureScope.current?.conversationId ?? sessionId,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        durationMs: sw.elapsedMilliseconds,
+      );
+      usageRecorded = true;
+    }
+
     var traceResponseRecorded = false;
     var apiLogRecorded = false;
     try {
-      final requestSentAt = await _owner._recordModelRequestSent(
+      requestSentAt = await _owner._recordModelRequestSent(
         traceId: traceId,
         sessionId: sessionId,
         turnId: turnId,
@@ -110,20 +150,39 @@ class _AgentApiDirectChatSupport {
         provider: provider,
       );
 
-      final sw = Stopwatch()..start();
+      sw.start();
       final request = RequestControl.request('POST', requestUri)
         ..headers.addAll(headers)
         ..bodyBytes = preparedRequest.requestBodyBytes;
-      final resp = await modelTransportRequest(() async => http.Response.fromStream(
-        await _client.send(request).timeout(timeout),
-      ).timeout(timeout));
+      final streamedResponse = await modelTransportRequest(
+        () => _client.send(request).timeout(timeout),
+      );
+      responseStatus = streamedResponse.statusCode;
+      final resp = await modelTransportRequest(
+        () => http.Response.fromStream(
+          http.StreamedResponse(
+            modelTransportStream(streamedResponse.stream.timeout(timeout)).map((chunk) {
+              receivedBytes.addAll(chunk);
+              return chunk;
+            }),
+            streamedResponse.statusCode,
+            headers: streamedResponse.headers,
+          ),
+        ).timeout(timeout),
+      );
       sw.stop();
 
       final responseBodyStr = utf8.decode(resp.bodyBytes);
 
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
         final data = jsonDecode(responseBodyStr) as Map<String, dynamic>;
+        usage = _parseHttpUsage(adapter.name, data);
         final result = adapter.parseResponse(data);
+        await recordUsage(
+          output: result.text,
+          reasoning: result.reasoning,
+          calls: result.toolCalls,
+        );
         final payloadRef = await _owner._buildApiPayloadRef(
           sessionId: sessionId,
           turnId: turnId,
@@ -156,6 +215,7 @@ class _AgentApiDirectChatSupport {
               'statusCode': resp.statusCode,
               'toolCalls': result.toolCalls.length,
               'textLength': result.text.length,
+              ..._usageMetadata(usage),
             },
           );
           traceEventSeq = traceEvent.eventSeq;
@@ -171,6 +231,12 @@ class _AgentApiDirectChatSupport {
           requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(responseBodyStr),
           ok: true,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cachedInputTokens: usage?.cachedInputTokens,
+          cacheWriteTokens: usage?.cacheWriteTokens,
+          reasoningTokens: usage?.reasoningTokens,
+          usageEstimated: usage?.isEstimated,
           rawContext: logContextJson,
           rawAiResponse: result.text,
           rawRequestBody: logRequestBodyJson,
@@ -201,6 +267,7 @@ class _AgentApiDirectChatSupport {
 
         return SendMessageRichResult(
           text: result.text,
+          usage: usage,
           toolResults: result.toolResults,
           toolCalls: result.toolCalls,
           hiddenThoughtParts: result.hiddenThoughtParts,
@@ -278,6 +345,14 @@ class _AgentApiDirectChatSupport {
       throw modelRequestFailure(ModelHttpException(resp.statusCode, resp.body,
         retryAfter: ModelHttpException.parseRetryAfter(resp.headers['retry-after'])));
     } catch (e) {
+      sw.stop();
+      // A 2xx response may be truncated before a complete JSON body arrives.
+      final partialBody = utf8.decode(receivedBytes, allowMalformed: true);
+      final partialText =
+          RegExp(
+            r'"(?:content|text|output_text)"\s*:\s*"((?:\\.|[^"\\])*)',
+          ).allMatches(partialBody).map((match) => match.group(1) ?? '').join();
+      await recordUsage(output: partialText);
       Map<String, dynamic>? catchPayloadRef;
       int? catchTraceEventSeq;
       if (traceId != null && !traceResponseRecorded) {
@@ -304,7 +379,7 @@ class _AgentApiDirectChatSupport {
           status: TraceEventStatus.failed,
           source: 'AgentApiClient',
           payloadRef: catchPayloadRef,
-          meta: {'error': e.toString()},
+          meta: {'error': e.toString(), ..._usageMetadata(usage)},
         );
         catchTraceEventSeq = traceEvent.eventSeq;
         traceResponseRecorded = true;
@@ -328,8 +403,14 @@ class _AgentApiDirectChatSupport {
           time: DateTime.now(),
           method: 'POST',
           url: endpoint,
-          status: null,
-          durationMs: 0,
+          status: responseStatus,
+          durationMs: sw.elapsedMilliseconds,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cachedInputTokens: usage?.cachedInputTokens,
+          cacheWriteTokens: usage?.cacheWriteTokens,
+          reasoningTokens: usage?.reasoningTokens,
+          usageEstimated: usage?.isEstimated,
           requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(e.toString()),
           ok: false,

@@ -54,6 +54,7 @@ class _DraftGenerator extends ProactiveReplyGenerator {
     required Conversation conversation,
     required String? reminder,
     DateTime? requestTime,
+    String? modelRef,
   }) async {
     this.reminder = reminder;
     return ApiConfig(
@@ -186,10 +187,7 @@ void main() {
       'timeContextGuide': '时间指南 {current_time_explanation}',
       'webSearchTool': '自定义搜索',
       'webFetchTool': '自定义读取',
-      'createReminderTool': '自定义创建',
-      'deleteReminderTool': '自定义取消',
-      'listRemindersTool': '自定义列表',
-      'searchRemindersTool': '自定义查找',
+      'reminderTool': '自定义提醒',
     });
     final time = TimeAwarenessPlugin(TimeAwarenessConfig());
     final web = WebSearchPlugin(
@@ -249,7 +247,7 @@ void main() {
           .singleWhere((s) => s.pluginId == 'trigger')
           .tools()
           .map((t) => t.description),
-      ['自定义创建', '自定义取消', '自定义列表', '自定义查找'],
+      ['自定义提醒'],
     );
     expect(
       web.getTools().first.description,
@@ -257,7 +255,7 @@ void main() {
     );
     expect(
       trigger.getTools().first.description,
-      TriggerPlugin.defaultCreateReminderDescription,
+      TriggerPlugin.defaultReminderDescription,
     );
     final config = TimeAwarenessConfig(systemGuidePromptTemplate: '自定义');
     expect(

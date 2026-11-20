@@ -18,6 +18,8 @@ import 'image_providers/image_provider_adapter.dart';
 import 'image_providers/comfyui_image_adapter.dart';
 import 'image_providers/openai_compatible_image_adapter.dart';
 import 'image_providers/image_provider_adapter_factory.dart';
+import 'providers/token_usage.dart';
+import '../../features/observability/token_usage_ledger.dart';
 import 'providers/finish_reason.dart';
 import 'providers/google_api_mode.dart';
 import 'providers/provider_chat_api_path.dart';
@@ -30,12 +32,15 @@ import 'providers/provider_adapter.dart'
 import '../../features/observability/trace_models.dart';
 import '../../features/observability/trace_store.dart';
 
+export 'providers/token_usage.dart';
+
 part 'agent_api_direct_chat_support.dart';
 part 'agent_api_stream_support.dart';
 part 'agent_image_api_support.dart';
 
 class SendMessageRichResult {
   final String text;
+  final TokenUsage? usage;
   final List<Map<String, dynamic>> toolResults;
   final List<ToolCall> toolCalls; // AI 请求执行的工具调用
   final List<Map<String, dynamic>> hiddenThoughtParts;
@@ -49,6 +54,7 @@ class SendMessageRichResult {
 
   const SendMessageRichResult({
     required this.text,
+    this.usage,
     required this.toolResults,
     this.toolCalls = const [],
     this.hiddenThoughtParts = const [],
@@ -93,6 +99,15 @@ class ImageGenerationResult {
 }
 
 class AgentApiClient {
+  static final Set<String> _unsupportedStreamUsage = <String>{};
+
+  @visibleForTesting
+  static void clearStreamUsageFallbackCache() =>
+      _unsupportedStreamUsage.clear();
+
+  static String _streamUsageKey(String endpoint, String model) =>
+      '$endpoint|$model';
+
   final http.Client _client;
   final Duration timeout;
 
@@ -104,24 +119,6 @@ class AgentApiClient {
       _AgentApiDirectChatSupport(this);
   _AgentApiStreamSupport get _streamSupport => _AgentApiStreamSupport(this);
   _AgentImageApiSupport get _imageSupport => _AgentImageApiSupport(this);
-
-  // 事件日志（文本风格；不引入新依赖）
-  void _evt(String name, Map<String, Object?> data, {String level = 'INFO'}) {
-    final now = DateTime.now();
-    final ts =
-        '[${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}]';
-    const source = 'AgentApiClient';
-    final parts = <String>[];
-    data.forEach((k, v) {
-      if (v == null) return;
-      final val =
-          v is String && v.length > 120 ? '${v.substring(0, 120)}...' : v;
-      parts.add('$k=$val');
-    });
-    final kv = parts.isEmpty ? '' : ' ${parts.join(' ')}';
-    // ignore: avoid_print
-    print('$ts [Core] [$level] [$source:$name]::$kv');
-  }
 
   Uri _uri(String path) {
     final base = resolvedApiBase();
@@ -544,6 +541,7 @@ class AgentApiClient {
     ProviderChatRequestOptions? requestOptions,
     bool streaming = false,
     bool allowAuthorizationFallback = false,
+    bool includeStreamUsage = true,
   }) {
     final requestContext = _resolveChatRequestContext(
       modelFullId: modelFullId,
@@ -571,6 +569,20 @@ class AgentApiClient {
     }
     if (streaming && adapter.name != 'gemini') {
       payload['stream'] = true;
+    }
+
+    final autoInjectedStreamUsage =
+        streaming &&
+        includeStreamUsage &&
+        adapter.name == 'openai' &&
+        Uri.parse(requestContext.endpoint).path.endsWith('/chat/completions') &&
+        !payload.containsKey('stream_options') &&
+        !(customConfig?.containsKey('stream_options') ?? false) &&
+        !_unsupportedStreamUsage.contains(
+          _streamUsageKey(requestContext.endpoint, requestContext.model),
+        );
+    if (autoInjectedStreamUsage) {
+      payload['stream_options'] = {'include_usage': true};
     }
 
     final requestBodyBytes = utf8.encode(jsonEncode(payload));
@@ -608,6 +620,7 @@ class AgentApiClient {
     );
 
     return _PreparedChatRequest(
+      autoInjectedStreamUsage: autoInjectedStreamUsage,
       provider: requestContext.provider,
       model: requestContext.model,
       adapter: adapter,
@@ -838,6 +851,7 @@ class AgentApiClient {
 
 class _PreparedChatRequest {
   const _PreparedChatRequest({
+    this.autoInjectedStreamUsage = false,
     required this.provider,
     required this.model,
     required this.adapter,
@@ -856,6 +870,8 @@ class _PreparedChatRequest {
     required this.requestDiagnostics,
   });
 
+  final bool autoInjectedStreamUsage;
+
   final String provider;
   final String model;
   final ProviderAdapter adapter;
@@ -873,3 +889,29 @@ class _PreparedChatRequest {
   final Map<String, String> headers;
   final Map<String, dynamic> requestDiagnostics;
 }
+
+TokenUsage? _parseHttpUsage(String adapter, Map<String, dynamic> response) {
+  Map<String, dynamic>? asMap(Object? value) =>
+      value is Map ? Map<String, dynamic>.from(value) : null;
+  if (adapter == 'claude') {
+    return TokenUsage.fromClaudeUsage(asMap(response['usage']));
+  }
+  if (adapter == 'gemini') {
+    return TokenUsage.fromGeminiUsageMetadata(asMap(response['usageMetadata']));
+  }
+  final nested = asMap(response['response']);
+  return TokenUsage.fromOpenAiUsage(asMap(response['usage'])) ??
+      TokenUsage.fromOpenAiUsage(asMap(nested?['usage']));
+}
+
+Map<String, dynamic> _usageMetadata(TokenUsage? usage) =>
+    usage == null
+        ? const {}
+        : {
+          'inputTokens': usage.inputTokens,
+          'outputTokens': usage.outputTokens,
+          'cachedInputTokens': usage.cachedInputTokens,
+          'cacheWriteTokens': usage.cacheWriteTokens,
+          'reasoningTokens': usage.reasoningTokens,
+          'usageEstimated': usage.isEstimated,
+        };

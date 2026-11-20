@@ -13,6 +13,7 @@ class _Port implements ManualCompactionPort {
   Completer<void>? gate;
   bool conflict = false;
   bool Function()? cancelled;
+  void Function(int, int)? progress;
   ManualCompactionDraft draft(String owner) {
     final message = Message(
         id: '$owner-raw',
@@ -34,6 +35,7 @@ class _Port implements ManualCompactionPort {
       {required void Function(int, int) onProgress,
       required bool Function() isCancelled}) async {
     cancelled = isCancelled;
+    progress = onProgress;
     onProgress(0, 1);
     if (gate != null) await gate!.future;
     return draft(ownerId);
@@ -166,5 +168,90 @@ void main() {
     await tester.tap(find.text('整理内容'));
     await tester.pumpAndSettle();
     expect(find.text('b：周五看海，怕冷'), findsOneWidget);
+  });
+
+  testWidgets('整理中按钮变为可点击的后台整理，退出弹窗后进度不丢失且完成后可确认提交', (tester) async {
+    final port = _Port()..gate = Completer<void>();
+    var generating = false;
+    await tester.pumpWidget(ProviderScope(
+        overrides: [manualCompactionProvider.overrideWithValue(port)],
+        child: MaterialApp(
+            home: Scaffold(
+                body: Consumer(
+                    builder: (context, ref, _) => TextButton(
+                        onPressed: () => showTopicCompactionDialog(context, ref,
+                            ownerId: 'a', isGenerating: generating),
+                        child: const Text('打开压缩')))))));
+
+    await tester.tap(find.text('打开压缩'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('整理内容'));
+    await tester.pump();
+
+    expect(find.text('整理内容'), findsNothing);
+    expect(find.text('后台整理'), findsOneWidget);
+    expect(find.text('取消整理'), findsOneWidget);
+
+    await tester.tap(find.text('后台整理'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byType(TopicCompactionDialog), findsNothing);
+    expect(find.textContaining('已转入后台整理'), findsOneWidget);
+    expect(port.cancelled!(), isFalse);
+
+    port.progress!(2, 3);
+    generating = true;
+    await tester.tap(find.text('打开压缩'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byType(TopicCompactionDialog), findsOneWidget);
+    expect(find.text('整理内容 2 / 3'), findsOneWidget);
+    expect(find.text('后台整理'), findsOneWidget);
+
+    await tester.tap(find.text('后台整理'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.byType(TopicCompactionDialog), findsNothing);
+    expect(port.cancelled!(), isFalse);
+
+    port.gate!.complete();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+
+    await tester.tap(find.text('打开压缩'));
+    await tester.pumpAndSettle();
+    expect(find.text('确认保留的内容'), findsOneWidget);
+    expect(find.text('a：周五看海，怕冷'), findsOneWidget);
+    generating = false;
+    await tester.tap(find.text('保存并开启'));
+    await tester.pumpAndSettle();
+    expect(port.saved, {'a': 'a：周五看海，怕冷'});
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('整理途中点取消整理会取消后台任务并关闭弹窗', (tester) async {
+    final port = _Port()..gate = Completer<void>();
+    await tester.pumpWidget(ProviderScope(
+        overrides: [manualCompactionProvider.overrideWithValue(port)],
+        child: MaterialApp(
+            home: Scaffold(
+                body: Consumer(
+                    builder: (context, ref, _) => TextButton(
+                        onPressed: () => showTopicCompactionDialog(context, ref,
+                            ownerId: 'a', isGenerating: false),
+                        child: const Text('打开压缩')))))));
+    await tester.tap(find.text('打开压缩'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('整理内容'));
+    await tester.pump();
+    expect(find.text('取消整理'), findsOneWidget);
+
+    await tester.tap(find.text('取消整理'));
+    await tester.pumpAndSettle();
+    expect(port.cancelled!(), isTrue);
+    expect(find.byType(TopicCompactionDialog), findsNothing);
+    port.gate!.complete();
+    await tester.pumpAndSettle();
   });
 }

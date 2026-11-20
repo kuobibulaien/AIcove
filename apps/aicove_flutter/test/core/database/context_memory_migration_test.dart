@@ -38,6 +38,37 @@ CREATE TABLE IF NOT EXISTS diaries (
   'CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(memory_id, conversation_id, tokenized_content)',
 ];
 
+// 旧版同步基础表与退役表上的触发器（不含 v18 起新增的同步表）。
+const _legacyCloudStatements = [
+  '''CREATE TABLE IF NOT EXISTS cloud_client_state (
+    id INTEGER PRIMARY KEY CHECK(id=1), suspended INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 0, epoch TEXT, account_key TEXT,
+    cursor INTEGER NOT NULL DEFAULT 0, initialized INTEGER NOT NULL DEFAULT 0)''',
+  'INSERT OR IGNORE INTO cloud_client_state(id) VALUES(1)',
+  '''CREATE TABLE IF NOT EXISTS cloud_dirty (
+    kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(kind, entity_id))''',
+  '''CREATE TABLE IF NOT EXISTS cloud_versions (
+    kind TEXT NOT NULL, entity_id TEXT NOT NULL, version INTEGER NOT NULL,
+    local_json TEXT, cloud_json TEXT NOT NULL, conflict_id TEXT,
+    PRIMARY KEY(kind, entity_id))''',
+  '''CREATE TABLE IF NOT EXISTS cloud_outbox (
+    op_id TEXT PRIMARY KEY, kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+    revision INTEGER NOT NULL, mutation_json TEXT NOT NULL, local_json TEXT,
+    UNIQUE(kind, entity_id))''',
+  '''CREATE TABLE IF NOT EXISTS cloud_inbox (
+    seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+    document_json TEXT NOT NULL)''',
+  '''CREATE TRIGGER IF NOT EXISTS cloud_memories_insert
+    AFTER INSERT ON memories
+    WHEN (SELECT suspended FROM cloud_client_state WHERE id=1)=0
+    BEGIN
+      INSERT INTO cloud_dirty(kind, entity_id, revision)
+      VALUES('memories', NEW.id, 1)
+      ON CONFLICT(kind, entity_id) DO UPDATE SET revision=revision+1;
+    END''',
+];
+
 /// 历史 v17 应用：只建当时的表。
 class _LegacyV17 extends db.AppDatabase {
   _LegacyV17(super.executor) : super.forTesting();
@@ -125,7 +156,11 @@ void main() {
       "INSERT INTO diaries VALUES('d','a',1,'旧日记',1,1)",
     );
     // 旧版本在退役表上装过同步触发器，也可能留下待同步记录。
-    await installCloudTracking(legacy);
+    // 照旧版结构手写：新版 installCloudTracking 会给 v17 尚不存在的
+    // context_summaries 等表装触发器。
+    for (final statement in _legacyCloudStatements) {
+      await legacy.customStatement(statement);
+    }
     await legacy.customStatement(
       "INSERT INTO cloud_dirty(kind,entity_id,revision) VALUES('memories','x',1),('conversations','a',1)",
     );

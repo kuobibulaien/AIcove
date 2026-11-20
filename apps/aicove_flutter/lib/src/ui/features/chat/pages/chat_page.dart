@@ -67,6 +67,10 @@ import '../../../../features/assistant/domain/assistant_onboarding.dart';
 import '../widgets/chat_message_list.dart';
 import '../widgets/model_failover_error_content.dart';
 import '../widgets/topic_compaction_button.dart';
+import '../../../../features/context/application/context_manager.dart'
+    show ManualCompactionSessionState;
+import '../../../../features/context/providers/context_providers.dart'
+    show manualCompactionSessionProvider, manualCompactionStateProvider;
 import '../widgets/frontend_message_probe.dart';
 import '../widgets/chat_viewport_controller.dart';
 import '../widgets/chat_wallpaper_background.dart';
@@ -826,7 +830,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final showCall =
         callHere != null && conv != null && !windowCall && !callHere.minimized;
     final actions = ref.read(chatActionsProvider); // (注释已丢失)
-    final chatStatus = ref.watch(chatStatusProvider);
     final colors = context.moeColors;
 
     if (currentConversationId != null) {
@@ -884,6 +887,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           }
         },
       );
+
+      // 后台手动压缩完成或失败时给出轻提示，再点一次「更多」即可确认开启。
+      ref.listen<ManualCompactionSessionState>(
+        manualCompactionStateProvider(currentConversationId),
+        (prev, next) {
+          final notice = next.notice;
+          if (notice != null && notice.id != prev?.notice?.id && mounted) {
+            if (notice.isError) {
+              MoeToast.error(context, notice.message);
+            } else {
+              MoeToast.info(context, notice.message);
+            }
+            ref
+                .read(manualCompactionSessionProvider)
+                .clearNotice(currentConversationId, notice.id);
+          }
+        },
+      );
     }
 
     final chatBgColor = resolveChatBackgroundColor(context);
@@ -924,7 +945,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 currentConversationId: currentConversationId,
                 deferEntryShell: deferEntryShell,
                 isGenerating: isGenerating,
-                chatStatus: chatStatus,
                 toolbarHeight: toolbarHeight,
                 nativeInset: nativeInset,
               ),

@@ -7,15 +7,16 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/ui_models_store_support.dart';
+import '../../settings_models.dart';
 
 const _legacyTriggerConfigKey = 'aicove.plugins.trigger.config';
 
-/// 导入时只声明了单一绘图／语音能力，返回该能力；否则返回 null。
+/// 仅语音专用分类整体设定初始模型用途。
 String? _singleMediaCapability(List<String>? capabilities) {
   final cleaned = cleanSettingsStrings(capabilities);
   if (cleaned.length != 1) return null;
   final only = cleaned.single;
-  return only == 'image' || only == 'tts' ? only : null;
+  return only == 'tts' || only == 'stt' ? only : null;
 }
 
 /// 设置模块本地存储数据源。
@@ -48,6 +49,7 @@ class UiModelsStoreLocalDataSource {
     List<String>? hiddenModels,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
+    Map<String, String>? modelTypeOverrides,
     required List<String> models,
   }) => cloudLocalWrite(() async {
     final prefs = await SharedPreferences.getInstance();
@@ -67,13 +69,21 @@ class UiModelsStoreLocalDataSource {
         requestFormat == 'nai';
 
     final isComfyUI = ComfyUIWorkflow.isProvider(providerId, customConfig);
-    // 绘图／语音供应商按导入时选的分类整体定型，避免模型名推断成对话。
-    final forcedModelType = isComfyUI
+    // 专用协议／语音分类只为导入的初始模型补用途，不锁定通用渠道。
+    final forcedModelType = isComfyUI || isNovelAi
         ? 'image'
         : _singleMediaCapability(capabilities);
     if (forcedModelType != null) {
       for (final model in models) {
-        modelTypes['$providerId:$model'] = forcedModelType;
+        final key = '$providerId:$model';
+        final stored = resolveModelTypeOverride(
+          providerId: providerId,
+          rawModelId: model,
+          modelTypes: modelTypes,
+        );
+        if (stored == null || stored.value == forcedModelType) {
+          modelTypes[key] = forcedModelType;
+        }
       }
       current['model_types'] = modelTypes;
     }
@@ -120,6 +130,29 @@ class UiModelsStoreLocalDataSource {
               ? 'https://api.openai.com/v1'
               : apiBaseUrl.trim());
 
+    final overrides = <String, String>{};
+    // 绘图分类的显式默认模型只影响它自身，不改远端返回的对话模型。
+    if (cleanSettingsStrings(capabilities).length == 1 &&
+        capabilities!.single == 'image') {
+      final selected = model ?? normalizedConfig['defaultImageModel']?.toString();
+      if (selected != null && models.contains(selected)) {
+        overrides[selected] = ModelType.image.value;
+      }
+    }
+    overrides.addAll(modelTypeOverrides ?? const <String, String>{});
+    mergeModelTypeOverrides(
+      providerId: providerId,
+      modelTypes: modelTypes,
+      overrides: overrides,
+      defaultType: resolveProviderDefaultModelType(
+        providerId: providerId,
+        apiBaseUrl: normalizedApiBaseUrl,
+        customConfig: normalizedConfig,
+        capabilities: capabilities ?? const <String>[],
+      ),
+    );
+    current['model_types'] = modelTypes;
+
     final entry = <String, dynamic>{
       'id': providerId,
       'displayName': displayName?.trim().isEmpty == true
@@ -134,8 +167,11 @@ class UiModelsStoreLocalDataSource {
       'capabilities': deriveProviderCapabilities(
         providerId: providerId,
         models: models,
+        visibleModels: visible,
         modelTypes: modelTypes,
         fallbackCapabilities: capabilities,
+        apiBaseUrl: normalizedApiBaseUrl,
+        customConfig: normalizedConfig,
       ),
       'custom_config': normalizedConfig,
     };
@@ -143,9 +179,11 @@ class UiModelsStoreLocalDataSource {
     providers.removeWhere((p) => p['id'] == providerId);
     providers.add(entry);
     current['providers'] = providers;
-    if (forcedModelType == null && visible.isNotEmpty) {
+    final isChatImport = forcedModelType == null &&
+        (capabilities == null || capabilities.contains('chat'));
+    if (isChatImport && visible.isNotEmpty) {
       current['default_model'] = visible.first;
-    } else if (forcedModelType == null && models.isNotEmpty) {
+    } else if (isChatImport && models.isNotEmpty) {
       current['default_model'] = models.first;
     }
 
@@ -160,6 +198,7 @@ class UiModelsStoreLocalDataSource {
     bool? enabled,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
+    Map<String, String>? modelTypeOverrides,
     List<String>? allModels,
     List<String>? visibleModels,
     List<String>? hiddenModels,
@@ -219,19 +258,14 @@ class UiModelsStoreLocalDataSource {
     if (customConfig != null) {
       provider['custom_config'] = customConfig;
     }
-    final providerRequestFormat =
-        (provider['custom_config'] is Map
-                ? (provider['custom_config'] as Map)['requestFormat']
-                : null)
-            ?.toString()
-            .trim()
-            .toLowerCase();
-    final providerIsComfyUI = ComfyUIWorkflow.isProvider(
-      providerId,
-      provider['custom_config'] is Map
-          ? Map<String, dynamic>.from(provider['custom_config'] as Map)
-          : null,
-    );
+    final providerConfig = provider['custom_config'] is Map
+        ? Map<String, dynamic>.from(provider['custom_config'] as Map)
+        : <String, dynamic>{};
+    provider['custom_config'] = providerConfig;
+    final providerRequestFormat = providerConfig['requestFormat']
+        ?.toString()
+        .trim()
+        .toLowerCase();
     final providerIsNovelAi =
         isNovelAiProvider(
           providerId: providerId,
@@ -245,12 +279,6 @@ class UiModelsStoreLocalDataSource {
       provider['models'] = providerIsNovelAi
           ? normalizeNovelAiModels(cleaned)
           : (cleaned..sort(caseInsensitiveSettingsSort));
-      if (providerIsComfyUI || providerIsNovelAi) {
-        for (final model in cleaned) {
-          currentModelTypes['$providerId:$model'] = 'image';
-        }
-        current['model_types'] = currentModelTypes;
-      }
     }
     if (visibleModels != null) {
       final models = cleanSettingsStrings(provider['models']);
@@ -274,10 +302,25 @@ class UiModelsStoreLocalDataSource {
     if (disableToolCalling != null) {
       provider['disable_tool_calling'] = disableToolCalling;
     }
+    mergeModelTypeOverrides(
+      providerId: providerId,
+      modelTypes: currentModelTypes,
+      overrides: modelTypeOverrides ?? const <String, String>{},
+      defaultType: resolveProviderDefaultModelType(
+        providerId: providerId,
+        apiBaseUrl: provider['apiBaseUrl'] as String? ?? '',
+        customConfig: providerConfig,
+        capabilities: capabilities ?? cleanSettingsStrings(provider['capabilities']),
+      ),
+    );
+    current['model_types'] = currentModelTypes;
     provider['capabilities'] = deriveProviderCapabilities(
       providerId: providerId,
       models: cleanSettingsStrings(provider['models']),
+      visibleModels: cleanSettingsStrings(provider['visible_models']),
       modelTypes: currentModelTypes,
+      apiBaseUrl: provider['apiBaseUrl'] as String? ?? '',
+      customConfig: providerConfig,
       fallbackCapabilities:
           capabilities ?? cleanSettingsStrings(provider['capabilities']),
     );

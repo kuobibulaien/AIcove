@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/thinking/thinking_level.dart';
 import '../../core/utils/message_formatter.dart';
 import '../chat/domain/chat_display_policy.dart';
+import '../plugins/tts/tts_request_format.dart';
 import '../../core/prompts/prompt_builtin_defaults.g.dart';
 import '../../ui/theme/tokens.dart';
 
@@ -79,6 +80,74 @@ enum ModelType {
   }
 }
 
+ModelType? resolveProviderDefaultModelType({
+  required String providerId,
+  String apiBaseUrl = '',
+  Map<String, dynamic>? customConfig,
+  List<String> capabilities = const <String>[],
+}) {
+  final format = customConfig?['requestFormat']?.toString().trim().toLowerCase();
+  const imageFormats = ['comfyui', 'novelai', 'nai'];
+  if (imageFormats.contains(format) ||
+      imageFormats.contains(providerId.trim().toLowerCase()) ||
+      apiBaseUrl.toLowerCase().contains('novelai.net')) {
+    return ModelType.image;
+  }
+  if (const ['openai', 'claude', 'gemini'].contains(format)) return null;
+  if (TtsRequestFormat.isTtsFormat(format) ||
+      ((format == null || format.isEmpty) &&
+          capabilities.isNotEmpty && capabilities.every((c) => c == 'tts'))) {
+    return ModelType.tts;
+  }
+  if (capabilities.isNotEmpty && capabilities.every((c) => c == 'stt')) {
+    return ModelType.stt;
+  }
+  return null;
+}
+
+ModelType? providerDefaultModelType(ProviderAuth provider) =>
+    resolveProviderDefaultModelType(
+      providerId: provider.id,
+      apiBaseUrl: provider.apiBaseUrl,
+      customConfig: provider.customConfig,
+      capabilities: provider.capabilities,
+    );
+
+/// 空渠道键不遮蔽仍有效的旧裸 ID 覆盖。
+ModelType? resolveModelTypeOverride({
+  required String providerId,
+  required String rawModelId,
+  required Map<String, String> modelTypes,
+}) {
+  for (final key in ['$providerId:$rawModelId', rawModelId]) {
+    final stored = modelTypes[key]?.trim();
+    if (stored != null && stored.isNotEmpty) return ModelType.fromValue(stored);
+  }
+  return null;
+}
+
+/// 渠道覆盖、旧裸 ID 覆盖、渠道默认、名称推断，按此顺序解析。
+ModelType resolveEffectiveModelType({
+  required String providerId,
+  required String rawModelId,
+  Map<String, String> modelTypes = const <String, String>{},
+  ModelType? defaultType,
+}) {
+  final override = resolveModelTypeOverride(
+    providerId: providerId,
+    rawModelId: rawModelId,
+    modelTypes: modelTypes,
+  );
+  if (override != null) return override;
+  final inferred = ModelType.inferFromModelId(rawModelId);
+  if (defaultType != null && defaultType != ModelType.chat) {
+    return defaultType == ModelType.tts && inferred == ModelType.stt
+        ? ModelType.stt
+        : defaultType;
+  }
+  return inferred;
+}
+
 const _openAiTtsVoiceIds = <String>{
   'alloy',
   'echo',
@@ -143,7 +212,11 @@ final _embeddingPatterns = RegExp(
 
 // 图像生成模型匹配规则
 final _imagePatterns = RegExp(
-  r'\b('
+  r'(?:^|[^a-z0-9])('
+  r'gpt-image|chatgpt-image|qwen-image|hunyuan-image|'
+  r'kolors|seedream|recraft|jimeng|'
+  r'gemini[:-][\w.-]*-image|grok[:-][\w.-]*-image|'
+  r'[\w.-]*-image-generation|[\w.-]*-t2i|'
   r'dall-e|'
   r'dalle|'
   r'midjourney|'
@@ -159,7 +232,7 @@ final _imagePatterns = RegExp(
   r'wanx|' // 通义万相
   r'nai-diffusion|' // NovelAI
   r'novelai'
-  r')\b',
+  r')(?:\b|(?=_))',
   caseSensitive: false,
 );
 
@@ -990,6 +1063,13 @@ class ModelConfig {
   /// 模型默认思考档位，null 表示未设置（走预设 / 软件默认）
   final ThinkingLevel? thinkingLevel;
 
+  /// 每百万 Token 的覆盖单价；null 使用内置参考价。
+  final double? inputPricePerMillion;
+  final double? outputPricePerMillion;
+  final double? cachedInputPricePerMillion;
+  final String? priceCurrency;
+  final double? priceMultiplier;
+
   const ModelConfig({
     this.disableToolCalling = false,
     this.temperature,
@@ -998,7 +1078,14 @@ class ModelConfig {
     this.chatCapabilities,
     this.maxContextTokens,
     this.thinkingLevel,
-  });
+    this.inputPricePerMillion,
+    this.outputPricePerMillion,
+    this.cachedInputPricePerMillion,
+    String? priceCurrency,
+    this.priceMultiplier,
+  }) : priceCurrency = priceCurrency == 'USD' || priceCurrency == 'CNY'
+           ? priceCurrency
+           : null;
 
   /// 是否为默认配置（全部为默认值时可删除以节省空间）
   bool get isDefault =>
@@ -1008,7 +1095,12 @@ class ModelConfig {
       contextMessageLimit == null &&
       chatCapabilities == null &&
       maxContextTokens == null &&
-      thinkingLevel == null;
+      thinkingLevel == null &&
+      inputPricePerMillion == null &&
+      outputPricePerMillion == null &&
+      cachedInputPricePerMillion == null &&
+      priceCurrency == null &&
+      priceMultiplier == null;
 
   ModelConfig copyWith({
     bool? disableToolCalling,
@@ -1024,6 +1116,16 @@ class ModelConfig {
     bool clearMaxContextTokens = false,
     ThinkingLevel? thinkingLevel,
     bool clearThinkingLevel = false,
+    double? inputPricePerMillion,
+    bool clearInputPricePerMillion = false,
+    double? outputPricePerMillion,
+    bool clearOutputPricePerMillion = false,
+    double? cachedInputPricePerMillion,
+    bool clearCachedInputPricePerMillion = false,
+    String? priceCurrency,
+    bool clearPriceCurrency = false,
+    double? priceMultiplier,
+    bool clearPriceMultiplier = false,
   }) => ModelConfig(
     disableToolCalling: disableToolCalling ?? this.disableToolCalling,
     temperature: clearTemperature ? null : (temperature ?? this.temperature),
@@ -1042,10 +1144,33 @@ class ModelConfig {
     thinkingLevel: clearThinkingLevel
         ? null
         : (thinkingLevel ?? this.thinkingLevel),
+    inputPricePerMillion: clearInputPricePerMillion
+        ? null
+        : (inputPricePerMillion ?? this.inputPricePerMillion),
+    outputPricePerMillion: clearOutputPricePerMillion
+        ? null
+        : (outputPricePerMillion ?? this.outputPricePerMillion),
+    cachedInputPricePerMillion: clearCachedInputPricePerMillion
+        ? null
+        : (cachedInputPricePerMillion ?? this.cachedInputPricePerMillion),
+    priceCurrency: clearPriceCurrency
+        ? null
+        : (priceCurrency ?? this.priceCurrency),
+    priceMultiplier: clearPriceMultiplier
+        ? null
+        : (priceMultiplier ?? this.priceMultiplier),
   );
 
   Map<String, dynamic> toJson() => {
     'disable_tool_calling': disableToolCalling,
+    if (inputPricePerMillion != null)
+      'input_price_per_million': inputPricePerMillion,
+    if (outputPricePerMillion != null)
+      'output_price_per_million': outputPricePerMillion,
+    if (cachedInputPricePerMillion != null)
+      'cached_input_price_per_million': cachedInputPricePerMillion,
+    if (priceCurrency != null) 'price_currency': priceCurrency,
+    if (priceMultiplier != null) 'price_multiplier': priceMultiplier,
     if (temperature != null) 'temperature': temperature,
     if (topP != null) 'top_p': topP,
     if (contextMessageLimit != null)
@@ -1067,6 +1192,15 @@ class ModelConfig {
         : null,
     maxContextTokens: json['max_context_tokens'] as int?,
     thinkingLevel: ThinkingLevel.tryParse(json['thinking_level']),
+    inputPricePerMillion: (json['input_price_per_million'] as num?)?.toDouble(),
+    outputPricePerMillion: (json['output_price_per_million'] as num?)
+        ?.toDouble(),
+    cachedInputPricePerMillion: (json['cached_input_price_per_million'] as num?)
+        ?.toDouble(),
+    priceCurrency: json['price_currency'] is String
+        ? json['price_currency'] as String
+        : null,
+    priceMultiplier: (json['price_multiplier'] as num?)?.toDouble(),
   );
 }
 
@@ -1501,50 +1635,69 @@ class AppSettings {
     return false;
   }
 
-  /// 从模型引用中提取原始模型 ID。
-  ///
-  /// 支持两种格式：
-  /// 1) 旧格式：`gpt-4o`
-  /// 2) 新格式：`provider:gpt-4o`
-  String getRawModelId(String modelRef) {
-    final ref = modelRef.trim();
-    if (ref.isEmpty) return ref;
+  bool _providerContainsExactModel(ProviderAuth provider, String modelId) =>
+      provider.models.contains(modelId) ||
+      provider.visibleModels.contains(modelId) ||
+      provider.hiddenModels.contains(modelId);
+
+  bool _hasProviderPrefix(String ref) {
     final idx = ref.indexOf(':');
-    if (idx <= 0 || idx >= ref.length - 1) {
-      return ref;
-    }
-    final providerId = ref.substring(0, idx).trim();
-    if (!_isKnownProviderId(providerId)) {
-      return ref;
-    }
-    return ref.substring(idx + 1).trim();
+    if (idx <= 0 || idx >= ref.length - 1) return false;
+    final prefix = ref.substring(0, idx).trim();
+    if (!_isKnownProviderId(prefix)) return false;
+    final rest = ref.substring(idx + 1).trim();
+    return _providerContainsExactModel(getProvider(prefix)!, rest) ||
+        !providers.any((provider) => _providerContainsExactModel(provider, ref));
   }
 
-  /// 获取模型引用对应的 providerId。
-  ///
-  /// 对于新格式优先解析前缀；旧格式回退到 `modelProviderMap`。
+  /// 只剥离确认为所属渠道的一层前缀，保留模型 ID 自带的冒号。
+  String getRawModelId(String modelRef) {
+    final ref = modelRef.trim();
+    return _hasProviderPrefix(ref)
+        ? ref.substring(ref.indexOf(':') + 1).trim()
+        : ref;
+  }
+
   String? getModelProviderId(String modelRef) {
     final ref = modelRef.trim();
     if (ref.isEmpty) return null;
-
-    final idx = ref.indexOf(':');
-    if (idx > 0 && idx < ref.length - 1) {
-      final providerId = ref.substring(0, idx).trim();
-      if (_isKnownProviderId(providerId)) {
-        return providerId;
-      }
+    if (_hasProviderPrefix(ref)) return ref.substring(0, ref.indexOf(':')).trim();
+    final mapped = modelProviderMap[ref] ?? modelProviderMap[getRawModelId(ref)];
+    if (mapped != null) return mapped;
+    for (final provider in providers) {
+      if (_providerContainsExactModel(provider, ref)) return provider.id;
     }
-
-    final rawId = getRawModelId(ref);
-    return modelProviderMap[ref] ?? modelProviderMap[rawId];
+    return null;
   }
 
-  /// 组装 provider 维度唯一模型引用：`provider:model`。
+  String? resolveAvailableChatModelRef(String modelRef) {
+    final ref = modelRef.trim();
+    if (ref.isEmpty) return null;
+    final providerId = getModelProviderId(ref);
+    final rawId = getRawModelId(ref);
+    final provider = providerId == null ? null : getProvider(providerId);
+    if (provider == null || !provider.enabled) return null;
+    if (!(provider.visibleModels.contains(rawId) ||
+        (!provider.hiddenModels.contains(rawId) &&
+            provider.models.contains(rawId)))) {
+      return null;
+    }
+    final normalized = buildModelRef(provider.id, rawId);
+    return getModelType(normalized) == ModelType.chat ? normalized : null;
+  }
+
+  /// 组装渠道维度引用，不把其它渠道同名的模型前缀剥掉。
   String buildModelRef(String providerId, String modelId) {
     final pid = providerId.trim();
-    final rawId = getRawModelId(modelId);
-    if (pid.isEmpty) return rawId;
-    return '$pid:$rawId';
+    var raw = modelId.trim();
+    if (pid.isEmpty) return raw;
+    if (raw.startsWith('$pid:')) {
+      final provider = getProvider(pid);
+      if (provider == null || !_providerContainsExactModel(provider, raw)) {
+        raw = raw.substring(pid.length + 1);
+      }
+    }
+    return '$pid:$raw';
   }
 
   /// 转为请求层使用的 `provider:model` 形式，未知 provider 时使用 fallback。
@@ -1634,11 +1787,14 @@ class AppSettings {
   ModelType getModelType(String modelId) {
     final ref = modelId.trim();
     final rawId = getRawModelId(ref);
-    final stored = modelTypes[ref] ?? modelTypes[rawId];
-    if (stored != null) {
-      return ModelType.fromValue(stored);
-    }
-    return ModelType.inferFromModelId(rawId);
+    final providerId = getModelProviderId(ref) ?? '';
+    final provider = getProvider(providerId);
+    return resolveEffectiveModelType(
+      providerId: providerId,
+      rawModelId: rawId,
+      modelTypes: modelTypes,
+      defaultType: provider == null ? null : providerDefaultModelType(provider),
+    );
   }
 
   /// 获取模型配置（如果没有自定义配置，返回默认配置）

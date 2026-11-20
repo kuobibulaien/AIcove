@@ -12,12 +12,15 @@ import 'dart:convert';
 
 import '../thinking/thinking_level.dart';
 import 'finish_reason.dart';
+import 'token_usage.dart';
 
 export '../thinking/thinking_level.dart' show ThinkingLevel, ThinkingScheme;
 export 'finish_reason.dart';
+export 'token_usage.dart';
 
 /// API 调用结果
 class ApiCallResult {
+  final TokenUsage? usage;
   final String text;
   final List<Map<String, dynamic>> toolResults;
   final List<ToolCall> toolCalls;
@@ -33,6 +36,7 @@ class ApiCallResult {
 
   const ApiCallResult({
     required this.text,
+    this.usage,
     this.toolResults = const [],
     this.toolCalls = const [],
     this.hiddenThoughtParts = const [],

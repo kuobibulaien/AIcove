@@ -1,199 +1,197 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../features/context/application/context_manager.dart';
 import '../../../../features/context/domain/context_summary.dart';
 import '../../../../features/context/providers/context_providers.dart';
 import '../../../shared/widgets/index.dart';
 import '../../../theme/tokens.dart';
 
-/// 聊天页「更多」菜单的手动压缩入口；目标角色生成中只提示不打开。
+/// 聊天页「更多」菜单的手动压缩入口；仅在未进入整理/待确认且生成中时提示不打开。
 Future<void> showTopicCompactionDialog(
   BuildContext context,
   WidgetRef ref, {
   required String ownerId,
   required bool isGenerating,
 }) async {
-  if (isGenerating) {
+  final session = ref.read(manualCompactionSessionProvider);
+  final state = session.stateOf(ownerId);
+  if (isGenerating && !state.preparing && state.draft == null) {
     MoeToast.info(context, '请等本轮回复结束后再压缩。');
     return;
   }
+  session.markForeground(ownerId);
   final result = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => TopicCompactionDialog(
-          ownerId: ownerId, port: ref.read(manualCompactionProvider)));
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => TopicCompactionDialog(
+      ownerId: ownerId,
+      port: ref.read(manualCompactionProvider),
+      session: session,
+    ),
+  );
   if (context.mounted && result != null) MoeToast.info(context, result);
 }
 
 /// 只操作应用层 Port；确认前不会移动 raw 边界。宽屏 760px，窄屏/键盘下内容滚动。
 class TopicCompactionDialog extends StatefulWidget {
-  const TopicCompactionDialog(
-      {super.key, required this.ownerId, required this.port});
+  const TopicCompactionDialog({
+    super.key,
+    required this.ownerId,
+    required this.port,
+    this.session,
+  });
   final String ownerId;
   final ManualCompactionPort port;
+  final ManualCompactionSessionStore? session;
   @override
   State<TopicCompactionDialog> createState() => _TopicCompactionDialogState();
 }
 
 class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
   final _text = TextEditingController();
-  ManualCompactionDraft? _draft;
-  ContextSummary? _current;
-  bool _busy = false, _committing = false, _cancelled = false;
-  int _generation = 0;
-  String? _error;
-  String _progress = '';
+  late ManualCompactionSessionStore _session;
+  bool _ownsSession = false;
 
   @override
   void initState() {
     super.initState();
-    _loadCurrent();
+    _attachSession();
+    _syncOwnerSession();
+  }
+
+  void _attachSession() {
+    final external = widget.session;
+    if (external != null) {
+      _session = external;
+      _ownsSession = false;
+    } else {
+      _session = ManualCompactionSessionStore.fromPort(widget.port);
+      _ownsSession = true;
+    }
+    _session.addListener(_onSessionChanged);
+  }
+
+  void _syncOwnerSession() {
+    final state = _session.stateOf(widget.ownerId);
+    if (state.backgrounded || state.notice != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _session.markForeground(widget.ownerId);
+      });
+    }
+    if (_text.text != state.draftText) {
+      _text.text = state.draftText;
+    }
+    if (state.currentSummary == null &&
+        !state.preparing &&
+        !state.committing) {
+      _session.loadCurrent(widget.ownerId);
+    }
+  }
+
+  void _onSessionChanged(String changedOwnerId) {
+    if (!mounted || changedOwnerId != widget.ownerId) return;
+    final state = _session.stateOf(widget.ownerId);
+    if (_text.text != state.draftText) {
+      _text.text = state.draftText;
+    }
+    setState(() {});
   }
 
   @override
   void didUpdateWidget(covariant TopicCompactionDialog oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.ownerId != widget.ownerId) {
-      _generation++;
-      _draft = null;
-      _current = null;
-      _text.clear();
-      _busy = false;
-      _committing = false;
-      _cancelled = false;
-      _error = null;
-      _loadCurrent();
+    final sessionChanged =
+        oldWidget.session != widget.session ||
+        (_ownsSession && oldWidget.port != widget.port);
+    if (sessionChanged) {
+      _session.removeListener(_onSessionChanged);
+      if (_ownsSession) {
+        _session.dispose();
+      }
+      _attachSession();
+      _syncOwnerSession();
+    } else if (oldWidget.ownerId != widget.ownerId) {
+      _syncOwnerSession();
     }
-  }
-
-  bool _valid(int generation) =>
-      mounted && !_cancelled && generation == _generation;
-  Future<void> _loadCurrent() async {
-    final generation = _generation;
-    try {
-      final current = await widget.port.current(widget.ownerId);
-      if (_valid(generation)) setState(() => _current = current);
-    } catch (_) {/* 仍保留撤销入口，损坏/失效摘要不冒充正常摘要展示。 */}
   }
 
   @override
   void dispose() {
-    _cancelled = true;
+    _session.removeListener(_onSessionChanged);
+    if (_ownsSession) {
+      _session.dispose();
+    }
     _text.dispose();
     super.dispose();
   }
 
-  String _errorText(Object error) => error is ContextCompactionException
-      ? error.message
-      : '整理或保存失败，请检查模型/网络后重试。确认前原话题不会改变。';
-
-  Future<void> _prepare() async {
-    final generation = ++_generation;
-    setState(() {
-      _busy = true;
-      _error = null;
-      _progress = '正在读取原始聊天…';
-    });
-    try {
-      final draft = await widget.port.prepare(widget.ownerId,
-          isCancelled: () => !_valid(generation),
-          onProgress: (done, total) {
-            if (_valid(generation)) {
-              setState(() => _progress = '整理内容 $done / $total');
-            }
-          });
-      if (!_valid(generation)) return;
-      setState(() {
-        _draft = draft;
-        _text.text = draft.summary;
-      });
-    } catch (error) {
-      if (_valid(generation)) setState(() => _error = _errorText(error));
-    } finally {
-      if (_valid(generation)) setState(() => _busy = false);
-    }
-  }
-
   Future<void> _commit() async {
-    final draft = _draft;
-    if (draft == null) return;
-    final generation = _generation;
-    setState(() {
-      _busy = true;
-      _committing = true;
-      _error = null;
-      _progress = '正在保存内容交接…';
-    });
-    try {
-      await widget.port.commit(draft, _text.text);
-      if (mounted && _valid(generation)) {
-        Navigator.of(context).pop('已保留内容，新话题将使用最新角色卡。');
-      }
-    } catch (error) {
-      if (_valid(generation)) setState(() => _error = _errorText(error));
-    } finally {
-      if (_valid(generation)) {
-        setState(() {
-          _busy = false;
-          _committing = false;
-        });
-      }
+    final ok = await _session.commit(widget.ownerId, _text.text);
+    if (ok && mounted) {
+      Navigator.of(context).pop('已保留内容，新话题将使用最新角色卡。');
     }
   }
 
   Future<void> _undo() async {
-    final generation = _generation;
-    final owner = widget.ownerId;
-    final port = widget.port;
     final accepted = await showMeoTalkDialog(
-        context: context,
-        title: '撤销上次压缩',
-        content: const Text('恢复上次压缩前的对话，聊天记录不会删除。'),
-        confirmText: '恢复上下文');
-    if (accepted != true || !_valid(generation)) return;
-    setState(() {
-      _busy = true;
-      _committing = true;
-      _error = null;
-      _progress = '正在恢复…';
-    });
-    try {
-      await port.undo(owner);
-      if (mounted && _valid(generation)) {
-        Navigator.of(context).pop('已恢复上次压缩前的上下文；长期记忆未撤回。');
-      }
-    } catch (error) {
-      if (_valid(generation)) setState(() => _error = _errorText(error));
-    } finally {
-      if (_valid(generation)) {
-        setState(() {
-          _busy = false;
-          _committing = false;
-        });
-      }
+      context: context,
+      title: '撤销上次压缩',
+      content: const Text('恢复上次压缩前的对话，聊天记录不会删除。'),
+      confirmText: '恢复上下文',
+    );
+    if (accepted != true || !mounted) return;
+    final ok = await _session.undo(widget.ownerId);
+    if (ok && mounted) {
+      Navigator.of(context).pop('已恢复上次压缩前的上下文；长期记忆未撤回。');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final state = _session.stateOf(widget.ownerId);
+    final busy = state.preparing || state.committing;
     final maxHeight = (MediaQuery.sizeOf(context).height -
             MediaQuery.viewInsetsOf(context).bottom -
             240)
         .clamp(80.0, 500.0);
     return PopScope(
-      canPop: !_committing,
+      canPop: !state.committing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop && _session.stateOf(widget.ownerId).preparing) {
+          _session.enterBackground(widget.ownerId);
+        }
+      },
       child: Center(
           child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
         child: MeoTalkDialog(
-          title: _draft == null ? '压缩并开启新话题' : '确认保留的内容',
-          cancelText: _busy ? '取消整理' : '取消',
-          showCancelButton: !_committing,
+          title: state.draft != null && !state.preparing
+              ? '确认保留的内容'
+              : '压缩并开启新话题',
+          cancelText: state.preparing ? '取消整理' : '取消',
+          showCancelButton: !state.committing,
           onCancel: () {
-            _cancelled = true;
+            if (state.preparing) {
+              _session.cancelPrepare(widget.ownerId);
+            } else if (state.draft != null) {
+              _session.discardDraft(widget.ownerId);
+            }
             Navigator.of(context).pop();
           },
-          confirmText: _draft == null ? '整理内容' : '保存并开启',
-          onConfirm: _busy ? null : (_draft == null ? _prepare : _commit),
+          confirmText: state.preparing
+              ? '后台整理'
+              : (state.draft == null ? '整理内容' : '保存并开启'),
+          onConfirm: state.committing
+              ? null
+              : state.preparing
+                  ? () {
+                      _session.enterBackground(widget.ownerId);
+                      Navigator.of(context)
+                          .pop('已转入后台整理，完成后打开「压缩上下文」即可确认开启。');
+                    }
+                  : (state.draft == null
+                      ? () => _session.prepare(widget.ownerId)
+                      : _commit),
           content: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxHeight),
             child: SingleChildScrollView(
@@ -203,29 +201,32 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
               children: [
                 const Text('把前面的对话整理成摘要，聊天记录不会删除。'),
                 const SizedBox(height: 12),
-                if (_busy) ...[
-                  Text(_progress),
+                if (busy) ...[
+                  Text(state.progress),
                   const LinearProgressIndicator()
                 ],
-                if (_draft != null && !_busy) ...[
+                if (state.draft != null && !busy) ...[
                   MoeTextField(
-                      controller: _text,
-                      minLines: 4,
-                      maxLines: 8,
-                      label: '新话题内容摘要（可修改）'),
+                    controller: _text,
+                    minLines: 4,
+                    maxLines: 8,
+                    label: '新话题内容摘要（可修改）',
+                    onChanged: (value) =>
+                        _session.updateDraftText(widget.ownerId, value),
+                  ),
                   const Text('确认后将整理进长期记忆。'),
                   IntrinsicWidth(
                     child: MoeSecondaryButton(
                       label: '重新整理（保留原话题）',
                       icon: Icons.refresh,
                       size: MoeSecondaryButtonSize.sm,
-                      onPressed: _prepare,
+                      onPressed: () => _session.prepare(widget.ownerId),
                     ),
                   ),
                 ],
-                if (_draft == null && !_busy) ...[
-                  if (_current != null)
-                    Text('上次内容摘要：\n${_current!.summary}',
+                if (state.draft == null && !busy) ...[
+                  if (state.currentSummary != null)
+                    Text('上次内容摘要：\n${state.currentSummary!.summary}',
                         maxLines: 4, overflow: TextOverflow.ellipsis),
                   IntrinsicWidth(
                     child: MoeSecondaryButton(
@@ -236,10 +237,10 @@ class _TopicCompactionDialogState extends State<TopicCompactionDialog> {
                     ),
                   ),
                 ],
-                if (_error != null)
+                if (state.error != null)
                   Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Text(_error!,
+                      child: Text(state.error!,
                           style: TextStyle(color: context.moeColors.text))),
               ],
             )),

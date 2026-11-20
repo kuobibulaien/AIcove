@@ -315,7 +315,14 @@ class TraceTimelinePanel extends StatelessWidget {
     final toolResults = _safeInt(meta['toolResults']);
     final textLength = _safeInt(meta['textLength']);
     final statusCode = _safeInt(meta['statusCode']);
+    final inputTokens = _safeInt(meta['inputTokens']);
+    final outputTokens = _safeInt(meta['outputTokens']);
+    final cachedTokens = _safeInt(meta['cachedInputTokens']) ?? 0;
 
+    if ((inputTokens ?? 0) > 0 || (outputTokens ?? 0) > 0) {
+      final cachePart = cachedTokens > 0 ? '(缓$cachedTokens)' : '';
+      parts.add('入${inputTokens ?? 0}$cachePart/出${outputTokens ?? 0}');
+    }
     if (toolCalls != null && toolCalls > 0) {
       parts.add('${toolCalls}个工具');
     }

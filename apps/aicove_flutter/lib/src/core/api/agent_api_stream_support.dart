@@ -49,21 +49,24 @@ class _AgentApiStreamSupport {
       throw StateError('Missing providerApiKey for direct stream');
     }
 
-    final preparedRequest = _owner._prepareChatRequest(
-      modelFullId: modelFullId,
-      messages: messages,
-      userText: userText,
-      providerApiKey: trimmedKey,
-      temperature: temperature,
-      topP: topP,
-      token: token,
-      providerApiBase: trimmedBase,
-      customConfig: customConfig,
-      tools: tools,
-      requestOptions: requestOptions,
-      streaming: true,
-      allowAuthorizationFallback: true,
-    );
+    _PreparedChatRequest prepare({bool includeStreamUsage = true}) =>
+        _owner._prepareChatRequest(
+          modelFullId: modelFullId,
+          messages: messages,
+          userText: userText,
+          providerApiKey: trimmedKey,
+          temperature: temperature,
+          topP: topP,
+          token: token,
+          providerApiBase: trimmedBase,
+          customConfig: customConfig,
+          tools: tools,
+          requestOptions: requestOptions,
+          streaming: true,
+          allowAuthorizationFallback: true,
+          includeStreamUsage: includeStreamUsage,
+        );
+    var preparedRequest = prepare();
     final provider = preparedRequest.provider;
     final adapter = preparedRequest.adapter;
     final adapterName = adapter.name;
@@ -88,10 +91,10 @@ class _AgentApiStreamSupport {
     final requestUri = preparedRequest.requestUri;
     final endpointForLogs = preparedRequest.endpointForLogs;
     final chatMessages = preparedRequest.chatMessages;
-    final logRequestBodyJson = preparedRequest.logRequestBodyJson;
+    var logRequestBodyJson = preparedRequest.logRequestBodyJson;
     final logContextJson = preparedRequest.logContextJson;
     final headers = preparedRequest.headers;
-    final requestDiagnostics = preparedRequest.requestDiagnostics;
+    var requestDiagnostics = preparedRequest.requestDiagnostics;
     final round = roundIndex ?? 0;
 
     await _owner._recordRoundRequestBuilt(
@@ -114,9 +117,12 @@ class _AgentApiStreamSupport {
     });
 
     final sw = Stopwatch()..start();
-    final request = RequestControl.request('POST', requestUri);
-    request.headers.addAll(headers);
-    request.bodyBytes = preparedRequest.requestBodyBytes;
+    Future<http.StreamedResponse> send() => modelTransportRequest(() {
+      final request = RequestControl.request('POST', requestUri)
+        ..headers.addAll(headers)
+        ..bodyBytes = preparedRequest.requestBodyBytes;
+      return _client.send(request).timeout(timeout);
+    });
     final requestSentAt = await _owner._recordModelRequestSent(
       traceId: traceId,
       sessionId: sessionId,
@@ -127,14 +133,78 @@ class _AgentApiStreamSupport {
       streaming: true,
     );
 
+    final requestId =
+        '${traceId ?? turnId ?? sessionId}:$round:${requestSentAt.microsecondsSinceEpoch}';
+    final text = StringBuffer();
+    final reasoning = StringBuffer();
+    final toolAggregator = _StreamingToolCallAggregator();
+    final anthropicToolAggregator = _AnthropicStreamingToolUseAggregator();
+    final geminiToolAggregator = _GeminiStreamingFunctionCallAggregator();
+    TokenUsage? usage;
+    final claudeUsageFields = <String, dynamic>{};
+    int? responseStatus;
+    var usageRecorded = false;
+    List<ToolCall> buildToolCalls() => switch (adapterName) {
+      'claude' => anthropicToolAggregator.build(),
+      'gemini' => geminiToolAggregator.build(),
+      _ => toolAggregator.build(),
+    };
+    Future<void> recordUsage() async {
+      if (usageRecorded ||
+          responseStatus == null ||
+          responseStatus < 200 ||
+          responseStatus >= 300) {
+        return;
+      }
+      usage ??= TokenUsage.estimate(
+        messages: chatMessages,
+        tools: tools,
+        outputText: text.toString(),
+        reasoningText: reasoning.toString(),
+        toolCalls: buildToolCalls(),
+      );
+      await TokenUsageLedger.instance.recordHttpRound(
+        requestId: requestId,
+        providerId: provider,
+        model: preparedRequest.model,
+        usage: usage!,
+        occurredAt: requestSentAt,
+        conversationId:
+            TokenUsageCaptureScope.current?.conversationId ?? sessionId,
+        turnId: turnId,
+        roundIndex: roundIndex,
+        durationMs: sw.elapsedMilliseconds,
+      );
+      usageRecorded = true;
+    }
+
     var traceResponseRecorded = false;
     var apiLogRecorded = false;
     try {
-      final response = await modelTransportRequest(
-        () => _client.send(request).timeout(timeout));
+      var response = await send();
+      String? rejectedBody;
+      if (preparedRequest.autoInjectedStreamUsage &&
+          (response.statusCode == 400 || response.statusCode == 422)) {
+        rejectedBody = utf8.decode(await modelTransportRequest(
+          () => response.stream.toBytes().timeout(timeout),
+        ));
+        final lower = rejectedBody.toLowerCase();
+        if (lower.contains('stream_options') ||
+            lower.contains('include_usage')) {
+          AgentApiClient._unsupportedStreamUsage.add(
+            AgentApiClient._streamUsageKey(endpoint, preparedRequest.model),
+          );
+          preparedRequest = prepare(includeStreamUsage: false);
+          logRequestBodyJson = preparedRequest.logRequestBodyJson;
+          requestDiagnostics = preparedRequest.requestDiagnostics;
+          response = await send();
+          rejectedBody = null;
+        }
+      }
+      responseStatus = response.statusCode;
       final responseBytes = http.ByteStream(modelTransportStream(response.stream.timeout(timeout)));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        final errBody = utf8.decode(
+        final errBody = rejectedBody ?? utf8.decode(
           await modelTransportRequest(() => responseBytes.toBytes().timeout(timeout)),
         );
         sw.stop();
@@ -211,12 +281,6 @@ class _AgentApiStreamSupport {
       final usesGeminiJsonBody = isGeminiStream &&
           responseContentType.contains('application/json') &&
           !responseContentType.contains('text/event-stream');
-
-      final text = StringBuffer();
-      final reasoning = StringBuffer();
-      final toolAggregator = _StreamingToolCallAggregator();
-      final anthropicToolAggregator = _AnthropicStreamingToolUseAggregator();
-      final geminiToolAggregator = _GeminiStreamingFunctionCallAggregator();
       final geminiThoughtAggregator = _GeminiStreamingThoughtPartAggregator();
       final textDeltaNormalizer = _StreamingTextDeltaNormalizer();
       var done = false;
@@ -303,6 +367,21 @@ class _AgentApiStreamSupport {
       }
 
       void handleDecodedEventMap(Map<String, dynamic> evt) {
+        if (isClaudeStream) {
+          final start = evt['message'];
+          final rawUsage =
+              evt['usage'] ?? (start is Map ? start['usage'] : null);
+          if (rawUsage is Map) {
+            for (final entry in rawUsage.entries) {
+              if (entry.value != null) {
+                claudeUsageFields[entry.key.toString()] = entry.value;
+              }
+            }
+            usage = TokenUsage.fromClaudeUsage(claudeUsageFields) ?? usage;
+          }
+        } else {
+          usage = _parseHttpUsage(adapterName, evt) ?? usage;
+        }
         final rootError = evt['error'];
         if (rootError != null) {
           final message = rootError is Map
@@ -584,11 +663,8 @@ class _AgentApiStreamSupport {
       }
 
       sw.stop();
-      final builtToolCalls = switch (adapterName) {
-        'claude' => anthropicToolAggregator.build(),
-        'gemini' => geminiToolAggregator.build(),
-        _ => toolAggregator.build(),
-      };
+      final builtToolCalls = buildToolCalls();
+      await recordUsage();
       final finalText = text.toString();
       final finalReasoning = reasoning.toString();
       final hiddenThoughtParts = switch (adapterName) {
@@ -651,6 +727,7 @@ class _AgentApiStreamSupport {
             'statusCode': response.statusCode,
             'toolCalls': builtToolCalls.length,
             'textLength': finalText.length,
+            ..._usageMetadata(usage),
           },
         );
         traceEventSeq = traceEvent.eventSeq;
@@ -665,6 +742,12 @@ class _AgentApiStreamSupport {
         requestBody: preparedRequest.requestBodySnippet,
         responseBody: '[stream]',
         ok: true,
+        inputTokens: usage?.inputTokens,
+        outputTokens: usage?.outputTokens,
+        cachedInputTokens: usage?.cachedInputTokens,
+        cacheWriteTokens: usage?.cacheWriteTokens,
+        reasoningTokens: usage?.reasoningTokens,
+        usageEstimated: usage?.isEstimated,
         rawContext: logContextJson,
         rawAiResponse: finalText,
         rawRequestBody: logRequestBodyJson,
@@ -692,6 +775,7 @@ class _AgentApiStreamSupport {
 
       return SendMessageRichResult(
         text: finalText,
+        usage: usage,
         toolResults: const <Map<String, dynamic>>[],
         toolCalls: builtToolCalls,
         hiddenThoughtParts: hiddenThoughtParts,
@@ -701,6 +785,10 @@ class _AgentApiStreamSupport {
       );
     } catch (e) {
       sw.stop();
+      if (usage != null || text.isNotEmpty || reasoning.isNotEmpty ||
+          buildToolCalls().isNotEmpty) {
+        await recordUsage();
+      }
       Map<String, dynamic>? catchPayloadRef;
       int? catchTraceEventSeq;
       if (traceId != null && !traceResponseRecorded) {
@@ -727,7 +815,7 @@ class _AgentApiStreamSupport {
           status: TraceEventStatus.failed,
           source: 'AgentApiClient',
           payloadRef: catchPayloadRef,
-          meta: {'error': e.toString()},
+          meta: {'error': e.toString(), ..._usageMetadata(usage)},
         );
         catchTraceEventSeq = traceEvent.eventSeq;
         traceResponseRecorded = true;
@@ -751,7 +839,13 @@ class _AgentApiStreamSupport {
           time: DateTime.now(),
           method: 'POST',
           url: endpoint,
-          status: null,
+          status: responseStatus,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cachedInputTokens: usage?.cachedInputTokens,
+          cacheWriteTokens: usage?.cacheWriteTokens,
+          reasoningTokens: usage?.reasoningTokens,
+          usageEstimated: usage?.isEstimated,
           durationMs: sw.elapsedMilliseconds,
           requestBody: preparedRequest.requestBodySnippet,
           responseBody: ApiLogger.safeSnippet(e.toString()),

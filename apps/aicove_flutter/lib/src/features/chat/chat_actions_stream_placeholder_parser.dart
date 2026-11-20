@@ -386,6 +386,28 @@ extension _StreamPlaceholderParser on _StreamPlaceholderDelivery {
     );
   }
 
+  static const _ttsClosePrefix = '</tts';
+  static final _ttsClosePattern = RegExp(
+    r"""</tts(?=[\s/>])(?:"[^"]*"|'[^']*'|[^'">])*?>""",
+    caseSensitive: false,
+  );
+  static final _ttsCloseStart = RegExp(r'</tts(?=[\s/])', caseSensitive: false);
+
+  bool _containsNewTtsClose(String delta) {
+    if (_partialTtsClose.isEmpty && !delta.contains('<')) return false;
+    final text = '$_partialTtsClose$delta';
+    final lastOpen = text.lastIndexOf('<');
+    final tail = text.substring(lastOpen);
+    _partialTtsClose =
+        (tail.length <= _ttsClosePrefix.length &&
+                _ttsClosePrefix.startsWith(tail.toLowerCase())) ||
+            (_ttsCloseStart.matchAsPrefix(tail) != null &&
+                _ttsClosePattern.matchAsPrefix(tail) == null)
+        ? tail
+        : '';
+    return delta.contains('>') && _ttsClosePattern.hasMatch(text);
+  }
+
   int _countReadyPendingAudioDescriptors(String rawText) {
     if (!enableTtsPlaceholders || rawText.isEmpty) return 0;
     var total = 0;
@@ -471,28 +493,29 @@ extension _StreamPlaceholderParser on _StreamPlaceholderDelivery {
     return segments;
   }
 
+  static final _createTriggerTag = RegExp(
+    r'<create_trigger\s[^>]*?/?>',
+    caseSensitive: false,
+  );
+  static final _createTriggerBlock = RegExp(
+    r'<create_trigger\s[^>]*?>.*?</create_trigger>',
+    caseSensitive: false,
+    dotAll: true,
+  );
+  static final _deleteTriggerTag = RegExp(
+    r'<delete_trigger\s[^>]*?/?>',
+    caseSensitive: false,
+  );
+
   String _sanitizeVisibleTextFragment(String value) {
     if (value.isEmpty) return value;
     var result = StickerTag.removeFrom(
       firstPartyContentTagScanner,
       _stripHiddenImageTagsForDisplay(value),
     );
-    result = result.replaceAll(
-      RegExp(r'<create_trigger\s[^>]*?/?>', caseSensitive: false),
-      '',
-    );
-    result = result.replaceAll(
-      RegExp(
-        r'<create_trigger\s[^>]*?>.*?</create_trigger>',
-        caseSensitive: false,
-        dotAll: true,
-      ),
-      '',
-    );
-    result = result.replaceAll(
-      RegExp(r'<delete_trigger\s[^>]*?/?>', caseSensitive: false),
-      '',
-    );
+    result = result.replaceAll(_createTriggerTag, '');
+    result = result.replaceAll(_createTriggerBlock, '');
+    result = result.replaceAll(_deleteTriggerTag, '');
     return result.replaceFirst(_partialTagTail, '');
   }
 

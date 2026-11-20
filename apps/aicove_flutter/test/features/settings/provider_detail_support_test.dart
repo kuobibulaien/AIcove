@@ -182,6 +182,43 @@ void main() {
     ]);
   });
 
+  group('按可见模型用途选择 API 格式', () {
+    for (final visible in <List<String>>[
+      ['gpt-4o', 'my-custom-paint'],
+      ['my-custom-paint'],
+    ]) {
+      test('通用渠道忽略旧默认用途并使用可见模型：$visible', () {
+        final settings = mapUiModelsToAppSettings({
+          'providers': [{
+            'id': 'paint',
+            'models': ['gpt-4o', 'my-custom-paint'],
+            'visible_models': visible,
+            'hidden_models': ['gpt-4o', 'my-custom-paint']
+                .where((model) => !visible.contains(model)).toList(),
+            'capabilities': ['image'],
+            'custom_config': {'requestFormat': 'openai', 'defaultModelType': 'image'},
+          }],
+          'model_types': {'paint:my-custom-paint': 'image'},
+        });
+        expect(ProviderDetailRequestFormat.forProvider(
+          settings.getProvider('paint')!, settings: settings,
+        ), visible.contains('gpt-4o')
+            ? ProviderDetailRequestFormat.chatFormats
+            : ProviderDetailRequestFormat.imageFormats);
+        expect(resolveProviderDetailRequestFormat(settings.getProvider('paint')!),
+            ProviderDetailRequestFormat.openai);
+      });
+    }
+    test('专用绘图格式在空模型目录仍保留绘图格式列表', () {
+      const provider = ProviderAuth(
+        id: 'paint', apiBaseUrl: '', apiKeys: [],
+        customConfig: {'requestFormat': 'comfyui'},
+      );
+      expect(ProviderDetailRequestFormat.forProvider(provider),
+          ProviderDetailRequestFormat.imageFormats);
+    });
+  });
+
   group('语音渠道的 API 格式', () {
     test('语音渠道可在全部语音格式间切换，即使模型名被推断成对话', () {
       const provider = ProviderAuth(

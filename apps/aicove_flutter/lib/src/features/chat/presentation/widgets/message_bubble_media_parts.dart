@@ -238,6 +238,7 @@ extension _MessageBubbleMediaParts on MessageBubble {
               ),
             )
           : placeholder(isError: true);
+      imageWidget = _ViewportVisibilityTickerMode(child: imageWidget);
     } else {
       // 照片：用 ConstrainedBox 限制最大尺寸，图片等比缩放（仿微信）
       final imgBlock = block as ImageBlock;
@@ -522,6 +523,113 @@ extension _MessageBubbleMediaParts on MessageBubble {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Pauses ticker-driven animations (such as animated stickers) once the widget
+/// moves more than [_kPrewarmMargin] logical pixels outside its scrollable
+/// viewport, avoiding offscreen decode and tick overhead.
+class _ViewportVisibilityTickerMode extends StatefulWidget {
+  const _ViewportVisibilityTickerMode({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_ViewportVisibilityTickerMode> createState() =>
+      _ViewportVisibilityTickerModeState();
+}
+
+class _ViewportVisibilityTickerModeState
+    extends State<_ViewportVisibilityTickerMode> {
+  static const double _kPrewarmMargin = 48.0;
+
+  ScrollableState? _scrollable;
+  ScrollPosition? _scrollPosition;
+  bool _nearViewport = true;
+  bool _measureScheduled = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scrollable = Scrollable.maybeOf(context);
+    final nextPosition = scrollable?.position;
+    _scrollable = scrollable;
+    if (!identical(_scrollPosition, nextPosition)) {
+      _scrollPosition?.removeListener(_onScroll);
+      _scrollPosition = nextPosition;
+      _scrollPosition?.addListener(_onScroll);
+    }
+    if (_scrollable == null) {
+      _nearViewport = true;
+    } else {
+      _scheduleMeasure();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ViewportVisibilityTickerMode oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_scrollable != null) {
+      _scheduleMeasure();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollPosition?.removeListener(_onScroll);
+    _scrollPosition = null;
+    _scrollable = null;
+    super.dispose();
+  }
+
+  void _onScroll() {
+    _scheduleMeasure();
+  }
+
+  void _scheduleMeasure() {
+    if (_measureScheduled || !mounted) return;
+    _measureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measureScheduled = false;
+      if (!mounted) return;
+      _measureVisibility();
+    });
+  }
+
+  void _measureVisibility() {
+    final scrollable = _scrollable ?? Scrollable.maybeOf(context);
+    if (scrollable == null) {
+      if (!_nearViewport) {
+        setState(() => _nearViewport = true);
+      }
+      return;
+    }
+    final selfObject = context.findRenderObject();
+    final viewportObject = scrollable.context.findRenderObject();
+    if (selfObject is! RenderBox ||
+        viewportObject is! RenderBox ||
+        !selfObject.attached ||
+        !viewportObject.attached ||
+        !selfObject.hasSize ||
+        !viewportObject.hasSize) {
+      return;
+    }
+    final selfRect = selfObject.localToGlobal(Offset.zero) & selfObject.size;
+    final viewportRect =
+        (viewportObject.localToGlobal(Offset.zero) & viewportObject.size)
+            .inflate(_kPrewarmMargin);
+    final nextNearViewport = selfRect.overlaps(viewportRect);
+    if (nextNearViewport != _nearViewport) {
+      setState(() => _nearViewport = nextNearViewport);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TickerMode(
+      enabled: TickerMode.valuesOf(context).enabled && _nearViewport,
+      child: widget.child,
     );
   }
 }

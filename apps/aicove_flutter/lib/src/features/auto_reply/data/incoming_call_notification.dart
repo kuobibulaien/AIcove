@@ -10,6 +10,19 @@ import 'proactive_call_ledger.dart';
 /// posts it and the isolates that handle its buttons.
 
 /// Payload prefix; the rest is the trigger id.
+const String activeReplyPayloadPrefix = 'active_reply:';
+
+int activeReplyNotificationId(String triggerId) =>
+    0x20000000 | (triggerId.hashCode & 0x0FFFFFFF);
+
+String? activeReplyConversationIdOf(String? payload) {
+  if (payload == null || !payload.startsWith(activeReplyPayloadPrefix)) {
+    return null;
+  }
+  final id = payload.substring(activeReplyPayloadPrefix.length).trim();
+  return id.isEmpty ? null : id;
+}
+
 const String incomingCallPayloadPrefix = 'incoming_call:';
 const String incomingCallAcceptAction = 'accept';
 const String incomingCallDeclineAction = 'decline';

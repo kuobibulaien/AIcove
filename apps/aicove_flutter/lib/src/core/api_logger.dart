@@ -26,6 +26,12 @@ String truncateLongText(String text,
 }
 
 class ApiLogEntry {
+  final int? inputTokens;
+  final int? outputTokens;
+  final int? cachedInputTokens;
+  final int? cacheWriteTokens;
+  final int? reasoningTokens;
+  final bool? usageEstimated;
   final DateTime time;
   final String method;
   final String url;
@@ -74,6 +80,12 @@ class ApiLogEntry {
       sessionId != null;
 
   const ApiLogEntry({
+    this.inputTokens,
+    this.outputTokens,
+    this.cachedInputTokens,
+    this.cacheWriteTokens,
+    this.reasoningTokens,
+    this.usageEstimated,
     required this.time,
     required this.method,
     required this.url,
@@ -103,6 +115,12 @@ class ApiLogEntry {
   /// 转换为 JSON
   Map<String, dynamic> toJson() {
     return {
+      if (inputTokens != null) 'inputTokens': inputTokens,
+      if (outputTokens != null) 'outputTokens': outputTokens,
+      if (cachedInputTokens != null) 'cachedInputTokens': cachedInputTokens,
+      if (cacheWriteTokens != null) 'cacheWriteTokens': cacheWriteTokens,
+      if (reasoningTokens != null) 'reasoningTokens': reasoningTokens,
+      if (usageEstimated != null) 'usageEstimated': usageEstimated,
       'time': time.toIso8601String(),
       'method': method,
       'url': url,
@@ -133,6 +151,12 @@ class ApiLogEntry {
   /// 从 JSON 创建
   factory ApiLogEntry.fromJson(Map<String, dynamic> json) {
     return ApiLogEntry(
+      inputTokens: json['inputTokens'] as int?,
+      outputTokens: json['outputTokens'] as int?,
+      cachedInputTokens: json['cachedInputTokens'] as int?,
+      cacheWriteTokens: json['cacheWriteTokens'] as int?,
+      reasoningTokens: json['reasoningTokens'] as int?,
+      usageEstimated: json['usageEstimated'] as bool?,
       time: DateTime.parse(json['time'] as String),
       method: json['method'] as String,
       url: json['url'] as String,

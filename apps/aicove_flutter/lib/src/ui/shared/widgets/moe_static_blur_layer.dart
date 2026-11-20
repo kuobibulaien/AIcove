@@ -57,21 +57,24 @@ class _MoeStaticBlurLayerState extends State<MoeStaticBlurLayer> {
     return _provider;
   }
 
-  Widget _image(ImageProvider provider) => SizedBox.expand(
-    child: Image(
-      image: provider,
-      fit: BoxFit.cover,
-      alignment: widget.alignment,
-      gaplessPlayback: true,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-    ),
-  );
+  Widget _image(ImageProvider provider, Animation<double> opacity) =>
+      SizedBox.expand(
+        child: Image(
+          image: provider,
+          fit: BoxFit.cover,
+          alignment: widget.alignment,
+          opacity: opacity,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
     final opacity = MoeStaticBlurLayer.opacityFor(widget.blur);
     if (opacity <= 0) return const SizedBox.shrink();
+    final opacityAnimation = AlwaysStoppedAnimation<double>(opacity);
     final source = widget.source;
     final blurAsset = BlurredBackgroundService.deriveBlurAssetPath(source);
     final Widget layer;
@@ -81,22 +84,23 @@ class _MoeStaticBlurLayerState extends State<MoeStaticBlurLayer> {
           blurAsset,
           fit: BoxFit.cover,
           alignment: widget.alignment,
+          opacity: opacityAnimation,
           gaplessPlayback: true,
           filterQuality: FilterQuality.medium,
           errorBuilder: (_, __, ___) {
             final provider = _generated(source);
             return provider == null
                 ? const SizedBox.shrink()
-                : _image(provider);
+                : _image(provider, opacityAnimation);
           },
         ),
       );
     } else {
       final provider = _generated(source);
-      layer = provider == null ? const SizedBox.shrink() : _image(provider);
+      layer = provider == null
+          ? const SizedBox.shrink()
+          : _image(provider, opacityAnimation);
     }
-    return IgnorePointer(
-      child: Opacity(opacity: opacity, child: layer),
-    );
+    return IgnorePointer(child: layer);
   }
 }

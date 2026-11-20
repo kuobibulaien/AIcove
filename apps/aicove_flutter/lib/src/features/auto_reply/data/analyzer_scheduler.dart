@@ -105,6 +105,7 @@ class AnalyzerScheduler {
 
   Future<void> _onConversationIdle(String conversationId) async {
     await _initFuture;
+    if (_disposed) return;
     final state = _states[conversationId];
     if (state == null ||
         state.mode != ConversationProactiveMode.active ||
@@ -117,7 +118,8 @@ class AnalyzerScheduler {
     );
     if (conversation == null ||
         !_isSupervisorEnabledForConversation(conversation) ||
-        !await _ownsConversation(conversationId)) {
+        !await _ownsConversation(conversationId) ||
+        _disposed) {
       return;
     }
     scheduleAnalysis(conversationId: conversationId, delay: _defaultDelay);

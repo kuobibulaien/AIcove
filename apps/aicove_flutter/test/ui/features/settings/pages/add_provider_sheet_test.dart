@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:aicove_flutter/src/features/settings/app_settings.dart';
 import 'package:aicove_flutter/src/ui/features/settings/pages/add_provider_sheet.dart';
 import '../../../../helpers/release_source_preview.dart';
 
@@ -178,4 +183,71 @@ void main() {
       expect(find.byType(AddProviderSheet), findsNothing);
     });
   }
+
+  testWidgets('绘图分类选 OpenAI 导入时不按名称丢弃远端模型，且不误勾对话模型为可见', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final requests = <String>[];
+    late HttpServer server;
+    await tester.runAsync(() async {
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        requests.add('${request.method} ${request.uri.path}');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({
+            'data': [
+              {'id': 'gpt-4o'},
+              {'id': 'my-custom-paint'},
+            ],
+          }),
+        );
+        await request.response.close();
+      });
+    });
+    addTearDown(() => server.close(force: true));
+    usePhoneSize(tester);
+
+    await HttpOverrides.runWithHttpOverrides(() async {
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: AddProviderSheet(initialCategory: ProviderCategory.image),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final fields = find.byType(TextField);
+      await tester.enterText(fields.at(1), 'sk-test');
+      await tester.enterText(fields.at(2), 'http://127.0.0.1:${server.port}/v1');
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('立即添加'));
+        await tester.pump();
+        for (var i = 0; i < 100 && requests.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+
+      expect(requests, ['GET /v1/models']);
+      final fresh = ProviderContainer();
+      addTearDown(fresh.dispose);
+      final saved = await fresh.read(appSettingsProvider.future);
+      final imported = saved.providers.last;
+      expect(imported.models, containsAll(['gpt-4o', 'my-custom-paint']));
+      expect(imported.visibleModels, isEmpty);
+      expect(imported.hiddenModels, containsAll(['gpt-4o', 'my-custom-paint']));
+      expect(tester.takeException(), isNull);
+    }, _LocalSheetHttpOverrides());
+  });
 }
+
+class _LocalSheetHttpOverrides extends HttpOverrides {}

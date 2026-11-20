@@ -194,6 +194,7 @@ void main() {
         activeConversationProvider.overrideWith((ref) => conversation),
         resolvedConversationByIdProvider(conversation.id)
             .overrideWith((ref) => conversation),
+        conversationSnapshotByIdProvider(conversation.id).overrideWith((ref) => conversation),
         conversationMessagesProvider(conversation.id).overrideWith(
           (ref) => AsyncValue.data(<Message>[userMessage, assistantMessage]),
         ),
@@ -266,6 +267,7 @@ void main() {
           activeConversationProvider.overrideWith((ref) => conversation),
           resolvedConversationByIdProvider(conversation.id)
               .overrideWith((ref) => conversation),
+          conversationSnapshotByIdProvider(conversation.id).overrideWith((ref) => conversation),
           conversationMessagesProvider(conversation.id).overrideWith(
             (ref) => AsyncValue.data(messages),
           ),
@@ -363,6 +365,7 @@ void main() {
         activeConversationProvider.overrideWith((ref) => conversation),
         resolvedConversationByIdProvider(conversation.id)
             .overrideWith((ref) => conversation),
+        conversationSnapshotByIdProvider(conversation.id).overrideWith((ref) => conversation),
         conversationMessagesProvider(conversation.id).overrideWith(
           (ref) => ref.watch(messagesStateProvider),
         ),

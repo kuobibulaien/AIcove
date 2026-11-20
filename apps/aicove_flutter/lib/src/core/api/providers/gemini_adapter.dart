@@ -307,6 +307,11 @@ class GeminiAdapter implements ProviderAdapter {
     }
 
     return ApiCallResult(
+      usage: TokenUsage.fromGeminiUsageMetadata(
+        response['usageMetadata'] is Map
+            ? Map<String, dynamic>.from(response['usageMetadata'])
+            : null,
+      ),
       text: text,
       toolResults: const [],
       toolCalls: toolCalls,

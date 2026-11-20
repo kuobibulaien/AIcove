@@ -395,31 +395,62 @@ bool isGoogleVertexExpressProvider({
   return normalized == 'gemini' && isVertexExpressEnabled(customConfig);
 }
 
-ModelType _resolveProviderModelType({
+/// 合并单个模型用途；普通对话不存冗余键，必要时遮蔽旧裸 ID 覆盖。
+void mergeModelTypeOverrides({
   required String providerId,
-  required String modelId,
   required Map<String, String> modelTypes,
+  required Map<String, String> overrides,
+  ModelType? defaultType,
 }) {
-  final modelRef = '$providerId:$modelId';
-  final stored = modelTypes[modelRef] ?? modelTypes[modelId];
-  if (stored != null && stored.trim().isNotEmpty) {
-    return ModelType.fromValue(stored.trim());
+  for (final entry in overrides.entries) {
+    final scopedKey = '$providerId:${entry.key}';
+    final type = ModelType.fromValue(entry.value);
+    final naturalType = resolveEffectiveModelType(
+      providerId: providerId,
+      rawModelId: entry.key,
+      defaultType: defaultType,
+    );
+    if (type == ModelType.chat && naturalType == ModelType.chat) {
+      modelTypes.remove(scopedKey);
+      if (resolveEffectiveModelType(
+            providerId: providerId,
+            rawModelId: entry.key,
+            modelTypes: modelTypes,
+            defaultType: defaultType,
+          ) != ModelType.chat) {
+        modelTypes[scopedKey] = type.value;
+      }
+    } else {
+      modelTypes[scopedKey] = type.value;
+    }
   }
-  return ModelType.inferFromModelId(modelId);
 }
 
 List<String> deriveProviderCapabilities({
   required String providerId,
   required List<String> models,
+  List<String>? visibleModels,
   required Map<String, String> modelTypes,
   List<String>? fallbackCapabilities,
+  String apiBaseUrl = '',
+  Map<String, dynamic>? customConfig,
 }) {
+  final defaultType = resolveProviderDefaultModelType(
+    providerId: providerId,
+    apiBaseUrl: apiBaseUrl,
+    customConfig: customConfig,
+    capabilities: fallbackCapabilities ?? const <String>[],
+  );
   final derived = <String>[];
-  for (final model in models) {
-    final resolved = _resolveProviderModelType(
+  final effectiveModels = visibleModels?.isNotEmpty == true
+      ? visibleModels!
+      : models;
+  for (final model in effectiveModels) {
+    final resolved = resolveEffectiveModelType(
       providerId: providerId,
-      modelId: model,
+      rawModelId: model,
       modelTypes: modelTypes,
+      defaultType: defaultType,
     );
     if (!derived.contains(resolved.value)) {
       derived.add(resolved.value);
@@ -643,6 +674,7 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
               provider['custom_config'] as Map<dynamic, dynamic>,
             )
           : <String, dynamic>{};
+      customConfig.remove('defaultModelType');
       if (id == 'aliyun' && !capabilities.contains('tts')) {
         capabilities.add('tts');
       }
@@ -691,9 +723,28 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       if (ttsFormat != null &&
           (ttsOnly || TtsRequestFormat.fromRaw(ttsFormat)!.forcesTtsModels)) {
         for (final model in models) {
-          if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty &&
+          if (resolveModelTypeOverride(
+                providerId: id,
+                rawModelId: model,
+                modelTypes: modelTypes,
+              ) == null &&
               ModelType.inferFromModelId(model) != ModelType.stt) {
             modelTypes['$id:$model'] = ModelType.tts.value;
+          }
+        }
+      }
+      // 旧版混合语音渠道按名称保留对话模型；迁成显式覆盖后再统一继承渠道默认。
+      if (ttsFormat != null &&
+          capabilities.contains('chat') &&
+          !TtsRequestFormat.fromRaw(ttsFormat)!.forcesTtsModels) {
+        for (final model in models) {
+          if (resolveModelTypeOverride(
+                providerId: id,
+                rawModelId: model,
+                modelTypes: modelTypes,
+              ) == null &&
+              ModelType.inferFromModelId(model) == ModelType.chat) {
+            modelTypes['$id:$model'] = ModelType.chat.value;
           }
         }
       }
@@ -706,20 +757,15 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
       if (asrFormat != null) {
         customConfig[AsrRequestFormat.configKey] = asrFormat.value;
       }
-      if (asrOnly) {
+      if (asrOnly &&
+          !const ['openai', 'claude', 'gemini'].contains(requestFormat)) {
         for (final model in models) {
-          if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty) {
+          if (resolveModelTypeOverride(
+                providerId: id,
+                rawModelId: model,
+                modelTypes: modelTypes,
+              ) == null) {
             modelTypes['$id:$model'] = ModelType.stt.value;
-          }
-        }
-      }
-      final isComfyUI = requestFormat == 'comfyui' ||
-          ((requestFormat == null || requestFormat.isEmpty) &&
-              id.toLowerCase() == 'comfyui');
-      if (isComfyUI) {
-        for (final model in models) {
-          if ((modelTypes['$id:$model'] ?? modelTypes[model] ?? '').isEmpty) {
-            modelTypes['$id:$model'] = ModelType.image.value;
           }
         }
       }
@@ -782,14 +828,15 @@ Map<String, dynamic> normalizeUiModelsStoreData(Map<String, dynamic> raw) {
         }
         hiddenList.add(model);
       }
-      final normalizedCapabilities = isNovelAi && capabilities.isNotEmpty
-          ? capabilities
-          : deriveProviderCapabilities(
-              providerId: id,
-              models: models,
-              modelTypes: modelTypes,
-              fallbackCapabilities: capabilities,
-            );
+      final normalizedCapabilities = deriveProviderCapabilities(
+        providerId: id,
+        models: models,
+        visibleModels: visibleList,
+        modelTypes: modelTypes,
+        fallbackCapabilities: capabilities,
+        apiBaseUrl: apiBaseUrl,
+        customConfig: customConfig,
+      );
       final contextMessageLimit = (provider['context_message_limit'] as num?)
           ?.toInt();
       final maxContextTokens = (provider['max_context_tokens'] as num?)

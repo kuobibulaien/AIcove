@@ -1,6 +1,8 @@
 // Plan 12 B4: the role may call the user. The chat model chooses a call
 // through the `call_user` tool while writing ahead; the call rings at fire
 // time, a missed one leaves a bubble and two in a row pause calling.
+import 'dart:async';
+
 import 'package:aicove_flutter/src/core/api/providers/provider_adapter.dart'
     show ToolCall;
 import 'package:aicove_flutter/src/core/database/database.dart' as db;
@@ -18,11 +20,24 @@ import 'package:aicove_flutter/src/features/voice_call/application/scripted_open
 import 'package:aicove_flutter/src/features/voice_call/application/voice_call_archiver.dart';
 import 'package:aicove_flutter/src/features/voice_call/domain/voice_call_ports.dart';
 import 'package:aicove_flutter/src/features/voice_call/providers/voice_call_providers.dart';
+import 'package:aicove_flutter/src/features/auto_reply/data/background_message_reprocessor.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+class _Reprocessor extends BackgroundMessageReprocessor {
+  _Reprocessor(super.ref);
+  final entered = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> reprocessRecentBackgroundMessages() async {
+    entered.complete();
+    await release.future;
+  }
+}
 
 class _EchoGenerator implements CallReplyGeneratorPort {
   final calls = <List<CallTurn>>[];
@@ -344,6 +359,7 @@ void main() {
     late List<Message> bubbles;
     late ProactiveCallLedger ledger;
     var failWrites = 0;
+    late _Reprocessor reprocessor;
 
     setUp(() {
       SharedPreferences.setMockInitialValues({});
@@ -354,6 +370,9 @@ void main() {
       container = ProviderContainer(
         overrides: [
           databaseProvider.overrideWithValue(database),
+          backgroundMessageReprocessorProvider.overrideWith(
+            (ref) => reprocessor = _Reprocessor(ref),
+          ),
           voiceCallArchiverProvider.overrideWithValue(
             VoiceCallArchiver(
               newId: (prefix) => '${prefix}_${ids++}',
@@ -395,6 +414,30 @@ void main() {
           .show(call, until: now.add(ringFor));
       return call;
     }
+
+
+    test('active reply opens its conversation after refresh; incoming call stays separate', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final bridge = container.read(incomingCallNotificationBridgeProvider);
+      final opened = <String>[];
+      await bridge.start(onOpenConversation: (_) => fail('stale callback'));
+      // A later start may supply navigation after initialization.
+      await bridge.start(onOpenConversation: opened.add);
+      container.read(backgroundMessageReprocessorProvider);
+      final response = bridge.handleResponse('active_reply:conv_target', null);
+      await reprocessor.entered.future;
+      expect(opened, isEmpty);
+      reprocessor.release.complete();
+      await response;
+      expect(opened, ['conv_target']);
+
+      await ring('notification_call', const Duration(seconds: 30));
+      await bridge.handleResponse('incoming_call:notification_call', 'decline');
+      expect((await ledger.find('notification_call'))!.state, ProactiveCallState.missed);
+      expect(bubbles, hasLength(1));
+      expect(opened, ['conv_target']);
+    });
 
     test('shows one call at a time', () async {
       final notifier = container.read(incomingCallProvider.notifier);

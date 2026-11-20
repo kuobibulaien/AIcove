@@ -312,7 +312,7 @@ List<ChatMessageListItem> buildChatMessageListItems({
         currentMessage.createdAt
                 .difference(messages[start - 1].createdAt)
                 .inMinutes >=
-            20;
+            5;
     bool computeShowAvatar() {
       final result =
           hasTimeDivider ||

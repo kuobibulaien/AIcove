@@ -16,7 +16,10 @@ import 'frontend_diagnostics_service.dart';
 /// 记录的是回传时刻，真实发生时间用 frameAgeMs 反推。事件循环延迟只说明主线程
 /// 当时没轮到定时器，不等于一定是应用代码占住了它。
 class FrameJankRecorder with WidgetsBindingObserver {
-  FrameJankRecorder(this._diagnostics);
+  FrameJankRecorder(this._diagnostics, {Duration Function()? elapsed})
+    : _elapsed = elapsed ?? (() => _monotonicClock.elapsed);
+
+  static final _monotonicClock = Stopwatch()..start();
 
   static final FrameJankRecorder instance = FrameJankRecorder(
     FrontendDiagnosticsService.instance,
@@ -26,6 +29,7 @@ class FrameJankRecorder with WidgetsBindingObserver {
   static const mixedPage = 'mixed';
   static const _window = Duration(seconds: 60);
   static const _beat = Duration(milliseconds: 100);
+  static const _idleTimeout = Duration(milliseconds: 2500);
   static const _stallThreshold = Duration(milliseconds: 150);
   static const _suspendedThreshold = Duration(seconds: 60);
   static const _slowFrameUs = 100000;
@@ -46,12 +50,14 @@ class FrameJankRecorder with WidgetsBindingObserver {
   }
 
   void recordSyncSpan(String tag, int startWallUs, int endWallUs) {
+    _markActivity();
     if (endWallUs - startWallUs < 8000) return;
     if (_syncSpans.length == 32) _syncSpans.removeFirst();
     _syncSpans.addLast((tag, startWallUs, endWallUs));
   }
 
   void enterPhase(String phase) {
+    _markActivity();
     (_activePhases[phase] ??= []).add(DateTime.now().microsecondsSinceEpoch);
   }
 
@@ -88,7 +94,9 @@ class FrameJankRecorder with WidgetsBindingObserver {
   String? Function()? pageName;
 
   final _windowClock = Stopwatch();
-  final _beatClock = Stopwatch();
+  final Duration Function() _elapsed;
+  Duration _lastActivity = Duration.zero;
+  Duration _beatStartedAt = Duration.zero;
   final _ui = _FrameHistogram();
   final _raster = _FrameHistogram();
   final _total = _FrameHistogram();
@@ -120,7 +128,7 @@ class FrameJankRecorder with WidgetsBindingObserver {
       ..start();
     final state = binding.lifecycleState;
     _foreground = state == null || state == AppLifecycleState.resumed;
-    if (_foreground) _startBeat();
+    _markActivity();
   }
 
   void uninstall() {
@@ -141,32 +149,41 @@ class FrameJankRecorder with WidgetsBindingObserver {
       _windowClock
         ..reset()
         ..start();
-      _startBeat();
+      _markActivity();
       return;
     }
     _stopBeat();
     flushWindow();
   }
 
+  @visibleForTesting
+  bool get isBeatRunning => _beatTimer != null;
+
+  void _markActivity() {
+    _lastActivity = _elapsed();
+    if (_installed && _foreground && _beatTimer == null) _startBeat();
+  }
+
   void _startBeat() {
-    _beatTimer?.cancel();
-    _beatClock
-      ..reset()
-      ..start();
+    _beatStartedAt = _elapsed();
     _beatTimer = Timer(_beat, _onBeat);
   }
 
   void _stopBeat() {
     _beatTimer?.cancel();
     _beatTimer = null;
-    _beatClock.stop();
   }
 
   void _onBeat() {
-    handleBeatLateness(_beatClock.elapsed - _beat);
+    final now = _elapsed();
+    handleBeatLateness(now - _beatStartedAt - _beat);
     if (_windowClock.elapsed >= _window) {
       flushWindow();
       _windowClock.reset();
+    }
+    if (_activePhases.isEmpty && now - _lastActivity > _idleTimeout) {
+      _stopBeat();
+      return;
     }
     _startBeat();
   }
@@ -190,7 +207,8 @@ class FrameJankRecorder with WidgetsBindingObserver {
   @visibleForTesting
   void handleTimings(List<FrameTiming> timings) {
     // 离开前台后才回传的帧归不到任何窗口，直接放弃。
-    if (!_foreground) return;
+    if (!_foreground || timings.isEmpty) return;
+    _markActivity();
     final page = _currentPage();
     _trackPage(page);
     // 一批帧可能跨过切页，此时无法确定某一帧属于哪个页面。

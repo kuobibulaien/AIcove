@@ -716,39 +716,42 @@ class _TypingDotsIndicatorState extends State<TypingDotsIndicator>
   @override
   Widget build(BuildContext context) {
     final effectiveHeight = widget.height ?? widget.dotSize * 1.6;
-    return SizedBox(
-      height: effectiveHeight,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: List.generate(3, (index) {
-          return Padding(
-            padding: EdgeInsets.only(right: index < 2 ? widget.spacing : 0),
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, child) {
-                // 每个点在周期中有不同的相位偏移（0.0, 0.2, 0.4）
-                final offset = index * 0.2;
-                final t = (_controller.value - offset) % 1.0;
-                // 活跃区间 [0, 0.4]，其余时间静止
-                final active = t < 0.4;
-                // 只使用透明度变化实现从左到右闪动，不缩放
-                final opacity = active
-                    ? 0.4 + 0.6 * math.sin(t / 0.4 * math.pi)
-                    : 0.4;
-                return Opacity(opacity: opacity, child: child);
-              },
-              child: Container(
-                width: widget.dotSize,
-                height: widget.dotSize,
-                decoration: BoxDecoration(
-                  color: widget.color,
-                  shape: BoxShape.circle,
-                ),
+    return RepaintBoundary(
+      child: SizedBox(
+        height: effectiveHeight,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: List.generate(3, (index) {
+            return Padding(
+              padding: EdgeInsets.only(right: index < 2 ? widget.spacing : 0),
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  // 每个点在周期中有不同的相位偏移（0.0, 0.2, 0.4）
+                  final offset = index * 0.2;
+                  final t = (_controller.value - offset) % 1.0;
+                  // 活跃区间 [0, 0.4]，其余时间静止
+                  final active = t < 0.4;
+                  // 只使用透明度变化实现从左到右闪动，不缩放
+                  final opacity = active
+                      ? 0.4 + 0.6 * math.sin(t / 0.4 * math.pi)
+                      : 0.4;
+                  return DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: widget.color.withValues(
+                        alpha: (widget.color.a * opacity).clamp(0.0, 1.0),
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: child,
+                  );
+                },
+                child: SizedBox(width: widget.dotSize, height: widget.dotSize),
               ),
-            ),
-          );
-        }),
+            );
+          }),
+        ),
       ),
     );
   }

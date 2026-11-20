@@ -37,7 +37,7 @@ import '../../plugins/image/drawing_preset_provider.dart';
 import '../../plugins/domain/handlers/ai_tool.dart';
 import '../../plugins/plugin_providers.dart';
 import '../../plugins/image/image_plugin.dart';
-import '../../plugins/trigger/trigger_plugin.dart';
+import '../../plugins/domain/plugin.dart';
 import '../../plugins/prompts/plugin_prompt_resolution.dart';
 import '../../plugins/prompts/plugin_prompts.dart';
 import '../../plugins/prompts/prompt_pack.dart';
@@ -509,10 +509,11 @@ class ChatSendBackendService {
         conv.hasAssistantCapability ||
         activeBackendPluginIds.isNotEmpty ||
         hasWorkspaceGrant;
-    final trigger = _ref.read(pluginManagerProvider).getPlugin('trigger');
-    final hasActiveTriggerCapability =
-        (enabledPluginIds == null || enabledPluginIds.contains('trigger')) &&
-        trigger is TriggerPlugin && trigger.enabledForConversation(conv.id);
+    final hasActiveTriggerCapability = await _isRequestPluginActive(
+      _ref.read(pluginManagerProvider).getPlugin('trigger'),
+      enabledPluginIds,
+      requestInputs(supportsTools: true),
+    );
     final canDelegateTasks = modelAllowsTools && hasActiveBackendCapability;
     final supportsToolCalling = modelAllowsTools &&
         (hasActiveBackendCapability || hasActiveTriggerCapability);
@@ -1415,4 +1416,32 @@ class _ContextPreviewCollector {
   List<PluginPromptEntry> plugins = const [];
   int inputLimit = 0;
   final notes = <String>[];
+}
+
+/// Whether [plugin] contributes an active request scope for this role, judged
+/// through the plugin runtime instead of the plugin's concrete type.
+Future<bool> _isRequestPluginActive(
+  Plugin? plugin,
+  Set<String>? enabledPluginIds,
+  PluginRequestInputs inputs,
+) async {
+  if (plugin == null) return false;
+  final runtime = PluginRuntime()
+    ..install(plugin.agentPlugin, enabled: plugin.enabled);
+  try {
+    for (final scope in runtime.requestScopes(
+      runtime.snapshot(),
+      runtime.selectForRole(enabledPluginIds),
+      inputs,
+    )) {
+      try {
+        if (scope.active) return true;
+      } finally {
+        await scope.dispose();
+      }
+    }
+    return false;
+  } finally {
+    await runtime.scope.dispose();
+  }
 }

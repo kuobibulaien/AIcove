@@ -109,7 +109,9 @@ void main() {
       agentFactory: () async => agent,
       allowed: (_) async => true,
       canAutoRun: (_) async => owns && !remoteRunning,
-      claimOwnership: (_) async { claimed++; },
+      claimOwnership: (_) async {
+        claimed++;
+      },
     );
     keeper.resumeOnce('a');
     await keeper.idle('a');
@@ -404,69 +406,112 @@ void main() {
     expect(await keeper.pendingMessages('a'), isEmpty);
   });
 
-  test('自然日和完整日用户数决定轮次，续跑保持切分', () async {
+  test('自然日合并、预算和天数限制保持续跑一致', () async {
     final day = DateTime(2026, 5, 12, 8);
-    Message at(String id, DateTime time) => _m(id, time.millisecondsSinceEpoch);
-    final small = [
-      at('a', day),
-      at('b', day.add(const Duration(hours: 3))),
-      at('c', day.add(const Duration(days: 1))),
-    ];
-    expect(
-      MemoryKeeperService.buildBatches(
-        small,
-        startIndex: 0,
-        targetIndex: 2,
-        budget: 100000,
-      ).map((b) => b.map((m) => m.id).toList()),
-      [
-        ['a', 'b'],
-        ['c'],
-      ],
+    Message at(String id, int days, {int minutes = 0, String? text}) => _m(
+      id,
+      day.add(Duration(days: days, minutes: minutes)).millisecondsSinceEpoch,
+      text: text,
     );
-    final twenty = [
-      for (var i = 0; i < 20; i++)
-        at('t$i', day.add(Duration(minutes: i < 10 ? i : i + 180))),
+    List<List<Message>> batch(List<Message> input) =>
+        MemoryKeeperService.buildBatches(
+          input,
+          startIndex: 0,
+          targetIndex: input.length - 1,
+          budget: 100000,
+        );
+    final sparse = [for (var i = 0; i < 8; i++) at('d$i', i)];
+    expect(batch(sparse.take(7).toList()), hasLength(1));
+    expect(batch(sparse).map((b) => b.length), [7, 1]);
+    final sameDay = [
+      for (var i = 0; i < 24; i++) at('m$i', 0, minutes: i < 12 ? i : i + 180),
     ];
-    expect(MemoryKeeperService.splitRounds(twenty), hasLength(1));
-    final many = [
-      for (var i = 0; i < 11; i++) at('a$i', day.add(Duration(minutes: i))),
-      for (var i = 0; i < 10; i++)
-        at('b$i', day.add(Duration(hours: 3, minutes: i))),
-      at('last', day.add(const Duration(hours: 5))),
+    expect(batch(sameDay), hasLength(1));
+    final large = [
+      at('a', 0, text: '字' * 2000),
+      at('b', 1, text: '字' * 2000),
+      at('c', 1, minutes: 1, text: '字' * 2000),
+      at('d', 2, text: '字' * 2000),
     ];
-    final batches = MemoryKeeperService.buildBatches(
-      many,
-      startIndex: 5,
-      targetIndex: 21,
-      budget: 100000,
+    final batches = batch(large);
+    expect(batches.map((b) => b.map((m) => m.id).toList()), [
+      ['a'],
+      ['b', 'c'],
+      ['d'],
+    ]);
+    messages['a'] = large;
+    boundaries['a'] = {'d'};
+    final estimate = await keeper.estimateRebuild(
+      'a',
+      batchTokenBudget: 100000,
     );
-    expect(batches.map((b) => b.length), [6, 10, 1]);
-    messages['a'] = many;
-    expect(
-      (await keeper.estimateRebuild('a', batchTokenBudget: 100000)).batches,
-      3,
-    );
-    boundaries['a'] = {'last'};
     keeper.schedule('a');
     await keeper.idle('a');
-    expect(agent.batches.map((b) => b.length), [11, 10, 1]);
+    expect(estimate.batches, batches.length);
+    expect(
+      agent.batches,
+      batches.map((b) => b.map((m) => m.id).toList()).toList(),
+    );
+    expect(
+      MemoryKeeperService.buildBatches(
+        large,
+        startIndex: -1,
+        targetIndex: 2,
+        budget: 1,
+      ),
+      isEmpty,
+    );
+    expect(
+      MemoryKeeperService.buildBatches(
+        large,
+        startIndex: 4,
+        targetIndex: 5,
+        budget: 1,
+      ),
+      isEmpty,
+    );
+    expect(
+      MemoryKeeperService.buildBatches(
+        large,
+        startIndex: 1,
+        targetIndex: 0,
+        budget: 1,
+      ),
+      isEmpty,
+    );
   });
 
-  test('往事日记补日期并保护旧日记', () {
+  test('跨日来源补日期并保护批次外旧日记', () {
+    final dates = {'m1': '2026-05-12', 'm2': '2026-05-13'};
+    final roundDates = dates.values.toSet().toList();
+    final titles = {
+      'first': '2026-05-12 旅行',
+      'second': '2026-05-13 海边',
+      'old': '2026-05-11 往事',
+    };
+    final protected = {
+      for (final entry in titles.entries)
+        if (!roundDates.any((d) => entry.value.startsWith(d))) entry.key,
+    };
+    expect(protected, {'old'});
     final ops = parseMemoryOps(
-      '{"ops":[{"op":"add","title":"旅行","content":"去海边","source_ids":["m"]},'
-      '{"op":"update","id":"old","content":"改"},{"op":"delete","id":"old"},'
-      '{"op":"update","id":"today","content":"补充"}]}',
-      knownIds: {'old', 'today'},
+      '{"ops":[{"op":"add","title":"旅行","content":"出发","source_ids":["m1"]},'
+      '{"op":"add","title":"海边","content":"看海","source_ids":["m2"]},'
+      '{"op":"update","id":"first","content":"补充"},'
+      '{"op":"update","id":"second","content":"补充"},'
+      '{"op":"update","id":"old","content":"改"},{"op":"delete","id":"old"}]}',
+      knownIds: titles.keys.toSet(),
       lockedIds: {},
-      sourceIds: {'m'},
+      sourceIds: dates.keys.toSet(),
+      sourceDates: dates,
       defaultArchiveDate: '2026-05-12',
-      protectedArchiveIds: {'old'},
+      protectedArchiveIds: protected,
     );
-    expect(ops, hasLength(2));
-    expect((ops.first as AddMemory).title, '2026-05-12 旅行');
-    expect((ops.last as UpdateMemory).id, 'today');
+    expect(ops, hasLength(4));
+    expect((ops[0] as AddMemory).title, '2026-05-12 旅行');
+    expect((ops[1] as AddMemory).title, '2026-05-13 海边');
+    expect((ops[2] as UpdateMemory).id, 'first');
+    expect((ops[3] as UpdateMemory).id, 'second');
     expect(formatMemoryRoundDate(DateTime(2026, 5, 12)), '2026-05-12');
   });
 

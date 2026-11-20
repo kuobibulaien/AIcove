@@ -245,9 +245,11 @@ class TaskAgentRunner {
                 loadSettings: loadSettings,
                 keyFailureRecorder: keyFailureRecorder,
               ),
-              modelRef: settings.compactionModel.trim().isNotEmpty
-                  ? settings.compactionModel
-                  : request.modelFullId,
+              modelRef:
+                  settings.resolveAvailableChatModelRef(
+                    settings.compactionModel,
+                  ) ??
+                  request.modelFullId,
               contextTokens: settings.getMaxContextTokens(request.modelFullId),
             ),
       ),

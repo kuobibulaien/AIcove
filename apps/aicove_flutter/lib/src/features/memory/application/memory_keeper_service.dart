@@ -9,8 +9,8 @@ import '../domain/memory_ports.dart';
 
 const kMemoryRollingWindow = Duration(hours: 24);
 const kMemoryContinuityGap = Duration(minutes: 10);
-const kMemoryRoundSplitThreshold = 20;
-const kMemoryRoundGap = Duration(hours: 1);
+const kMemorySoftBatchTokenBudget = 8000;
+const kMemoryMaxDaysPerBatch = 7;
 const kMemoryCheckThrottle = Duration(minutes: 10);
 
 /// 重建前给用户看的估算。
@@ -199,53 +199,61 @@ class MemoryKeeperService implements MemoryMaintenancePort {
     return index;
   }
 
-  static List<List<Message>> splitRounds(List<Message> all) {
-    final days = <DateTime, List<Message>>{};
-    for (final message in all) {
-      final local = message.createdAt.toLocal();
-      (days[DateTime(local.year, local.month, local.day)] ??= []).add(message);
-    }
-    final rounds = <List<Message>>[];
-    for (final day in days.values) {
-      if (day.where((m) => m.role == 'user').length <=
-          kMemoryRoundSplitThreshold) {
-        rounds.add(day);
-        continue;
-      }
-      var round = <Message>[];
-      for (var i = 0; i < day.length; i++) {
-        if (i > 0 &&
-            day[i].createdAt.difference(day[i - 1].createdAt) >
-                kMemoryRoundGap) {
-          rounds.add(round);
-          round = [];
-        }
-        round.add(day[i]);
-      }
-      rounds.add(round);
-    }
-    return rounds;
-  }
-
   static List<List<Message>> buildBatches(
     List<Message> all, {
     required int startIndex,
     required int targetIndex,
     required int budget,
   }) {
-    if (all.isEmpty || targetIndex < startIndex) return const [];
-    final batches = <List<Message>>[];
-    var offset = 0;
-    for (final round in splitRounds(all)) {
-      final from = startIndex > offset ? startIndex - offset : 0;
-      final end = targetIndex + 1 < offset + round.length
-          ? targetIndex + 1 - offset
-          : round.length;
-      if (from < end && from < round.length && end > 0) {
-        batches.addAll(_batches(round.sublist(from, end), budget));
-      }
-      offset += round.length;
+    if (all.isEmpty || startIndex < 0 || startIndex >= all.length) {
+      return const [];
     }
+    final endInclusive = targetIndex < all.length
+        ? targetIndex
+        : all.length - 1;
+    if (endInclusive < startIndex) return const [];
+    final effectiveBudget = budget < kMemorySoftBatchTokenBudget
+        ? (budget > 0 ? budget : 1)
+        : kMemorySoftBatchTokenBudget;
+    final days = <DateTime, List<Message>>{};
+    for (final message in all.sublist(startIndex, endInclusive + 1)) {
+      final local = message.createdAt.toLocal();
+      (days[DateTime(local.year, local.month, local.day)] ??= []).add(message);
+    }
+    final batches = <List<Message>>[];
+    var current = <Message>[];
+    var currentTokens = 0;
+    var currentDays = 0;
+    for (final day in days.values) {
+      final dayTokens = day.fold<int>(
+        0,
+        (n, m) => n + estimateMemoryMessageTokens(m),
+      );
+      if (current.isNotEmpty &&
+          (currentDays >= kMemoryMaxDaysPerBatch ||
+              currentTokens + dayTokens > effectiveBudget)) {
+        batches.add(current);
+        current = [];
+        currentTokens = 0;
+        currentDays = 0;
+      }
+      if (dayTokens > effectiveBudget) {
+        final dayChunks = _batches(day, effectiveBudget);
+        batches.addAll(dayChunks.take(dayChunks.length - 1));
+        final tail = dayChunks.last;
+        current = List<Message>.of(tail);
+        currentTokens = tail.fold<int>(
+          0,
+          (n, m) => n + estimateMemoryMessageTokens(m),
+        );
+        currentDays = 1;
+      } else {
+        current.addAll(day);
+        currentTokens += dayTokens;
+        currentDays++;
+      }
+    }
+    if (current.isNotEmpty) batches.add(current);
     return batches;
   }
 
@@ -280,7 +288,11 @@ class MemoryKeeperService implements MemoryMaintenancePort {
           batch.map((m) => m.displayText).join('\n'),
           limit: 12,
         );
-        if (!_manual.contains(ownerId) && canAutoRun != null && !await canAutoRun!(ownerId)) return;
+        if (!_manual.contains(ownerId) &&
+            canAutoRun != null &&
+            !await canAutoRun!(ownerId)) {
+          return;
+        }
         final ops = await agent.propose(
           ownerId: ownerId,
           core: core,

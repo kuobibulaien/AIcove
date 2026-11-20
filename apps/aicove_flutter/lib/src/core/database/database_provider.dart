@@ -1,14 +1,21 @@
 /// 数据库服务提供者
 library;
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'database.dart' hide Provider;
 import 'repositories/repositories.dart';
+import '../../features/observability/token_usage_ledger.dart';
 
 /// 全局数据库实例
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();
-  ref.onDispose(() => db.close());
+  TokenUsageLedger.instance.bindDatabase(db);
+  ref.onDispose(() {
+    TokenUsageLedger.instance.unbindDatabase(db);
+    unawaited(db.close());
+  });
   return db;
 });
 
@@ -24,8 +31,8 @@ final messageRepositoryProvider = Provider<MessageRepository>((ref) {
 
 final messageProjectionMappingRepositoryProvider =
     Provider<MessageProjectionMappingRepository>((ref) {
-  return MessageProjectionMappingRepository(ref.watch(databaseProvider));
-});
+      return MessageProjectionMappingRepository(ref.watch(databaseProvider));
+    });
 
 /// 消息内容块 Repository
 final messageBlockRepositoryProvider = Provider<MessageBlockRepository>((ref) {

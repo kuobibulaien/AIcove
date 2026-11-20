@@ -44,6 +44,38 @@ void main() {
     return logs;
   }
 
+  testWidgets('心跳捕捉卡顿，静置停表，收到帧后恢复', (tester) async {
+    final start = tester.binding.clock.now();
+    var stall = Duration.zero;
+    final active = FrameJankRecorder(
+      FrontendDiagnosticsService(sink: logs.add),
+      elapsed: () => tester.binding.clock.now().difference(start) + stall,
+    );
+    active.install();
+    addTearDown(active.uninstall);
+    active.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    active.handleTimings([_frame()]);
+
+    stall = const Duration(milliseconds: 300);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(logs.map((entry) => _meta(entry)['event']), contains('uiStall'));
+    expect(active.isBeatRunning, isTrue);
+
+    await tester.pump(const Duration(seconds: 3));
+    expect(active.isBeatRunning, isFalse);
+    active.handleTimings([]);
+    expect(active.isBeatRunning, isFalse);
+    active.handleTimings([_frame()]);
+    expect(active.isBeatRunning, isTrue);
+    active.didChangeAppLifecycleState(AppLifecycleState.paused);
+    await tester.pump();
+    expect(active.isBeatRunning, isFalse);
+    final summary = logs.lastWhere(
+      (entry) => _meta(entry)['event'] == 'frameSummary',
+    );
+    expect(_state(summary)['frames'], 2);
+  });
+
   test('普通帧只累加不写日志，汇总分开界面和绘制耗时', () async {
     recorder.handleTimings([
       for (var i = 0; i < 99; i++) _frame(uiMs: 3, rasterMs: 5),

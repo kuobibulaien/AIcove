@@ -11,8 +11,8 @@ import 'package:path/path.dart' as p;
 
 import '../domain/chat_context_preview.dart';
 import '../domain/conversation.dart';
-import '../domain/message.dart';
 import '../domain/conversation_context_window.dart';
+import '../domain/message.dart';
 import '../id_gen.dart';
 import '../../settings/app_settings.dart';
 import '../../observability/trace_models.dart';
@@ -228,10 +228,7 @@ class ChatSendService {
     final all = await loadConversationMessagesFromStore(conv: conv);
     return _backendService.previewContext(
       conv: conv,
-      history: _sliceContextWindow(
-        allMessages: all,
-        contextStartId: conv.contextStartMessageId,
-      ),
+      history: sliceConversationContext(all, conv.contextStartMessageId),
     );
   }
 
@@ -550,11 +547,7 @@ class ChatSendService {
     final all =
         await _ref.read(chatHistoryStoreProvider).loadAllRawMessages(conv.id);
 
-    if (ensureTailMessage != null &&
-        all.every((m) => m.id != ensureTailMessage.id)) {
-      all.add(ensureTailMessage);
-    }
-    return all;
+    return _ensureTail(all, ensureTailMessage);
   }
 
   /// 从数据库准备发送上下文。
@@ -562,21 +555,24 @@ class ChatSendService {
     required Conversation conv,
     required Message userMsg,
   }) async {
-    final all = await loadConversationMessagesFromStore(
-      conv: conv,
-      ensureTailMessage: userMsg,
-    );
-    return _sliceContextWindow(
-      allMessages: all,
-      contextStartId: conv.contextStartMessageId,
-    );
+    final boundary = conv.contextStartMessageId?.trim();
+    if (boundary == null || boundary.isEmpty) {
+      return loadConversationMessagesFromStore(
+        conv: conv,
+        ensureTailMessage: userMsg,
+      );
+    }
+    final messages = await _ref
+        .read(chatHistoryStoreProvider)
+        .loadRawMessagesForContext(conv.id, contextStartMessageId: boundary);
+    return _ensureTail(messages, userMsg.id == boundary ? null : userMsg);
   }
 
-  List<Message> _sliceContextWindow({
-    required List<Message> allMessages,
-    required String? contextStartId,
-  }) {
-    return sliceConversationContext(allMessages, contextStartId);
+  List<Message> _ensureTail(List<Message> messages, Message? tail) {
+    if (tail != null && messages.every((message) => message.id != tail.id)) {
+      return [...messages, tail];
+    }
+    return messages;
   }
 }
 

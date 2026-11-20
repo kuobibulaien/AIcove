@@ -173,7 +173,7 @@ class MessageRepository {
         .write(MessagesCompanion(status: Value(status)));
   }
 
-  /// Recover only user sends older than the threshold without a live owner.
+  /// Recover interrupted user sends and discard expired assistant placeholders.
   /// The live predicate is evaluated after the read, inside the transaction:
   /// sends started while waiting for the database must not be recovered.
   Future<List<String>> recoverInterruptedUserMessages(
@@ -185,30 +185,71 @@ class MessageRepository {
       final cutoff = _now()
           .subtract(kInterruptedSendRecoveryThreshold)
           .millisecondsSinceEpoch;
-      final candidates = await (_db.selectOnly(table)
-            ..addColumns([table.id])
-            ..where(
-              table.conversationId.equals(conversationId) &
-                  table.role.equals('user') &
-                  table.status.equals('sending') &
-                  table.createdAt.isSmallerThanValue(cutoff) &
-                  table.deletedAt.isNull() &
-                  table.replacedBy.isNull(),
-            ))
-          .get();
+      final candidates =
+          await (_db.selectOnly(table)
+                ..addColumns([table.id, table.role])
+                ..where(
+                  table.conversationId.equals(conversationId) &
+                      table.role.isIn(const ['user', 'assistant']) &
+                      table.status.equals('sending') &
+                      table.createdAt.isSmallerThanValue(cutoff) &
+                      table.deletedAt.isNull() &
+                      table.replacedBy.isNull(),
+                ))
+              .get();
+      if (candidates.isEmpty) return <String>[];
+      final conversations = _db.conversations;
+      final owner =
+          await (_db.selectOnly(conversations)
+                ..addColumns([conversations.contextStartMessageId])
+                ..where(conversations.id.equals(conversationId)))
+              .getSingleOrNull();
+      final contextStartMessageId = owner?.read(
+        conversations.contextStartMessageId,
+      );
+      final deletedAtMs = _now().millisecondsSinceEpoch;
+      final purgeAtMs = deletedAtMs + const Duration(days: 30).inMilliseconds;
       final recovered = <String>[];
       for (final row in candidates) {
         final id = row.read(table.id)!;
         if (isActiveSend(id)) continue;
-        final changed = await (_db.update(table)
-              ..where((t) =>
-                  t.id.equals(id) &
-                  t.status.equals('sending') &
-                  t.createdAt.isSmallerThanValue(cutoff) &
-                  t.deletedAt.isNull() &
-                  t.replacedBy.isNull()))
-            .write(const MessagesCompanion(status: Value('failed')));
-        if (changed > 0) recovered.add(id);
+        final isAssistant = row.read(table.role) == 'assistant';
+        if (isAssistant && id == contextStartMessageId) continue;
+        final changed =
+            await (_db.update(table)..where(
+                  (t) =>
+                      t.id.equals(id) &
+                      t.status.equals('sending') &
+                      t.createdAt.isSmallerThanValue(cutoff) &
+                      t.deletedAt.isNull() &
+                      t.replacedBy.isNull(),
+                ))
+                .write(
+                  // Sync excludes sending rows, so the tombstone must also
+                  // leave sending in this same update.
+                  isAssistant
+                      ? MessagesCompanion(
+                          status: const Value('failed'),
+                          deletedAt: Value(deletedAtMs),
+                          purgeAt: Value(purgeAtMs),
+                        )
+                      : const MessagesCompanion(status: Value('failed')),
+                );
+        if (changed > 0) {
+          if (isAssistant) {
+            await (_db.update(_db.messageBlocks)
+                  ..where((t) => t.messageId.equals(id) & t.deletedAt.isNull()))
+                .write(MessageBlocksCompanion(deletedAt: Value(deletedAtMs)));
+            await (_db.delete(
+              _db.messageProjectionMappings,
+            )..where((t) => t.rawMessageId.equals(id))).go();
+            await _db.customStatement(
+              'DELETE FROM message_states WHERE anchor_id = ?',
+              [id],
+            );
+          }
+          recovered.add(id);
+        }
       }
       return recovered;
     });
@@ -356,6 +397,40 @@ class MessageRepository {
       descending: false,
     );
   }
+
+  Future<List<Message>> getByConversationAfterBoundaryOrderedStable(
+    String conversationId, {
+    required String boundaryMessageId,
+  }) => _db.transaction(() async {
+    final anchor = await _db
+        .customSelect(
+          'SELECT created_at, rowid FROM messages WHERE id = ? AND '
+          'conversation_id = ? AND deleted_at IS NULL AND replaced_by IS NULL LIMIT 1',
+          variables: [Variable(boundaryMessageId), Variable(conversationId)],
+          readsFrom: {_db.messages},
+        )
+        .getSingleOrNull();
+    if (anchor == null) {
+      throw StateError('话题边界已失效，请先恢复或撤销上次压缩，本轮未发送。');
+    }
+    final anchorTime = anchor.read<int>('created_at');
+    final rows = await _db
+        .customSelect(
+          'SELECT * FROM messages WHERE conversation_id = ? AND '
+          'deleted_at IS NULL AND replaced_by IS NULL AND '
+          '(created_at > ? OR (created_at = ? AND rowid > ?)) '
+          'ORDER BY created_at ASC, rowid ASC',
+          variables: [
+            Variable(conversationId),
+            Variable(anchorTime),
+            Variable(anchorTime),
+            Variable(anchor.read<int>('rowid')),
+          ],
+          readsFrom: {_db.messages},
+        )
+        .get();
+    return [for (final row in rows) _db.messages.map(row.data)];
+  });
 
   /// 当前有效消息链里已发送的 AI 回复（稳定排序），供会话状态重放（ADR0071）。
   Future<List<Message>> getSentAssistantChainStable(

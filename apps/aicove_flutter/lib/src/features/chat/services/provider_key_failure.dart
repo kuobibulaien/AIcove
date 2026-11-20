@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../observability/model_request_ledger.dart';
+import '../../observability/token_usage_ledger.dart';
 import 'package:aicove_agent_kernel/aicove_agent_kernel.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -65,28 +66,70 @@ Future<T> executeWithProviderKeyFailureRecording<T>({
   ModelRunRecord? record;
   Timer? renewal;
   final scope = ModelRunScope.current;
+  final usageCapture = TokenUsageCaptureScope(
+    settings: config.settings,
+    providerId: config.providerId,
+    modelFullId: config.modelFullId,
+    scope: scope,
+  );
   if (scope != null) {
     try {
-      record = await ModelRequestLedger.instance.begin(scope, config.providerId, config.modelFullId);
+      record = await ModelRequestLedger.instance.begin(
+        scope,
+        config.providerId,
+        config.modelFullId,
+      );
       renewal = Timer.periodic(const Duration(seconds: 60), (_) {
         final current = record;
         if (current == null) return;
-        record = current.advance('running', DateTime.now().millisecondsSinceEpoch);
+        record = current.advance(
+          'running',
+          DateTime.now().millisecondsSinceEpoch,
+        );
         unawaited(ModelRequestLedger.instance.write(record!));
       });
     } catch (error) {
-      AppLogger.warning('ModelRequestLedger', '开始模型请求记录失败', metadata: {'error': '$error'});
+      AppLogger.warning(
+        'ModelRequestLedger',
+        '开始模型请求记录失败',
+        metadata: {'error': '$error'},
+      );
     }
   }
   try {
-    final result = await failures.run(execute);
-    final status = result is ApiCallResult && result.status == ApiRunStatus.cancelled
-        ? 'cancelled' : result is ApiCallResult && result.status == ApiRunStatus.failed ? 'failed' : 'succeeded';
-    if (record != null) await ModelRequestLedger.instance.write(record!.advance(status, DateTime.now().millisecondsSinceEpoch));
+    final result = await usageCapture.run(() => failures.run(execute));
+    final status =
+        result is ApiCallResult && result.status == ApiRunStatus.cancelled
+        ? 'cancelled'
+        : result is ApiCallResult && result.status == ApiRunStatus.failed
+        ? 'failed'
+        : 'succeeded';
+    if (record != null) {
+      await ModelRequestLedger.instance.write(
+        record!.advance(
+          status,
+          DateTime.now().millisecondsSinceEpoch,
+          usage: usageCapture.hasUsage ? usageCapture.usage : null,
+        ),
+      );
+    }
     return result;
   } catch (error) {
-    final cancelled = error is KernelCancelledException || config.cancellation?.isCancelled == true || cancellation?.isCancelled == true || RequestControl.cancellation?.isCancelled == true;
-    if (record != null) await ModelRequestLedger.instance.write(record!.advance(cancelled ? 'cancelled' : 'failed', DateTime.now().millisecondsSinceEpoch, error: cancelled ? null : error.toString()));
+    final cancelled =
+        error is KernelCancelledException ||
+        config.cancellation?.isCancelled == true ||
+        cancellation?.isCancelled == true ||
+        RequestControl.cancellation?.isCancelled == true;
+    if (record != null) {
+      await ModelRequestLedger.instance.write(
+        record!.advance(
+          cancelled ? 'cancelled' : 'failed',
+          DateTime.now().millisecondsSinceEpoch,
+          error: cancelled ? null : error.toString(),
+          usage: usageCapture.hasUsage ? usageCapture.usage : null,
+        ),
+      );
+    }
     if (failures.owns(error)) {
       await recorder?._record(config, error, cancellation: cancellation);
     }

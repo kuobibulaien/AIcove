@@ -4,12 +4,15 @@
 /// - 2025-12-31: 提取数据模型到 settings_models.dart
 library;
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/api/thinking/thinking_fallback.dart';
+import '../observability/model_request_ledger.dart';
+import '../observability/token_usage_ledger.dart';
 import '../../core/sync/cloud_local_write.dart';
 import '../../core/utils/message_formatter.dart';
 import '../../ui/theme/tokens.dart';
@@ -162,21 +165,10 @@ _ModelMeta _calculateModelMeta(
   final providerIds = <String>{};
   final hiddenModels = <String>{};
 
-  ModelType resolveModelType({
-    required String providerId,
-    required String modelId,
-  }) {
-    final modelRef = _buildProviderModelRef(providerId, modelId);
-    final stored = modelTypes[modelRef] ?? modelTypes[modelId];
-    if (stored != null && stored.isNotEmpty) {
-      return ModelType.fromValue(stored);
-    }
-    return ModelType.inferFromModelId(modelId);
-  }
-
   for (final provider in providers) {
     // 禁用渠道不应参与“可用模型”汇总，避免在选择列表中继续出现。
     if (!provider.enabled) continue;
+    final defaultType = providerDefaultModelType(provider);
     hiddenModels.addAll(provider.hiddenModels.map(
       (model) => _buildProviderModelRef(provider.id, model),
     ));
@@ -185,7 +177,12 @@ _ModelMeta _calculateModelMeta(
     for (final model in provider.models) {
       final id = _normalizeModelId(model);
       if (id.isEmpty) continue;
-      if (resolveModelType(providerId: provider.id, modelId: id) !=
+      if (resolveEffectiveModelType(
+            providerId: provider.id,
+            rawModelId: id,
+            modelTypes: modelTypes,
+            defaultType: defaultType,
+          ) !=
           ModelType.chat) {
         continue;
       }
@@ -200,7 +197,12 @@ _ModelMeta _calculateModelMeta(
     for (final model in provider.visibleModels) {
       final id = _normalizeModelId(model);
       if (id.isEmpty) continue;
-      if (resolveModelType(providerId: provider.id, modelId: id) !=
+      if (resolveEffectiveModelType(
+            providerId: provider.id,
+            rawModelId: id,
+            modelTypes: modelTypes,
+            defaultType: defaultType,
+          ) !=
           ModelType.chat) {
         continue;
       }
@@ -597,14 +599,36 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     if (providerId == null || providerId.isEmpty) {
       return rawModelId;
     }
-    return settings.buildModelRef(providerId, rawModelId);
+    return '${providerId.trim()}:$rawModelId';
   }
 
   /// 空字符串表示跟随默认聊天模型。
   Future<void> setCompactionModel(String modelRef) async {
-    await _commit(
-      () => _api.updatePartial({'compaction_model': modelRef.trim()}),
-    );
+    await _commit(() async {
+      final data = await _api.updatePartial({
+        'compaction_model': modelRef.trim(),
+      });
+      const legacyKey = 'aicove.plugins.memory.config';
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.get(legacyKey);
+      if (raw is! String) return data;
+      final Object? legacy;
+      try {
+        legacy = jsonDecode(raw);
+      } on FormatException {
+        return data;
+      }
+      if (legacy is Map<String, dynamic>) {
+        final count = legacy.length;
+        legacy
+          ..remove('summarizeModelName')
+          ..remove('summarizeProviderId');
+        if (legacy.length != count) {
+          await prefs.setString(legacyKey, jsonEncode(legacy));
+        }
+      }
+      return data;
+    });
   }
 
   /// 空字符串表示跟随压缩模型。
@@ -659,33 +683,41 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     });
   }
 
-  /// 设置模型类型（chat 类型会被移除，因为是默认值）
+  /// 普通对话默认值无需存储；覆盖渠道默认类型时必须显式保存。
   Future<void> setModelType({
     required String modelId,
     required ModelType type,
   }) async {
-    final normalizedModelId = _normalizeModelRefForPersist(modelId);
-    final rawModelId = normalizedModelId.contains(':')
-        ? normalizedModelId.substring(normalizedModelId.indexOf(':') + 1)
-        : normalizedModelId;
     await _commit(() async {
       final data = await _api.fetchAll();
+      final settings = _mapToSettings(data);
+      final providerId = settings.getModelProviderId(modelId) ?? '';
+      final rawModelId = settings.getRawModelId(modelId);
+      final normalizedModelId = providerId.isEmpty
+          ? rawModelId
+          : '$providerId:$rawModelId';
+      final provider = settings.getProvider(providerId);
+      final defaultType = provider == null ? null : providerDefaultModelType(provider);
+      final naturalType = resolveEffectiveModelType(
+        providerId: providerId,
+        rawModelId: rawModelId,
+        defaultType: defaultType,
+      );
       final types = (data['model_types'] as Map? ?? const <String, dynamic>{})
-          .map(
-            (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
-          );
-      if (type == ModelType.chat) {
-        final inferredType = ModelType.inferFromModelId(rawModelId);
-        if (inferredType == ModelType.chat) {
-          // chat 是默认值，不需要存储
-          types.remove(modelId);
-          types.remove(normalizedModelId);
-        } else {
-          types.remove(modelId);
+          .map((key, value) => MapEntry(key.toString(), value?.toString() ?? ''));
+      types.remove(modelId);
+      if (type == ModelType.chat && naturalType == ModelType.chat) {
+        types.remove(normalizedModelId);
+        // 旧裸 ID 覆盖可能仍被其它渠道使用；仅给当前渠道保存对话覆盖。
+        if (resolveEffectiveModelType(
+          providerId: providerId,
+          rawModelId: rawModelId,
+          modelTypes: types,
+          defaultType: defaultType,
+        ) != ModelType.chat) {
           types[normalizedModelId] = type.value;
         }
       } else {
-        types.remove(modelId);
         types[normalizedModelId] = type.value;
       }
       return _api.updatePartial({'model_types': types});
@@ -744,28 +776,27 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String providerId,
     required String modelId,
   }) async {
-    final current = state.value;
-    if (current == null) return;
+    await _commit(() async {
+      final data = await _api.fetchAll();
+      final current = _mapToSettings(data);
+      final provider = current.providers
+          .where((provider) => provider.id == providerId)
+          .firstOrNull;
+      if (provider == null) return data;
 
-    final provider = current.providers.firstWhere(
-      (p) => p.id == providerId,
-      orElse: () => const ProviderAuth(id: '', apiBaseUrl: '', apiKeys: []),
-    );
-
-    if (provider.id.isEmpty) return;
-
-    final allModels = [...provider.models]..removeWhere((m) => m == modelId);
-    final visibleModels = [...provider.visibleModels]
-      ..removeWhere((m) => m == modelId);
-    final hiddenModels = [...provider.hiddenModels]
-      ..removeWhere((m) => m == modelId);
-
-    await updateProviderModels(
-      providerId: providerId,
-      allModels: allModels,
-      visibleModels: visibleModels,
-      hiddenModels: hiddenModels,
-    );
+      final updated = await _api.updateProvider(
+        providerId: providerId,
+        allModels: provider.models.where((m) => m != modelId).toList(),
+        visibleModels: provider.visibleModels.where((m) => m != modelId).toList(),
+        hiddenModels: provider.hiddenModels.where((m) => m != modelId).toList(),
+      );
+      return _clearDeletedContextModelRefs(
+        current,
+        updated,
+        providerId,
+        modelId: modelId,
+      );
+    });
   }
 
   Future<void> setProviderEnabled(String providerId, bool enabled) async {
@@ -841,6 +872,16 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     bool clearMaxContextTokens = false,
     ThinkingLevel? thinkingLevel,
     bool clearThinkingLevel = false,
+    double? inputPricePerMillion,
+    bool clearInputPricePerMillion = false,
+    double? outputPricePerMillion,
+    bool clearOutputPricePerMillion = false,
+    double? cachedInputPricePerMillion,
+    bool clearCachedInputPricePerMillion = false,
+    String? priceCurrency,
+    bool clearPriceCurrency = false,
+    double? priceMultiplier,
+    bool clearPriceMultiplier = false,
   }) async {
     final normalizedModelId = _normalizeModelRefForPersist(modelId);
     await _commit(() async {
@@ -870,6 +911,16 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         clearMaxContextTokens: clearMaxContextTokens,
         thinkingLevel: thinkingLevel,
         clearThinkingLevel: clearThinkingLevel,
+        inputPricePerMillion: inputPricePerMillion,
+        clearInputPricePerMillion: clearInputPricePerMillion,
+        outputPricePerMillion: outputPricePerMillion,
+        clearOutputPricePerMillion: clearOutputPricePerMillion,
+        cachedInputPricePerMillion: cachedInputPricePerMillion,
+        clearCachedInputPricePerMillion: clearCachedInputPricePerMillion,
+        priceCurrency: priceCurrency,
+        clearPriceCurrency: clearPriceCurrency,
+        priceMultiplier: priceMultiplier,
+        clearPriceMultiplier: clearPriceMultiplier,
       );
 
       if (updated.isDefault) {
@@ -884,8 +935,29 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
   }
 
   Future<void> deleteProvider(String providerId) async {
-    await _commit(() => _api.deleteProvider(providerId));
+    await _commit(() async {
+      final current = await readStored();
+      final updated = await _api.deleteProvider(providerId);
+      return _clearDeletedContextModelRefs(current, updated, providerId);
+    });
     await ThinkingFallbackMemory.instance.forgetProvider(providerId);
+  }
+
+  Future<Map<String, dynamic>> _clearDeletedContextModelRefs(
+    AppSettings beforeDeletion,
+    Map<String, dynamic> updated,
+    String providerId, {
+    String? modelId,
+  }) async {
+    bool matches(String ref) =>
+        beforeDeletion.getModelProviderId(ref) == providerId &&
+        (modelId == null || beforeDeletion.getRawModelId(ref) == modelId);
+
+    final patch = {
+      if (matches(beforeDeletion.compactionModel)) 'compaction_model': '',
+      if (matches(beforeDeletion.memoryModel)) 'memory_model': '',
+    };
+    return patch.isEmpty ? updated : _api.updatePartial(patch);
   }
 
   Future<void> reorderProviders(List<String> providerIds) async {
@@ -986,14 +1058,21 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     Map<String, dynamic>? customConfig,
     ModelType modelType = ModelType.chat,
   }) {
-    return _api.testModel(
+    final currentSettings = state.value;
+    const scope = ModelRunScope(purpose: 'probe');
+    return scope.run(() => TokenUsageCaptureScope(
+      settings: currentSettings,
+      providerId: providerId,
+      modelFullId: '$providerId:$modelId',
+      scope: scope,
+    ).run(() => _api.testModel(
       providerId: providerId,
       apiKey: apiKey,
       apiBaseUrl: apiBaseUrl,
       modelId: modelId,
       customConfig: customConfig,
       modelType: modelType,
-    );
+    )));
   }
 
   String _resolveImportProviderId(String providerId) {
@@ -1026,6 +1105,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     List<String>? allModels,
     List<String>? capabilities,
     Map<String, dynamic>? customConfig,
+    Map<String, String>? modelTypeOverrides,
   }) async {
     final resolvedProviderId = _resolveImportProviderId(provider);
     await _commit(
@@ -1040,6 +1120,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         allModels: allModels,
         capabilities: capabilities,
         customConfig: customConfig,
+        modelTypeOverrides: modelTypeOverrides,
       ),
     );
   }
@@ -1050,6 +1131,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required List<String> allModels,
     List<String>? visibleModels,
     List<String>? hiddenModels,
+    Map<String, ModelType>? selectedModelTypes,
   }) async {
     await _commit(
       () => _api.updateProvider(
@@ -1057,6 +1139,10 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
         allModels: allModels,
         visibleModels: visibleModels ?? allModels,
         hiddenModels: hiddenModels,
+        modelTypeOverrides: selectedModelTypes == null ? null : {
+          for (final entry in selectedModelTypes.entries)
+            entry.key: entry.value.value,
+        },
       ),
     );
   }
@@ -1066,6 +1152,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     required String providerId,
     required String modelId,
     String? displayName,
+    ModelType? modelType,
   }) async {
     final current = state.value;
     if (current == null) return;
@@ -1094,6 +1181,7 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
       allModels: newAllModels,
       visibleModels: newVisible,
       hiddenModels: newHidden,
+      selectedModelTypes: modelType == null ? null : {modelId: modelType},
     );
 
     // 如果有显示名称，同时设置

@@ -36,6 +36,7 @@ import 'services/conversation_short_window_store.dart';
 
 class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   StreamSubscription<List<db.Conversation>>? _watchSub;
+  final Map<String, (db.Conversation, Conversation)> _mappedCache = {};
 
   @override
   Future<List<Conversation>> build() async {
@@ -291,9 +292,21 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   }
 
   List<Conversation> _mapConversations(List<db.Conversation> dbConvs) {
-    return [
-      for (final dbConv in dbConvs) ConversationConverter.fromDb(dbConv),
-    ];
+    final liveIds = <String>{};
+    final conversations = <Conversation>[];
+    for (final dbConv in dbConvs) {
+      liveIds.add(dbConv.id);
+      final cached = _mappedCache[dbConv.id];
+      if (cached != null && cached.$1 == dbConv) {
+        conversations.add(cached.$2);
+      } else {
+        final conversation = ConversationConverter.fromDb(dbConv);
+        _mappedCache[dbConv.id] = (dbConv, conversation);
+        conversations.add(conversation);
+      }
+    }
+    _mappedCache.removeWhere((id, _) => !liveIds.contains(id));
+    return conversations;
   }
 
   /// Build initial conversation when database is empty
@@ -670,12 +683,21 @@ class ConversationsNotifier extends AsyncNotifier<List<Conversation>> {
   Future<void> clearUnread(String id) async {
     final convRepo = ref.read(conversationRepositoryProvider);
 
-    // update database
+    final current = _findInMemory(id);
+    if (current?.unreadCount == 0 &&
+        (await convRepo.getById(id))?.unreadCount == 0) {
+      return;
+    }
     await convRepo.clearUnread(id);
-
-    // update in-memory state
-    await updateOne(id, (c) => c.copyWith(unreadCount: 0));
+    if (current != null &&
+        current.unreadCount != 0 &&
+        identical(_findInMemory(id), current)) {
+      await updateOne(id, (c) => c.copyWith(unreadCount: 0), persist: false);
+    }
   }
+
+  Conversation? _findInMemory(String id) =>
+      state.value?.where((conversation) => conversation.id == id).firstOrNull;
 
   // 清空消息
   Future<void> clearMessages(String id) async {

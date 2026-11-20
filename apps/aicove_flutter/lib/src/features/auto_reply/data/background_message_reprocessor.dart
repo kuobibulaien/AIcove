@@ -48,12 +48,39 @@ class BackgroundMessageReprocessor {
   static const _attemptLimit = 3;
   // Deliberately outside the synced aicove.* preference namespace.
   static const _attemptPrefix = 'local.bg_reprocess.attempts.';
-  final Ref _ref;
-  bool _running = false;
 
-  Future<void> reprocessRecentBackgroundMessages() async {
-    if (_running) return;
-    _running = true;
+  static final RegExp _legacyEmojiTagPattern = RegExp(
+    r'<(/?)emoji(?=[\s/>])',
+    caseSensitive: false,
+  );
+
+  static String _normalizeLegacyEmojiTags(String text) =>
+      text.replaceAllMapped(
+        _legacyEmojiTagPattern,
+        (match) => '<${match[1]}sticker',
+      );
+
+  final Ref _ref;
+  Future<void>? _running;
+  bool _again = false;
+
+  Future<void> reprocessRecentBackgroundMessages() {
+    final running = _running;
+    if (running != null) {
+      _again = true;
+      return running;
+    }
+    return _running = _loop().whenComplete(() => _running = null);
+  }
+
+  Future<void> _loop() async {
+    do {
+      _again = false;
+      await _sweep();
+    } while (_again);
+  }
+
+  Future<void> _sweep() async {
     try {
       await _reprocessInternal();
     } catch (e) {
@@ -68,8 +95,6 @@ class BackgroundMessageReprocessor {
           'errorType': e.runtimeType.toString(),
         },
       );
-    } finally {
-      _running = false;
     }
   }
 
@@ -91,13 +116,11 @@ class BackgroundMessageReprocessor {
                   t.replacedBy.isNull(),
             ))
             .get();
-    if (rows.isEmpty) return;
 
     // Repair every warm timeline before media/ownership/processed gates: plain
     // text and already-enriched messages can also arrive while the app sleeps.
     final cache = _ref.read(conversationTimelineCacheProvider);
-    for (final conversationId
-        in rows.map((row) => row.conversationId).toSet()) {
+    for (final conversationId in cache.loadedConversationIds) {
       if (cache.peekWindow(conversationId: conversationId, limit: 1) == null) {
         continue;
       }
@@ -105,12 +128,25 @@ class BackgroundMessageReprocessor {
       final cachedRawIds = {
         for (final message in cached) message.sourceMessageIdOrSelf,
       };
-      if (rows.any(
-        (row) =>
-            row.conversationId == conversationId &&
-            row.id.startsWith('bg_') &&
-            !cachedRawIds.contains(row.id),
-      )) {
+      final recent = await db
+          .customSelect(
+            'SELECT id FROM messages WHERE conversation_id = ? '
+            'AND deleted_at IS NULL AND replaced_by IS NULL '
+            'ORDER BY created_at DESC, rowid DESC LIMIT ?',
+            variables: [
+              Variable<String>(conversationId),
+              const Variable<int>(kConversationTimelineSeedMessageCount),
+            ],
+            readsFrom: {db.messages},
+          )
+          .get();
+      if (recent.any((row) => !cachedRawIds.contains(row.read<String>('id'))) ||
+          rows.any(
+            (row) =>
+                row.conversationId == conversationId &&
+                row.id.startsWith('bg_') &&
+                !cachedRawIds.contains(row.id),
+          )) {
         // A warm window may also contain a foreground stream draft with no
         // persisted raw yet. Reload committed rows without losing that draft.
         final stored =
@@ -136,6 +172,8 @@ class BackgroundMessageReprocessor {
         }
       }
     }
+
+    if (rows.isEmpty) return;
 
     final deviceId = await _ref.read(
       backgroundReprocessDeviceIdProvider.future,
@@ -172,7 +210,7 @@ class BackgroundMessageReprocessor {
       final rawReply = (ChatMessageProjectionCodec.rawReplyText(payload) ?? '')
           .trim();
       final hasMedia = firstPartyContentTagScanner
-          .scan(rawReply)
+          .scan(_normalizeLegacyEmojiTags(rawReply))
           .any(
             (segment) =>
                 segment is ContentTagElement &&
@@ -238,6 +276,14 @@ class BackgroundMessageReprocessor {
               ttsEnabled: settings.ttsEnabled,
               fallbackFailedMedia: terminalAttempt,
             );
+            if (projected.isEmpty) {
+              (raw, projected) = _textFallback(
+                row.id,
+                row.createdAt,
+                rawReply,
+                payload,
+              );
+            }
           } catch (_) {
             if (!terminalAttempt) rethrow;
             (raw, projected) = _textFallback(
@@ -297,16 +343,23 @@ class BackgroundMessageReprocessor {
     String reply,
     Map<String, dynamic> payload,
   ) {
-    final text = firstPartyContentTagScanner.scan(reply).map((segment) {
+    final displayInput = _normalizeLegacyEmojiTags(reply);
+    var text = firstPartyContentTagScanner.scan(displayInput).map((segment) {
       if (segment is! ContentTagElement || !segment.closed) return segment.raw;
+      if (segment.spec.name == 'sticker') {
+        final tag = (segment.attributes['tag'] ?? segment.inner).trim();
+        return tag.isEmpty ? '[表情]' : '[表情：$tag]';
+      }
       return switch (segment.spec.name) {
         'tts' => segment.inner,
         'image' => '[图片：${segment.inner}]',
-        'emoji' ||
-        'sticker' => '[表情：${segment.attributes['tag'] ?? segment.inner}]',
         _ => segment.raw,
       };
     }).join();
+    if (text.trim().isEmpty) {
+      text = ChatMessageProjectionCodec.displayReplyText(payload)?.trim() ?? '';
+      if (text.isEmpty) text = '[消息]';
+    }
     final raw = model.Message(
       id: id,
       role: 'assistant',
